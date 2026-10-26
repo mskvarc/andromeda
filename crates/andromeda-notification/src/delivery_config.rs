@@ -113,6 +113,7 @@ pub enum DeliveryMode {
 /// have queued deliveries that are still due. `request_timeout` bounds every
 /// outbound notification, queued or live.
 #[derive(Clone, Deserialize, Serialize, TomlComment, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryConfig {
     /// Whether notifications are delivered live (in-process) or durably (queued).
     #[toml_comment(inline)]

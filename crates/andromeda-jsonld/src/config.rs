@@ -41,6 +41,7 @@ pub enum JsonLdConfigError {
 
 /// Context resolution settings.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct JsonLdConfig {
     /// Whether a context that is neither embedded nor cached may be fetched.
     pub allow_remote_contexts: bool,

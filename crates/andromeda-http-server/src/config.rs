@@ -53,6 +53,7 @@ pub struct ServerOverrides {
 
 /// Address and graceful-drain policy for inbound HTTP execution.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Listener address.
     #[toml_comment(inline)]

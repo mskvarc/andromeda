@@ -71,6 +71,7 @@ pub enum ManagementConfigError {
 /// [`ManagementMode::Merged`] the endpoints ride the data-plane listener, and in
 /// [`ManagementMode::Disabled`] no management listener is bound.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ManagementConfig {
     /// Management-plane topology.
     #[toml_comment(inline)]

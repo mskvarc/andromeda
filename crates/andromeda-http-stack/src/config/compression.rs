@@ -25,6 +25,7 @@ pub enum CompressionQuality {
 /// The enabled codings are a single typed set listed as an array; an empty set
 /// means response compression is off, so there is no separate umbrella toggle.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CompressionConfig {
     /// The content codings the broker may compress responses with. An empty
     /// array disables response compression entirely.

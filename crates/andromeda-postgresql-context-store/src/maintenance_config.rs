@@ -32,6 +32,7 @@ pub enum MaintenanceProfile {
 
 /// Adaptive PostgreSQL maintenance configuration.
 #[derive(Clone, Copy, Deserialize, Serialize, Default, TomlComment, Debug, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct MaintenanceConfig {
     /// Whether inspection is disabled, observational, or automatic.
     #[toml_comment(inline)]

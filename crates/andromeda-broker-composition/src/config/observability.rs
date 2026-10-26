@@ -82,6 +82,7 @@ pub enum LogCompression {
 /// structured records to a rotating, optionally compressed file, independent of
 /// the stdout subscriber and with its own verbosity.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct FileLoggingConfig {
     /// Whether the structured file sink is installed.
     #[toml_comment(inline)]
@@ -131,6 +132,7 @@ impl Default for FileLoggingConfig {
 
 /// Broker observability settings.
 #[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ObservabilityConfig {
     /// Maximum emitted log verbosity.
     #[toml_comment(inline)]

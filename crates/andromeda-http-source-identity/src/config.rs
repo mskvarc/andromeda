@@ -9,6 +9,7 @@ use url::Url;
 
 /// Identity returned by `/info/sourceIdentity` and used for distributed loop detection.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct InfoConfig {
     /// URI identifying this Context Source, per Table 5.2.40-1.
     #[toml_comment(inline)]

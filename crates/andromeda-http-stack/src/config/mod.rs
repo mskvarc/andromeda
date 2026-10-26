@@ -59,6 +59,7 @@ pub enum HttpStackConfigError {
 
 /// Process-wide inbound HTTP stack configuration.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HttpStackConfig {
     /// Maximum wall-clock time for one HTTP request, in human-readable form
     /// (`"30s"`, `"2m"`).

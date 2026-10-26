@@ -71,6 +71,7 @@ pub enum TlsConfigError {
 /// The broker's TLS identity and handshake policy, shared by every listener
 /// that terminates TLS.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// PEM-encoded certificate chain the broker presents, leaf first.
     #[toml_comment(inline)]

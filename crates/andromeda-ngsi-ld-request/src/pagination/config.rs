@@ -11,6 +11,7 @@ use toml_comment::TomlComment;
 /// extension switch; the two together resolve to the broker's pagination
 /// policy at startup.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PaginationConfig {
     /// The pointers a fresh request is paged by: `cursor` (clause 5.5.9.1
     /// opaque pointers) or `offset` (clause 5.5.9.2 `limit`/`offset`).

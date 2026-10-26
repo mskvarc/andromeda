@@ -10,6 +10,7 @@ use toml_comment::TomlComment;
 /// The accepted codings are a single typed set listed as an array; an empty set
 /// means inbound decompression is off, so there is no separate umbrella toggle.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct DecompressionConfig {
     /// The content codings the broker will decode request bodies from. An empty
     /// array disables inbound decompression entirely.

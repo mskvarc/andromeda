@@ -27,6 +27,7 @@ pub enum NotificationsConfigError {
 /// Notification delivery configuration: the durable delivery queue, live
 /// evaluation, and the interval drain, all under one `notifications` section.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
     /// Durable notification event and delivery configuration.
     pub delivery: DeliveryConfig,

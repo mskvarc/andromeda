@@ -78,6 +78,7 @@ fn resolve_config_file(explicit: Option<PathBuf>) -> Result<Option<PathBuf>, Con
 
 /// Fully loaded broker construction configuration.
 #[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     /// HTTP listener and graceful-drain configuration.
     pub server: ServerConfig,
@@ -680,18 +681,23 @@ port = 1600
 
     #[test]
     #[serial]
-    fn legacy_env_names_are_ignored() {
-        // Only the double-underscore contract nests; a single-prefix name and a
-        // single underscore between section and key both fail to reach a field,
-        // so the built-in default stands.
+    fn a_single_prefix_underscore_name_is_not_read() {
         unsafe { env::set_var("ANDROMEDA_PORT", "8888") };
-        unsafe { env::set_var("ANDROMEDA__SERVER_HOST", "203.0.113.1") };
         let config = load_env_only();
         unsafe { env::remove_var("ANDROMEDA_PORT") };
-        unsafe { env::remove_var("ANDROMEDA__SERVER_HOST") };
 
         pretty_assertions::assert_eq!(config.server.port, 1056);
-        pretty_assertions::assert_eq!(config.server.host, IpAddr::from([0, 0, 0, 0]));
+    }
+
+    #[test]
+    #[serial]
+    fn a_single_underscore_between_section_and_key_is_refused_as_an_unknown_section() {
+        unsafe { env::set_var("ANDROMEDA__SERVER_HOST", "203.0.113.1") };
+        let result = RuntimeConfig::load(None, ServerOverrides::default());
+        unsafe { env::remove_var("ANDROMEDA__SERVER_HOST") };
+
+        let message = result.expect_err("a section named server_host does not exist").to_string();
+        assert!(message.to_lowercase().contains("server_host"), "{message}");
     }
 
     #[test]
@@ -855,6 +861,101 @@ port = 1600
         let config = load_env_only();
         unsafe { env::remove_var("ANDROMEDA__PAGINATION__DEFAULT_MODE") };
         pretty_assertions::assert_eq!(config.pagination.default_mode, PagingMode::Offset);
+    }
+
+    /// Load a file holding one misspelled key under `table` and return the
+    /// rendered startup error.
+    fn unknown_key_error(table: &str) -> String {
+        let path = write_temp_config(&format!("[{table}]\nunknown_key = 1\n"));
+        let result = RuntimeConfig::load(Some(&path), ServerOverrides::default());
+        fs::remove_file(path).expect("temp config should be removed");
+        let error = result.expect_err("an unknown key must fail loading");
+        assert!(matches!(error, ConfigurationError::Load(_)), "{error:?}");
+        error.to_string()
+    }
+
+    macro_rules! unknown_key_is_refused_with_its_path {
+        ($($name:ident: $table:literal,)+) => {
+            $(
+                #[test]
+                #[serial]
+                fn $name() {
+                    let message = unknown_key_error($table);
+                    assert!(message.contains(concat!($table, ".unknown_key")), "{message}");
+                    assert!(message.contains("unknown field: found `unknown_key`, expected"), "{message}");
+                }
+            )+
+        };
+    }
+
+    unknown_key_is_refused_with_its_path! {
+        an_unknown_server_key_is_refused: "server",
+        an_unknown_http_key_is_refused: "http",
+        an_unknown_http_cors_key_is_refused: "http.cors",
+        an_unknown_http_compression_key_is_refused: "http.compression",
+        an_unknown_http_decompression_key_is_refused: "http.decompression",
+        an_unknown_http_server_timing_key_is_refused: "http.server_timing",
+        an_unknown_http_helmet_key_is_refused: "http.helmet",
+        an_unknown_http_csrf_key_is_refused: "http.csrf",
+        an_unknown_http3_key_is_refused: "http3",
+        an_unknown_tls_key_is_refused: "tls",
+        an_unknown_database_key_is_refused: "database",
+        an_unknown_database_name_cache_key_is_refused: "database.name_cache",
+        an_unknown_database_maintenance_key_is_refused: "database.maintenance",
+        an_unknown_jsonld_key_is_refused: "jsonld",
+        an_unknown_temporal_key_is_refused: "temporal",
+        an_unknown_tenancy_key_is_refused: "tenancy",
+        an_unknown_identity_key_is_refused: "identity",
+        an_unknown_entity_key_is_refused: "entity",
+        an_unknown_federation_key_is_refused: "federation",
+        an_unknown_snapshot_key_is_refused: "snapshot",
+        an_unknown_notifications_key_is_refused: "notifications",
+        an_unknown_notifications_delivery_key_is_refused: "notifications.delivery",
+        an_unknown_spatial_key_is_refused: "spatial",
+        an_unknown_observability_key_is_refused: "observability",
+        an_unknown_observability_file_logging_key_is_refused: "observability.file_logging",
+        an_unknown_management_key_is_refused: "management",
+        an_unknown_extensions_key_is_refused: "extensions",
+        an_unknown_pagination_key_is_refused: "pagination",
+    }
+
+    #[test]
+    #[serial]
+    fn an_unknown_database_pooler_key_is_refused() {
+        let path = write_temp_config("[database.pooler]\nurl = \"postgres://pooler/db\"\nunknown_key = 1\n");
+        let result = RuntimeConfig::load(Some(&path), ServerOverrides::default());
+        fs::remove_file(path).expect("temp config should be removed");
+        let message = result.expect_err("an unknown pooler key must fail loading").to_string();
+        assert!(message.contains("database.pooler.unknown_key"), "{message}");
+    }
+
+    #[test]
+    #[serial]
+    fn an_unknown_top_level_key_is_refused() {
+        let path = write_temp_config("unknown_section = 1\n");
+        let result = RuntimeConfig::load(Some(&path), ServerOverrides::default());
+        fs::remove_file(path).expect("temp config should be removed");
+        let message = result.expect_err("an unknown top-level key must fail loading").to_string();
+        assert!(message.contains("unknown_section"), "{message}");
+    }
+
+    #[test]
+    #[serial]
+    fn an_unknown_prefixed_environment_variable_is_refused() {
+        unsafe { env::set_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ", "1") };
+        let result = RuntimeConfig::load(None, ServerOverrides::default());
+        unsafe { env::remove_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ") };
+        let message = result.expect_err("an unknown environment key must fail loading").to_string();
+        assert!(message.to_lowercase().contains("http.server_timing.phasez"), "{message}");
+    }
+
+    #[test]
+    #[serial]
+    fn an_environment_variable_without_the_prefix_is_not_read() {
+        unsafe { env::set_var("HTTP__SERVER_TIMING__PHASEZ", "1") };
+        let result = RuntimeConfig::load(None, ServerOverrides::default());
+        unsafe { env::remove_var("HTTP__SERVER_TIMING__PHASEZ") };
+        result.expect("an unprefixed variable never reaches the configuration");
     }
 
     #[test]

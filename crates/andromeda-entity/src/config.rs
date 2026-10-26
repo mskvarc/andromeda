@@ -118,6 +118,7 @@ pub enum EntityConfigError {
 
 /// Entity batching, expiry, and durable side-effect configuration.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EntityConfig {
     /// Maximum concurrent CPU-bound preparation chunks.
     pub batch_chunk_concurrency: Option<usize>,

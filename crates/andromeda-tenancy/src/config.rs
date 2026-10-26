@@ -52,6 +52,7 @@ pub enum TenancyConfigError {
 /// nothing to a runtime cache. They live together because they are one
 /// operator-facing section, not because one type uses them all.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct TenancyConfig {
     /// Whether named tenants are served at all.
     pub enabled: bool,

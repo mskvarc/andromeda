@@ -103,6 +103,7 @@ pub const DEFAULT_MAX_QUERY_INSTANCES: NonZeroU32 = NonZeroU32::MIN.saturating_a
 
 /// Distributed Context Source forwarding limits.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct FederationConfig {
     /// Maximum parallel Context Source forwarding requests.
     pub forward_concurrency: usize,

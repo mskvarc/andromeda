@@ -206,6 +206,7 @@ cors_rule! {
 
 /// CORS policy configuration for the broker edge.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CorsConfig {
     /// The overall CORS mode. `permissive` and `very-permissive` ignore every
     /// other field in this table.

@@ -73,6 +73,7 @@ pub enum QTargetLanguages {
 /// [`HttpFeatureMode::Disabled`], so a broker with no `[extensions]` section is
 /// a conformant broker.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ExtensionsConfig {
     /// The hard conformance override.
     ///

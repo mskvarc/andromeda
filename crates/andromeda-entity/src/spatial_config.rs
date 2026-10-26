@@ -52,6 +52,7 @@ pub enum SpatialConsistency {
 
 /// Spatial-index consistency and rebuild policy.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SpatialConfig {
     /// How the index is kept consistent with the store: `watermark`
     /// (default), `commit-synchronous` or `store-verified`.

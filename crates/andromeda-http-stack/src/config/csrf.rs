@@ -11,6 +11,7 @@ use url::Url;
 /// send no `Origin` and are unaffected, while a browser-driven UI in front of the
 /// broker enables it and declares the origins it serves from.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CsrfConfig {
     /// Whether the CSRF layer is installed.
     #[toml_comment(inline)]

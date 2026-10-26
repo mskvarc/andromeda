@@ -57,6 +57,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 
 /// Defaults and reconciliation cadence for temporal history.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct TemporalConfig {
     /// Whether Core API writes add to the Temporal Evolution of the Entities
     /// they change: `"recorded"` (the default) or `"not-recorded"`.

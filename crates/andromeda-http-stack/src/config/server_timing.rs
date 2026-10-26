@@ -26,6 +26,7 @@ pub enum ServerTimingPhase {
 
 /// `Server-Timing` configuration.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ServerTimingConfig {
     /// Whether the broker emits a `Server-Timing` response header at all.
     #[toml_comment(inline)]

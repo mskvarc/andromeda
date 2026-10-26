@@ -30,6 +30,7 @@ pub enum Http3Mode {
 /// the TCP listener, differing only in transport (UDP/QUIC rather than TCP).
 /// Its certificate is the `[tls]` identity.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Http3Config {
     /// Whether the QUIC/HTTP/3 listener is served alongside the TCP listener.
     /// Enabling it requires the `[tls]` certificate and key.

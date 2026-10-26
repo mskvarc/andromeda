@@ -40,6 +40,7 @@ pub enum DatabaseConfigError {
 /// the request path through the proxy while provisioning, migration and
 /// maintenance keep using [`DatabaseConfig::url`] directly.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct PoolerConfig {
     /// The transaction pooler's PostgreSQL-protocol URL, used by the request
     /// path in place of [`DatabaseConfig::url`]. The pooler forwards to the same
@@ -121,6 +122,7 @@ impl SynchronousCommit {
 
 /// PostgreSQL pool configuration.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// Validated PostgreSQL connection URL. This always names PostgreSQL itself,
     /// never a proxy: provisioning, migration and maintenance connect here, and

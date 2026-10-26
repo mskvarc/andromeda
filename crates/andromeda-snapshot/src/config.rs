@@ -42,6 +42,7 @@ pub enum SnapshotConfigError {
 
 /// Snapshot preparation execution limits.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SnapshotConfig {
     /// Default lifetime used when `snapshotLifetime` is omitted, in
     /// human-readable form (`"1h"`).

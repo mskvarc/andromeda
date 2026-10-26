@@ -15,6 +15,7 @@ use toml_comment::TomlComment;
 /// off. Per-header policy is a single default set today; finer control is a
 /// follow-up.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HelmetConfig {
     /// Whether the security-header layer is installed.
     #[toml_comment(inline)]

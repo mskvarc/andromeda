@@ -34,6 +34,7 @@ pub enum NameCacheConfigError {
 /// of cached names, and only as much as it has actually resolved: the budget is
 /// a ceiling, not an allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TomlComment)]
+#[serde(deny_unknown_fields)]
 pub struct NameCacheConfig {
     /// Memory each dictionary's cache may hold, in human-readable form
     /// (`"16 MiB"`). When it is full, the least valuable names are dropped to
