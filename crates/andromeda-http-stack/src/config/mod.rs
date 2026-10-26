@@ -28,6 +28,7 @@ use crate::config::{
     server_timing::ServerTimingConfig,
 };
 use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+use andromeda_http_extraction::request_body_limit::RequestBodyLimit;
 use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
@@ -51,6 +52,12 @@ pub enum HttpStackConfigError {
     /// Request bodies require a positive size ceiling.
     #[error("http.max_request_body must be greater than zero")]
     ZeroRequestBodyLimit,
+    /// A ceiling beyond the platform address width would admit every body.
+    #[error("http.max_request_body does not fit the platform address width")]
+    RequestBodyLimitExceedsAddressWidth,
+    /// A threshold beyond the platform address width would never send a payload to the blocking pool.
+    #[error("http.blocking_decode_threshold does not fit the platform address width")]
+    BlockingDecodeThresholdExceedsAddressWidth,
     /// The Fetch standard forbids `*` with credentials, and the CORS layer
     /// panics on the combination, so it is rejected here.
     #[error("http.cors: allow_credentials cannot be combined with an `any` wildcard on origins, methods, headers or exposed headers")]
@@ -149,21 +156,57 @@ impl HttpStackConfig {
     ///
     /// Returns [`HttpStackConfigError::ZeroRequestTimeout`] when
     /// `request_timeout` is zero, [`HttpStackConfigError::ZeroRequestBodyLimit`]
-    /// when `max_request_body` is zero, and
+    /// when `max_request_body` is zero,
+    /// [`HttpStackConfigError::RequestBodyLimitExceedsAddressWidth`] and
+    /// [`HttpStackConfigError::BlockingDecodeThresholdExceedsAddressWidth`] when
+    /// either size does not fit a `usize`, and
     /// [`HttpStackConfigError::CorsCredentialsWithWildcard`] when the CORS policy
     /// pairs credentials with an `any` wildcard.
-    pub const fn validate(&self) -> Result<(), HttpStackConfigError> {
+    pub fn validate(&self) -> Result<(), HttpStackConfigError> {
         if self.request_timeout.is_zero() {
             return Err(HttpStackConfigError::ZeroRequestTimeout);
         }
         if self.max_request_body.as_u64() == 0 {
             return Err(HttpStackConfigError::ZeroRequestBodyLimit);
         }
+        self.request_body_limit()?;
+        self.blocking_decode_threshold_bytes()?;
         if self.cors.has_credentialed_wildcard() {
             return Err(HttpStackConfigError::CorsCredentialsWithWildcard);
         }
         Ok(())
     }
+
+    /// The configured body ceiling as the extraction layer's limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpStackConfigError::RequestBodyLimitExceedsAddressWidth`] when
+    /// `max_request_body` does not fit a `usize`.
+    pub fn request_body_limit(&self) -> Result<RequestBodyLimit, HttpStackConfigError> {
+        within_address_width(self.max_request_body.as_u64(), HttpStackConfigError::RequestBodyLimitExceedsAddressWidth).map(RequestBodyLimit::new)
+    }
+
+    /// The configured blocking-decode threshold in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpStackConfigError::BlockingDecodeThresholdExceedsAddressWidth`]
+    /// when `blocking_decode_threshold` does not fit a `usize`.
+    pub fn blocking_decode_threshold_bytes(&self) -> Result<usize, HttpStackConfigError> {
+        within_address_width(
+            self.blocking_decode_threshold.as_u64(),
+            HttpStackConfigError::BlockingDecodeThresholdExceedsAddressWidth,
+        )
+    }
+}
+
+/// Narrow a configured byte count to the integer type `T`, answering `error`
+/// when it does not fit. Production narrows to `usize`; a size that does not
+/// fit is refused because saturating it would turn a protective ceiling into no
+/// ceiling.
+fn within_address_width<T: TryFrom<u64>>(bytes: u64, error: HttpStackConfigError) -> Result<T, HttpStackConfigError> {
+    T::try_from(bytes).map_err(|_| error)
 }
 
 #[cfg(test)]
@@ -176,8 +219,10 @@ mod tests {
         HttpStackConfig,
         HttpStackConfigError,
         cors::{CorsConfig, CorsMode},
+        within_address_width,
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+    use andromeda_http_extraction::request_body_limit::RequestBodyLimit;
     use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
     use serde::Deserialize;
     use std::{num::NonZeroUsize, time::Duration};
@@ -227,6 +272,28 @@ mod tests {
             ..HttpStackConfig::default()
         };
         pretty_assertions::assert_eq!(config.validate(), Err(HttpStackConfigError::ZeroRequestBodyLimit));
+    }
+
+    /// Narrowing to `u32` stands in for a platform narrower than the 64-bit
+    /// configuration value, so the test holds on every host.
+    #[test]
+    fn a_size_one_above_the_address_width_is_refused_and_the_largest_fitting_size_is_kept() {
+        let largest = u64::from(u32::MAX);
+        pretty_assertions::assert_eq!(
+            within_address_width::<u32>(largest, HttpStackConfigError::RequestBodyLimitExceedsAddressWidth),
+            Ok(u32::MAX)
+        );
+        pretty_assertions::assert_eq!(
+            within_address_width::<u32>(largest + 1, HttpStackConfigError::RequestBodyLimitExceedsAddressWidth),
+            Err(HttpStackConfigError::RequestBodyLimitExceedsAddressWidth)
+        );
+    }
+
+    #[test]
+    fn the_default_sizes_fit_the_address_width() {
+        let config = HttpStackConfig::default();
+        pretty_assertions::assert_eq!(config.request_body_limit().map(RequestBodyLimit::bytes), Ok(67_108_864));
+        pretty_assertions::assert_eq!(config.blocking_decode_threshold_bytes(), Ok(262_144));
     }
 
     #[test]

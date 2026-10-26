@@ -12,7 +12,7 @@ mod server_timing;
 mod strict_transport_security_layer;
 
 use crate::{
-    config::{HttpStackConfig, server_timing::ServerTimingConfig},
+    config::{HttpStackConfig, HttpStackConfigError, server_timing::ServerTimingConfig},
     stack::{
         compression_layer::build_compression_layer,
         cors_layer::build_cors_layer,
@@ -62,6 +62,9 @@ use tower_http::{
 /// A fallible middleware layer could not be built from its configuration.
 #[derive(Debug, Error)]
 pub enum HttpStackBuildError {
+    /// A configured size does not fit the platform address width.
+    #[error(transparent)]
+    Config(#[from] HttpStackConfigError),
     /// The security-header layer could not be rendered.
     #[error("failed to build the security-header layer: {0}")]
     Helmet(#[from] HelmetError),
@@ -111,17 +114,12 @@ impl HttpStack {
     ///
     /// # Errors
     ///
-    /// Returns [`HttpStackBuildError`] when the security-header layer cannot be
-    /// rendered or a CSRF trusted origin is not one the CSRF layer accepts.
+    /// Returns [`HttpStackBuildError`] when a configured size does not fit the
+    /// platform address width, the security-header layer cannot be rendered or a
+    /// CSRF trusted origin is not one the CSRF layer accepts.
     pub fn new(config: HttpStackConfig) -> Result<HttpStack, HttpStackBuildError> {
-        // A 64-bit host has `usize == u64`, so the conversion is exact; the
-        // saturating fallback keeps a hypothetical 32-bit build from panicking on
-        // an over-large configured ceiling rather than silently truncating it.
-        let request_body_limit = RequestBodyLimit::new(usize::try_from(config.max_request_body.as_u64()).unwrap_or(usize::MAX));
-        let blocking_decode = BlockingDecodePolicy::new(
-            usize::try_from(config.blocking_decode_threshold.as_u64()).unwrap_or(usize::MAX),
-            config.max_concurrent_blocking_decodes,
-        );
+        let request_body_limit = config.request_body_limit()?;
+        let blocking_decode = BlockingDecodePolicy::new(config.blocking_decode_threshold_bytes()?, config.max_concurrent_blocking_decodes);
         Ok(HttpStack {
             request_body_limit,
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(config.max_request_json_values)),
