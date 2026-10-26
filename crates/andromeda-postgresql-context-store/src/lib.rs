@@ -10,7 +10,6 @@
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
-pub mod config;
 /// The tenant-wide order context source registration and subscription writes
 /// commit in.
 mod context_source_change_clock;
@@ -45,7 +44,6 @@ pub mod json_text;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
 /// PostgreSQL maintenance configuration owned beside the database connection settings.
-pub mod maintenance_config;
 /// The three embedded migration sets and the ledger each is recorded in.
 pub mod migration_set;
 /// Persistence layer for the notification delivery queue.
@@ -86,7 +84,7 @@ pub mod tenant_wake_schedule;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-component-report",
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-context-space",

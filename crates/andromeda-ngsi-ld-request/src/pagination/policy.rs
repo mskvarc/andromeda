@@ -7,10 +7,10 @@ use crate::{
         cursor_request::CursorRequest,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
-        paging_mode::PagingMode,
         parameters::PageParameters,
     },
 };
+use andromeda_configuration::schema::paging_mode::PagingMode;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
@@ -168,11 +168,11 @@ mod tests {
             page_pointers::PagePointers,
             page_request::{CollectionOrder, PageRequest},
             page_size::{PageSizeBounds, PageSizeCap, PageSizeExceeded},
-            paging_mode::PagingMode,
             parameters::PageParameters,
             policy::{PaginationPolicy, PaginationPolicyError},
         },
     };
+    use andromeda_configuration::schema::paging_mode::PagingMode;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,

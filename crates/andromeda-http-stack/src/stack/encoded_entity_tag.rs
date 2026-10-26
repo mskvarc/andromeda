@@ -20,7 +20,7 @@
 //! applies stands for the encoded 200, so it also gets that response's weak
 //! tag.
 
-use crate::config::content_coding::ContentCoding;
+use andromeda_configuration::schema::content_coding::ContentCoding;
 use axum::{
     http::{
         HeaderMap,
@@ -160,7 +160,8 @@ fn is_content_encoded(headers: &HeaderMap) -> bool {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{config::content_coding::ContentCoding, stack::encoded_entity_tag::EncodedEntityTags};
+    use crate::stack::encoded_entity_tag::EncodedEntityTags;
+    use andromeda_configuration::schema::content_coding::ContentCoding;
     use axum::{
         http::{
             HeaderMap,

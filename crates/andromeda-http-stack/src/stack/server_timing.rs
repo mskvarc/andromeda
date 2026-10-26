@@ -1,8 +1,8 @@
 //! Installation of the per-phase `Server-Timing` mechanism.
 
-use crate::config::{
+use andromeda_configuration::schema::{
     feature_mode::HttpFeatureMode,
-    server_timing::{ServerTimingConfig, ServerTimingPhase},
+    http::server_timing::{ServerTimingConfig, ServerTimingPhase},
 };
 use axum::{
     Router,
@@ -70,12 +70,10 @@ fn lock_recovering(extension: &ServerTimingExtension) -> MutexGuard<'_, ServerTi
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        config::{
-            feature_mode::HttpFeatureMode,
-            server_timing::{ServerTimingConfig, ServerTimingPhase},
-        },
-        stack::server_timing::apply_server_timing,
+    use crate::stack::server_timing::apply_server_timing;
+    use andromeda_configuration::schema::{
+        feature_mode::HttpFeatureMode,
+        http::server_timing::{ServerTimingConfig, ServerTimingPhase},
     };
     use axum::{Router, body::Body, extract::Request, http::StatusCode, routing::get};
     use std::error::Error;

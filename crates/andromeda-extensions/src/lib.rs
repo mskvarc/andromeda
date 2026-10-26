@@ -16,14 +16,13 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod advertisement;
-pub mod config;
 pub mod enabled;
 pub mod startup_log;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-http-stack",
+        "andromeda-configuration",
         "andromeda-json-literal",
         "andromeda-ngsi-ld-query",
     ],

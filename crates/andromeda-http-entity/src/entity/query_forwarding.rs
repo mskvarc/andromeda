@@ -20,12 +20,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
-    config::SplitEntities,
     entity_budget::{EntityBudget, EntityBudgetExceeded},
     forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
+    split_entities::SplitEntities,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};

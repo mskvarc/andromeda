@@ -12,6 +12,7 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     tasks::temporal_sweep_failure::classify_sweep_failure,
 };
+use andromeda_configuration::schema::temporal::TemporalConfig;
 use andromeda_postgresql_temporal_store::{
     repo::TemporalRepository,
     retention_sweep::{TemporalRetention, TemporalRetentionHorizon, TemporalRetentionOutcome},
@@ -27,7 +28,6 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use andromeda_temporal::config::TemporalConfig;
 use chrono::{TimeDelta, Utc};
 use std::sync::Arc;
 

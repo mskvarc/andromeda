@@ -16,8 +16,8 @@ use crate::tenant_factory::{
     storage::TenantStorage,
     tasks::{notification_schedule::classify_notification_failure, retention::retention_duration},
 };
+use andromeda_configuration::schema::delivery::DeliveryConfig;
 use andromeda_notification::{
-    delivery_config::DeliveryConfig,
     delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
     delivery_store::DeliveryStore,
     error::NotificationError,
@@ -229,11 +229,11 @@ mod tests {
         background_pacer::{BackgroundPacer, ObligationSource},
         tasks::notification_delivery::{CleanupRetention, paced_cleanup},
     };
+    use andromeda_configuration::schema::delivery::DeliveryConfig;
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
-        delivery_config::DeliveryConfig,
         delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
         delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},

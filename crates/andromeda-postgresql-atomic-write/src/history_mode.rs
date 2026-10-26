@@ -99,10 +99,11 @@ impl TemporalHistoryCommitMode {
 )]
 mod tests {
     use crate::history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode};
+    use andromeda_configuration::schema::{name_cache::NameCacheConfig, write_reserve::WriteReserve};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
-    use andromeda_postgresql_pool::{read_share::ReadShare, write_reserve::WriteReserve};
+    use andromeda_postgresql_name_dictionary::name_cache::NameCache;
+    use andromeda_postgresql_pool::read_share::ReadShare;
     use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
     use andromeda_temporal::port::temporal_intent_publisher::NoTemporalIntentPublisher;
     use sqlx::postgres::PgPoolOptions;

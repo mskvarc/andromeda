@@ -1,11 +1,11 @@
 //! The live rustls configuration one listener hands to each new handshake.
 
 use crate::{
-    config::MinimumProtocolVersion,
     handshake_policy::{HandshakeConfigError, HandshakePolicy, build_server_config},
     material_watch::TlsMaterialWatch,
     pem_material::TlsMaterial,
 };
+use andromeda_configuration::schema::tls::MinimumProtocolVersion;
 use rustls::ServerConfig;
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -95,13 +95,12 @@ async fn rebuild_on_change(
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::TlsConfig,
         handshake_policy::{HandshakePolicy, ProtocolFloor},
         handshake_probe::handshake,
         material_watch::TlsMaterialWatch,
         test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_configuration::{human_duration::HumanDuration, schema::tls::TlsConfig};
     use rustls::version::TLS13;
     use std::{error::Error, sync::Arc, time::Duration};
     use tokio::time::timeout;

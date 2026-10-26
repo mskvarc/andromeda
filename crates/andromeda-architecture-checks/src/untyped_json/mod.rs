@@ -11,7 +11,9 @@
 //! hold or convert such a tree: `serde_json::{Value, Map, json!, to_value,
 //! from_value}` (also through `serde_json::value`), and the JSON processor's
 //! own tree (`jstrict`, `jsonld_syntax::Value`) outside the two places that
-//! hand JSON to and from the processor. Imports count once per leaf, and a
+//! hand JSON to and from the processor, and the `toml` crate's tree
+//! (`toml::Value`, `toml::Table`, `toml::map`) outside the one configuration
+//! value that holds operator data passed on verbatim. Imports count once per leaf, and a
 //! local name bound by one counts wherever it is used, inside macro calls too.
 //!
 //! Detection is deny-by-default and runs at zero: any production site naming

@@ -16,6 +16,7 @@ use andromeda_context_commit::{committer::ContextCommitter, context_change_event
 use andromeda_entity::{
     NotificationWriteConfig,
     change_sink::EntityChangeSink,
+    configured_policy::pending_side_effects_retry_schedule,
     error::EntityError,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
     side_effect_notification::SideEffectNotificationRoute,
@@ -90,9 +91,7 @@ pub(super) fn register_entity_side_effects(
             lease_seconds: i32::try_from(entity_config.pending_side_effects_lease.duration().as_secs()).unwrap_or(i32::MAX),
             batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
             max_attempts: entity_config.pending_side_effects_max_attempts,
-            retry_schedule: entity_config
-                .pending_side_effects_retry_schedule()
-                .map_err(AssemblyInvariant::SideEffectRetry)?,
+            retry_schedule: pending_side_effects_retry_schedule(entity_config).map_err(AssemblyInvariant::SideEffectRetry)?,
             lease_holder: LeaseHolder::mint(),
         },
     ));

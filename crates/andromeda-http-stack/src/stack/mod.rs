@@ -12,7 +12,7 @@ mod server_timing;
 mod strict_transport_security_layer;
 
 use crate::{
-    config::{HttpStackConfig, HttpStackConfigError, server_timing::ServerTimingConfig},
+    cors_tokens::CorsTokenError,
     stack::{
         compression_layer::build_compression_layer,
         cors_layer::build_cors_layer,
@@ -26,13 +26,13 @@ use crate::{
         strict_transport_security_layer::set_strict_transport_security,
     },
 };
-use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
-use andromeda_http_headers::{
+use andromeda_configuration::schema::{
     forwarded_header_trust::ForwardedHeaderTrust,
-    link::field_layout::LinkFieldLayout,
-    ngsild_tenant::NgsiLdTenant,
-    x_request_id::XRequestId,
+    http::{HttpStackConfig, HttpStackConfigError, server_timing::ServerTimingConfig},
+    link_field_layout::LinkFieldLayout,
 };
+use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
+use andromeda_http_headers::{link::field_layout::apply_link_field_layout, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use axum::{
@@ -71,6 +71,9 @@ pub enum HttpStackBuildError {
     /// A CSRF trusted origin could not be admitted.
     #[error(transparent)]
     Csrf(#[from] CsrfLayerError),
+    /// A CORS method or header name could not be read.
+    #[error(transparent)]
+    Cors(#[from] CorsTokenError),
 }
 
 /// Explicitly ordered inbound HTTP stack.
@@ -118,7 +121,7 @@ impl HttpStack {
     /// platform address width, the security-header layer cannot be rendered or a
     /// CSRF trusted origin is not one the CSRF layer accepts.
     pub fn new(config: HttpStackConfig) -> Result<HttpStack, HttpStackBuildError> {
-        let request_body_limit = config.request_body_limit()?;
+        let request_body_limit = RequestBodyLimit::new(config.max_request_body_bytes()?);
         let blocking_decode = BlockingDecodePolicy::new(config.blocking_decode_threshold_bytes()?, config.max_concurrent_blocking_decodes);
         Ok(HttpStack {
             request_body_limit,
@@ -128,7 +131,7 @@ impl HttpStack {
             link_field: config.link_field,
             request_deadline: RequestDeadline::new(config.request_timeout.duration()),
             helmet: build_helmet_layer(config.helmet)?,
-            cors: build_cors_layer(&config.cors),
+            cors: build_cors_layer(&config.cors)?,
             compression: build_compression_layer(&config.compression),
             encoded_entity_tags: EncodedEntityTags::new(config.compression.algorithms),
             decompression: build_decompression_layer(&config.decompression),
@@ -162,7 +165,7 @@ impl HttpStack {
         // handler wrote them.
         let link_field = self.link_field;
         router.layer(middleware::map_response(move |mut response: Response| async move {
-            link_field.apply(response.headers_mut());
+            apply_link_field_layout(link_field, response.headers_mut());
             response
         }))
     }
@@ -289,22 +292,26 @@ mod revalidation_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{
-            HttpStackConfig,
-            compression::{CompressionConfig, CompressionQuality},
-            cors::{CorsConfig, CorsMode},
-            csrf::CsrfConfig,
-            decompression::DecompressionConfig,
+    use crate::stack::HttpStack;
+    use andromeda_configuration::{
+        human_byte_size::HumanByteSize,
+        human_duration::HumanDuration,
+        schema::{
             feature_mode::HttpFeatureMode,
-            helmet::HelmetConfig,
-            server_timing::{ServerTimingConfig, ServerTimingPhase},
+            forwarded_header_trust::ForwardedHeaderTrust,
+            http::{
+                HttpStackConfig,
+                compression::{CompressionConfig, CompressionQuality},
+                cors::{CorsConfig, CorsMode},
+                csrf::CsrfConfig,
+                decompression::DecompressionConfig,
+                helmet::HelmetConfig,
+                server_timing::{ServerTimingConfig, ServerTimingPhase},
+            },
+            link_field_layout::LinkFieldLayout,
         },
-        stack::HttpStack,
     };
-    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_json_value_limit::RequestJsonValueLimit};
-    use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
     use axum::{
         Extension,
         Router,

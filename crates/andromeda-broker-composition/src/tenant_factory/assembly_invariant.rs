@@ -4,15 +4,16 @@
 //! Every variant carries the refusal of the part that was being constructed, so
 //! an operator reads which part refused and why, not a flattened sentence.
 
+use andromeda_configuration::schema::temporal::error::TemporalConfigError;
 use andromeda_delivery::error::TransportError;
-use andromeda_entity::{config::EntityConfigError, error::EntityError, expiry::EntityExpiryBatchSizeError};
+use andromeda_entity::{error::EntityError, expiry::EntityExpiryBatchSizeError};
 use andromeda_federation::error::FederationError;
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonymError;
 use andromeda_notification::error::NotificationError;
 use andromeda_postgresql_temporal_store::retention_sweep::TemporalRetentionHorizonInvalid;
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use andromeda_snapshot::error::SnapshotError;
 use andromeda_task_runtime::{periodic_trigger::PeriodicScheduleError, registration::TaskRegistrationError, task_name::TaskNameError};
-use andromeda_temporal::config_error::TemporalConfigError;
 use thiserror::Error;
 
 /// A setting that must name a positive count.
@@ -49,6 +50,10 @@ pub(super) enum RetentionSetting {
 /// A part of a tenant runtime that refused to be constructed.
 #[derive(Debug, Error)]
 pub(super) enum AssemblyInvariant {
+    /// The configured `identity.source_alias` is not a pseudonym; loading
+    /// refuses it first.
+    #[error("identity.source_alias is not valid: {0}")]
+    SourceAlias(#[from] ContextSourcePseudonymError),
     /// A background task's name is not a task name.
     #[error("a background task name is not valid: {0}")]
     TaskName(#[from] TaskNameError),
@@ -70,11 +75,11 @@ pub(super) enum AssemblyInvariant {
     /// The temporal intent retry schedule the configuration names is not
     /// valid.
     #[error("the temporal intent retry policy is not valid: {0}")]
-    IntentRetry(#[source] TemporalConfigError),
+    IntentRetry(#[source] BackoffScheduleError),
     /// The pending side-effect retry schedule the configuration names is not
     /// valid.
     #[error("the pending side-effect retry schedule is not valid: {0}")]
-    SideEffectRetry(#[source] EntityConfigError),
+    SideEffectRetry(#[source] BackoffScheduleError),
     /// The temporal storage policy the configuration names is not valid.
     #[error("the temporal storage policy is not valid: {0}")]
     StoragePolicy(#[from] TemporalConfigError),

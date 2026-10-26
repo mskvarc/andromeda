@@ -9,7 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-andromeda-configuration-scalars.workspace = true
+andromeda-configuration.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-postgresql-pool.workspace = true
@@ -20,12 +20,9 @@ async-trait = "0.1.92"
 chrono = "0.4.45"
 moka = { version = "0.12.16", features = ["sync"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-uuid"] }
-serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-toml = "1.1.8"
-toml-comment = "0.3.0"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

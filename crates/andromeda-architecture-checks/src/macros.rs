@@ -178,6 +178,18 @@ macro_rules! workspace_architecture {
                 $crate::manifest_hygiene::assert_manifest_hygiene(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Configuration types are defined in the configuration crate, and only the composition reads the root.
+            #[test]
+            fn configuration_has_one_owner() {
+                $crate::configuration_ownership::assert_configuration_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
+            /// The configuration schema crate depends on no other in-tree crate.
+            #[test]
+            fn configuration_is_the_bottom_of_the_graph() {
+                $crate::configuration_layering::assert_configuration_is_a_leaf(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Client-facing error detail is lowercase prose that interpolates through Display.
             #[test]
             fn error_detail_messages_are_well_formed() {

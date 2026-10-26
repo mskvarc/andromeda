@@ -85,6 +85,7 @@ mod written_json;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-json-literal",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",

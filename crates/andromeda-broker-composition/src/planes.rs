@@ -1,7 +1,7 @@
 //! The data plane and the management plane, assembled per the configured
 //! topology.
 
-use crate::config::management::ManagementMode;
+use andromeda_configuration::schema::management::ManagementMode;
 use andromeda_health::aggregate::Health;
 use andromeda_http_api::{
     api::HttpApi,

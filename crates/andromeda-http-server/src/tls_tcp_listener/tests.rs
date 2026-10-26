@@ -2,16 +2,21 @@
 
 use crate::{
     close_policy::ClosePolicy,
-    config::ListenerTransport,
     error::HttpServerError,
     execution::serve_listener,
     field_section::HeaderSectionPolicy,
     listener_security::TCP_HANDSHAKE_POLICY,
     tls_tcp_listener::TlsTcpListener,
 };
-use andromeda_configuration_scalars::{header_section_limit::HeaderSectionLimit, human_duration::HumanDuration};
+use andromeda_configuration::{
+    header_section_limit::HeaderSectionLimit,
+    human_duration::HumanDuration,
+    schema::{
+        listener_transport::ListenerTransport,
+        tls::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
+    },
+};
 use andromeda_server_tls::{
-    config::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
     material_watch::TlsMaterialWatch,
     server_config_feed::ServerConfigFeed,
     test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},

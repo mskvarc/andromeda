@@ -3,9 +3,9 @@
 use crate::{
     delivery_attempt_ceiling::DeliveryAttemptCeilingError,
     delivery_concurrency::DeliveryConcurrencyError,
-    delivery_config::DeliveryConfigError,
     delivery_error_bound::DeliveryErrorBoundError,
     delivery_lease::LeaseTermError,
+    delivery_policy::DeliveryPolicyError,
 };
 use andromeda_retry::retry_number::RetryNumberError;
 use std::num::TryFromIntError;
@@ -38,7 +38,7 @@ pub enum NotificationInvariant {
     ClaimWidth(#[source] TryFromIntError),
     /// The configured retry schedule is unusable.
     #[error("the notification delivery retry schedule is unusable: {0}")]
-    RetrySchedule(#[source] DeliveryConfigError),
+    RetrySchedule(#[source] DeliveryPolicyError),
     /// A claimed delivery records a negative attempt count.
     #[error("a claimed notification delivery records no attempt count: {0}")]
     AttemptCount(#[source] RetryNumberError),

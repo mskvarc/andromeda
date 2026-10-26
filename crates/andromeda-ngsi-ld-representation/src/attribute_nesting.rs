@@ -20,6 +20,7 @@
 //! and clauses 5.7.1 and 5.7.2 raise `BadRequestData` for the one depth limit
 //! the specification names, a "too deep query".
 
+use andromeda_configuration::schema::entity::DEFAULT_MAX_ATTRIBUTE_NESTING;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::json_value::READER_NESTING_LIMIT;
 use derive_more::Display;
@@ -77,7 +78,7 @@ impl AttributeNestingLimit {
     /// also the depth a `q` or `orderBy` attribute path may walk: the one
     /// bound keeps every sub-attribute a write can store addressable by a
     /// query.
-    pub const DEFAULT: AttributeNestingLimit = AttributeNestingLimit::new(NonZeroUsize::MIN.saturating_add(31));
+    pub const DEFAULT: AttributeNestingLimit = AttributeNestingLimit::new(DEFAULT_MAX_ATTRIBUTE_NESTING);
 
     /// A limit of `levels` levels.
     #[must_use]

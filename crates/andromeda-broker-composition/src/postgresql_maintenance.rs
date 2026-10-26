@@ -1,10 +1,7 @@
 //! Process-scoped PostgreSQL maintenance task registration.
 
-use andromeda_postgresql_context_store::{
-    error::ContextStoreError,
-    maintenance_config::{MaintenanceConfig, MaintenanceMode},
-    tenant_database::DatabaseUrl,
-};
+use andromeda_configuration::schema::maintenance::{MaintenanceConfig, MaintenanceMode};
+use andromeda_postgresql_context_store::{error::ContextStoreError, tenant_database::DatabaseUrl};
 use andromeda_postgresql_maintenance::{
     controller::MaintenanceController,
     error::MaintenanceError,

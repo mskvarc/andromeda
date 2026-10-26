@@ -22,7 +22,7 @@ use crate::temporal::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_federation::config::SplitEntities;
+use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -311,7 +311,7 @@ mod tests {
         },
         test_history::held_history,
     };
-    use andromeda_federation::{config::SplitEntities, entity_budget::EntityBudget, outcome::ForwardedTemporalEntities};
+    use andromeda_federation::{entity_budget::EntityBudget, outcome::ForwardedTemporalEntities, split_entities::SplitEntities};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
     use andromeda_ngsi_ld_query::{

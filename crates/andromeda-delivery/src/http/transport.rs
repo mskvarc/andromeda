@@ -14,7 +14,8 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
-use andromeda_http_headers::link::field_layout::LinkFieldLayout;
+use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
+use andromeda_http_headers::link::field_layout::apply_link_field_layout;
 use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
@@ -315,7 +316,7 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
             }
         }
     }
-    link_field.apply(&mut header_map);
+    apply_link_field_layout(link_field, &mut header_map);
     header_map
 }
 
@@ -336,7 +337,7 @@ mod tests {
         request::NotificationDelivery,
         transport::NotificationTransport,
     };
-    use andromeda_http_headers::link::field_layout::LinkFieldLayout;
+    use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;

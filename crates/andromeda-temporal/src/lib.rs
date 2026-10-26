@@ -3,7 +3,6 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-/// How the inputs of one aggregation group disagree in meaning.
 pub mod aggregation_conflict;
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
@@ -19,16 +18,15 @@ mod answered_evolution;
 mod answered_fixture;
 /// The instances a Context Source answered a temporal query with, as history rows.
 mod answered_history;
+/// How the inputs of one aggregation group disagree in meaning.
+pub mod configured_policy;
 
 /// Typed, durable consequences for queued temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
 mod compilation;
-pub mod config;
 /// The ways a temporal policy configuration is refused as it is read.
-pub mod config_error;
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
-pub mod core_write_history;
 pub mod delete_by_query;
 pub mod error;
 mod evolution_write;
@@ -125,7 +123,7 @@ mod intent_drain_tests;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-entity",

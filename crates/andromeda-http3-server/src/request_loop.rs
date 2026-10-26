@@ -7,7 +7,7 @@
 //! 7.2.4.2); one that sends it anyway is answered 431 before the request
 //! reaches the router.
 
-use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_configuration::header_section_limit::HeaderSectionLimit;
 use andromeda_http_server::close_policy::ClosePolicy;
 use axum::{
     Router,

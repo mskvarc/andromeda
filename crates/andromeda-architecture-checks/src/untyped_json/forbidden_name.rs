@@ -7,6 +7,10 @@
 /// operations a literal needs.
 const PROCESSOR_TREE_OWNERS: [&str; 2] = ["crates/andromeda-jsonld/src/engine/", "crates/andromeda-json-literal/"];
 
+/// The TOML tree is admitted only in the one configuration value that holds
+/// operator data the broker passes on verbatim and never interprets.
+const TOML_TREE_OWNERS: [&str; 1] = ["crates/andromeda-configuration/src/schema/source_extras.rs"];
+
 /// The members of `serde_json` (and of its `value` module) that build, hold or
 /// convert an untyped tree.
 const SERDE_JSON_TREE_MEMBERS: [&str; 5] = ["Value", "Map", "json", "to_value", "from_value"];
@@ -19,6 +23,8 @@ pub(crate) enum UntypedTree {
     /// The JSON processor's `jstrict` tree, re-exported as `jsonld_syntax::Value`
     /// and again as `jsonld::syntax::Value`.
     Processor,
+    /// The `toml` crate's own tree: `toml::Value`, `toml::Table` and its map.
+    Toml,
 }
 
 impl UntypedTree {
@@ -27,6 +33,7 @@ impl UntypedTree {
         match self {
             UntypedTree::SerdeJson => false,
             UntypedTree::Processor => PROCESSOR_TREE_OWNERS.iter().any(|owner| path.starts_with(owner)),
+            UntypedTree::Toml => TOML_TREE_OWNERS.contains(&path),
         }
     }
 }
@@ -41,6 +48,7 @@ pub(crate) fn untyped_tree_of(segments: &[String]) -> Option<UntypedTree> {
     match segments.as_slice() {
         ["serde_json", member, ..] | ["serde_json", "value", member, ..] if SERDE_JSON_TREE_MEMBERS.contains(member) => Some(UntypedTree::SerdeJson),
         ["jstrict", ..] | ["jsonld_syntax", "Value", ..] | ["jsonld", "syntax", "Value", ..] => Some(UntypedTree::Processor),
+        ["toml", "Value" | "Table" | "value" | "map", ..] => Some(UntypedTree::Toml),
         _ => None,
     }
 }

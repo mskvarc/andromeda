@@ -1,6 +1,6 @@
 //! What a TCP listener needs to know to speak its configured transport.
 
-use crate::config::ListenerTransport;
+use andromeda_configuration::schema::listener_transport::ListenerTransport;
 use andromeda_server_tls::{
     handshake_policy::{HandshakePolicy, ProtocolFloor},
     server_config_feed::ServerConfigFeed,

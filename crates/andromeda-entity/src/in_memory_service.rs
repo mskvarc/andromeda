@@ -5,7 +5,7 @@ use crate::{
     EntityService,
     batch::execution::BatchExecutionConfig,
     change_notifier::ChangeNotifier,
-    config::EntityConfig,
+    configured_policy::payload_budget,
     in_memory_store::InMemoryStore,
     port::{
         attribute_history::AttributeDatasetHistory,
@@ -16,6 +16,7 @@ use crate::{
     },
     recording_ports::{ImmediateRetry, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
+use andromeda_configuration::schema::entity::EntityConfig;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_retry::retry_delay::RetryDelay;
@@ -46,6 +47,6 @@ pub(crate) fn in_memory_service(store: &Arc<InMemoryStore>, writes: Arc<dyn Cont
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        EntityConfig::default().payload_budget(),
+        payload_budget(&EntityConfig::default()),
     )
 }

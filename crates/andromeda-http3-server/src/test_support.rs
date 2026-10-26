@@ -11,9 +11,11 @@ use crate::{
     http3_client::Http3Client,
     quic_crypto::{H3_ALPN, QUIC_HANDSHAKE_POLICY},
 };
-use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_configuration::{
+    human_duration::HumanDuration,
+    schema::tls::{ClientAuthentication, TlsConfig},
+};
 use andromeda_server_tls::{
-    config::{ClientAuthentication, TlsConfig},
     material_watch::TlsMaterialWatch,
     server_config_feed::ServerConfigFeed,
     test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},

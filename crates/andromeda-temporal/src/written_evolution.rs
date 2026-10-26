@@ -200,7 +200,8 @@ mod tests {
         temporal_validation_reason::TemporalValidationReason,
         written_evolution::WrittenEvolution,
     };
-    use andromeda_entity::config::EntityConfig;
+    use andromeda_configuration::schema::entity::EntityConfig;
+    use andromeda_entity::configured_policy::payload_budget;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_entity::{document::EntityDocument, history::current_state_fold::fold_into_current_state, refusal::EntityRefusal};
@@ -299,7 +300,7 @@ mod tests {
             let document = EntityDocument::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a written document");
             WrittenEvolution::new(Arc::new(document), None)
         };
-        let budget = EntityConfig::default().payload_budget();
+        let budget = payload_budget(&EntityConfig::default());
         assert!(evolution(32).admit_budget(budget).is_ok());
         let refused = evolution(33).admit_budget(budget).expect_err("33 levels pass the default limit of 32");
         let TemporalError::AttributeNesting(exceeded) = refused else {

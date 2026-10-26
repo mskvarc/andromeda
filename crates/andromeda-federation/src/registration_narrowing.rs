@@ -9,7 +9,6 @@
 
 use crate::{
     FederationService,
-    config::SplitEntities,
     error::FederationError,
     forwarded_names::ForwardedNames,
     forwarded_query::{ForwardedQuery, client_query::ClientQuery},
@@ -17,6 +16,7 @@ use crate::{
     read_fan_out::ForwardedRead,
     registration_payload::forwarding_decision,
     request::{SourcePage, TemporalAnswer},
+    split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
 use andromeda_jsonld::context_spec::ContextSpec;

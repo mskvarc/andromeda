@@ -17,7 +17,7 @@ use crate::{
     },
     tenant_state::AndromedaState,
 };
-use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
+use andromeda_configuration::human_byte_size::HumanByteSize;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -27,6 +27,7 @@ use andromeda_entity::{
     batch::execution::BatchExecutionConfig,
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
+    configured_policy::{geometry_census_limits, payload_budget},
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
@@ -36,6 +37,7 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
@@ -47,6 +49,7 @@ use andromeda_snapshot::{
 };
 use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, service::SubscriptionForwardingService};
 use andromeda_temporal::{
+    instance_limits::TemporalInstanceLimits,
     port::{mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
@@ -95,7 +98,7 @@ pub(super) fn construct_services(
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
     // 4.3.6.4 considers each Tenant of a registered Context Source separately).
-    let aliases = ContextSourceAliases::new(config.identity.source_alias.clone()); // clone: the alias family owns the configured default-tenant alias.
+    let aliases = ContextSourceAliases::new(ContextSourcePseudonym::try_from(&config.identity.source_alias).map_err(AssemblyInvariant::from)?);
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
@@ -123,7 +126,7 @@ pub(super) fn construct_services(
         edge,
         &entity_query,
         geo_query_admission(config),
-        config.extensions.resolve().language_targeting(),
+        EnabledExtensions::from(&config.extensions).language_targeting(),
     );
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
@@ -195,7 +198,7 @@ fn compose_entity_service(
             prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
             async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
         },
-        config.entity.payload_budget(),
+        payload_budget(&config.entity),
     ))
 }
 
@@ -220,7 +223,7 @@ fn compose_temporal_service(
         storage.engine.clone(), // clone: temporal policy owns its engine handle.
         Arc::clone(notifier),
         TemporalServiceLimits {
-            instance_limits: config.temporal.instance_limits(),
+            instance_limits: TemporalInstanceLimits::from(&config.temporal),
             // The delete-by-query extension's `TooManyResults` bound; inert
             // unless the extension is routed, which composition gates
             // separately.
@@ -229,9 +232,9 @@ fn compose_temporal_service(
             // likewise inert unless the extension is routed.
             aggregation_grouping_max_groups: config.extensions.temporal_aggregation_grouping_max_groups,
             // A temporal write is admitted under the budget a Core write is.
-            payload_budget: config.entity.payload_budget(),
-            near_band: near_distance_band(config.extensions.resolve()),
-            language_targeting: config.extensions.resolve().language_targeting(),
+            payload_budget: payload_budget(&config.entity),
+            near_band: near_distance_band(EnabledExtensions::from(&config.extensions)),
+            language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
         },
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
@@ -240,7 +243,7 @@ fn compose_temporal_service(
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteTemporalLinkedSource>),
-        temporal_linked_retrieval(config.extensions.resolve()),
+        temporal_linked_retrieval(EnabledExtensions::from(&config.extensions)),
     ))
 }
 
@@ -266,7 +269,10 @@ fn near_distance_band(enabled: EnabledExtensions) -> NearDistanceBand {
 
 /// What every geo-query a request of the tenant writes is admitted under.
 fn geo_query_admission(config: &TenantFactoryConfig) -> GeoQueryAdmission {
-    GeoQueryAdmission::new(config.entity.geometry_census_limits(), near_distance_band(config.extensions.resolve()))
+    GeoQueryAdmission::new(
+        geometry_census_limits(&config.entity),
+        near_distance_band(EnabledExtensions::from(&config.extensions)),
+    )
 }
 
 /// Compose the entity query service every entity read is answered from.
@@ -285,7 +291,7 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
                 storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
             )) as Arc<dyn RemoteLinkedEntitySource>))
             .geo_admission(geo_query_admission(config))
-            .language_targeting(config.extensions.resolve().language_targeting())
+            .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
             .build(),
     )
 }
@@ -316,7 +322,7 @@ fn compose_snapshot_services(
             lease_duration: snapshot.preparation_lease.duration(),
             tenant_count_quota: snapshot.tenant_count_quota,
             tenant_byte_quota: snapshot.tenant_storage_quota.map(HumanByteSize::as_u64),
-            attribute_nesting: config.entity.payload_budget().attribute_nesting,
+            attribute_nesting: payload_budget(&config.entity).attribute_nesting,
         },
     ));
     let service = Arc::new(SnapshotService::new(

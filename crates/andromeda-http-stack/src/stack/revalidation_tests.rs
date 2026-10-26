@@ -1,13 +1,13 @@
 //! Revalidating a compressed response through the built process stack (RFC
 //! 7232 sections 2.3.3 and 4.1).
 
-use crate::{
-    config::{
+use crate::stack::HttpStack;
+use andromeda_configuration::schema::{
+    content_coding::ContentCoding,
+    http::{
         HttpStackConfig,
         compression::{CompressionConfig, CompressionQuality},
-        content_coding::ContentCoding,
     },
-    stack::HttpStack,
 };
 use axum::{
     Router,

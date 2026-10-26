@@ -9,6 +9,7 @@
 //! needs to look inside it, and written out verbatim.
 
 pub mod admission;
+pub mod configured_extras;
 pub mod equality;
 pub mod json_text;
 pub mod merge_patch;
@@ -154,7 +155,7 @@ mod tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-ngsi-ld-number", "andromeda-ngsi-ld-vocabulary"],
+    allow_workspace_dependencies: ["andromeda-configuration", "andromeda-ngsi-ld-number", "andromeda-ngsi-ld-vocabulary"],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }

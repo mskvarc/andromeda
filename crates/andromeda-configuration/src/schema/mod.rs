@@ -1,0 +1,36 @@
+//! Configuration section types, their mode enums and their defaults.
+
+pub mod configured_lifetime;
+pub mod content_coding;
+pub mod database;
+pub mod db_name_prefix;
+pub mod delivery;
+pub mod entity;
+pub mod extensions;
+pub mod feature_mode;
+pub mod federation;
+pub mod forwarded_header_trust;
+pub mod http;
+pub mod http3;
+pub mod identity;
+pub mod jsonld;
+pub mod link_field_layout;
+pub mod listener_transport;
+pub mod maintenance;
+pub mod management;
+pub mod name_cache;
+pub mod notifications;
+pub mod observability;
+pub mod pagination;
+pub mod paging_mode;
+pub mod server;
+pub mod snapshot;
+pub mod source_alias;
+pub mod source_extras;
+pub mod source_identifier;
+pub mod spatial;
+pub mod temporal;
+pub mod tenancy;
+pub mod tls;
+pub mod tls_material_sources;
+pub mod write_reserve;

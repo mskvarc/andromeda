@@ -1,8 +1,8 @@
 //! Construction of one tenant's notification dispatcher.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
+use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use andromeda_delivery::{dispatch::TransportDispatcher, http::config::HttpTransportConfig, mqtt::config::MqttPoolConfig};
-use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use std::{sync::Arc, time::Duration};
 
 /// Construct the notification dispatcher for one tenant.

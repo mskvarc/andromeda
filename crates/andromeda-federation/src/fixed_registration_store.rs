@@ -1,6 +1,7 @@
 //! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be, and a read by identifier answers the fixed registration of that identifier as stored, expired or not; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
 
-use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
+use crate::{FederationService, local_entity_type::LocalEntityTypeResolver};
+use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{

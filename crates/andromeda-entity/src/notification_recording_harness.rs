@@ -22,7 +22,7 @@ use crate::{
     },
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
-    config::EntityConfig,
+    configured_policy::payload_budget,
     deletion_outline::DeletionWatchers,
     deletion_outline_fixture::{PayloadOutline, ProbeAnswer},
     port::{
@@ -34,6 +34,7 @@ use crate::{
     },
     recording_ports::{ImmediateRetry, RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
+use andromeda_configuration::schema::entity::EntityConfig;
 use andromeda_context_commit::{atomic_write::AtomicWrite, change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -99,7 +100,7 @@ pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicW
             }),
         ),
         ProbeAnswer::Answers(DeletionWatchers::Possible),
-        EntityConfig::default().payload_budget(),
+        payload_budget(&EntityConfig::default()),
     );
     (service, recorded)
 }
@@ -115,7 +116,7 @@ pub(crate) async fn recording_service_counting_enqueued() -> (EntityService, Rec
             }),
         ),
         ProbeAnswer::Answers(DeletionWatchers::Possible),
-        EntityConfig::default().payload_budget(),
+        payload_budget(&EntityConfig::default()),
     );
     (service, recorded)
 }
@@ -125,7 +126,7 @@ pub(crate) async fn recording_service_counting_enqueued() -> (EntityService, Rec
 pub(crate) fn geometry_budget(positions: usize) -> EntityPayloadBudget {
     EntityPayloadBudget {
         geometry_positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("the fixture budget admits a position")),
-        ..EntityConfig::default().payload_budget()
+        ..payload_budget(&EntityConfig::default())
     }
 }
 
@@ -197,7 +198,7 @@ fn observed_service(probe: ProbeAnswer, matching: SubscriptionMatching) -> Obser
         published: Arc::clone(&published), // clone: the sink and the test both hold the published changes
     };
     let notifier = ChangeNotifier::new(Some(Arc::new(sink) as Arc<dyn EntityChangeSink>), matching);
-    let (service, RecordedCommits { writes: recorded, .. }, payload_reads) = recording_service_with(notifier, probe, EntityConfig::default().payload_budget());
+    let (service, RecordedCommits { writes: recorded, .. }, payload_reads) = recording_service_with(notifier, probe, payload_budget(&EntityConfig::default()));
     ObservedService {
         service,
         recorded,
@@ -228,7 +229,7 @@ pub(crate) fn live_recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWr
     let (service, RecordedCommits { writes: recorded, .. }, _payload_reads) = recording_service_with(
         ChangeNotifier::new(None, SubscriptionMatching::Absent),
         ProbeAnswer::Answers(DeletionWatchers::Possible),
-        EntityConfig::default().payload_budget(),
+        payload_budget(&EntityConfig::default()),
     );
     (service, recorded)
 }

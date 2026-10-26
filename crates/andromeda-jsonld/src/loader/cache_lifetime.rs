@@ -20,12 +20,10 @@
 //! present but will not parse, both state something, and neither states that
 //! the document may be kept for an hour.
 
-use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_configuration::schema::configured_lifetime::ConfiguredLifetime;
 use headers::{CacheControl, Date, Expires, HeaderMapExt};
 use reqwest::header::{CACHE_CONTROL, EXPIRES, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
-use thiserror::Error;
 
 /// A positive span for which a stored `@context` stays fresh.
 ///
@@ -34,48 +32,15 @@ use thiserror::Error;
 /// records instead. Keeping the two apart means no cache tier has to decide
 /// what a zero lifetime ought to mean.
 ///
-/// A deployment states a lifetime in the human-readable duration form, read
-/// through [`TryFrom<HumanDuration>`], which also refuses a span below one
-/// second: such a span is advertised as `max-age` in whole seconds, where it
-/// would become zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(try_from = "HumanDuration", into = "HumanDuration")]
+/// A deployment states a lifetime as a [`ConfiguredLifetime`], which is
+/// always one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CacheLifetime(Duration);
 
-/// A configured lifetime that cannot be one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum ConfiguredLifetimeError {
-    /// The span is zero, so nothing would ever be kept.
-    #[error("a lifetime must not be zero")]
-    Zero,
-    /// The span is below one second, which `max-age` cannot state.
-    #[error("a lifetime must be at least one second, got {milliseconds} ms")]
-    SubSecond {
-        /// The configured span, in milliseconds.
-        milliseconds: u128,
-    },
-}
-
-impl TryFrom<HumanDuration> for CacheLifetime {
-    type Error = ConfiguredLifetimeError;
-
-    fn try_from(configured: HumanDuration) -> Result<CacheLifetime, ConfiguredLifetimeError> {
-        let span = configured.duration();
-        if span.is_zero() {
-            Err(ConfiguredLifetimeError::Zero)
-        } else if span < Duration::from_secs(1) {
-            Err(ConfiguredLifetimeError::SubSecond {
-                milliseconds: span.as_millis(),
-            })
-        } else {
-            Ok(CacheLifetime(span))
-        }
-    }
-}
-
-impl From<CacheLifetime> for HumanDuration {
-    fn from(lifetime: CacheLifetime) -> HumanDuration {
-        HumanDuration::new(lifetime.0)
+// A configured lifetime is positive by construction, so every one is a lifetime.
+impl From<ConfiguredLifetime> for CacheLifetime {
+    fn from(configured: ConfiguredLifetime) -> CacheLifetime {
+        CacheLifetime(configured.as_duration())
     }
 }
 
@@ -85,7 +50,7 @@ impl CacheLifetime {
     ///
     /// One hour, matching the `jsonld.cache_ttl` default, so a builder
     /// driven without a configuration behaves as a configured deployment does.
-    pub const DEFAULT: CacheLifetime = CacheLifetime(Duration::from_secs(3600));
+    pub const DEFAULT: CacheLifetime = CacheLifetime(ConfiguredLifetime::CACHE_TTL_DEFAULT.as_duration());
 
     /// How long an `@context` the broker stores itself is used from memory
     /// before its row is read again, when the deployment states no span.
@@ -93,7 +58,7 @@ impl CacheLifetime {
     /// One minute, matching the `jsonld.hosted_context_revalidation` default: a
     /// deletion on another broker process sharing the database is seen within
     /// a minute, for one primary-key read per entry per minute.
-    pub const HOSTED_REVALIDATION_DEFAULT: CacheLifetime = CacheLifetime(Duration::from_secs(60));
+    pub const HOSTED_REVALIDATION_DEFAULT: CacheLifetime = CacheLifetime(ConfiguredLifetime::HOSTED_REVALIDATION_DEFAULT.as_duration());
 
     /// The lifetime `duration` grants, or `None` when it grants none.
     #[must_use]
@@ -286,8 +251,8 @@ const fn granted(span: Duration) -> ContextFreshness {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::loader::cache_lifetime::{CacheLifetime, ConfiguredLifetimeError, ContextFreshness, ResidualLifetime, response_freshness};
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use crate::loader::cache_lifetime::{CacheLifetime, ContextFreshness, ResidualLifetime, response_freshness};
+    use andromeda_configuration::schema::configured_lifetime::ConfiguredLifetime;
     use headers::{Date, Expires, HeaderMapExt};
     use reqwest::header::{CACHE_CONTROL, EXPIRES, HeaderMap, HeaderValue};
     use std::time::{Duration, SystemTime};
@@ -519,18 +484,12 @@ mod tests {
         assert_ne!(ResidualLifetime::Unbounded, ResidualLifetime::Bounded(lifetime));
     }
 
-    /// A configured lifetime is refused when it is zero or below one second,
-    /// and read as given otherwise.
     #[test]
-    fn a_configured_lifetime_refuses_zero_and_sub_second_spans() {
-        pretty_assertions::assert_eq!(CacheLifetime::try_from(HumanDuration::from_secs(0)), Err(ConfiguredLifetimeError::Zero));
+    fn the_configured_defaults_are_the_lifetimes_a_builder_without_configuration_uses() {
+        pretty_assertions::assert_eq!(CacheLifetime::from(ConfiguredLifetime::CACHE_TTL_DEFAULT), CacheLifetime::DEFAULT);
         pretty_assertions::assert_eq!(
-            CacheLifetime::try_from(HumanDuration::from_millis(500)),
-            Err(ConfiguredLifetimeError::SubSecond { milliseconds: 500 })
-        );
-        pretty_assertions::assert_eq!(
-            CacheLifetime::try_from(HumanDuration::from_secs(1)),
-            Ok(CacheLifetime::from_seconds(1).expect("one second is a positive lifetime"))
+            CacheLifetime::from(ConfiguredLifetime::HOSTED_REVALIDATION_DEFAULT),
+            CacheLifetime::HOSTED_REVALIDATION_DEFAULT
         );
     }
 }

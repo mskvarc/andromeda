@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 andromeda-component-report.workspace = true
-andromeda-configuration-scalars.workspace = true
+andromeda-configuration.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-context-space.workspace = true
@@ -73,21 +73,15 @@ async-trait = "0.1.92"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
 etcetera = "0.11.0"
-figment2 = { version = "0.11.5", features = ["env", "toml"] }
 file-rotate = "0.8.0"
 futures = "0.3.34"
-humantime = "2.4.0"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
 shadow-rs = "2.0.0"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-util = { version = "0.7.20", features = ["rt"] }
-toml = "1.1.8"
-toml-comment = "0.3.0"
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["add-extension", "set-header"] }
 tracing = "0.1.44"

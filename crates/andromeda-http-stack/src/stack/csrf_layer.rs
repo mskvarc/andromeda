@@ -1,6 +1,6 @@
 //! Construction of the CSRF middleware layer.
 
-use crate::config::{csrf::CsrfConfig, feature_mode::HttpFeatureMode};
+use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::csrf::CsrfConfig};
 use thiserror::Error;
 use tower_http::csrf::{ConfigError, CsrfLayer};
 
@@ -41,10 +41,8 @@ pub(crate) fn build_csrf_layer(config: &CsrfConfig) -> Result<Option<CsrfLayer>,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        config::{csrf::CsrfConfig, feature_mode::HttpFeatureMode},
-        stack::csrf_layer::build_csrf_layer,
-    };
+    use crate::stack::csrf_layer::build_csrf_layer;
+    use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::csrf::CsrfConfig};
 
     #[test]
     fn csrf_disabled_builds_no_layer() {

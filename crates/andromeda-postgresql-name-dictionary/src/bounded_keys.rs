@@ -11,7 +11,7 @@
 //! stream of names written once therefore cannot push out the core vocabulary
 //! every request resolves.
 
-use crate::name_cache_config::NameCacheConfig;
+use andromeda_configuration::schema::name_cache::NameCacheConfig;
 use andromeda_postgresql_query::dictionary::interned_name::InternedName;
 use moka::sync::Cache;
 
@@ -71,11 +71,12 @@ fn entry_weight<N: InternedName>(name: &N, _key: &N::Key) -> u32 {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, preload_row_limit},
-        name_cache_config::{IdleEviction, NameCacheConfig, Unlimited},
+    use crate::bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, preload_row_limit};
+    use andromeda_configuration::{
+        human_byte_size::HumanByteSize,
+        human_duration::HumanDuration,
+        schema::name_cache::{IdleEviction, NameCacheConfig, Unlimited},
     };
-    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;

@@ -5,17 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# `toml` is used only through the `toml-comment` derive, which expands to
-# `toml::Value` at the call site; cargo-machete cannot see that macro-generated
-# use and would otherwise report the dependency as unused.
-[package.metadata.cargo-machete]
-ignored = ["toml"]
-
 [lints]
 workspace = true
 
 [dependencies]
-andromeda-configuration-scalars.workspace = true
+andromeda-configuration.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
@@ -28,12 +22,8 @@ axum-prometheus = "0.10.1"
 axum-server-timing = "3.0.1"
 enumset = { version = "1.1.15", features = ["serde"] }
 headers = "0.4.2"
-serde = { version = "1.0.229", features = ["derive"] }
-strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["time"] }
-toml = "1.1.8"
-toml-comment = "0.3.0"
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["compression-full", "cors", "csrf", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "trace"] }
 tracing = "0.1.44"
@@ -44,3 +34,4 @@ andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["macros", "rt", "time"] }
+toml = "1.1.8"

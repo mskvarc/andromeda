@@ -3,11 +3,9 @@
 
 use crate::{
     administration::TenantAdministration,
-    config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
     database_name::TenantDatabaseName,
-    db_name_prefix::DbNamePrefix,
     error::TenancyError,
     lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
@@ -22,7 +20,10 @@ use crate::{
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
-use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_configuration::{
+    human_duration::HumanDuration,
+    schema::{db_name_prefix::DbNamePrefix, tenancy::TenancyConfig},
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};

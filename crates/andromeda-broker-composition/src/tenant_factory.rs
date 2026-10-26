@@ -5,7 +5,7 @@
 //! broker has, which is exactly what `andromeda-tenancy` must not see.
 
 use crate::{
-    config::{notifications::NotificationsConfig, runtime::RuntimeConfig},
+    config::section_admission::database_defaults,
     tenant_factory::{
         background_pacer::{BackgroundPacer, TenantObligations},
         commit_consequence::RuntimeCommitConsequencePublisher,
@@ -20,27 +20,30 @@ use crate::{
     },
     tenant_state::AndromedaState,
 };
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    schema::{
+        database::DatabaseConfig,
+        entity::EntityConfig,
+        extensions::ExtensionsConfig,
+        federation::FederationConfig,
+        identity::InfoConfig,
+        jsonld::JsonLdConfig,
+        link_field_layout::LinkFieldLayout,
+        notifications::NotificationsConfig,
+        snapshot::SnapshotConfig,
+        spatial::SpatialConfig,
+        temporal::TemporalConfig,
+        tenancy::TenancyConfig,
+    },
+};
 use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePublisher, committer::ContextCommitter};
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
-use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
-use andromeda_extensions::config::ExtensionsConfig;
-use andromeda_federation::config::FederationConfig;
-use andromeda_http_headers::link::field_layout::LinkFieldLayout;
-use andromeda_http_source_identity::config::InfoConfig;
-use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
-use andromeda_postgresql_context_store::{config::DatabaseConfig, database_defaults::DatabaseDefaults, tenant_database::DatabaseUrl};
-use andromeda_snapshot::config::SnapshotConfig;
+use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_database::DatabaseUrl};
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
-use andromeda_temporal::config::TemporalConfig;
-use andromeda_tenancy::{
-    config::TenancyConfig,
-    database_name::TenantDatabaseName,
-    error::TenancyError,
-    state_factory::TenantStateFactory,
-    tenant_ref::TenantRef,
-};
+use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
 use async_trait::async_trait;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -111,11 +114,11 @@ struct TenantFactoryConfig {
     request_timeout: Duration,
 }
 
-impl From<&RuntimeConfig> for TenantFactoryConfig {
-    fn from(config: &RuntimeConfig) -> Self {
+impl From<&BrokerConfig> for TenantFactoryConfig {
+    fn from(config: &BrokerConfig) -> Self {
         Self {
             database: config.database.clone(),
-            database_defaults: config.database_defaults(),
+            database_defaults: database_defaults(config),
             entity: config.entity.clone(),
             federation: config.federation.clone(),
             identity: config.identity.clone(),
@@ -135,7 +138,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
 impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
     pub(super) fn new(
-        config: &RuntimeConfig,
+        config: &BrokerConfig,
         request_url: DatabaseUrl,
         direct_url: DatabaseUrl,
         process_tasks: TaskSupervisor,

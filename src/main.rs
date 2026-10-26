@@ -5,8 +5,7 @@
 mod cli;
 
 use crate::cli::{Cli, Command, ConfigCommand, OutputFormat};
-use andromeda_broker_composition::config::runtime::{
-    BrokerRunOverrides,
+use andromeda_broker_composition::config::commands::{
     ConfigurationLoadOutcome,
     ConfigurationOutputFormat,
     generate_default_reported,
@@ -14,6 +13,7 @@ use andromeda_broker_composition::config::runtime::{
     print_effective_reported,
     validate_reported,
 };
+use andromeda_configuration::load::ListenerOverrides;
 use clap::Parser;
 #[cfg(target_env = "msvc")]
 use mimalloc::MiMalloc;
@@ -35,7 +35,7 @@ async fn main() -> ExitCode {
     let config_file = cli.config_file;
     let outcome = match cli.command {
         None => {
-            let overrides = BrokerRunOverrides {
+            let overrides = ListenerOverrides {
                 host: cli.host,
                 port: cli.port,
             };

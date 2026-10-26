@@ -26,10 +26,11 @@ use crate::{
     receiver::ReceiverEndpoint,
     service::SubscriptionForwardingService,
 };
+use andromeda_configuration::schema::{entity::EntityConfig, federation::FederationConfig};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{dispatch::TransportDispatcher, http::config::HttpTransportConfig, mqtt::config::MqttPoolConfig};
-use andromeda_entity::{config::EntityConfig, query::EntityQueryService, spatial_acceleration::SpatialAcceleration};
-use andromeda_federation::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
+use andromeda_entity::{configured_policy::geometry_census_limits, query::EntityQueryService, spatial_acceleration::SpatialAcceleration};
+use andromeda_federation::{FederationService, local_entity_type::LocalEntityTypeResolver};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -192,7 +193,7 @@ impl ReassemblyScene {
             CsrSubscriptionVariant::new(offline_engine()),
             None,
             Arc::new(AcceptingEndpoints),
-            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
+            GeoQueryAdmission::new(geometry_census_limits(&EntityConfig::default()), NearDistanceBand::Refused),
             LanguageTargeting::Specification,
         );
         let held = Arc::new(HeldEntities::new(held));
@@ -212,7 +213,7 @@ impl ReassemblyScene {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(None)
             .geo_admission(GeoQueryAdmission::new(
-                EntityConfig::default().geometry_census_limits(),
+                geometry_census_limits(&EntityConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

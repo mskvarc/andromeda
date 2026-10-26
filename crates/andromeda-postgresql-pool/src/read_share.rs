@@ -12,7 +12,7 @@
 //! [`StatementPlanning`] asks, so every store plans a gated or value-dependent
 //! statement the same way.
 
-use crate::write_reserve::WriteReserve;
+use andromeda_configuration::schema::write_reserve::WriteReserve;
 use andromeda_postgresql_seaquery::{statement::Statement, statement_planning::StatementPlanning};
 use derive_more::{Deref, DerefMut};
 use sea_query::SelectStatement;
@@ -124,7 +124,8 @@ fn permit_count(connections: u32) -> usize {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{pool_options::configure_pool_options, read_share::ReadShare, write_reserve::WriteReserve};
+    use crate::{pool_options::configure_pool_options, read_share::ReadShare};
+    use andromeda_configuration::schema::write_reserve::WriteReserve;
     use pretty_assertions::assert_eq;
     use std::{sync::Arc, time::Duration};
 

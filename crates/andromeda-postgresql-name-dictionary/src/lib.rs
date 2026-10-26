@@ -25,14 +25,13 @@ mod dictionary_rows;
 mod dictionary_statements;
 pub mod entity_type_names;
 pub mod name_cache;
-pub mod name_cache_config;
 pub mod name_lookup;
 pub mod schema_epoch;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure",
         "andromeda-postgresql-pool",

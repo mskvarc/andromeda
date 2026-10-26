@@ -4,9 +4,9 @@
 //! second structured stream to a rotating file. Both are assembled and installed
 //! here, ahead of any runtime resource being opened.
 
-use crate::config::{
-    observability::{FileLoggingConfig, FileLoggingMode, LogCompression, LogFileFormat, LogLevel, LogRotationInterval},
-    runtime::RuntimeConfig,
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    schema::observability::{FileLoggingConfig, FileLoggingMode, LogCompression, LogFileFormat, LogLevel, LogRotationInterval},
 };
 use etcetera::{BaseStrategy, choose_base_strategy};
 use file_rotate::{
@@ -61,7 +61,7 @@ pub enum TracingInitError {
 /// Returns [`TracingInitError::LogDirectory`] when the file sink's directory
 /// cannot be created, and [`TracingInitError::Install`] when a subscriber is
 /// already installed for the process.
-pub fn initialize(config: &RuntimeConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
+pub fn initialize(config: &BrokerConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
     let observability = &config.observability;
     let stdout_layer = fmt::layer().compact().with_filter(stdout_env_filter(observability.log_level));
 
@@ -137,7 +137,8 @@ fn resolve_log_directory(configured: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::observability::FileLoggingConfig, logging::resolve_log_directory};
+    use crate::logging::resolve_log_directory;
+    use andromeda_configuration::schema::observability::FileLoggingConfig;
     use std::path::{Path, PathBuf};
 
     #[test]

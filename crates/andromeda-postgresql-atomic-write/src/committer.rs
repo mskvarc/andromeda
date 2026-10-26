@@ -20,6 +20,7 @@ use crate::{
     name_resolution::resolve_write_names,
     write_isolation::IsolatedSubmission,
 };
+use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_consequence_publisher::CommitConsequencePublisher,
@@ -38,7 +39,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_context_store::entity::repo::EntityRepository;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_temporal::core_write_history::CoreWriteHistory;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{
     collections::{HashMap, HashSet},

@@ -27,9 +27,10 @@ mod tenant_factory;
 mod tenant_state;
 mod tenant_waker;
 
-use crate::{config::runtime::RuntimeConfig, outcome::ProcessExitOutcome};
+use crate::outcome::ProcessExitOutcome;
+use andromeda_configuration::broker_config::BrokerConfig;
 
 /// Run the configured broker and return its already-reported process outcome.
-pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
+pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
     broker::run(config).await
 }

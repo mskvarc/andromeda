@@ -14,7 +14,7 @@ use crate::{
     freeze_policy::FreezePressure,
     observation::{Finding, ObservationDecision, ObservationLevel},
 };
-use andromeda_tenancy::db_name_prefix::DbNamePrefix;
+use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use strum::IntoStaticStr;
 
 /// A PostgreSQL database's name as `pg_database` holds it.
@@ -117,7 +117,7 @@ mod tests {
         observation::{Finding, ObservationDecision},
         unvisited_database::{DatabaseName, UnvisitedDatabase, UnvisitedRegistration},
     };
-    use andromeda_tenancy::db_name_prefix::DbNamePrefix;
+    use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
     use pretty_assertions::assert_eq;
 
     /// A database with transaction ID age `age` against the default

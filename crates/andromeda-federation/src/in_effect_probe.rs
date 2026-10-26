@@ -18,12 +18,12 @@
 
 use crate::{
     FederationService,
-    config::SplitEntities,
     error::FederationError,
     federation_invariant::FederationInvariant,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
     request::ForwardTemporalQueryRequest,
+    split_entities::SplitEntities,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError, time_prop::TimeProp, time_rel::TimeRel};
@@ -182,12 +182,12 @@ impl FederationService {
 )]
 mod tests {
     use crate::{
-        config::SplitEntities,
         forwarded_names::ForwardedNames,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
         forwarding_context::Rewording,
         in_effect_probe::{InEffectProbe, InEffectReading},
         request::TemporalAnswer,
+        split_entities::SplitEntities,
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

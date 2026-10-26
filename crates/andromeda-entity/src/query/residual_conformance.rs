@@ -26,7 +26,7 @@
 )]
 mod tests {
     use crate::{
-        config::EntityConfig,
+        configured_policy::geometry_census_limits,
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         pagination_outcome::PaginationOutcome,
@@ -36,6 +36,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };
+    use andromeda_configuration::schema::entity::EntityConfig;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, scopes::Scopes};
@@ -298,7 +299,7 @@ mod tests {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(None)
             .geo_admission(GeoQueryAdmission::new(
-                EntityConfig::default().geometry_census_limits(),
+                geometry_census_limits(&EntityConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

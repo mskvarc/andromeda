@@ -2,7 +2,7 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::{management::MetricsExposure, pagination::resolve_pagination, runtime::RuntimeConfig},
+    config::section_admission::{database_defaults, expected_deployment, resolve_pagination},
     extension_routing::{accept_language_reading, tenant_management_mode},
     listeners,
     logging,
@@ -16,7 +16,7 @@ use crate::{
         notification_receiver::BrokerNotificationReceiverResolver,
         registration::BrokerRegistrationStateResolver,
         snapshot::BrokerSnapshotStateResolver,
-        source_identity::source_identity_routes,
+        source_identity::{SourceIdentityRouteError, source_identity_routes},
         subscription::BrokerSubscriptionStateResolver,
         temporal::BrokerTemporalStateResolver,
     },
@@ -25,8 +25,9 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
+use andromeda_configuration::{broker_config::BrokerConfig, schema::management::MetricsExposure};
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
-use andromeda_extensions::startup_log::log_conformance_override;
+use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
 use andromeda_http_api::{api::HttpApi, management::ManagementApi, routes::ApiRoutes};
 use andromeda_http_component_report::routes::ComponentReportRoutes;
@@ -43,7 +44,6 @@ use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
-use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
@@ -127,13 +127,13 @@ enum BrokerStartupError {
     /// `[pagination]` and `[extensions]` together name no pagination policy.
     #[error(transparent)]
     Pagination(#[from] PaginationPolicyError),
-    /// The configured `contextSourceExtras` are no admissible JSON.
-    #[error("the configured source extras are not admissible JSON: {0}")]
-    SourceExtras(#[from] JsonLiteralError),
+    /// The `/info/sourceIdentity` route could not be built from the configured identity.
+    #[error(transparent)]
+    SourceIdentity(#[from] SourceIdentityRouteError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
-pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
+pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
     // Held for the whole process: dropping the guard flushes the non-blocking
     // file appender, so it lives until after the shutdown logs below are written.
     let _log_guard = match logging::initialize(&config) {
@@ -220,7 +220,7 @@ fn tenant_administration(tenants: &Arc<TenantRuntimeManager<PostgresTenantRegist
 /// Reads a tenant's own database over a transient request-path connection (the
 /// same shape as the wake probe) and reports the configured snapshot-count
 /// ceiling as `snapshotQuota`.
-fn tenant_usage_probe(request_url: DatabaseUrl, config: &RuntimeConfig) -> Arc<dyn TenantUsageProbe> {
+fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dyn TenantUsageProbe> {
     Arc::new(PostgresTenantUsageProbe::new(
         request_url,
         config.database.acquire_timeout(),
@@ -230,7 +230,7 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &RuntimeConfig) -> Arc<d
 
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
 async fn construct(
-    config: Arc<RuntimeConfig>,
+    config: Arc<BrokerConfig>,
     telemetry: Option<Arc<TelemetryRecorder>>,
     started_at: DateTime<Utc>,
 ) -> Result<BrokerExecution, BrokerStartupError> {
@@ -253,7 +253,7 @@ async fn construct(
             configure_pool_options(config.database.max_connections, config.database.acquire_timeout()),
             direct_url.clone(),     // clone: the registry provisions and migrates over the direct base
             config.tenancy.clone(), // clone: registry owns its runtime tenancy policy
-            &config.database_defaults(),
+            &database_defaults(&config),
             config.database.acquire_timeout(),
         )
         .await?,
@@ -270,7 +270,7 @@ async fn construct(
         direct_url.clone(), // clone: the process task derives tenant URLs over the direct base
         config.database.maintenance,
         config.database.acquire_timeout(),
-        config.expected_deployment(),
+        expected_deployment(&config),
     )?;
     // The platform route from minted subscription identifiers to tenants is
     // shared by every tenant's forwarding service and by the receiver.
@@ -308,7 +308,7 @@ async fn construct(
     let health = broker_health(&registry, &factory);
     let component_reports = collect_component_reports(registry.main_pool(), &config).await?;
 
-    let enabled_extensions = config.extensions.resolve();
+    let enabled_extensions = EnabledExtensions::from(&config.extensions);
     log_conformance_override(&config.extensions);
     let pagination = resolve_pagination(&config.extensions, config.pagination)?;
 

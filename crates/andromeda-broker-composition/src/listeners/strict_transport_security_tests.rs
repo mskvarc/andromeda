@@ -1,15 +1,10 @@
 //! `Strict-Transport-Security` on the API reaches a client only over the TLS listener.
 
 use crate::listener_tls::{SharedTlsIdentity, listener_scheme};
-use andromeda_http_server::{
-    config::{ListenerTransport, ServerConfig},
-    execution::serve_bound,
-};
-use andromeda_http_stack::{config::HttpStackConfig, stack::HttpStack};
-use andromeda_server_tls::{
-    config::TlsConfig,
-    test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
-};
+use andromeda_configuration::schema::{http::HttpStackConfig, listener_transport::ListenerTransport, server::ServerConfig, tls::TlsConfig};
+use andromeda_http_server::execution::serve_bound;
+use andromeda_http_stack::stack::HttpStack;
+use andromeda_server_tls::test_identity::{authority::TestAuthority, identity_files::IdentityFiles};
 use axum::{Router, routing::get};
 use http::{StatusCode, header};
 use pretty_assertions::assert_eq;

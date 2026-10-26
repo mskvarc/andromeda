@@ -6,8 +6,10 @@
 //! every gate is what keeps the conformance override in one place: no code path
 //! reads the raw per-feature field, so none of them can forget the override.
 
-use crate::config::{ExtensionsConfig, QTargetLanguages};
-use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
+use andromeda_configuration::schema::{
+    extensions::{ExtensionsConfig, QTargetLanguages},
+    feature_mode::HttpFeatureMode,
+};
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use enumset::{EnumSet, EnumSetType, enum_set};
 
@@ -44,7 +46,7 @@ pub enum Extension {
 
 /// The extensions that are actually on for this process.
 ///
-/// Produced by [`ExtensionsConfig::resolve`]. `Copy`, so it is threaded to the
+/// Produced from an [`ExtensionsConfig`]. `Copy`, so it is threaded to the
 /// route builders, the advertisement, and the service bound by value.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct EnabledExtensions {
@@ -52,34 +54,31 @@ pub struct EnabledExtensions {
     enabled: EnumSet<Extension>,
 }
 
-impl ExtensionsConfig {
-    /// Resolve the effective extension set, folding in the conformance override.
-    ///
-    /// When [`ExtensionsConfig::conformance_mode`] is [`HttpFeatureMode::Enabled`]
-    /// the set is empty regardless of the individual fields, which is the single
-    /// point that makes the override impossible to leak past.
-    #[must_use]
-    pub fn resolve(&self) -> EnabledExtensions {
-        if self.conformance_mode_enabled() {
+// When `conformance_mode` is enabled the set is empty regardless of the
+// individual fields, which is the single point that makes the override
+// impossible to leak past.
+impl From<&ExtensionsConfig> for EnabledExtensions {
+    fn from(config: &ExtensionsConfig) -> EnabledExtensions {
+        if config.conformance_mode_enabled() {
             return EnabledExtensions { enabled: EnumSet::empty() };
         }
         let mut enabled = EnumSet::empty();
         for (mode, extension) in [
-            (self.temporal_delete_by_query, Extension::TemporalDeleteByQuery),
-            (self.purge_dataset_scope, Extension::PurgeDatasetScope),
-            (self.temporal_aggregation_grouping, Extension::TemporalAggregationGrouping),
-            (self.temporal_linked_retrieval, Extension::TemporalLinkedRetrieval),
-            (self.tenant_management, Extension::TenantManagement),
-            (self.cursor_pagination, Extension::CursorPagination),
-            (self.near_distance_band, Extension::NearDistanceBand),
-            (self.accept_language, Extension::AcceptLanguage),
+            (config.temporal_delete_by_query, Extension::TemporalDeleteByQuery),
+            (config.purge_dataset_scope, Extension::PurgeDatasetScope),
+            (config.temporal_aggregation_grouping, Extension::TemporalAggregationGrouping),
+            (config.temporal_linked_retrieval, Extension::TemporalLinkedRetrieval),
+            (config.tenant_management, Extension::TenantManagement),
+            (config.cursor_pagination, Extension::CursorPagination),
+            (config.near_distance_band, Extension::NearDistanceBand),
+            (config.accept_language, Extension::AcceptLanguage),
         ] {
             if matches!(mode, HttpFeatureMode::Enabled) {
                 enabled.insert(extension);
             }
         }
         EnabledExtensions {
-            enabled: enabled | target_language_extensions(self.q_target_languages),
+            enabled: enabled | target_language_extensions(config.q_target_languages),
         }
     }
 }
@@ -108,7 +107,7 @@ impl EnabledExtensions {
     ///
     /// A convenience for tests and harnesses that exercise the extensions
     /// without constructing an [`ExtensionsConfig`]; the production path always
-    /// goes through [`ExtensionsConfig::resolve`].
+    /// goes through the conversion from [`ExtensionsConfig`].
     #[must_use]
     pub const fn all() -> EnabledExtensions {
         EnabledExtensions { enabled: EnumSet::all() }
@@ -189,11 +188,11 @@ impl EnabledExtensions {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{ExtensionsConfig, QTargetLanguages},
-        enabled::EnabledExtensions,
+    use crate::enabled::EnabledExtensions;
+    use andromeda_configuration::schema::{
+        extensions::{ExtensionsConfig, QTargetLanguages},
+        feature_mode::HttpFeatureMode,
     };
-    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 
     fn both_on() -> ExtensionsConfig {
@@ -215,7 +214,7 @@ mod tests {
 
     #[test]
     fn the_default_configuration_enables_cursor_pagination_alone() {
-        let enabled = ExtensionsConfig::default().resolve();
+        let enabled = EnabledExtensions::from(&ExtensionsConfig::default());
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn enabled_fields_resolve_to_their_predicates() {
-        let enabled = both_on().resolve();
+        let enabled = EnabledExtensions::from(&both_on());
         assert!(enabled.temporal_delete_by_query_enabled());
         assert!(enabled.purge_dataset_scope_enabled());
         assert!(enabled.temporal_aggregation_grouping_enabled());
@@ -250,7 +249,7 @@ mod tests {
     fn conformance_mode_forces_every_extension_off() {
         let mut config = both_on();
         config.conformance_mode = HttpFeatureMode::Enabled;
-        let enabled = config.resolve();
+        let enabled = EnabledExtensions::from(&config);
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
@@ -273,7 +272,7 @@ mod tests {
             temporal_linked_retrieval: HttpFeatureMode::Enabled,
             ..ExtensionsConfig::default()
         };
-        assert!(!config.resolve().temporal_linked_retrieval_enabled());
+        assert!(!EnabledExtensions::from(&config).temporal_linked_retrieval_enabled());
     }
 
     /// The conformance override forces the default-on cursor pagination off
@@ -284,7 +283,7 @@ mod tests {
             conformance_mode: HttpFeatureMode::Enabled,
             ..ExtensionsConfig::default()
         };
-        assert!(!config.resolve().cursor_pagination_enabled());
+        assert!(!EnabledExtensions::from(&config).cursor_pagination_enabled());
     }
 
     #[test]
@@ -298,13 +297,12 @@ mod tests {
                 q_target_languages: level,
                 ..ExtensionsConfig::default()
             };
-            pretty_assertions::assert_eq!(config.resolve().language_targeting(), targeting, "{level:?}");
+            pretty_assertions::assert_eq!(EnabledExtensions::from(&config).language_targeting(), targeting, "{level:?}");
         }
-        let tags = ExtensionsConfig {
+        let tags = EnabledExtensions::from(&ExtensionsConfig {
             q_target_languages: QTargetLanguages::LanguageTags,
             ..ExtensionsConfig::default()
-        }
-        .resolve();
+        });
         assert!(tags.language_tags_enabled());
         assert!(!tags.language_range_filtering_enabled());
     }
@@ -318,7 +316,7 @@ mod tests {
             q_target_languages: QTargetLanguages::LanguageRanges,
             ..ExtensionsConfig::default()
         };
-        pretty_assertions::assert_eq!(config.resolve().language_targeting(), LanguageTargeting::Specification);
+        pretty_assertions::assert_eq!(EnabledExtensions::from(&config).language_targeting(), LanguageTargeting::Specification);
     }
 
     #[test]

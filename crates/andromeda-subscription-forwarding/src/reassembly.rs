@@ -24,11 +24,11 @@ use andromeda_entity::{
     query::{attribute_expansion::AttributeExpansions, retrieval::RetrievalNarrowing},
 };
 use andromeda_federation::{
-    config::SplitEntities,
     entity_result::merge_retrieve_results,
     forwarded_query::client_query::ClientQuery,
     outcome::ForwardedEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+    split_entities::SplitEntities,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;

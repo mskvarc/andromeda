@@ -6,15 +6,16 @@ use crate::{
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
     delivery_claim_budget::ClaimBudget,
     delivery_concurrency::DeliveryConcurrency,
-    delivery_config::DeliveryConfig,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
+    delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
     delivery_store::DeliveryStore,
     error::NotificationError,
     held_events::HeldEvents,
     notification_invariant::NotificationInvariant,
 };
+use andromeda_configuration::schema::delivery::DeliveryConfig;
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
@@ -161,11 +162,11 @@ impl NotificationDeliveryDrain {
         config: &DeliveryConfig,
     ) -> Result<NotificationDeliveryDrain, NotificationError> {
         let worker_id = LeaseHolder::mint();
-        let retry_schedule = config.retry_schedule().map_err(NotificationInvariant::RetrySchedule)?;
-        let lease_term = config.lease_term().map_err(NotificationInvariant::from)?;
-        let error_bound = config.error_bound().map_err(NotificationInvariant::from)?;
-        let concurrency = config.delivery_concurrency().map_err(NotificationInvariant::from)?;
-        let attempt_ceiling = config.attempt_ceiling().map_err(NotificationInvariant::from)?;
+        let retry_schedule = retry_schedule(config).map_err(NotificationInvariant::RetrySchedule)?;
+        let lease_term = lease_term(config).map_err(NotificationInvariant::from)?;
+        let error_bound = error_bound(config).map_err(NotificationInvariant::from)?;
+        let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
+        let attempt_ceiling = attempt_ceiling(config).map_err(NotificationInvariant::from)?;
         let batch_size = usize::try_from(config.batch_size)
             .ok()
             .filter(|size| *size > 0)
@@ -385,16 +386,19 @@ impl NotificationDeliveryDrain {
 mod tests {
     use crate::{
         delivery_claim::{DeliveryClaim, UnreadableDelivery},
-        delivery_config::{DeliveryConfig, DeliveryMode},
         delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
         delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
+        delivery_policy::retry_schedule,
         delivery_store::DeliveryStore,
         error::NotificationError,
         held_events::HeldEvents,
         notification_event::{NotificationEvent, NotificationEventKey},
     };
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_configuration::{
+        human_duration::HumanDuration,
+        schema::delivery::{DeliveryConfig, DeliveryMode},
+    };
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -1152,7 +1156,7 @@ mod tests {
                 .execute(now)
                 .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
-            let backoff = config().retry_schedule().expect("a valid retry schedule").delay(RetryNumber::FIRST);
+            let backoff = retry_schedule(&config()).expect("a valid retry schedule").delay(RetryNumber::FIRST);
             let earliest = now + TimeDelta::from_std(backoff + delay).expect("a representable delay");
             let scheduled = failed.first().map(|(_, _, next_attempt_at)| *next_attempt_at);
             assert!(scheduled.is_some_and(|at| at >= earliest), "{scheduled:?} is earlier than {earliest}");

@@ -4,6 +4,7 @@ use crate::{
     identifier_length::IdentifierTooLong,
     uri::{Uri, UriParseError},
 };
+use andromeda_configuration::schema::source_identifier::SourceIdentifier;
 use derive_more::{AsRef, Deref, Display, Into};
 use iri_rs::{Iri, IriBuf};
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,16 @@ impl FromStr for Identifier {
     }
 }
 
+// The configuration holds the identifier to IRI syntax only; the bound is this
+// type's, so the configured identifier is parsed like any other.
+impl TryFrom<&SourceIdentifier> for Identifier {
+    type Error = IdentifierParseError;
+
+    fn try_from(configured: &SourceIdentifier) -> Result<Identifier, IdentifierParseError> {
+        configured.as_str().parse()
+    }
+}
+
 // Parsing lives in `FromStr`; this adapter exists only because
 // `#[serde(try_from = "String")]` requires an owned-string conversion.
 impl TryFrom<String> for Identifier {
@@ -153,6 +164,7 @@ mod tests {
         identifier_length::{IDENTIFIER_BYTE_LIMIT, IdentifierTooLong},
         uri::{Uri, UriParseError},
     };
+    use andromeda_configuration::schema::source_identifier::SourceIdentifier;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use url::Url;
@@ -266,6 +278,23 @@ mod tests {
 
         let iri = IriBuf::new(format!("https://example.com/{}", "\u{e9}".repeat(IDENTIFIER_BYTE_LIMIT))).expect("an IRI");
         assert!(Identifier::try_from(Uri::from(iri)).is_err());
+    }
+
+    #[test]
+    fn a_configured_source_identifier_converts_within_the_bound_and_is_refused_past_it() {
+        let configured: SourceIdentifier = "urn:ngsi-ld:ContextSourceIdentity:node".parse().expect("an IRI");
+        assert_eq!(
+            Identifier::try_from(&configured).map(|identifier| identifier.as_str().to_owned()),
+            Ok("urn:ngsi-ld:ContextSourceIdentity:node".to_owned())
+        );
+
+        let long: SourceIdentifier = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1).parse().expect("an IRI of any length");
+        assert_eq!(
+            Identifier::try_from(&long),
+            Err(IdentifierParseError::TooLong(IdentifierTooLong {
+                length: IDENTIFIER_BYTE_LIMIT + 1
+            }))
+        );
     }
 
     #[test]

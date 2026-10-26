@@ -1,7 +1,7 @@
 //! Mapping of the decompression configuration onto a `tower-http` layer, and
 //! the record of the `Content-Length` that decoding removes.
 
-use crate::config::{content_coding::ContentCoding, decompression::DecompressionConfig};
+use andromeda_configuration::schema::{content_coding::ContentCoding, http::decompression::DecompressionConfig};
 use andromeda_http_extraction::content_length_precondition::ReceivedContentLength;
 use axum::extract::Request;
 use tower_http::decompression::RequestDecompressionLayer;
@@ -44,10 +44,8 @@ pub(crate) async fn record_received_content_length(mut request: Request) -> Requ
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{content_coding::ContentCoding, decompression::DecompressionConfig},
-        stack::decompression_layer::build_decompression_layer,
-    };
+    use crate::stack::decompression_layer::build_decompression_layer;
+    use andromeda_configuration::schema::{content_coding::ContentCoding, http::decompression::DecompressionConfig};
     use enumset::EnumSet;
 
     #[test]

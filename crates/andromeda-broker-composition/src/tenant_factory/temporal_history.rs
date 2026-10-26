@@ -5,17 +5,15 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     temporal_intent_task::{TemporalIntentRegistration, register_temporal_intent_drain},
 };
+use andromeda_configuration::schema::temporal::TemporalConfig;
 use andromeda_postgresql_atomic_write::{history_mode::TemporalHistoryCommitMode, intent_store::PostgresTemporalIntentStore};
 use andromeda_postgresql_temporal_store::{recorder::TemporalRecorder, repo::TemporalRepository};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
-use andromeda_temporal::{
-    config::TemporalConfig,
-    port::{
-        history_reader::TemporalHistoryReader,
-        mutation_barrier::TemporalMutationBarrier,
-        temporal_intent_application::TemporalIntentApplication,
-        temporal_intent_queue::TemporalIntentQueue,
-    },
+use andromeda_temporal::port::{
+    history_reader::TemporalHistoryReader,
+    mutation_barrier::TemporalMutationBarrier,
+    temporal_intent_application::TemporalIntentApplication,
+    temporal_intent_queue::TemporalIntentQueue,
 };
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};

@@ -1,7 +1,7 @@
 //! What an MQTT notification carries instead of headers.
 
 use crate::request::DeliveryRequest;
-use andromeda_http_headers::link::field_layout::LinkFieldLayout;
+use andromeda_http_headers::link::field_layout::combined_link_value;
 
 /// The `Link` member, named as the HTTP header it stands in for.
 const LINK_KEY: &str = "Link";
@@ -39,7 +39,7 @@ pub fn transported_headers(request: &DeliveryRequest) -> Vec<(String, String)> {
         .iter()
         .filter(|pair| pair.key.eq_ignore_ascii_case(LINK_KEY))
         .map(|pair| pair.value.as_str());
-    if let Some(value) = LinkFieldLayout::combined_value(context_link.as_deref().into_iter().chain(receiver_links)) {
+    if let Some(value) = combined_link_value(context_link.as_deref().into_iter().chain(receiver_links)) {
         headers.push((LINK_KEY.to_string(), value));
     }
 

@@ -1,6 +1,6 @@
 //! How the HTTP transport is tuned.
 
-use andromeda_http_headers::link::field_layout::LinkFieldLayout;
+use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use std::time::Duration;
 
 /// Default per-delivery timeout.

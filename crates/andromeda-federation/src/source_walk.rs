@@ -359,7 +359,6 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
 mod tests {
     use crate::{
         FederationService,
-        config::{FederationConfig, SplitEntities},
         entity_budget::{EntityBudget, EntityBudgetExceeded},
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
@@ -378,7 +377,9 @@ mod tests {
             SourcePaging,
             TriggeringRequest,
         },
+        split_entities::SplitEntities,
     };
+    use andromeda_configuration::schema::federation::FederationConfig;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

@@ -240,7 +240,7 @@ fn assert_permitted(
 /// prefix. Anything it does not recognise yields no declaration, so a shape it
 /// cannot read fails open — which is why the crate that declares an edge also
 /// carries the test, where the omission is visible.
-fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
+pub(crate) fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
     let mut declared = Vec::new();
     let mut section: Option<DependencyKind> = None;
 

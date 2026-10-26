@@ -10,6 +10,7 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+andromeda-configuration.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 cefact-units = "1.0.0"

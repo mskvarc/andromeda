@@ -201,10 +201,12 @@ mod tests {
             advertises,
             enabled_extension_extras,
         },
-        config::{ExtensionsConfig, QTargetLanguages},
         enabled::{EnabledExtensions, Extension},
     };
-    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
+    use andromeda_configuration::schema::{
+        extensions::{ExtensionsConfig, QTargetLanguages},
+        feature_mode::HttpFeatureMode,
+    };
     use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
     use std::borrow::Cow;
@@ -230,7 +232,7 @@ mod tests {
     }
 
     fn both_enabled() -> EnabledExtensions {
-        ExtensionsConfig {
+        EnabledExtensions::from(&ExtensionsConfig {
             conformance_mode: HttpFeatureMode::Disabled,
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
@@ -243,8 +245,7 @@ mod tests {
             q_target_languages: QTargetLanguages::LanguageRanges,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
-        }
-        .resolve()
+        })
     }
 
     #[test]
@@ -273,14 +274,17 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        pretty_assertions::assert_eq!(tokens(&extras(None, config.resolve()).expect("extras present")), vec![TENANT_MANAGEMENT_TOKEN]);
+        pretty_assertions::assert_eq!(
+            tokens(&extras(None, EnabledExtensions::from(&config)).expect("extras present")),
+            vec![TENANT_MANAGEMENT_TOKEN]
+        );
 
         // With the extension off, nothing about it is advertised.
         let neither = ExtensionsConfig {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        assert!(extras(None, neither.resolve()).is_none());
+        assert!(extras(None, EnabledExtensions::from(&neither)).is_none());
     }
 
     #[test]
@@ -291,11 +295,11 @@ mod tests {
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
-            tokens(&extras(None, config.resolve()).expect("extras present")),
+            tokens(&extras(None, EnabledExtensions::from(&config)).expect("extras present")),
             vec![TEMPORAL_LINKED_RETRIEVAL_TOKEN]
         );
 
-        let default_rendered = tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present"));
+        let default_rendered = tokens(&extras(None, EnabledExtensions::from(&ExtensionsConfig::default())).expect("extras present"));
         assert!(
             !default_rendered.iter().any(|token| token == TEMPORAL_LINKED_RETRIEVAL_TOKEN),
             "{default_rendered:?}"
@@ -309,9 +313,12 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        pretty_assertions::assert_eq!(tokens(&extras(None, config.resolve()).expect("extras present")), vec![ACCEPT_LANGUAGE_TOKEN]);
+        pretty_assertions::assert_eq!(
+            tokens(&extras(None, EnabledExtensions::from(&config)).expect("extras present")),
+            vec![ACCEPT_LANGUAGE_TOKEN]
+        );
 
-        let default_rendered = tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present"));
+        let default_rendered = tokens(&extras(None, EnabledExtensions::from(&ExtensionsConfig::default())).expect("extras present"));
         assert!(!default_rendered.iter().any(|token| token == ACCEPT_LANGUAGE_TOKEN), "{default_rendered:?}");
     }
 
@@ -332,11 +339,11 @@ mod tests {
                 cursor_pagination: HttpFeatureMode::Disabled,
                 ..ExtensionsConfig::default()
             };
-            let advertised = extras(None, config.resolve()).expect("extras present");
+            let advertised = extras(None, EnabledExtensions::from(&config)).expect("extras present");
             pretty_assertions::assert_eq!(tokens(&advertised), expected, "{level:?}");
             pretty_assertions::assert_eq!(advertised_language_targeting(Some(&advertised)), targeting, "{level:?}");
         }
-        let default_extras = extras(None, ExtensionsConfig::default().resolve());
+        let default_extras = extras(None, EnabledExtensions::from(&ExtensionsConfig::default()));
         pretty_assertions::assert_eq!(advertised_language_targeting(default_extras.as_ref()), LanguageTargeting::Specification);
         assert!(!advertises(default_extras.as_ref(), Extension::LanguageTags));
         pretty_assertions::assert_eq!(advertised_language_targeting(None), LanguageTargeting::Specification);
@@ -346,7 +353,7 @@ mod tests {
     #[test]
     fn the_advertisement_names_cursor_pagination_by_default() {
         pretty_assertions::assert_eq!(
-            tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present")),
+            tokens(&extras(None, EnabledExtensions::from(&ExtensionsConfig::default())).expect("extras present")),
             vec![CURSOR_PAGINATION_TOKEN]
         );
     }
@@ -382,7 +389,7 @@ mod tests {
     fn an_advertisement_reads_back_as_the_enabled_extensions() {
         let extras = extras(None, both_enabled());
         assert!(advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval));
-        let default_extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("written extras");
+        let default_extras = enabled_extension_extras(None, EnabledExtensions::from(&ExtensionsConfig::default())).expect("written extras");
         assert!(!advertises(default_extras.as_ref(), Extension::TemporalLinkedRetrieval));
         assert!(advertises(default_extras.as_ref(), Extension::CursorPagination));
     }

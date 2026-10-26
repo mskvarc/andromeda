@@ -16,7 +16,7 @@ use crate::{
     safety_gate_inspection::{self, GateScope},
     state::{RegisteredTenant, target_record},
 };
-use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
+use andromeda_configuration::schema::maintenance::MaintenanceMode;
 use chrono::Utc;
 use sqlx::PgConnection;
 use std::{

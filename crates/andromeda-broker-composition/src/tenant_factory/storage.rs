@@ -4,6 +4,7 @@ use crate::{
     context_hit_flush::ContextHitFlushWorker,
     tenant_factory::{TenantFactoryConfig, assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, spatial::initialize_spatial},
 };
+use andromeda_configuration::schema::temporal::TemporalConfig;
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -21,8 +22,9 @@ use andromeda_entity::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_entity_map::store::EntityMapStore;
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_context_registry::hosted_context_reference::TenantHostedContexts;
-use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_jsonld::{configured_engine::build_engine, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
@@ -44,7 +46,7 @@ use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSup
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_subscription::cache::SubscriptionCache;
-use andromeda_temporal::config::TemporalConfig;
+use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -171,7 +173,7 @@ fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextR
     let recognizer = Arc::new(TenantHostedContexts::new(
         config.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
     ));
-    Ok(config.jsonld.build_engine(Arc::clone(context_repo), recognizer)?)
+    Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }
 
 /// Open, migrate, validate, and warm every storage component for a tenant.
@@ -288,7 +290,7 @@ pub(super) async fn initialize_storage(
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
-    let stored_filter_matching = config.extensions.resolve().language_targeting().matching();
+    let stored_filter_matching = EnabledExtensions::from(&config.extensions).language_targeting().matching();
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone(), stored_filter_matching));
     // clone: the cache reload reads through a repository sharing the tenant's one dictionary.
     if let Err(error) = subscription_cache
@@ -330,7 +332,7 @@ pub(super) async fn initialize_storage(
 /// Returns [`TenantAssemblyError`] when the configuration names no valid
 /// policy or the reconciliation fails.
 async fn reconcile_temporal_storage(temporal_repo: &TemporalRepository, temporal: &TemporalConfig) -> Result<(), TenantAssemblyError> {
-    let policy = temporal.storage_policy().map_err(AssemblyInvariant::from)?;
+    let policy = TemporalStoragePolicy::try_from(temporal).map_err(AssemblyInvariant::from)?;
     let outcome = temporal_repo.reconcile_storage_policy(&policy).await?;
     if !outcome.is_unchanged() {
         tracing::info!(outcome = ?outcome, event = "temporal_storage_policy_reconciled");

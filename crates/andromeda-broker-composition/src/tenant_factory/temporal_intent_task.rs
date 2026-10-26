@@ -5,6 +5,7 @@ use crate::tenant_factory::{
     background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
 };
+use andromeda_configuration::schema::temporal::TemporalConfig;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -18,7 +19,7 @@ use andromeda_task_runtime::{
     wake_trigger::{DrainFallbackPolicy, WakeHandle, WakeRequest, wake_channel},
 };
 use andromeda_temporal::{
-    config::TemporalConfig,
+    configured_policy::intent_retry_schedule,
     error::TemporalError,
     intent_drain::{TemporalIntentClaim, TemporalIntentDrain},
     intent_retry_policy::TemporalIntentRetryPolicy,
@@ -89,7 +90,7 @@ pub(super) fn register_temporal_intent_drain(
         .ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize))?;
     let stuck_after =
         NonZeroU32::new(config.intent_stuck_after_attempts).ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentStuckAfterAttempts))?;
-    let retry_policy = TemporalIntentRetryPolicy::new(config.intent_retry_schedule().map_err(AssemblyInvariant::IntentRetry)?, stuck_after);
+    let retry_policy = TemporalIntentRetryPolicy::new(intent_retry_schedule(config).map_err(AssemblyInvariant::IntentRetry)?, stuck_after);
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
         application,

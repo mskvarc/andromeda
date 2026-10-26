@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-configuration.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 jstrict = "0.16.0"
@@ -19,3 +20,4 @@ thiserror = "2.0.21"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+toml = "1.1.8"

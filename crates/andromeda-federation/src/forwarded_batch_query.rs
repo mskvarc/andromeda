@@ -63,12 +63,12 @@ pub(crate) fn batch_query(query: &ForwardedQuery) -> Result<Query, FederationErr
 )]
 mod tests {
     use crate::{
-        config::SplitEntities,
         forwarded_batch_query::batch_query,
         forwarded_names::ForwardedNames,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
         forwarding_context::Rewording,
         request::TemporalAnswer,
+        split_entities::SplitEntities,
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

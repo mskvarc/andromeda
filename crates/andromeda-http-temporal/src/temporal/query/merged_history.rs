@@ -9,9 +9,9 @@ use crate::temporal::{
 };
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
-    config::SplitEntities,
     entity_result::temporal_contributions_of,
     outcome::ForwardedTemporalEntities,
+    split_entities::SplitEntities,
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;

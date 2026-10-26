@@ -19,10 +19,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-pub mod config;
 pub mod crypto_provider;
 pub mod handshake_policy;
-pub mod material_sources;
 pub mod material_watch;
 pub mod pem_material;
 pub mod server_config_feed;
@@ -34,7 +32,7 @@ mod handshake_probe;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-configuration-scalars"],
+    allow_workspace_dependencies: ["andromeda-configuration"],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["tokio"],
 }

@@ -1,12 +1,12 @@
 //! None of these is the client's doing: each is a property of a registration the broker admitted or of the broker's own configuration, so a broken one is answered `InternalError`.
 
-use crate::config::FederationConfigError;
 use andromeda_http_headers::received_protocol::ReceivedProtocolError;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
+use andromeda_retry::schedule_error::BackoffScheduleError;
 use mediatype::MediaTypeBuf;
 use thiserror::Error;
 use url::Url;
@@ -69,5 +69,5 @@ pub enum FederationInvariant {
     /// The cooldown policy does not hold, although configuration loading
     /// validates it before any forwarding service is built.
     #[error("the context source cooldown policy is invalid: {0}")]
-    CooldownPolicy(#[source] FederationConfigError),
+    CooldownPolicy(#[source] BackoffScheduleError),
 }

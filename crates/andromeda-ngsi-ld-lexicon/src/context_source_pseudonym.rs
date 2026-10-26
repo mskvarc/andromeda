@@ -1,6 +1,7 @@
 //! The pseudonym naming one intermediary in a `Via` chain (RFC 9110 clause 7.6.3).
 
 use crate::tenant::TenantName;
+use andromeda_configuration::schema::source_alias::SourceAlias;
 use derive_more::{Display, Into};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -125,6 +126,16 @@ impl TryFrom<&str> for ContextSourcePseudonym {
     }
 }
 
+// The configured alias carries no grammar of its own; this conversion applies
+// the pseudonym's, so it is the one place the configured alias is held to it.
+impl TryFrom<&SourceAlias> for ContextSourcePseudonym {
+    type Error = ContextSourcePseudonymError;
+
+    fn try_from(configured: &SourceAlias) -> Result<ContextSourcePseudonym, ContextSourcePseudonymError> {
+        ContextSourcePseudonym::new(configured.as_str())
+    }
+}
+
 impl FromStr for ContextSourcePseudonym {
     type Err = ContextSourcePseudonymError;
 
@@ -143,6 +154,7 @@ mod tests {
         context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
         tenant::{TENANT_NAME_BYTE_LIMIT, TenantName},
     };
+    use andromeda_configuration::schema::source_alias::SourceAlias;
 
     /// A validated tenant label, for composing tenant-scoped aliases.
     fn tenant(raw: &str) -> TenantName {
@@ -185,6 +197,22 @@ mod tests {
         let parsed: ContextSourcePseudonym = "broker-b".parse().expect("valid pseudonym");
         pretty_assertions::assert_eq!(parsed, ContextSourcePseudonym::try_from("broker-b").expect("valid pseudonym"));
         assert!("".parse::<ContextSourcePseudonym>().is_err());
+    }
+
+    #[test]
+    fn a_configured_alias_converts_only_when_it_is_a_token() {
+        assert_eq!(
+            ContextSourcePseudonym::try_from(&SourceAlias::from_static("broker-a")).map(|alias| alias.as_str().to_owned()),
+            Ok("broker-a".to_owned())
+        );
+        assert_eq!(
+            ContextSourcePseudonym::try_from(&SourceAlias::from_static("")),
+            Err(ContextSourcePseudonymError::Empty)
+        );
+        assert_eq!(
+            ContextSourcePseudonym::try_from(&SourceAlias::from_static("broker a")),
+            Err(ContextSourcePseudonymError::NotAToken { offending: ' ' })
+        );
     }
 
     /// Table 5.2.40-1: the alias identifies a specific Tenant within a

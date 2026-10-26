@@ -39,12 +39,11 @@ pub mod sql_state;
 pub mod store_unavailability;
 /// Whether a driver error is a transaction rolled back under contention.
 pub mod transaction_rollback;
-/// The part of a tenant pool read requests leave to writes.
-pub mod write_reserve;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-persistence-failure", "andromeda-postgresql-seaquery",
         "andromeda-retry",
     ],

@@ -1,6 +1,6 @@
 //! Construction of the security-header (helmet) middleware layer.
 
-use crate::config::{feature_mode::HttpFeatureMode, helmet::HelmetConfig};
+use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::helmet::HelmetConfig};
 use axum_helmet::{
     ContentSecurityPolicy,
     CrossOriginOpenerPolicy,
@@ -60,10 +60,8 @@ fn security_header_policy() -> Helmet {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        config::{feature_mode::HttpFeatureMode, helmet::HelmetConfig},
-        stack::helmet_layer::build_helmet_layer,
-    };
+    use crate::stack::helmet_layer::build_helmet_layer;
+    use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::helmet::HelmetConfig};
     use axum::{
         Router,
         body::Body,

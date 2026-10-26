@@ -7,10 +7,10 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals},
 };
+use andromeda_configuration::schema::identity::InfoConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
-use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, geo::admission::GeoQueryAdmission};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,

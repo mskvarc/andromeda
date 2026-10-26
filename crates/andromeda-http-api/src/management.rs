@@ -62,18 +62,18 @@ impl ManagementApi {
 #[cfg(test)]
 mod tests {
     use crate::management::{ManagementApi, ManagementRoutes};
-    use andromeda_health::aggregate::Health;
-    use andromeda_http_health::routes::HealthRoutes;
-    use andromeda_http_stack::{
-        config::{
+    use andromeda_configuration::schema::{
+        feature_mode::HttpFeatureMode,
+        http::{
             HttpStackConfig,
             cors::{CorsConfig, CorsMode},
             csrf::CsrfConfig,
-            feature_mode::HttpFeatureMode,
             helmet::HelmetConfig,
         },
-        stack::HttpStack,
     };
+    use andromeda_health::aggregate::Health;
+    use andromeda_http_health::routes::HealthRoutes;
+    use andromeda_http_stack::stack::HttpStack;
     use andromeda_http_telemetry::routes::TelemetryRoutes;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use axum::{

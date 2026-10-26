@@ -12,7 +12,6 @@
 //! crates testing such routes enable for their tests alone.
 
 use crate::{
-    config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
     database_name::TenantDatabaseName,
@@ -28,6 +27,7 @@ use crate::{
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
+use andromeda_configuration::schema::tenancy::TenancyConfig;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

@@ -9,6 +9,7 @@
 //! with no dormancy to manage.
 
 use crate::tenant_factory::BrokerTenantFactory;
+use andromeda_configuration::schema::tenancy::TenancyConfig;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
@@ -23,7 +24,6 @@ use andromeda_task_runtime::{
     task_name::{TaskName, TaskNameError},
 };
 use andromeda_tenancy::{
-    config::TenancyConfig,
     runtime::TenantRuntimeManager,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };

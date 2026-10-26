@@ -9,8 +9,7 @@
 //! then not counted again) and the target's path and query, then every other
 //! field as it arrived.
 
-use crate::config::ListenerTransport;
-use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::listener_transport::ListenerTransport};
 use axum::{
     extract::{Request, State},
     http::{HeaderValue, StatusCode, Version, header::HOST, uri::Authority},
@@ -86,11 +85,8 @@ pub(crate) async fn refuse_oversized_http1_section(State(policy): State<HeaderSe
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::ListenerTransport,
-        field_section::{HeaderSectionPolicy, field_section_size, refuse_oversized_http1_section},
-    };
-    use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+    use crate::field_section::{HeaderSectionPolicy, field_section_size, refuse_oversized_http1_section};
+    use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::listener_transport::ListenerTransport};
     use axum::{
         Router,
         body::Body,

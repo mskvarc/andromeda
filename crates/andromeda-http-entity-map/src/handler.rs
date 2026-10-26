@@ -10,7 +10,7 @@ use crate::{
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
 };
 use andromeda_entity_map::fingerprint::{FingerprintedRequest, fingerprint_of};
-use andromeda_federation::{config::SplitEntities, entity_map::EntityMapQueryKind, request::TriggeringRequest};
+use andromeda_federation::{entity_map::EntityMapQueryKind, request::TriggeringRequest, split_entities::SplitEntities};
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,

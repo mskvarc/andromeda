@@ -7,18 +7,18 @@
 //! test that reaches it says so.
 
 use crate::{
-    config::DEFAULT_AGGREGATION_INSTANCE_BUDGET,
     instance_limits::TemporalInstanceLimits,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
     service_limits::TemporalServiceLimits,
 };
+use andromeda_configuration::schema::{entity::EntityConfig, temporal::DEFAULT_AGGREGATION_INSTANCE_BUDGET};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     change_notifier::{ChangeNotifier, SubscriptionMatching},
-    config::EntityConfig,
+    configured_policy::payload_budget,
     port::reader::EntityReader,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -257,7 +257,7 @@ pub(crate) fn limits() -> TemporalServiceLimits {
         },
         delete_by_query_max_matches: 100,
         aggregation_grouping_max_groups: 100,
-        payload_budget: EntityConfig::default().payload_budget(),
+        payload_budget: payload_budget(&EntityConfig::default()),
         near_band: NearDistanceBand::Refused,
         language_targeting: LanguageTargeting::Specification,
     }

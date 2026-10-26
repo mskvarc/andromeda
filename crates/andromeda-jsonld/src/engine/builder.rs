@@ -35,7 +35,7 @@ const DATA_INTEGRITY_STUB: &str = r#"{"@context":{}}"#;
 ///
 /// Values arrive one method at a time rather than as a struct so the crate's
 /// construction path does not depend on a configuration framework. The
-/// [`crate::config::JsonLdConfig`] that reads them from the environment is a
+/// [`andromeda_configuration::schema::jsonld::JsonLdConfig`] that reads them from the environment is a
 /// separate concern.
 #[derive(Debug)]
 pub struct JsonLdEngineBuilder {

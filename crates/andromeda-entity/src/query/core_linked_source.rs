@@ -221,7 +221,7 @@ impl LinkedSource for CoreLinkedSource<'_> {
 )]
 mod tests {
     use crate::{
-        config::EntityConfig,
+        configured_policy::geometry_census_limits,
         entity_snapshot::EntitySnapshot,
         port::{query::EntityQueryStore, reader::EntityReader},
         query::{core_linked_source::*, remote_linked::RemoteLinkedEntitySource},
@@ -229,6 +229,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
+    use andromeda_configuration::schema::entity::EntityConfig;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_linked_retrieval::{
@@ -514,7 +515,7 @@ mod tests {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(remote_linked)
             .geo_admission(GeoQueryAdmission::new(
-                EntityConfig::default().geometry_census_limits(),
+                geometry_census_limits(&EntityConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

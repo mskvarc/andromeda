@@ -108,6 +108,17 @@ mod tests {
         routes::ApiRoutes,
     };
     use andromeda_component_report::{ComponentReport, ComponentVersion, ConnectionCapacity};
+    use andromeda_configuration::schema::{
+        feature_mode::HttpFeatureMode,
+        forwarded_header_trust::ForwardedHeaderTrust,
+        http::{
+            HttpStackConfig,
+            cors::{CorsConfig, CorsMode},
+            csrf::CsrfConfig,
+            helmet::HelmetConfig,
+            server_timing::ServerTimingConfig,
+        },
+    };
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
     use andromeda_http_component_report::routes::ComponentReportRoutes;
@@ -128,7 +139,6 @@ mod tests {
         api_root::{AdvertisedApiRoot, ApiRoot},
         pagination_policy::RequestPagination,
     };
-    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
         routes::NotificationReceiverRoutes,
@@ -147,17 +157,7 @@ mod tests {
         routes::SourceIdentityRoutes,
         state::SourceIdentityState,
     };
-    use andromeda_http_stack::{
-        config::{
-            HttpStackConfig,
-            cors::{CorsConfig, CorsMode},
-            csrf::CsrfConfig,
-            feature_mode::HttpFeatureMode,
-            helmet::HelmetConfig,
-            server_timing::ServerTimingConfig,
-        },
-        stack::HttpStack,
-    };
+    use andromeda_http_stack::stack::HttpStack;
     use andromeda_http_subscription::{
         routes::SubscriptionRoutes,
         state::{SubscriptionRouteServices, SubscriptionStateResolver},

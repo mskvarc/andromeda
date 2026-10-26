@@ -1,12 +1,8 @@
-//! Broker runtime configuration, split by the resource each value constructs.
+//! The broker's use of its configuration: loading it for a command and
+//! admitting each section into the domain values it is read as.
 
+/// Loading the configuration for a command and reporting the outcome.
+pub mod commands;
 mod error;
-/// Management-plane topology and metrics-exposure configuration.
-pub mod management;
-/// Composition of the durable and live notification delivery configurations.
-pub mod notifications;
-pub mod observability;
-pub(crate) mod pagination;
-/// Aggregate configuration loading, reporting, and CLI override handling.
-pub mod runtime;
-mod validation;
+/// Admitting loaded sections into their domain values.
+pub(crate) mod section_admission;

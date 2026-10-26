@@ -1,5 +1,6 @@
 //! Delivery binding for snapshot status notifications.
 
+use andromeda_configuration::schema::delivery::DeliveryConfig;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -9,7 +10,11 @@ use andromeda_delivery::{
     request::DeliveryRequest,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_notification::{delivery_backoff::retry_due_at, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
+use andromeda_notification::{
+    delivery_backoff::retry_due_at,
+    delivery_error_bound::DeliveryErrorBound,
+    delivery_policy::{error_bound, retry_schedule},
+};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
@@ -51,13 +56,13 @@ impl SnapshotStatusDeliveryDrain {
             worker: LeaseHolder::mint(),
             lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
             max_attempts: config.max_attempts.max(1),
-            retry_schedule: config.retry_schedule().map_err(|error| {
+            retry_schedule: retry_schedule(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule
             })?,
             batch_size: config.batch_size.max(1),
             concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
-            error_bound: config.error_bound().map_err(|error| {
+            error_bound: error_bound(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
                 SnapshotInvariant::NotificationErrorBound
             })?,

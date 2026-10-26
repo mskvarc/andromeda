@@ -5,7 +5,7 @@ use std::num::NonZeroU64;
 /// The broker's clause 6.3.10 limits on the instances one temporal read
 /// returns per attribute.
 ///
-/// Built from a validated [`TemporalConfig`](crate::config::TemporalConfig), so
+/// Built from a validated [`TemporalConfig`](andromeda_configuration::schema::temporal::TemporalConfig), so
 /// `default_page` is at least one and never above `maximum`, and `edge_group`
 /// never below it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

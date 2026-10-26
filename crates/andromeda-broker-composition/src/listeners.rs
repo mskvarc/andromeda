@@ -15,9 +15,10 @@
 //! URLs the broker mints from a request origin carry `https` exactly when the
 //! request arrived over TLS the broker terminated (see [`crate::listener_tls`]).
 
-use crate::{
-    config::runtime::RuntimeConfig,
-    listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme},
+use crate::listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme};
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    schema::{http3::Http3Mode, server::ServerConfig},
 };
 use andromeda_http_api::{api::HttpApi, management::ManagementApi};
 use andromeda_http_headers::{
@@ -25,9 +26,8 @@ use andromeda_http_headers::{
     api_root_scheme::ApiRootScheme,
     listener_scheme::ListenerScheme,
 };
-use andromeda_http_server::{config::ServerConfig, error::HttpServerError, execution::serve as serve_tcp, listener_security::ListenerSecurity};
+use andromeda_http_server::{close_policy::ClosePolicy, error::HttpServerError, execution::serve as serve_tcp, listener_security::ListenerSecurity};
 use andromeda_http3_server::{
-    config::Http3Mode,
     endpoint::{self, Http3EndpointError},
     execution::{Http3ServeError, serve_endpoint},
 };
@@ -67,7 +67,7 @@ pub enum ListenerError {
 /// Serve the broker's HTTP listeners until `shutdown` resolves.
 ///
 /// The data-plane TCP listener is always served, in plaintext or over TLS as
-/// `server.transport` says. When [`RuntimeConfig::http3`] is enabled, a QUIC
+/// `server.transport` says. When [`BrokerConfig::http3`] is enabled, a QUIC
 /// listener is bound on the same host and port over UDP and served
 /// concurrently, and the TCP responses advertise it through `Alt-Svc`. When
 /// `management` is `Some` (the `separate-port` mode), a third TCP-only listener
@@ -81,7 +81,7 @@ pub enum ListenerError {
 /// when any listener cannot be bound or fails while serving, or when the
 /// HTTP/3 advertisement cannot be built.
 pub async fn serve(
-    config: &RuntimeConfig,
+    config: &BrokerConfig,
     api: HttpApi,
     management: Option<ManagementApi>,
     shutdown: impl Future<Output = ()> + Send + 'static,
@@ -136,7 +136,7 @@ pub async fn serve(
             feed,
             router,
             config.server.max_request_header_section,
-            config.server.close_policy(),
+            ClosePolicy::from(&config.server),
             wait_for(&shutdown_token),
         );
         listeners.push(Box::pin(async move { http3.await.map_err(ListenerError::from) }));

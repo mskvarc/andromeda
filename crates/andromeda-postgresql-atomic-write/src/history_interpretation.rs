@@ -8,6 +8,7 @@
 //! says.
 
 use crate::{attempt_failure::AttemptFailure, commit_refusal::temporal};
+use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_invariant::CommitInvariant,
@@ -17,7 +18,7 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_temporal::{append_intent::TemporalAppendIntent, core_write_history::CoreWriteHistory, error::TemporalError};
+use andromeda_temporal::{append_intent::TemporalAppendIntent, error::TemporalError};
 
 /// Interpret every landed write's temporal consequences exactly once, and
 /// report the ordinal one past the last one this phase consumed.
@@ -69,6 +70,7 @@ pub(crate) fn interpret(
 )]
 mod tests {
     use crate::history_interpretation::interpret;
+    use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -79,7 +81,6 @@ mod tests {
     };
     use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
-    use andromeda_temporal::core_write_history::CoreWriteHistory;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::sync::Arc;

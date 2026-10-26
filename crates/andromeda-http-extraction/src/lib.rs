@@ -62,6 +62,7 @@ pub mod via;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-context-space",
         "andromeda-http-headers",
         "andromeda-http-response",

@@ -3,7 +3,6 @@
 use crate::{
     announced_close::record_close_announcement,
     close_policy::ClosePolicy,
-    config::ServerConfig,
     connection_builder::connection_builder,
     error::HttpServerError,
     field_section::{HeaderSectionPolicy, refuse_oversized_http1_section},
@@ -11,6 +10,7 @@ use crate::{
     staged_close_listener::StagedCloseListener,
     tls_tcp_listener::TlsTcpListener,
 };
+use andromeda_configuration::schema::server::ServerConfig;
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request},
@@ -62,7 +62,7 @@ where
 {
     let local_address = listener.local_addr().map_err(|source| HttpServerError::LocalAddress { source })?;
     tracing::info!(address = %local_address, transport = %security.transport(), "HTTP listener accepting connections");
-    let policy = config.close_policy();
+    let policy = ClosePolicy::from(config);
     let header_section = HeaderSectionPolicy {
         limit: config.max_request_header_section,
         transport: security.transport(),
@@ -148,12 +148,11 @@ where
 mod tests {
     use crate::{
         close_policy::ClosePolicy,
-        config::ListenerTransport,
         error::HttpServerError,
         execution::serve_listener,
         field_section::{HeaderSectionPolicy, field_section_size},
     };
-    use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+    use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::listener_transport::ListenerTransport};
     use axum::{
         Router,
         extract::Request,

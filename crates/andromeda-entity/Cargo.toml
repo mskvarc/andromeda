@@ -5,17 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# `toml` is used only through the `toml-comment` derive, which expands to
-# `toml::Value` at the call site; cargo-machete cannot see that macro-generated
-# use and would otherwise report the dependency as unused.
-[package.metadata.cargo-machete]
-ignored = ["toml"]
-
 [lints]
 workspace = true
 
 [dependencies]
-andromeda-configuration-scalars.workspace = true
+andromeda-configuration.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-federation.workspace = true
@@ -49,12 +43,9 @@ indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 langtag = "1.1.0"
 moka = { version = "0.12.16", features = ["future"] }
-serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-toml = "1.1.8"
-toml-comment = "0.3.0"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
 
@@ -64,4 +55,5 @@ async-trait = "0.1.92"
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"
 tokio = { version = "1.54.1", features = ["macros", "rt", "time"] }
+toml = "1.1.8"
 uuid = "1.29.0"

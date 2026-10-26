@@ -52,7 +52,7 @@ mod compare_and_set_fixture;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
 /// Entity execution and background-operation configuration.
-pub mod config;
+pub mod configured_policy;
 /// One compare-and-set attempt and the loop that repeats it under contention.
 mod contended_attempt;
 /// What a deletion needs to know about the entity it removes, short of its payload.
@@ -210,7 +210,6 @@ mod snapshot_supply;
 /// Which spatial index, if any, a geo query may be narrowed through.
 pub mod spatial_acceleration;
 /// Entity spatial-index consistency configuration.
-pub mod spatial_config;
 /// Keeping the entity spatial index in step with every live commit.
 pub mod spatial_indexing_committer;
 /// Where one entity's location belongs in the entity spatial index.
@@ -361,7 +360,7 @@ impl EntityService {
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-federation",

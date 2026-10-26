@@ -14,7 +14,7 @@ use crate::{
     quic_crypto::quic_server_config,
     request_loop::{Drain, accept_connections},
 };
-use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_configuration::header_section_limit::HeaderSectionLimit;
 use andromeda_http_server::close_policy::ClosePolicy;
 use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
@@ -150,7 +150,7 @@ mod tests {
         quic_crypto::H3_ALPN,
         test_support::QuicIdentity,
     };
-    use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+    use andromeda_configuration::header_section_limit::HeaderSectionLimit;
     use andromeda_http_server::close_policy::ClosePolicy;
     use andromeda_server_tls::test_identity::authority::TestAuthority;
     use axum::{

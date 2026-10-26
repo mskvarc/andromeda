@@ -16,13 +16,13 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::{
     FederationService,
-    config::SplitEntities,
     entity_budget::{EntityBudget, EntityBudgetExceeded},
     in_effect_probe::InEffectProbe,
     instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, HistoryBudget, SourcePaging, TriggeringRequest},
+    split_entities::SplitEntities,
 };
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
@@ -381,7 +381,12 @@ pub(crate) struct InEffectRequest<'r> {
 mod tests {
     use crate::temporal::query::forwarding::{QueryScope, forwarding_outcome};
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_federation::{config::SplitEntities, entity_budget::EntityBudget, outcome::ForwardReadOutcome, query_forwarding_error::QueryForwardingError};
+    use andromeda_federation::{
+        entity_budget::EntityBudget,
+        outcome::ForwardReadOutcome,
+        query_forwarding_error::QueryForwardingError,
+        split_entities::SplitEntities,
+    };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use axum::{
         http::{StatusCode, Uri},

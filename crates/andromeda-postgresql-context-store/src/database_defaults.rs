@@ -30,7 +30,8 @@
 //! which is why a caller that sees [`DefaultsReconciliation::Adjusted`] opens
 //! its pool again.
 
-use crate::{config::SynchronousCommit, error::ContextStoreError};
+use crate::error::ContextStoreError;
+use andromeda_configuration::schema::database::SynchronousCommit;
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     command::Command,
@@ -125,7 +126,7 @@ impl DatabaseDefaults {
         [
             DatabaseDefault {
                 parameter: Setting::SynchronousCommit,
-                value: self.synchronous_commit.as_postgres_setting().to_owned(),
+                value: synchronous_commit_setting(self.synchronous_commit).to_owned(),
             },
             DatabaseDefault {
                 parameter: Setting::StatementTimeout,
@@ -221,16 +222,47 @@ fn configuration_lock(database: &str) -> SelectStatement {
         .to_owned()
 }
 
+/// The literal PostgreSQL's `SET` and `ALTER DATABASE ... SET` statements
+/// accept for a commit durability.
+const fn synchronous_commit_setting(durability: SynchronousCommit) -> &'static str {
+    match durability {
+        SynchronousCommit::On => "on",
+        SynchronousCommit::Off => "off",
+        SynchronousCommit::Local => "local",
+        SynchronousCommit::RemoteApply => "remote_apply",
+        SynchronousCommit::RemoteWrite => "remote_write",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::SynchronousCommit,
-        database_defaults::{DatabaseDefault, DatabaseDefaults, StatementTimeout, configuration_lock, missing_defaults, stored_defaults_statement},
+    use crate::database_defaults::{
+        DatabaseDefault,
+        DatabaseDefaults,
+        StatementTimeout,
+        configuration_lock,
+        missing_defaults,
+        stored_defaults_statement,
+        synchronous_commit_setting,
     };
+    use andromeda_configuration::schema::database::SynchronousCommit;
     use andromeda_postgresql_seaquery::setting::Setting;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::PostgresQueryBuilder;
     use std::time::Duration;
+
+    #[test]
+    fn every_commit_durability_renders_the_postgresql_setting() {
+        for (durability, setting) in [
+            (SynchronousCommit::On, "on"),
+            (SynchronousCommit::Off, "off"),
+            (SynchronousCommit::Local, "local"),
+            (SynchronousCommit::RemoteApply, "remote_apply"),
+            (SynchronousCommit::RemoteWrite, "remote_write"),
+        ] {
+            assert_eq!(synchronous_commit_setting(durability), setting);
+        }
+    }
 
     /// The defaults a broker with a 30 s request deadline installs.
     fn defaults() -> DatabaseDefaults {

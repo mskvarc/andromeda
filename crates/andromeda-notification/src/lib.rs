@@ -28,7 +28,6 @@ mod delivery_claim_budget;
 /// In-flight bound for one notification delivery pass.
 pub mod delivery_concurrency;
 /// Notification delivery runtime configuration.
-pub mod delivery_config;
 /// One bounded notification delivery pass.
 pub mod delivery_drain;
 /// A pending delivery of a notification event to one subscription.
@@ -37,6 +36,7 @@ pub mod delivery_entry;
 pub mod delivery_error_bound;
 /// Worker ownership of a claimed notification delivery.
 pub mod delivery_lease;
+pub mod delivery_policy;
 /// Notification delivery queue persistence.
 pub mod delivery_store;
 /// Focused notification failures.
@@ -67,7 +67,7 @@ mod resolved_notification_context;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-delivery",

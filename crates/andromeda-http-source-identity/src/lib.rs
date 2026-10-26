@@ -4,7 +4,6 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 /// Context Source identity configuration.
-pub mod config;
 /// The default tenant's context resolution and hosting.
 pub mod default_tenant_contexts;
 pub mod error;

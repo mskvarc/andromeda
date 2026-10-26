@@ -2,11 +2,11 @@
 //! consistency mode.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
+use andromeda_configuration::schema::spatial::SpatialConsistency;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
     port::spatial_snapshot::EntitySpatialSnapshotSource,
     spatial_acceleration::SpatialAcceleration,
-    spatial_config::SpatialConsistency,
     spatial_indexing_committer::SpatialIndexingCommitter,
     spatial_placement::LocationPlacement,
     spatial_reconciliation::rebuild_location_index,
@@ -90,6 +90,7 @@ pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement
 )]
 mod tests {
     use crate::tenant_factory::spatial::{indexed_commits, initialize_spatial};
+    use andromeda_configuration::schema::spatial::SpatialConfig;
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         commit_replay::CommitReplay,
@@ -100,7 +101,6 @@ mod tests {
         error::EntityError,
         port::spatial_snapshot::{ChangeHorizon, EntitySpatialSnapshotSource, LocationRead},
         spatial_acceleration::SpatialAcceleration,
-        spatial_config::SpatialConfig,
     };
     use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use andromeda_tenancy::tenant_ref::TenantRef;

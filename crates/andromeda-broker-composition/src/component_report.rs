@@ -2,7 +2,7 @@
 
 #![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
 
-use crate::{broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS, config::runtime::RuntimeConfig};
+use crate::broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS;
 use andromeda_component_report::{
     BuildBranch,
     BuildCommit,
@@ -16,6 +16,7 @@ use andromeda_component_report::{
     RustChannel,
     RustVersion,
 };
+use andromeda_configuration::broker_config::BrokerConfig;
 use andromeda_postgresql_context_store::component_report;
 use shadow_rs::shadow;
 use sqlx::PgPool;
@@ -46,7 +47,7 @@ const BUILD_CONNECTIONS: u32 = 2;
 /// Collect build metadata and reports from the selected PostgreSQL adapter,
 /// warning when the broker's pools could need more connections than the
 /// server lets it open.
-pub(crate) async fn collect(pool: &PgPool, config: &RuntimeConfig) -> Result<Vec<ComponentReport>, ComponentReportError> {
+pub(crate) async fn collect(pool: &PgPool, config: &BrokerConfig) -> Result<Vec<ComponentReport>, ComponentReportError> {
     let ceiling = broker_connection_ceiling(config);
     let mut reports = component_report::discover(pool, ceiling).await?;
     for report in &reports {
@@ -76,7 +77,7 @@ pub(crate) async fn collect(pool: &PgPool, config: &RuntimeConfig) -> Result<Vec
 /// one serving pool per tenant the runtime cache holds, and the
 /// dormant-tenant probes. Behind a pooler those reach the pooler, whose own
 /// server connections are the pooler's to size.
-fn broker_connection_ceiling(config: &RuntimeConfig) -> u32 {
+fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     let database = &config.database;
     let tenancy = &config.tenancy;
     let builds = u32::try_from(tenancy.max_concurrent_builds).unwrap_or(u32::MAX);
@@ -113,17 +114,14 @@ fn andromeda_report() -> ComponentReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        component_report::{andromeda_report, broker_connection_ceiling, build},
-        config::runtime::RuntimeConfig,
-    };
+    use crate::component_report::{andromeda_report, broker_connection_ceiling, build};
     use andromeda_component_report::ComponentReport;
-    use andromeda_postgresql_context_store::config::PoolerConfig;
+    use andromeda_configuration::{broker_config::BrokerConfig, schema::database::PoolerConfig};
     use pretty_assertions::{assert_eq, assert_ne};
 
     /// A configuration with small, distinct pool sizes.
-    fn sized() -> RuntimeConfig {
-        let mut config = RuntimeConfig::default();
+    fn sized() -> BrokerConfig {
+        let mut config = BrokerConfig::default();
         config.database.max_connections = 10;
         config.tenancy.max_concurrent_builds = 4;
         config.tenancy.runtime_max_cached = 20;

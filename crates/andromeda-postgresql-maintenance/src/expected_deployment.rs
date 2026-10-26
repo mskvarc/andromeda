@@ -1,7 +1,7 @@
 //! The facts of the broker's own configuration the controller checks the
 //! cluster against, which no catalogue can tell it.
 
-use andromeda_tenancy::db_name_prefix::DbNamePrefix;
+use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
 

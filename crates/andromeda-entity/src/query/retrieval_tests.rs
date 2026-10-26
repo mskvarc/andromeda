@@ -6,7 +6,7 @@
 //! path that reached for a second read fails here.
 
 use crate::{
-    config::EntityConfig,
+    configured_policy::geometry_census_limits,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
@@ -21,6 +21,7 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
     storage_profile::StorageProfile,
 };
+use andromeda_configuration::schema::entity::EntityConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -154,7 +155,7 @@ fn service() -> EntityQueryService {
         .tenant(TenantRef::UnnamedDefault)
         .remote_linked(None)
         .geo_admission(GeoQueryAdmission::new(
-            EntityConfig::default().geometry_census_limits(),
+            geometry_census_limits(&EntityConfig::default()),
             NearDistanceBand::Refused,
         ))
         .language_targeting(LanguageTargeting::Specification)

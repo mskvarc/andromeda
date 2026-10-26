@@ -1,8 +1,8 @@
 //! Mapping of the compression configuration onto a `tower-http` compression layer.
 
-use crate::config::{
-    compression::{CompressionConfig, CompressionQuality},
+use andromeda_configuration::schema::{
     content_coding::ContentCoding,
+    http::compression::{CompressionConfig, CompressionQuality},
 };
 use tower_http::compression::{CompressionLayer, CompressionLevel};
 
@@ -42,12 +42,10 @@ const fn compression_level(quality: CompressionQuality) -> CompressionLevel {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{
-            compression::{CompressionConfig, CompressionQuality},
-            content_coding::ContentCoding,
-        },
-        stack::compression_layer::{build_compression_layer, compression_level},
+    use crate::stack::compression_layer::{build_compression_layer, compression_level};
+    use andromeda_configuration::schema::{
+        content_coding::ContentCoding,
+        http::compression::{CompressionConfig, CompressionQuality},
     };
     use enumset::EnumSet;
     use tower_http::compression::CompressionLevel;

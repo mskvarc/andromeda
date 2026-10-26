@@ -1,7 +1,7 @@
 //! The protocol settings every accepted TCP connection is served under.
 
 use crate::field_section::SMALLEST_FIELD;
-use andromeda_configuration_scalars::header_section_limit::HeaderSectionLimit;
+use andromeda_configuration::header_section_limit::HeaderSectionLimit;
 use hyper_util::{rt::TokioExecutor, server::conn::auto::Builder};
 
 /// A connection builder speaking HTTP/1.1 or HTTP/2, as the client chooses,

@@ -1,11 +1,11 @@
 //! Typed inputs for context-source federation operations.
 
 use crate::{
-    config::SplitEntities,
     entity_budget::EntityBudget,
     forwarded_query::client_query::ClientQuery,
     instance_budget::InstanceBudget,
     operation::{ForwardingOperation, ProvisionResource},
+    split_entities::SplitEntities,
 };
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_http_headers::via::Via;

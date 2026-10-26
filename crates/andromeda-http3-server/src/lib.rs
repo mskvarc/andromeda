@@ -15,7 +15,6 @@
 //! (the `Alt-Svc` header on the TCP responses) and composing the two listeners
 //! into one running broker are the composition layer's job, not this crate's.
 
-pub mod config;
 pub mod endpoint;
 pub mod execution;
 #[cfg(test)]
@@ -28,7 +27,7 @@ mod test_support;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: ["andromeda-configuration-scalars", "andromeda-http-server", "andromeda-server-tls"],
+    allow_workspace_dependencies: ["andromeda-configuration", "andromeda-http-server", "andromeda-server-tls"],
     allow_workspace_dev_dependencies: ["andromeda-server-tls"],
     allow_production_dependencies: ["axum", "tokio"],
 }

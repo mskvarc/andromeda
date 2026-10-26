@@ -1,10 +1,10 @@
 //! Turning loaded material into the rustls configuration one listener serves.
 
 use crate::{
-    config::MinimumProtocolVersion,
     crypto_provider::broker_crypto_provider,
     pem_material::{ClientVerification, TlsMaterial},
 };
+use andromeda_configuration::schema::tls::MinimumProtocolVersion;
 use rustls::{
     ServerConfig,
     SupportedProtocolVersion,
@@ -96,20 +96,19 @@ pub fn build_server_config(material: &TlsMaterial, configured: MinimumProtocolVe
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::MinimumProtocolVersion,
         handshake_policy::{HandshakePolicy, ProtocolFloor, build_server_config},
         handshake_probe::handshake,
-        material_sources::{ClientTrust, TlsMaterialSources},
         pem_material::TlsMaterial,
         test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
+    use andromeda_configuration::schema::tls::{MinimumProtocolVersion, TlsConfig};
     use rustls::{
         ProtocolVersion,
         RootCertStore,
         ServerConfig,
         version::{TLS12, TLS13},
     };
-    use std::{borrow::Cow, error::Error, sync::Arc};
+    use std::{error::Error, sync::Arc};
 
     /// The TCP listener's policy: HTTP/2 preferred over HTTP/1.1.
     const TCP_POLICY: HandshakePolicy = HandshakePolicy {
@@ -121,12 +120,12 @@ mod tests {
     fn server_config(configured: MinimumProtocolVersion, policy: HandshakePolicy) -> Result<(Arc<ServerConfig>, RootCertStore), Box<dyn Error + Send + Sync>> {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
-        let sources = TlsMaterialSources::new(
-            Cow::Borrowed(files.certificate_path()),
-            Cow::Borrowed(files.private_key_path()),
-            ClientTrust::Anonymous,
-        );
-        let config = build_server_config(&TlsMaterial::load(&sources)?, configured, policy)?;
+        let tls = TlsConfig {
+            certificate_path: files.certificate_path().to_path_buf(),
+            private_key_path: files.private_key_path().to_path_buf(),
+            ..TlsConfig::default()
+        };
+        let config = build_server_config(&TlsMaterial::load(&tls.material_sources()?)?, configured, policy)?;
         Ok((Arc::new(config), authority.root_store()?))
     }
 

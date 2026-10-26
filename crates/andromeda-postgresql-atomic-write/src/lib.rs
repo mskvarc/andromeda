@@ -36,6 +36,7 @@ mod write_isolation;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-ngsi-ld-entity",

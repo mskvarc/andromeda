@@ -6,7 +6,7 @@
 //! believes it serves. Everything else about the extension set is ordinary
 //! informational logging left to the composition owner.
 
-use crate::config::ExtensionsConfig;
+use andromeda_configuration::schema::extensions::ExtensionsConfig;
 
 /// Warn loudly when `conformance_mode` overrode a feature the operator enabled.
 ///
@@ -26,11 +26,11 @@ pub fn log_conformance_override(config: &ExtensionsConfig) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{ExtensionsConfig, QTargetLanguages},
-        startup_log::log_conformance_override,
+    use crate::startup_log::log_conformance_override;
+    use andromeda_configuration::schema::{
+        extensions::{ExtensionsConfig, QTargetLanguages},
+        feature_mode::HttpFeatureMode,
     };
-    use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
 
     /// The reporter must not panic in any of the four combinations of the two
     /// conditions it guards on; the message content is a `tracing` concern.

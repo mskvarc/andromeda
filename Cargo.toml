@@ -52,6 +52,7 @@ workspace = true
 
 [dependencies]
 andromeda-broker-composition.workspace = true
+andromeda-configuration.workspace = true
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 clap-themes = "0.1.3"
 shadow-rs = "2.0.0"
@@ -84,7 +85,7 @@ opt-level = 3
 andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
 andromeda-broker-composition = { path = "crates/andromeda-broker-composition" }
 andromeda-component-report = { path = "crates/andromeda-component-report" }
-andromeda-configuration-scalars = { path = "crates/andromeda-configuration-scalars" }
+andromeda-configuration = { path = "crates/andromeda-configuration" }
 andromeda-context-commit = { path = "crates/andromeda-context-commit" }
 andromeda-context-registry = { path = "crates/andromeda-context-registry" }
 andromeda-context-space = { path = "crates/andromeda-context-space" }

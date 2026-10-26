@@ -6,6 +6,7 @@
 //! [`crate::database_defaults`]'s.
 
 use crate::error::ContextStoreError;
+use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_pool::{sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_seaquery::{
@@ -16,7 +17,7 @@ use andromeda_postgresql_seaquery::{
     system_catalog::PgDatabase,
 };
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
-use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
+use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::{Connection, PgConnection};
 use std::{

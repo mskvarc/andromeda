@@ -20,12 +20,10 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod administration;
-pub mod config;
 pub mod context_source_alias;
 pub mod creation_policy;
 pub mod database;
 pub mod database_name;
-pub mod db_name_prefix;
 pub mod error;
 pub mod lifecycle;
 pub mod pending_work;
@@ -51,7 +49,7 @@ pub mod waker;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure",
         "andromeda-telemetry",

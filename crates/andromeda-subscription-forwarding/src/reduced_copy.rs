@@ -10,7 +10,7 @@
 //! then can they not be decided at one source.
 
 use crate::receiver::ReceiverEndpoint;
-use andromeda_federation::config::SplitEntities;
+use andromeda_federation::split_entities::SplitEntities;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -201,7 +201,7 @@ mod tests {
         receiver::ReceiverEndpoint,
         reduced_copy::{FilterCarriage, ReducedSubscription},
     };
-    use andromeda_federation::config::SplitEntities;
+    use andromeda_federation::split_entities::SplitEntities;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription, subscription_request::SubscriptionRequest};
     use andromeda_subscription::deleted_members::DeletedMembers;

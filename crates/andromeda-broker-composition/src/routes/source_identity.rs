@@ -2,14 +2,18 @@
 //! it answers under.
 
 use crate::tenant_factory::BrokerTenantFactory;
+use andromeda_configuration::schema::identity::InfoConfig;
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_source_identity::{
-    config::InfoConfig,
     default_tenant_contexts::{DefaultTenantContexts, DefaultTenantContextsResolver},
     routes::SourceIdentityRoutes,
     state::SourceIdentityState,
 };
-use andromeda_json_literal::admission::JsonLiteralError;
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError, configured_extras::ConfiguredExtrasError};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
+    identifier::{Identifier, IdentifierParseError},
+};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     context_source_alias::ContextSourceAliases,
@@ -21,6 +25,24 @@ use andromeda_tenancy::{
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use std::sync::Arc;
+use thiserror::Error;
+
+/// Why the `/info/sourceIdentity` route could not be built from the configured identity.
+#[derive(Debug, Error)]
+pub enum SourceIdentityRouteError {
+    /// The configured `contextSourceExtras` are no admissible JSON.
+    #[error("the configured source extras are not admissible JSON: {0}")]
+    Extras(#[from] JsonLiteralError),
+    /// `identity.source_id` is not an identifier a stored resource can carry.
+    #[error("identity.source_id: {0}")]
+    Identifier(#[from] IdentifierParseError),
+    /// `identity.source_alias` is not a single `received-by` token.
+    #[error("identity.source_alias: {0}")]
+    Alias(#[from] ContextSourcePseudonymError),
+    /// `identity.source_extras` is not a JSON literal.
+    #[error(transparent)]
+    ConfiguredExtras(#[from] ConfiguredExtrasError),
+}
 
 /// Resolves the default tenant and projects the contexts `/info/sourceIdentity`
 /// answers under (clause 4.14: the default tenant always exists).
@@ -53,21 +75,24 @@ impl DefaultTenantContextsResolver for BrokerDefaultTenantContexts {
 ///
 /// # Errors
 ///
-/// Returns the [`JsonLiteralError`] of extras the enabled extensions could not
-/// be written into, which no admitted `contextSourceExtras` raise.
+/// Returns [`SourceIdentityRouteError::Extras`] for extras the enabled
+/// extensions could not be written into, which no admitted
+/// `contextSourceExtras` raise, and [`SourceIdentityRouteError::Identifier`]
+/// or [`SourceIdentityRouteError::Alias`] for a configured identifier past
+/// the bound or an alias that is not a token, both of which loading already refuses.
 pub(crate) fn source_identity_routes(
     identity: &InfoConfig,
     started_at: DateTime<Utc>,
     enabled_extensions: EnabledExtensions,
     tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
-) -> Result<SourceIdentityRoutes, JsonLiteralError> {
+) -> Result<SourceIdentityRoutes, SourceIdentityRouteError> {
     Ok(SourceIdentityRoutes::new(SourceIdentityState::new(
-        identity.source_id.clone(), // clone: configuration and immutable route state own the identifier
+        Identifier::try_from(&identity.source_id)?,
         // Table 5.2.40-1: the configured alias is the default tenant's, and
         // every other tenant's is derived from it.
-        ContextSourceAliases::new(identity.source_alias.clone()), // clone: configuration and the alias family own the configured alias
+        ContextSourceAliases::new(ContextSourcePseudonym::try_from(&identity.source_alias)?),
         started_at,
-        identity.source_extras.clone(), // clone: configuration and immutable route state own the extras
+        identity.source_extras.as_ref().map(JsonLiteral::try_from).transpose()?,
         enabled_extensions,
         Arc::new(BrokerDefaultTenantContexts::new(Arc::clone(tenants))),
     )?))

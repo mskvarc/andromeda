@@ -215,3 +215,36 @@ fn a_same_named_type_of_another_module_is_not_counted() {
     let modules = [(parent, "pub struct Value;\n"), (child, "use crate::query::Value;\nfn f(v: Value) {}\n")];
     assert_eq!(reports_beside(&modules, child), Vec::<String>::new());
 }
+
+#[test]
+fn a_toml_table_or_value_in_production_code_is_reported() {
+    let source = "struct Section {\n    extras: toml::Table,\n    one: toml::Value,\n}\nfn walk(map: &toml::map::Map<String, toml::Value>) {}\n";
+    assert_eq!(
+        reports(OUTSIDE, source),
+        vec![
+            format!("{OUTSIDE}:2: toml::Table"),
+            format!("{OUTSIDE}:3: toml::Value"),
+            format!("{OUTSIDE}:5: toml::map::Map"),
+            format!("{OUTSIDE}:5: toml::Value"),
+        ]
+    );
+}
+
+#[test]
+fn toml_text_conversions_are_not_a_tree() {
+    let source = "fn render(section: &Section) -> Result<String, toml::ser::Error> { toml::to_string(section) }\n";
+    assert_eq!(reports(OUTSIDE, source), Vec::<String>::new());
+}
+
+#[test]
+fn the_toml_tree_is_admitted_only_in_the_source_extras_value() {
+    let source = "struct SourceExtras(toml::Table);\n";
+    assert_eq!(
+        reports("crates/andromeda-configuration/src/schema/source_extras.rs", source),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        reports("crates/andromeda-configuration/src/schema/server.rs", source),
+        vec!["crates/andromeda-configuration/src/schema/server.rs:1: toml::Table".to_owned()]
+    );
+}

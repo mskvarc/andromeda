@@ -52,6 +52,7 @@ pub mod unsupported_representation;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-http-headers",
         "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-geometry",

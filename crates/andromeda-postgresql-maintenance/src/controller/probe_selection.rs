@@ -81,7 +81,7 @@ mod tests {
         policy::PolicyProfile,
         state::target_record::IndexProbeState,
     };
-    use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
+    use andromeda_configuration::schema::maintenance::MaintenanceProfile;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
 

@@ -108,7 +108,7 @@ fn standing(state: Arc<EntityState>, at: DateTime<Utc>) -> Arc<EntityState> {
 )]
 mod tests {
     use crate::{
-        config::EntityConfig,
+        configured_policy::geometry_census_limits,
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
@@ -117,6 +117,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
+    use andromeda_configuration::schema::entity::EntityConfig;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
@@ -269,7 +270,7 @@ mod tests {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(None)
             .geo_admission(GeoQueryAdmission::new(
-                EntityConfig::default().geometry_census_limits(),
+                geometry_census_limits(&EntityConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

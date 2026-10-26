@@ -10,6 +10,7 @@
 //! size.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, tasks::temporal_sweep_failure::classify_sweep_failure};
+use andromeda_configuration::schema::temporal::TemporalConfig;
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
     columnstore_conversion::{ChunkConversion, ColumnstoreHorizon, ConversionCandidates},
@@ -27,7 +28,7 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use andromeda_temporal::config::TemporalConfig;
+use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use chrono::Utc;
 use std::{future::Future, sync::Arc};
 use tokio_util::sync::CancellationToken;
@@ -69,7 +70,7 @@ pub(super) fn register_columnstore_conversion(
         ColumnstoreSupport::Absent => return Ok(()),
         ColumnstoreSupport::Present => {}
     }
-    let horizon = ColumnstoreHorizon::of_days(config.storage_policy().map_err(AssemblyInvariant::from)?.columnstore_after_days);
+    let horizon = ColumnstoreHorizon::of_days(TemporalStoragePolicy::try_from(config).map_err(AssemblyInvariant::from)?.columnstore_after_days);
     let cadence = config.columnstore_sweep_interval.duration();
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("temporal-columnstore-conversion").map_err(AssemblyInvariant::from)?;

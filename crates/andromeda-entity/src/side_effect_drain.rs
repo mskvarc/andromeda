@@ -363,7 +363,7 @@ mod tests {
         NotificationWriteConfig,
         building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
         change_sink::EntityChangeSink,
-        config::PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY,
+        configured_policy::PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY,
         error::EntityError,
         side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
         side_effect_notification::SideEffectNotificationRoute,

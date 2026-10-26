@@ -8,7 +8,6 @@
 //! share nothing with these beyond the schedule helper.
 
 use crate::{
-    config::notifications::NotificationsConfig,
     linked_forwarding::LinkedForwarding,
     tenant_factory::{
         TenantFactoryConfig,
@@ -24,9 +23,14 @@ use crate::{
         },
     },
 };
+use andromeda_configuration::schema::notifications::NotificationsConfig;
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
-use andromeda_entity::query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource};
+use andromeda_entity::{
+    configured_policy::geometry_census_limits,
+    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
+};
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
@@ -88,9 +92,9 @@ pub(super) fn compose_notification_query(
             // from its stored form, admitted once when it was written, so neither a
             // lower limit nor the band switched off since refuses a stored
             // subscription.
-            .geo_admission(GeoQueryAdmission::new(config.entity.geometry_census_limits(), NearDistanceBand::Admitted))
+            .geo_admission(GeoQueryAdmission::new(geometry_census_limits(&config.entity), NearDistanceBand::Admitted))
             // A subscription's filters read under the broker's live mode.
-            .language_targeting(config.extensions.resolve().language_targeting())
+            .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
             .build(),
     )
 }

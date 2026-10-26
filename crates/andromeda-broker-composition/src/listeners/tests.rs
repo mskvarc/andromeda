@@ -1,15 +1,10 @@
 //! One request header section limit across the broker's three HTTP versions.
 
 use crate::listener_tls::SharedTlsIdentity;
-use andromeda_http_server::{
-    config::{ListenerTransport, ServerConfig},
-    execution::serve_bound,
-};
+use andromeda_configuration::schema::{listener_transport::ListenerTransport, server::ServerConfig, tls::TlsConfig};
+use andromeda_http_server::{close_policy::ClosePolicy, execution::serve_bound};
 use andromeda_http3_server::{endpoint, execution::serve_endpoint, quic_crypto::H3_ALPN};
-use andromeda_server_tls::{
-    config::TlsConfig,
-    test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
-};
+use andromeda_server_tls::test_identity::{authority::TestAuthority, identity_files::IdentityFiles};
 use axum::{Router, routing::get};
 use bytes::{Buf, Bytes};
 use h3::{
@@ -112,7 +107,7 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
         ..ServerConfig::default()
     };
     let limit = server.max_request_header_section;
-    let policy = server.close_policy();
+    let policy = ClosePolicy::from(&server);
     let mut identity = SharedTlsIdentity::new(&tls);
     let security = identity.tcp_security(ListenerTransport::Tls)?;
     let feed = identity.quic_feed()?;

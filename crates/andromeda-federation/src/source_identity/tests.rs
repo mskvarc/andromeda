@@ -1,6 +1,5 @@
 use crate::{
     FederationService,
-    config::FederationConfig,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_query::client_query::ClientQuery,
     mock_source::{answer_in_turn, endpoint, received},
@@ -9,6 +8,7 @@ use crate::{
     request::EntityMapInUse,
     source_identity::{ReachedSource, SourceConfiguration},
 };
+use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

@@ -26,8 +26,8 @@ use crate::{
     statement_statistics,
     timescale_observation,
 };
+use andromeda_configuration::schema::maintenance::{MaintenanceConfig, MaintenanceMode};
 use andromeda_postgresql_context_store::{
-    maintenance_config::{MaintenanceConfig, MaintenanceMode},
     schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract},
     tenant_database::DatabaseUrl,
 };

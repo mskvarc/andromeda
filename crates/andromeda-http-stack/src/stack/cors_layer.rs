@@ -1,6 +1,7 @@
 //! Mapping of the CORS configuration onto a `tower-http` CORS layer.
 
-use crate::config::cors::{CorsConfig, CorsHeaderName, CorsMethod, CorsMode, ExposeRule, HeaderRule, MethodRule, OriginRule};
+use crate::cors_tokens::{CorsTokenError, cors_header_name, cors_method};
+use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, ExposeRule, HeaderRule, MethodRule, OriginRule};
 use axum::http::HeaderValue;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, ExposeHeaders};
 use url::Url;
@@ -10,28 +11,33 @@ use url::Url;
 /// `permissive` and `very-permissive` return the corresponding complete profiles
 /// and ignore every custom field; `enabled` builds the layer from the custom
 /// fields; `disabled` installs nothing.
-pub(crate) fn build_cors_layer(config: &CorsConfig) -> Option<CorsLayer> {
-    match config.mode {
+///
+/// # Errors
+///
+/// Returns the [`CorsTokenError`] of a listed method or header name the HTTP
+/// layer cannot read.
+pub(crate) fn build_cors_layer(config: &CorsConfig) -> Result<Option<CorsLayer>, CorsTokenError> {
+    Ok(match config.mode {
         CorsMode::Disabled => None,
         CorsMode::Permissive => Some(CorsLayer::permissive()),
         CorsMode::VeryPermissive => Some(CorsLayer::very_permissive()),
-        CorsMode::Enabled => Some(build_enabled_cors_layer(config)),
-    }
+        CorsMode::Enabled => Some(build_enabled_cors_layer(config)?),
+    })
 }
 
 /// Assemble the custom CORS layer from the `enabled`-mode fields.
-fn build_enabled_cors_layer(config: &CorsConfig) -> CorsLayer {
+fn build_enabled_cors_layer(config: &CorsConfig) -> Result<CorsLayer, CorsTokenError> {
     let mut layer = CorsLayer::new()
         .allow_origin(origin_rule(&config.allow_origins))
-        .allow_methods(method_rule(&config.allow_methods))
-        .allow_headers(header_rule(&config.allow_headers))
-        .expose_headers(expose_rule(&config.expose_headers))
+        .allow_methods(method_rule(&config.allow_methods)?)
+        .allow_headers(header_rule(&config.allow_headers)?)
+        .expose_headers(expose_rule(&config.expose_headers)?)
         .allow_credentials(config.allow_credentials)
         .allow_private_network(config.allow_private_network);
     if let Some(max_age) = config.max_age {
         layer = layer.max_age(max_age.duration());
     }
-    layer
+    Ok(layer)
 }
 
 /// Translate an origin rule into the layer's origin policy.
@@ -43,29 +49,29 @@ fn origin_rule(rule: &OriginRule) -> AllowOrigin {
 }
 
 /// Translate a method rule into the layer's method policy.
-fn method_rule(rule: &MethodRule) -> AllowMethods {
-    match rule {
+fn method_rule(rule: &MethodRule) -> Result<AllowMethods, CorsTokenError> {
+    Ok(match rule {
         MethodRule::Any => AllowMethods::any(),
         MethodRule::Mirror => AllowMethods::mirror_request(),
-        MethodRule::List(methods) => AllowMethods::list(methods.iter().map(CorsMethod::method)),
-    }
+        MethodRule::List(methods) => AllowMethods::list(methods.iter().map(cors_method).collect::<Result<Vec<_>, _>>()?),
+    })
 }
 
 /// Translate a request-header rule into the layer's allowed-header policy.
-fn header_rule(rule: &HeaderRule) -> AllowHeaders {
-    match rule {
+fn header_rule(rule: &HeaderRule) -> Result<AllowHeaders, CorsTokenError> {
+    Ok(match rule {
         HeaderRule::Any => AllowHeaders::any(),
         HeaderRule::Mirror => AllowHeaders::mirror_request(),
-        HeaderRule::List(headers) => AllowHeaders::list(headers.iter().map(CorsHeaderName::header_name)),
-    }
+        HeaderRule::List(headers) => AllowHeaders::list(headers.iter().map(cors_header_name).collect::<Result<Vec<_>, _>>()?),
+    })
 }
 
 /// Translate an expose rule into the layer's exposed-header policy.
-fn expose_rule(rule: &ExposeRule) -> ExposeHeaders {
-    match rule {
+fn expose_rule(rule: &ExposeRule) -> Result<ExposeHeaders, CorsTokenError> {
+    Ok(match rule {
         ExposeRule::Any => ExposeHeaders::any(),
-        ExposeRule::List(headers) => ExposeHeaders::list(headers.iter().map(CorsHeaderName::header_name)),
-    }
+        ExposeRule::List(headers) => ExposeHeaders::list(headers.iter().map(cors_header_name).collect::<Result<Vec<_>, _>>()?),
+    })
 }
 
 /// The ASCII serialisation of a URL's origin as a header value.
@@ -82,10 +88,8 @@ fn origin_header_value(url: &Url) -> Option<HeaderValue> {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        config::cors::{CorsConfig, CorsMode, HeaderRule, MethodRule, OriginRule},
-        stack::cors_layer::build_cors_layer,
-    };
+    use crate::stack::cors_layer::build_cors_layer;
+    use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, HeaderRule, MethodRule, OriginRule};
 
     #[test]
     fn cors_disabled_builds_no_layer() {
@@ -93,7 +97,7 @@ mod tests {
             mode: CorsMode::Disabled,
             ..CorsConfig::default()
         };
-        assert!(build_cors_layer(&config).is_none());
+        assert!(build_cors_layer(&config).expect("a readable policy").is_none());
     }
 
     #[test]
@@ -106,7 +110,7 @@ mod tests {
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };
-        assert!(build_cors_layer(&config).is_some());
+        assert!(build_cors_layer(&config).expect("a readable policy").is_some());
     }
 
     #[test]
@@ -117,7 +121,7 @@ mod tests {
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };
-        assert!(build_cors_layer(&config).is_some());
+        assert!(build_cors_layer(&config).expect("a readable policy").is_some());
     }
 
     #[test]
@@ -137,6 +141,6 @@ allow_private_network = false
         assert!(matches!(config.allow_origins, OriginRule::List(_)));
         assert!(matches!(config.allow_methods, MethodRule::List(_)));
         assert!(matches!(config.allow_headers, HeaderRule::List(_)));
-        assert!(build_cors_layer(&config).is_some());
+        assert!(build_cors_layer(&config).expect("a readable policy").is_some());
     }
 }

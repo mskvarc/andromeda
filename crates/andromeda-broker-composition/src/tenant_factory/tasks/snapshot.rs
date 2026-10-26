@@ -5,8 +5,8 @@ use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
     tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError},
 };
+use andromeda_configuration::schema::delivery::DeliveryConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
-use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_context_store::snapshot::status_outbox::SnapshotStatusOutbox;
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{

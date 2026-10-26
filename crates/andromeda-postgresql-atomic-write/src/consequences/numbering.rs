@@ -5,6 +5,7 @@ use crate::{
     consequences::notification_events::{self, EventGroup},
     history_interpretation::interpret,
 };
+use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_invariant::CommitInvariant,
@@ -12,7 +13,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_temporal::{append_intent::TemporalAppendIntent, core_write_history::CoreWriteHistory};
+use andromeda_temporal::append_intent::TemporalAppendIntent;
 
 /// Every consequence one commit's landed writes owe, numbered.
 ///
@@ -63,6 +64,7 @@ pub(crate) fn number_consequences<'a>(
 )]
 mod tests {
     use crate::consequences::numbering::{NumberedConsequences, number_consequences};
+    use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         batch_side_effect_job::BatchSideEffectJob,
@@ -81,7 +83,6 @@ mod tests {
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
     };
-    use andromeda_temporal::core_write_history::CoreWriteHistory;
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;

@@ -43,6 +43,7 @@ pub mod transport;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-health",
         "andromeda-http-headers",
         "andromeda-json-literal",

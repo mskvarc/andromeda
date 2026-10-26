@@ -74,6 +74,7 @@ pub mod vacuum_horizon;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-context-space",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-postgresql-branch",

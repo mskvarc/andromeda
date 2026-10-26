@@ -17,7 +17,6 @@ mod wake;
 
 use crate::{
     administration::TenantAdministration,
-    config::TenancyConfig,
     database::TenantDatabase,
     error::TenancyError,
     lifecycle::TenantLifecycle,
@@ -36,6 +35,7 @@ use crate::{
     wake_schedule::TenantWakeSchedule,
     waker::WakerPolicy,
 };
+use andromeda_configuration::schema::tenancy::TenancyConfig;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::set_runtimes_cached;
 use async_trait::async_trait;

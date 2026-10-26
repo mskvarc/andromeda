@@ -1,9 +1,7 @@
 //! Loading the broker's identity and client trust anchors from PEM files.
 
-use crate::{
-    crypto_provider::broker_crypto_provider,
-    material_sources::{ClientTrust, TlsMaterialSources},
-};
+use crate::crypto_provider::broker_crypto_provider;
+use andromeda_configuration::schema::tls_material_sources::{ClientTrust, TlsMaterialSources};
 use rustls::{RootCertStore, sign::CertifiedKey};
 use rustls_pki_types::{
     CertificateDer,
@@ -229,16 +227,23 @@ fn load_client_roots(path: &Path) -> Result<RootCertStore, TlsMaterialError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        material_sources::{ClientTrust, TlsMaterialSources},
         pem_material::{ClientVerification, MaterialChange, TlsMaterial, TlsMaterialError, load_certificate_chain, load_client_roots, load_private_key},
         test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
-    use std::{borrow::Cow, error::Error, fs, path::Path};
+    use andromeda_configuration::schema::tls::{ClientAuthentication, TlsConfig};
+    use std::{error::Error, fs, path::Path};
     use tempfile::TempDir;
 
-    /// Sources naming the key pair in `files`, with client trust as given.
-    fn sources_of<'files>(files: &'files IdentityFiles, client_trust: ClientTrust<'files>) -> TlsMaterialSources<'files> {
-        TlsMaterialSources::new(Cow::Borrowed(files.certificate_path()), Cow::Borrowed(files.private_key_path()), client_trust)
+    /// A `[tls]` section naming the key pair in `files`, requiring client
+    /// certificates chained to `client_ca` when one is given.
+    fn section_of(files: &IdentityFiles, client_ca: Option<&Path>) -> TlsConfig {
+        TlsConfig {
+            certificate_path: files.certificate_path().to_path_buf(),
+            private_key_path: files.private_key_path().to_path_buf(),
+            client_authentication: client_ca.map_or(ClientAuthentication::None, |_| ClientAuthentication::Required),
+            client_ca_path: client_ca.map(Path::to_path_buf).unwrap_or_default(),
+            ..TlsConfig::default()
+        }
     }
 
     #[test]
@@ -274,7 +279,7 @@ mod tests {
     fn a_self_signed_pair_loads() -> Result<(), Box<dyn Error>> {
         let identity = TestAuthority::generate()?.issue_server_identity()?;
         let files = IdentityFiles::write(&identity)?;
-        let material = TlsMaterial::load(&sources_of(&files, ClientTrust::Anonymous))?;
+        let material = TlsMaterial::load(&section_of(&files, None).material_sources()?)?;
         pretty_assertions::assert_eq!(material.leaf(), Some(identity.certificate()));
         assert!(matches!(material.client_verification(), ClientVerification::Anonymous));
         Ok(())
@@ -287,7 +292,7 @@ mod tests {
         let second = authority.issue_server_identity()?;
         let files = IdentityFiles::write(&first)?;
         fs::write(files.private_key_path(), second.private_key_pem())?;
-        let error = TlsMaterial::load(&sources_of(&files, ClientTrust::Anonymous)).map(|_| ());
+        let error = TlsMaterial::load(&section_of(&files, None).material_sources()?).map(|_| ());
         assert!(matches!(error, Err(TlsMaterialError::Identity(_))), "{error:?}");
         Ok(())
     }
@@ -307,7 +312,7 @@ mod tests {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
         let bundle = files.write_client_ca(&authority)?;
-        let material = TlsMaterial::load(&sources_of(&files, ClientTrust::Required(Cow::Borrowed(&bundle))))?;
+        let material = TlsMaterial::load(&section_of(&files, Some(&bundle)).material_sources()?)?;
         assert!(matches!(material.client_verification(), ClientVerification::Required(roots) if roots.len() == 1));
         Ok(())
     }
@@ -316,7 +321,8 @@ mod tests {
     fn reloading_the_same_files_is_unchanged_and_a_new_pair_is_a_change() -> Result<(), Box<dyn Error>> {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
-        let sources = sources_of(&files, ClientTrust::Anonymous);
+        let section = section_of(&files, None);
+        let sources = section.material_sources()?;
         let first = TlsMaterial::load(&sources)?;
         pretty_assertions::assert_eq!(TlsMaterial::load(&sources)?.change_from(&first), MaterialChange::Unchanged);
         files.replace(&authority.issue_server_identity()?)?;

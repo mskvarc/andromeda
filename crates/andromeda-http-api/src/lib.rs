@@ -29,6 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-configuration",
         "andromeda-extensions",
         "andromeda-health",
         "andromeda-http-headers",

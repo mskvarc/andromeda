@@ -27,7 +27,6 @@
 pub mod accept;
 pub mod alt_svc;
 pub mod api_root_scheme;
-pub mod forwarded_header_trust;
 pub mod forwarded_protocol;
 pub mod geo_json_body;
 pub mod json_ld_accept;
@@ -54,6 +53,7 @@ pub mod x_request_id;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",

@@ -4,7 +4,6 @@ use crate::{
     FederationService,
     answer_reading::{ReceivedAnswer, received_answer},
     cache::Cacheability,
-    config::SplitEntities,
     error::FederationError,
     forwarded_batch_query::batch_query,
     forwarded_parameter::ForwardedParameter,
@@ -19,6 +18,7 @@ use crate::{
     registration_narrowing::Narrowing,
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     source_walk::SOURCE_PAGE_SIZE,
+    split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;

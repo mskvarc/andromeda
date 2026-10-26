@@ -41,7 +41,7 @@ use andromeda_entity::query::{
     entity_versions::{VersionRead, held_version},
 };
 use andromeda_entity_map::recording::PageMatches;
-use andromeda_federation::config::SplitEntities;
+use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};

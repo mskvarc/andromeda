@@ -56,7 +56,7 @@
 
 pub mod batch_contexts;
 pub mod compound_context_host;
-pub mod config;
+pub mod configured_engine;
 pub mod container_terms;
 pub mod context_cache;
 pub mod context_graph;
@@ -92,7 +92,7 @@ pub mod user_context_admission;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-ngsi-ld-lexicon",

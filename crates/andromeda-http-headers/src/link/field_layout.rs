@@ -15,89 +15,66 @@
 //! every parameter kept as it was written.
 
 use crate::link::{header::Link, quoting::SplitAsciiUnquoted, relation_type::RelationType, value::LinkValue};
+use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use http::{HeaderMap, HeaderValue, header::LINK};
-use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
 
-/// How the link-values of one message are laid out over `Link` field lines.
+/// Lay the `Link` field lines of `headers` out as `layout` asks.
 ///
-/// Whatever the layout, the link-values keep one order: the JSON-LD `@context`
-/// link first, then the pagination links as `first`, `prev`, `next`, `last`,
-/// then every other link-value in the order it was written.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum LinkFieldLayout {
-    /// Every link-value on one field line, separated by `, `.
-    #[default]
-    Combined,
-    /// One field line per concern: the `@context` link, the pagination links,
-    /// and every other link-value, each concern that is present on its own line.
-    Grouped,
-    /// Every link-value on its own field line.
-    Separate,
+/// Field lines that are not visible ASCII cannot be split into link-values,
+/// so a message carrying one keeps its `Link` field lines as they are.
+pub fn apply_link_field_layout(layout: LinkFieldLayout, headers: &mut HeaderMap) {
+    let Some(lines) = field_lines(layout, headers.get_all(LINK).iter()) else {
+        return;
+    };
+    headers.remove(LINK);
+    for line in lines {
+        headers.append(LINK, line);
+    }
 }
 
-impl LinkFieldLayout {
-    /// Lay the `Link` field lines of `headers` out as this layout asks.
-    ///
-    /// Field lines that are not visible ASCII cannot be split into link-values,
-    /// so a message carrying one keeps its `Link` field lines as they are.
-    pub fn apply(self, headers: &mut HeaderMap) {
-        let Some(lines) = self.field_lines(headers.get_all(LINK).iter()) else {
-            return;
-        };
-        headers.remove(LINK);
-        for line in lines {
-            headers.append(LINK, line);
-        }
+/// The field lines `layout` makes of `lines`, or `None` when they are left as
+/// they are: there is no `Link` field, a line is not visible ASCII, or a
+/// laid-out line does not encode.
+fn field_lines<'a>(layout: LinkFieldLayout, lines: impl Iterator<Item = &'a HeaderValue>) -> Option<Vec<HeaderValue>> {
+    let mut values = lines
+        .map(|line| line.to_str().ok().map(link_values))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .map(|raw| (FieldPosition::of(raw), raw))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
     }
+    // Stable, so link-values of one position keep the order they were written in.
+    values.sort_by_key(|(position, _)| *position);
+    let values = values;
+    let groups: Vec<Vec<&str>> = match layout {
+        LinkFieldLayout::Combined => vec![values.iter().map(|(_, raw)| *raw).collect()],
+        LinkFieldLayout::Grouped => values
+            .chunk_by(|(left, _), (right, _)| left.concern() == right.concern())
+            .map(|chunk| chunk.iter().map(|(_, raw)| *raw).collect())
+            .collect(),
+        LinkFieldLayout::Separate => values.iter().map(|(_, raw)| vec![*raw]).collect(),
+    };
+    groups.iter().map(|group| HeaderValue::from_str(&group.join(", ")).ok()).collect()
+}
 
-    /// The field lines this layout makes of `lines`, or `None` when they are
-    /// left as they are: there is no `Link` field, a line is not visible ASCII,
-    /// or a laid-out line does not encode.
-    fn field_lines<'a>(self, lines: impl Iterator<Item = &'a HeaderValue>) -> Option<Vec<HeaderValue>> {
-        let mut values = lines
-            .map(|line| line.to_str().ok().map(link_values))
-            .collect::<Option<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .map(|raw| (FieldPosition::of(raw), raw))
-            .collect::<Vec<_>>();
-        if values.is_empty() {
-            return None;
-        }
-        // Stable, so link-values of one position keep the order they were written in.
-        values.sort_by_key(|(position, _)| *position);
-        let values = values;
-        let groups: Vec<Vec<&str>> = match self {
-            LinkFieldLayout::Combined => vec![values.iter().map(|(_, raw)| *raw).collect()],
-            LinkFieldLayout::Grouped => values
-                .chunk_by(|(left, _), (right, _)| left.concern() == right.concern())
-                .map(|chunk| chunk.iter().map(|(_, raw)| *raw).collect())
-                .collect(),
-            LinkFieldLayout::Separate => values.iter().map(|(_, raw)| vec![*raw]).collect(),
-        };
-        groups.iter().map(|group| HeaderValue::from_str(&group.join(", ")).ok()).collect()
-    }
-
-    /// Join `lines`, each a `Link` field value, into the one field value a
-    /// carrier holding a single `Link` member writes, in the order every layout
-    /// keeps.
-    ///
-    /// A carrier with one slot per name, such as the metadata object of an MQTT
-    /// notification, cannot hold several `Link` lines, so it is always combined.
-    #[must_use]
-    pub fn combined_value<'a>(lines: impl IntoIterator<Item = &'a str>) -> Option<String> {
-        let mut values = lines
-            .into_iter()
-            .flat_map(link_values)
-            .map(|raw| (FieldPosition::of(raw), raw))
-            .collect::<Vec<_>>();
-        values.sort_by_key(|(position, _)| *position);
-        let values = values;
-        (!values.is_empty()).then(|| values.iter().map(|(_, raw)| *raw).collect::<Vec<_>>().join(", "))
-    }
+/// Join `lines`, each a `Link` field value, into the one field value a carrier
+/// holding a single `Link` member writes, in the order every layout keeps.
+///
+/// A carrier with one slot per name, such as the metadata object of an MQTT
+/// notification, cannot hold several `Link` lines, so it is always combined.
+#[must_use]
+pub fn combined_link_value<'a>(lines: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut values = lines
+        .into_iter()
+        .flat_map(link_values)
+        .map(|raw| (FieldPosition::of(raw), raw))
+        .collect::<Vec<_>>();
+    values.sort_by_key(|(position, _)| *position);
+    let values = values;
+    (!values.is_empty()).then(|| values.iter().map(|(_, raw)| *raw).collect::<Vec<_>>().join(", "))
 }
 
 /// The link-values of one field line, trimmed, with RFC 9110 section 5.6.1's
@@ -176,7 +153,8 @@ impl FieldPosition {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::link::field_layout::LinkFieldLayout;
+    use crate::link::field_layout::{apply_link_field_layout, combined_link_value};
+    use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
     use http::{HeaderMap, HeaderValue, header::LINK};
 
     const CONTEXT: &str = r#"<https://example.org/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#;
@@ -210,7 +188,7 @@ mod tests {
     fn combined_joins_every_link_value_into_one_line_context_first_then_first_prev_next_last() {
         let mut headers = context_and_pagination();
 
-        LinkFieldLayout::Combined.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Combined, &mut headers);
 
         pretty_assertions::assert_eq!(lines(&headers), vec![[CONTEXT, FIRST, PREV, NEXT, LAST].join(", ").as_str()]);
     }
@@ -219,7 +197,7 @@ mod tests {
     fn grouped_writes_the_context_and_the_pagination_links_on_a_line_each() {
         let mut headers = context_and_pagination();
 
-        LinkFieldLayout::Grouped.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Grouped, &mut headers);
 
         pretty_assertions::assert_eq!(lines(&headers), vec![CONTEXT, [FIRST, PREV, NEXT, LAST].join(", ").as_str()]);
     }
@@ -228,7 +206,7 @@ mod tests {
     fn separate_writes_every_link_value_on_its_own_line() {
         let mut headers = context_and_pagination();
 
-        LinkFieldLayout::Separate.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Separate, &mut headers);
 
         pretty_assertions::assert_eq!(lines(&headers), vec![CONTEXT, FIRST, PREV, NEXT, LAST]);
     }
@@ -238,11 +216,11 @@ mod tests {
     #[test]
     fn another_link_value_follows_the_pagination_links_with_its_parameters_unchanged() {
         let mut combined = headers_with(&[OTHER, NEXT, CONTEXT]);
-        LinkFieldLayout::Combined.apply(&mut combined);
+        apply_link_field_layout(LinkFieldLayout::Combined, &mut combined);
         pretty_assertions::assert_eq!(lines(&combined), vec![[CONTEXT, NEXT, OTHER].join(", ").as_str()]);
 
         let mut grouped = headers_with(&[OTHER, NEXT, CONTEXT]);
-        LinkFieldLayout::Grouped.apply(&mut grouped);
+        apply_link_field_layout(LinkFieldLayout::Grouped, &mut grouped);
         pretty_assertions::assert_eq!(lines(&grouped), vec![CONTEXT, NEXT, OTHER]);
     }
 
@@ -250,7 +228,7 @@ mod tests {
     fn a_message_without_a_link_field_is_left_without_one() {
         let mut headers = HeaderMap::new();
 
-        LinkFieldLayout::Combined.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Combined, &mut headers);
 
         assert!(headers.get(LINK).is_none());
     }
@@ -261,7 +239,7 @@ mod tests {
         for layout in [LinkFieldLayout::Combined, LinkFieldLayout::Grouped, LinkFieldLayout::Separate] {
             let mut headers = headers_with(&[CONTEXT]);
 
-            layout.apply(&mut headers);
+            apply_link_field_layout(layout, &mut headers);
 
             pretty_assertions::assert_eq!(lines(&headers), vec![CONTEXT], "{layout}");
         }
@@ -271,7 +249,7 @@ mod tests {
     fn a_value_that_does_not_parse_as_a_link_is_kept_after_the_ones_that_do() {
         let mut headers = headers_with(&["not a link", NEXT]);
 
-        LinkFieldLayout::Combined.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Combined, &mut headers);
 
         pretty_assertions::assert_eq!(lines(&headers), vec![[NEXT, "not a link"].join(", ").as_str()]);
     }
@@ -284,27 +262,14 @@ mod tests {
             HeaderValue::from_bytes(b"<https://example.org/\xe9>").expect("obs-text is a valid field value"),
         );
 
-        LinkFieldLayout::Combined.apply(&mut headers);
+        apply_link_field_layout(LinkFieldLayout::Combined, &mut headers);
 
         pretty_assertions::assert_eq!(headers.get_all(LINK).iter().count(), 2);
     }
 
     #[test]
     fn combined_value_orders_the_context_link_before_one_written_ahead_of_it() {
-        pretty_assertions::assert_eq!(LinkFieldLayout::combined_value([OTHER, CONTEXT]), Some([CONTEXT, OTHER].join(", ")));
-        pretty_assertions::assert_eq!(LinkFieldLayout::combined_value([]), None);
-    }
-
-    #[test]
-    fn the_layout_round_trips_through_its_kebab_case_token() {
-        for (layout, token) in [
-            (LinkFieldLayout::Combined, "combined"),
-            (LinkFieldLayout::Grouped, "grouped"),
-            (LinkFieldLayout::Separate, "separate"),
-        ] {
-            pretty_assertions::assert_eq!(layout.to_string(), token);
-            pretty_assertions::assert_eq!(token.parse::<LinkFieldLayout>().expect("a layout token"), layout);
-        }
-        pretty_assertions::assert_eq!(LinkFieldLayout::default(), LinkFieldLayout::Combined);
+        pretty_assertions::assert_eq!(combined_link_value([OTHER, CONTEXT]), Some([CONTEXT, OTHER].join(", ")));
+        pretty_assertions::assert_eq!(combined_link_value([]), None);
     }
 }

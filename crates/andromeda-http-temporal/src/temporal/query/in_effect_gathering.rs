@@ -21,9 +21,9 @@ use crate::temporal::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::{
-    config::SplitEntities,
     in_effect_probe::{InEffectProbe, InEffectReading},
     outcome::ForwardedTemporalEntities,
+    split_entities::SplitEntities,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;

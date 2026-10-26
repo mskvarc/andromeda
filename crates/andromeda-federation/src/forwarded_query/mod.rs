@@ -15,7 +15,6 @@
 //! to the aggregated result.
 
 use crate::{
-    config::SplitEntities,
     error::FederationError,
     forwarded_names::ForwardedNames,
     forwarded_parameter::ForwardedParameter,
@@ -25,6 +24,7 @@ use crate::{
     },
     request::{SourcePage, TemporalAnswer},
     source_walk::SOURCE_PAGE_SIZE,
+    split_entities::SplitEntities,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -338,7 +338,6 @@ impl ForwardedQuery {
 )]
 mod tests {
     use crate::{
-        config::SplitEntities,
         forwarded_names::ForwardedNames,
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{
@@ -347,6 +346,7 @@ mod tests {
         },
         forwarding_context::Rewording,
         request::{SourcePage, TemporalAnswer},
+        split_entities::SplitEntities,
         term_resolver::TermResolver,
     };
     use andromeda_json_literal::JsonLiteral;

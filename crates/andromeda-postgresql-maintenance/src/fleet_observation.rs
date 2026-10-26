@@ -16,6 +16,7 @@ use crate::{
     state::TenantKey,
     unvisited_database::{DatabaseName, UnvisitedDatabase, UnvisitedRegistration},
 };
+use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::{
@@ -27,7 +28,6 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
 };
 use andromeda_telemetry::maintenance::{FreezePressureLevel, record_fleet_freeze};
-use andromeda_tenancy::db_name_prefix::DbNamePrefix;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};

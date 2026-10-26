@@ -3,7 +3,6 @@
 use crate::{
     FederationService,
     cache::Cacheability,
-    config::SplitEntities,
     entity_read::own_loop_warning,
     error::FederationError,
     forwarded_query::client_query::ClientQuery,
@@ -16,6 +15,7 @@ use crate::{
     received_temporal_answer::ReceivedTemporalAnswer,
     registration_narrowing::Narrowing,
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, SourcePaging},
+    split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;

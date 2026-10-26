@@ -9,10 +9,10 @@
 //! material keeps being served: a broken rotation must never take a working
 //! listener down.
 
-use crate::{
-    config::{MinimumProtocolVersion, TlsConfig, TlsConfigError},
-    material_sources::TlsMaterialSources,
-    pem_material::{MaterialChange, TlsMaterial, TlsMaterialError},
+use crate::pem_material::{MaterialChange, TlsMaterial, TlsMaterialError};
+use andromeda_configuration::schema::{
+    tls::{MinimumProtocolVersion, TlsConfig, TlsConfigError},
+    tls_material_sources::TlsMaterialSources,
 };
 use notify_debouncer_full::{
     DebounceEventHandler,
@@ -158,12 +158,11 @@ impl DebounceEventHandler for MaterialReloader {
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::TlsConfig,
         material_watch::{TlsMaterialWatch, TlsWatchError},
         pem_material::TlsMaterialError,
         test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},
     };
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use andromeda_configuration::{human_duration::HumanDuration, schema::tls::TlsConfig};
     use rustls_pki_types::CertificateDer;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;

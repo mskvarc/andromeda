@@ -5,8 +5,6 @@
 /// Whether a Snapshot's stored branch can be served by this binary.
 pub mod branch_condition;
 /// Snapshot operation configuration.
-pub mod config;
-
 pub mod error;
 pub mod executor;
 pub mod expiry;
@@ -36,7 +34,6 @@ mod store_double;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-entity",

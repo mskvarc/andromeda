@@ -13,11 +13,10 @@ mod attribute_coverage;
 /// Cached forwarded GET responses (clause 6.3.17).
 pub mod cache;
 /// Federation operation configuration.
-pub mod config;
 /// Cooldown windows after failed forwarded requests, by endpoint and by registration (Table 5.2.34-1).
 pub mod cooldown;
 /// The broker's own cooldown after a failed forwarded request (Table 5.2.34-1, clause 6.3.17).
-mod cooldown_policy;
+pub mod cooldown_policy;
 /// Context-source discovery request execution.
 pub mod discovery;
 /// The warnings of a discovery answer that is not merged in full.
@@ -154,6 +153,7 @@ mod source_read;
 mod source_read_warning;
 /// Walking every page of a source's answer to a forwarded query.
 pub mod source_walk;
+pub mod split_entities;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
 /// Temporal query and retrieve execution.
@@ -171,14 +171,15 @@ mod write_answer;
 
 use crate::{
     cache::ForwardedGetCache,
-    config::{FederationConfig, SplitEntities, SplitEntitiesDefault},
     cooldown::CooldownRegistry,
     cooldown_policy::CooldownPolicy,
     error::FederationError,
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
     source_identity::SourceIdentityCache,
+    split_entities::{SplitEntities, resolve_split_entities},
 };
+use andromeda_configuration::schema::federation::{FederationConfig, SplitEntitiesDefault};
 use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
@@ -300,7 +301,7 @@ impl FederationService {
     /// deployment default (clauses 4.3.6.7 and 5.2.12).
     #[must_use]
     pub const fn split_entities(&self, explicit: Option<bool>) -> SplitEntities {
-        self.split_entities_default.resolve(explicit)
+        resolve_split_entities(self.split_entities_default, explicit)
     }
 
     /// The JSON-LD engine forwarding expands and compacts with.
@@ -349,7 +350,7 @@ mod tests;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-configuration-scalars",
+        "andromeda-configuration",
         "andromeda-context-space",
         "andromeda-entity-map",
         "andromeda-http-headers",

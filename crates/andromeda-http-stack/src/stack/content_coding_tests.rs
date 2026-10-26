@@ -1,11 +1,11 @@
 //! Every content coding through the built process stack, on request bodies the
 //! stack decodes and on responses it encodes (RFC 9110 section 8.4).
 
-use crate::{
-    config::{HttpStackConfig, content_coding::ContentCoding},
-    stack::HttpStack,
+use crate::stack::HttpStack;
+use andromeda_configuration::{
+    human_byte_size::HumanByteSize,
+    schema::{content_coding::ContentCoding, http::HttpStackConfig},
 };
-use andromeda_configuration_scalars::human_byte_size::HumanByteSize;
 use andromeda_http_extraction::request_payload::RequestPayload;
 use axum::{
     Router,

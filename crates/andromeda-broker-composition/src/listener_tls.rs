@@ -8,14 +8,11 @@
 //! identity is loaded only if some listener asks for it, so a plaintext broker
 //! behind a reverse proxy never reads a certificate.
 
+use andromeda_configuration::schema::{listener_transport::ListenerTransport, tls::TlsConfig};
 use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
-use andromeda_http_server::{
-    config::ListenerTransport,
-    listener_security::{ListenerSecurity, TCP_HANDSHAKE_POLICY},
-};
+use andromeda_http_server::listener_security::{ListenerSecurity, TCP_HANDSHAKE_POLICY};
 use andromeda_http3_server::quic_crypto::QUIC_HANDSHAKE_POLICY;
 use andromeda_server_tls::{
-    config::TlsConfig,
     handshake_policy::HandshakeConfigError,
     material_watch::{TlsMaterialWatch, TlsWatchError},
     server_config_feed::ServerConfigFeed,
@@ -98,9 +95,9 @@ pub const fn listener_scheme(transport: ListenerTransport) -> ListenerScheme {
 #[cfg(test)]
 mod tests {
     use crate::listener_tls::{SharedTlsIdentity, listener_scheme};
+    use andromeda_configuration::schema::{listener_transport::ListenerTransport, tls::TlsConfig};
     use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
-    use andromeda_http_server::{config::ListenerTransport, listener_security::ListenerSecurity};
-    use andromeda_server_tls::config::TlsConfig;
+    use andromeda_http_server::listener_security::ListenerSecurity;
     use http::{Request, Response};
     use std::{convert::Infallible, error::Error};
     use tower::{Layer, ServiceExt, service_fn};
