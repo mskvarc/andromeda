@@ -55,6 +55,8 @@ impl ReceiverEndpoint {
             notifier_info: None,
             cooldown: None,
             timeout: None,
+            created_at: (),
+            modified_at: (),
         }
     }
 }

@@ -21,7 +21,14 @@
 //! modified in update operations", cannot be deleted, so the Null for one of
 //! them is a value outside its data type (clause 5.5.4). The members the broker
 //! generates (`status`, `createdAt`, `modifiedAt`) are not part of the body and
-//! are ignored when a client sends them.
+//! are ignored when a client sends them, whatever they hold.
+//!
+//! Tables 5.2.12-1 and 5.2.12-2 define the Subscription in full and give it no
+//! place to keep a member they do not name, so a body naming one is refused
+//! rather than stored without it. That is Andromeda's own bound, stricter than
+//! the clause: it stops a misspelt `watchedAttributes` from becoming a
+//! subscription that watches every attribute. A user `@context` term that
+//! aliases a member is that member, as JSON-LD expansion requires.
 
 use crate::{
     attribute_name_csv,
@@ -30,6 +37,7 @@ use crate::{
     clearable_parsed,
     clearable_timestamp,
     delivery_seconds,
+    ignored_member,
     notification::NotificationTrigger,
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
@@ -47,7 +55,7 @@ use typed_builder::TypedBuilder;
 
 /// A Subscription create body or update fragment (Table 5.2.12-1).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[builder(field_defaults(default = Default::default()))]
 pub struct SubscriptionRequest {
     /// Subscription identifier (clause 5.2.12: a URI, not necessarily an
@@ -173,6 +181,18 @@ pub struct SubscriptionRequest {
         serialize_with = "clearable_parsed::serialize"
     )]
     pub ngsild_conformance: Clearable<SpecVersion>,
+    /// The generated `status` (Table 5.2.12-2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub status: (),
+    /// The generated `createdAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub created_at: (),
+    /// The generated `modifiedAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub modified_at: (),
 }
 
 impl RequestBody for SubscriptionRequest {}
@@ -245,6 +265,9 @@ impl SubscriptionRequest {
             local_only,
             split_entities,
             ngsild_conformance,
+            status: (),
+            created_at: (),
+            modified_at: (),
         } = self;
         subscription_name.is_absent()
             && description.is_absent()
@@ -511,6 +534,26 @@ mod tests {
     #[test]
     fn generated_members_are_ignored() {
         let request = decode(&json!({"status": "paused", "createdAt": "2024-01-01T00:00:00Z", "modifiedAt": "2024-01-01T00:00:00Z"}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&request).expect("the request writes"), json!({}));
+    }
+
+    /// Table 5.2.12-1 defines the Subscription in full: a misspelt member and
+    /// an extension member are refused naming the member.
+    #[test]
+    fn an_unknown_member_is_refused_naming_it() {
+        for member in ["watchedAtributes", "priority"] {
+            let body = json!({ member: ["speed"] });
+            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+                .expect_err("an unknown member is refused");
+            assert!(error.to_string().contains(&format!("unknown field `{member}`")), "{member}: got {error}");
+        }
+    }
+
+    /// Table 5.2.12-2 and clause 5.2.2: the generated members are accepted
+    /// whatever they hold, and never written back.
+    #[test]
+    fn the_generated_members_are_accepted_whatever_they_hold() {
+        let request = decode(&json!({"status": 5, "createdAt": null, "modifiedAt": [true]}));
         pretty_assertions::assert_eq!(serde_json::to_value(&request).expect("the request writes"), json!({}));
     }
 

@@ -6,9 +6,14 @@
 //! with its names expanded, so the member a client sends is not the
 //! [`NotificationParams`] the broker stores. The output-only members of Table
 //! 5.2.14.2-1 (`timesSent`, `lastNotification`, ...) are accepted and ignored
-//! as clause 5.8.2.4 requires: the broker supplies them on every read.
+//! as clause 5.8.2.4 requires: the broker supplies them on every read. Table
+//! 5.2.14.1-1 defines the member in full, so any other member is refused, as in
+//! the Subscription that holds it.
 
-use crate::subscription::{Endpoint, NotificationParams};
+use crate::{
+    ignored_member,
+    subscription::{Endpoint, NotificationParams},
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -29,7 +34,7 @@ pub enum NotificationRequestError {
 /// A Subscription's notification parameters as a request writes them.
 #[serde_as]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[builder(field_defaults(default = Default::default()))]
 pub struct NotificationRequest {
     /// Attributes to include in notifications (empty means all).
@@ -63,6 +68,38 @@ pub struct NotificationRequest {
     /// Maximum depth for linked entity joins (clause 4.5.23 `joinLevel`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join_level: Option<NonZeroU32>,
+    /// The generated `status` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub status: (),
+    /// The generated `timesSent` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub times_sent: (),
+    /// The generated `timesFailed` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub times_failed: (),
+    /// The generated `lastNotification` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub last_notification: (),
+    /// The generated `lastSuccess` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub last_success: (),
+    /// The generated `lastFailure` (Table 5.2.14.2-1): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub last_failure: (),
+    /// The generated `createdAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub created_at: (),
+    /// The generated `modifiedAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    #[builder(setter(skip))]
+    pub modified_at: (),
 }
 
 impl TryFrom<NotificationRequest> for NotificationParams {
@@ -84,6 +121,14 @@ impl TryFrom<NotificationRequest> for NotificationParams {
             omit,
             join,
             join_level,
+            status: (),
+            times_sent: (),
+            times_failed: (),
+            last_notification: (),
+            last_success: (),
+            last_failure: (),
+            created_at: (),
+            modified_at: (),
         } = request;
         Ok(NotificationParams {
             attributes,
@@ -156,6 +201,43 @@ mod tests {
         })))
         .expect("an endpoint is present");
         assert!(params.times_sent.is_none() && params.last_notification.is_none() && params.status.is_none());
+    }
+
+    /// Table 5.2.14.1-1 defines the member in full: a misspelt member is
+    /// refused naming it.
+    #[test]
+    fn an_unknown_notification_member_is_refused_naming_it() {
+        for member in ["atributes", "formt"] {
+            let wire = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, member: "x"});
+            let error = serde_json::from_value::<NotificationRequest>(wire).expect_err("an unknown member is refused");
+            assert!(error.to_string().contains(&format!("unknown field `{member}`")), "{member}: got {error}");
+        }
+    }
+
+    /// Table 5.2.14.2-1 and clause 5.2.2: the generated members are accepted
+    /// whatever they hold, and the parameters leave every output member unset.
+    #[test]
+    fn the_generated_notification_members_are_accepted_whatever_they_hold() {
+        let params = NotificationParams::try_from(request(json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "status": 5,
+            "timesSent": "many",
+            "timesFailed": [1],
+            "lastNotification": {"at": 1},
+            "lastSuccess": true,
+            "lastFailure": null,
+            "createdAt": null,
+            "modifiedAt": 3
+        })))
+        .expect("an endpoint is present");
+        assert!(
+            params.status.is_none()
+                && params.times_sent.is_none()
+                && params.times_failed.is_none()
+                && params.last_notification.is_none()
+                && params.last_success.is_none()
+                && params.last_failure.is_none()
+        );
     }
 
     #[test]

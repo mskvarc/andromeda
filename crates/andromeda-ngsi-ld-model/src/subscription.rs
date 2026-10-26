@@ -6,6 +6,7 @@ pub mod standing;
 use crate::{
     attribute_name_csv,
     delivery_seconds,
+    ignored_member,
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
@@ -66,7 +67,7 @@ pub enum NotificationStatus {
 
 /// Notification delivery endpoint configuration (ETSI GS CIM 009 clause 5.2.15).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Endpoint {
     /// The notification target URI, absolute and carrying the scheme the
     /// transport is chosen from (`http`, `https` or `mqtt`).
@@ -107,6 +108,12 @@ pub struct Endpoint {
     /// at `QoS` 1 and 2 is the binding's own (clause 7.2), not this member.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<PositiveMilliseconds>,
+    /// The generated `createdAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    pub created_at: (),
+    /// The generated `modifiedAt` (clause 5.2.2): accepted and ignored.
+    #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
+    pub modified_at: (),
 }
 
 /// Notification delivery parameters for a subscription (ETSI GS CIM 009 clause 5.2.14).
@@ -553,6 +560,20 @@ mod tests {
             serde_json::from_value(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "application/json"})).expect("parses");
         pretty_assertions::assert_eq!(endpoint.uri.url().scheme(), "https");
         pretty_assertions::assert_eq!(endpoint.uri.url().host_str(), Some("receiver.example.com"));
+    }
+
+    /// Table 5.2.15-1 defines the endpoint in full: a misspelt member is
+    /// refused naming it, while the generated `createdAt` and `modifiedAt`
+    /// (clause 5.2.2) are accepted.
+    #[test]
+    fn an_unknown_endpoint_member_is_refused_naming_it() {
+        let error = serde_json::from_value::<Endpoint>(serde_json::json!({"uri": "https://receiver.example.com/notify", "protcol": "http"}))
+            .expect_err("an unknown member is refused");
+        assert!(error.to_string().contains("unknown field `protcol`"), "got {error}");
+        let accepted = serde_json::from_value::<Endpoint>(
+            serde_json::json!({"uri": "https://receiver.example.com/notify", "createdAt": "2024-01-01T00:00:00Z", "modifiedAt": null}),
+        );
+        assert!(accepted.is_ok(), "got {accepted:?}");
     }
 
     #[test]

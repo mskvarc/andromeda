@@ -127,6 +127,9 @@ impl SubscriptionWriteValues {
             local_only,
             split_entities,
             ngsild_conformance,
+            status: (),
+            created_at: (),
+            modified_at: (),
         } = request;
         Ok(SubscriptionWriteValues {
             subscription_name: subscription_name.into_created(),
@@ -209,6 +212,9 @@ impl SubscriptionWriteValues {
             local_only,
             split_entities,
             ngsild_conformance,
+            status: (),
+            created_at: (),
+            modified_at: (),
         } = request;
 
         Ok(SubscriptionWriteValues {

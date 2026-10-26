@@ -620,6 +620,32 @@ mod tests {
         }
     }
 
+    /// Tables 5.2.12-1, 5.2.14.1-1 and 5.2.15-1 define the Subscription in
+    /// full: a member outside them, at the top level, inside `notification`
+    /// or inside its `endpoint`, is refused naming it.
+    #[test]
+    fn an_unknown_member_is_refused_when_the_body_is_read() {
+        for (member, body) in [
+            ("watchedAtributes", json!({"watchedAtributes": ["speed"]})),
+            (
+                "notificaton",
+                json!({"notificaton": {"endpoint": {"uri": "https://receiver.example.com/notify"}}}),
+            ),
+            (
+                "formt",
+                json!({"notification": {"formt": "normalized", "endpoint": {"uri": "https://receiver.example.com/notify"}}}),
+            ),
+            (
+                "protcol",
+                json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify", "protcol": "http"}}}),
+            ),
+        ] {
+            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+                .expect_err("an unknown member is refused");
+            assert!(error.to_string().contains(&format!("unknown field `{member}`")), "{body}: got {error}");
+        }
+    }
+
     /// Clause 5.5.4: a body whose member is not the data type Table 5.2.12-1,
     /// 5.2.13-1 or 5.2.21-1 gives it is refused when it is read (answered as
     /// `BadRequestData`). The reader's own message names the member for a
