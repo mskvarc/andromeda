@@ -220,18 +220,16 @@ mod tests {
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
+    /// Clause 4.23.3 has no `!` prefix; a descending term is `name;desc`.
     #[test]
-    fn parse_order_by_desc_with_bang() {
-        let p = params_from_query("orderBy=!temperature");
-        let order = &p.ordering.order_by;
-        pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
+    fn parse_order_by_refuses_bang_prefix() {
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderBy=!temperature").is_err());
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderBy=speed,!temperature").is_err());
     }
 
     #[test]
     fn parse_order_by_multiple() {
-        let p = params_from_query("orderBy=speed,!temperature");
+        let p = params_from_query("orderBy=speed,temperature;desc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 2);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);

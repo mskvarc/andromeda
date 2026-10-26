@@ -1,6 +1,6 @@
 //! Serde support for `Query` members that Table 5.2.23-1 forbids from being empty.
 
-use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
+use andromeda_ngsi_ld_query::ordering::parameters::{OrderingBody, OrderingParameters};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use thiserror::Error;
 
@@ -40,13 +40,15 @@ where
 ///
 /// # Errors
 ///
-/// Returns the deserializer's own error when the member is not valid
-/// `OrderingParameters`, and a custom error when it carries no ordering terms.
+/// Returns the deserializer's own error when the member is not a valid
+/// `OrderingBody`, a custom error when its reference geometry or distance terms
+/// are malformed, and a custom error when it carries no ordering terms.
 pub fn deserialize_ordering<'de, D>(deserializer: D) -> Result<Option<OrderingParameters>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let ordering = Option::<OrderingParameters>::deserialize(deserializer)?;
+    let body = Option::<OrderingBody>::deserialize(deserializer)?;
+    let ordering = body.map(OrderingParameters::try_from).transpose().map_err(DeserializeError::custom)?;
     match ordering {
         Some(ordering) if ordering.order_by.is_empty() => Err(DeserializeError::custom(NonEmptyMemberError::OrderingWithoutOrderBy)),
         other => Ok(other),
@@ -82,5 +84,16 @@ mod tests {
         assert!(rejected("ordering", &json!({"collation": "und-x-icu"})));
         assert!(rejected("ordering", &json!({"orderBy": []})));
         assert!(!rejected("ordering", &json!({"orderBy": ["name;asc"]})));
+    }
+
+    #[test]
+    fn ordering_refuses_the_spellings_only_the_query_string_defines() {
+        assert!(rejected("ordering", &json!({"orderBy": "name;asc"})));
+        assert!(rejected("ordering", &json!({"orderBy": ["!name"]})));
+        assert!(rejected("ordering", &json!({"orderBy": ["location;dist-asc"], "orderFrom": [8, 40]})));
+        assert!(rejected(
+            "ordering",
+            &json!({"orderBy": ["location;dist-asc"], "orderGeometry": "Point", "coordinates": [8, 40]})
+        ));
     }
 }

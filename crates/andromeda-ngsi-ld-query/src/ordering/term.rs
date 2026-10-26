@@ -138,10 +138,7 @@ impl FromStr for OrderTerm {
                 let direction = direction.trim().parse::<OrderDirection>().map_err(OrderTermError::Direction)?;
                 (member.trim(), direction)
             }
-            None => match raw.strip_prefix('!') {
-                Some(member) => (member, OrderDirection::Desc),
-                None => (raw, OrderDirection::Asc),
-            },
+            None => (raw, OrderDirection::Asc),
         };
         let attr = parse_attribute_path(member).map_err(OrderTermError::Member)?;
         if attr.trailing == Some(TrailingPath::AllLanguages) {
@@ -333,13 +330,16 @@ mod tests {
         }
     }
 
-    /// The `!` prefix is the shorthand for a descending term, and it renders
-    /// back in the `;desc` spelling the grammar defines.
+    /// Clause 4.23.3 spells a descending term `AttrName;desc`; a leading `!` is not part of the grammar.
     #[test]
-    fn the_bang_prefix_is_read_as_a_descending_term() {
-        let parsed = term("!name.observedAt");
-        assert_eq!(parsed.direction, OrderDirection::Desc);
-        assert_eq!(parsed.to_string(), "name.observedAt;desc");
+    fn a_bang_prefix_is_not_an_ordering_member() {
+        for rejected in ["!name", "!name.observedAt", "!name;asc"] {
+            let error = rejected.parse::<OrderTerm>().expect_err("a bang prefix is not an ordering member");
+            assert!(
+                matches!(error, OrderTermError::Member(_) | OrderTermError::Direction(_)),
+                "{rejected}: got {error:?}"
+            );
+        }
     }
 
     #[test]
