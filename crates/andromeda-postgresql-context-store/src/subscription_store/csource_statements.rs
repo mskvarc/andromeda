@@ -124,13 +124,11 @@ pub fn csource_update(
     interned: InternedAttributeLists,
     status: SubscriptionStatus,
 ) -> Result<UpdateStatement, SubscriptionError> {
+    let mut columns = written_columns(fields, interned, status)?;
+    columns.push((Subscriptions::TemporalQ, json_document(fields.temporal_q)?));
     Ok(Query::update()
         .table(table_of(target, Subscriptions::Table))
-        .values(
-            written_columns(fields, interned, status)?
-                .into_iter()
-                .chain([(Subscriptions::ModifiedAt, now())]),
-        )
+        .values(columns.into_iter().chain([(Subscriptions::ModifiedAt, now())]))
         .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
         .and_where(of_kind(StoredKind::Csource))
         .with_cte(advance_clause())
@@ -204,11 +202,11 @@ mod tests {
 
     /// Clause 5.11.2.3 makes the Subscription datatype the payload of a
     /// context-source subscription too, so both statements carry its opt-in
-    /// lists, `ngsildConformance` and the written members of `q`.
+    /// lists, `ngsildConformance`, `temporalQ` and the written members of `q`.
     #[test]
     fn both_statements_carry_the_clause_5_2_12_members_and_the_written_members_of_q() {
         for (sql, _) in [create_sql(), update_sql()] {
-            for column in ["expand_values", "json_keys", "ngsild_conformance", "q_written_members"] {
+            for column in ["expand_values", "json_keys", "ngsild_conformance", "q_written_members", "temporal_q"] {
                 assert!(sql.contains(column), "{column}: {sql}");
             }
         }
@@ -234,15 +232,15 @@ mod tests {
         let (create, _) = create_sql();
         let (update, _) = update_sql();
         assert_eq!(create.matches("::json").count(), 4, "{create}");
-        assert_eq!(update.matches("::json").count(), 3, "{update}");
+        assert_eq!(update.matches("::json").count(), 4, "{update}");
         assert!(!create.contains("::jsonb") && !update.contains("::jsonb"), "{create} {update}");
     }
 
     #[test]
     fn the_update_pins_the_row_by_id_and_kind() {
         let (sql, _) = update_sql();
-        assert!(sql.contains(r#""id" = $21"#), "{sql}");
-        assert!(sql.contains(r#""subscriptions"."kind" = $22"#), "{sql}");
+        assert!(sql.contains(r#""id" = $22"#), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."kind" = $23"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
     }
 

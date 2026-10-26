@@ -92,6 +92,10 @@ pub enum SubscriptionValidationReason {
     /// `endTimeAt` comes with `between` alone and closes after `timeAt`).
     #[error("temporalQ is invalid: {0}")]
     TemporalQ(QueryError),
+    /// An entity subscription carried a `temporalQ`, which Table 5.2.12-1
+    /// reserves for Context Registration Subscriptions.
+    #[error("temporalQ is only allowed in Context Source Registration Subscriptions")]
+    TemporalQNotForEntitySubscription,
     /// The notification projection combined mutually exclusive selectors
     /// (clause 4.21).
     #[error(transparent)]

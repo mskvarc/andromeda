@@ -50,6 +50,10 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
             .get_or_insert_with(|| DEFAULT_NOTIFICATION_TRIGGERS.to_vec());
     }
 
+    fn validate_members(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+        request_validation::validate_no_temporal_q(request)
+    }
+
     fn validate_update_extra(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
         // Clause 5.8.2.4: an entity subscription update with a past `expiresAt` is rejected.
         request_validation::validate_expires_at_not_in_past(request)
@@ -76,10 +80,51 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{entity::EntitySubscriptionVariant, variant::SubscriptionVariant};
+    use crate::{
+        entity::EntitySubscriptionVariant,
+        error::SubscriptionError,
+        subscription_validation_reason::SubscriptionValidationReason,
+        variant::SubscriptionVariant,
+    };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::Subscription};
+    use andromeda_ngsi_ld_model::{
+        notification::NotificationTrigger,
+        request_body::RequestBody,
+        subscription::Subscription,
+        subscription_request::SubscriptionRequest,
+    };
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::json;
+
+    fn request(wire: &serde_json::Value) -> SubscriptionRequest {
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request")
+    }
+
+    /// Table 5.2.12-1: `temporalQ` is "to be used only in Context Registration
+    /// Subscriptions", so an entity subscription create or update refuses it.
+    #[test]
+    fn a_temporal_q_on_an_entity_subscription_is_refused() {
+        let result = variant().validate_members(&request(&json!({
+            "temporalQ": {"timerel": "after", "timeAt": "2020-06-01T00:00:00Z"}
+        })));
+        assert!(
+            matches!(
+                &result,
+                Err(SubscriptionError::Validation(SubscriptionValidationReason::TemporalQNotForEntitySubscription))
+            ),
+            "got {result:?}"
+        );
+    }
+
+    /// An update fragment's NGSI-LD Null removes the member, so a subscriber
+    /// can still clear a `temporalQ` it holds.
+    #[test]
+    fn a_temporal_q_deletion_and_an_absent_temporal_q_are_admitted() {
+        for wire in [json!({"temporalQ": "urn:ngsi-ld:null"}), json!({"isActive": true})] {
+            let result = variant().validate_members(&request(&wire));
+            assert!(result.is_ok(), "got {result:?}");
+        }
+    }
 
     fn subscription(members: &serde_json::Value) -> Subscription {
         let mut wire = json!({

@@ -205,6 +205,23 @@ pub fn validate_common_members(
     Ok(())
 }
 
+/// Refuse a `temporalQ` on an entity subscription (Table 5.2.12-1: "to be used
+/// only in Context Registration Subscriptions").
+///
+/// An update fragment's NGSI-LD Null removes the member and stays admitted, so
+/// a subscriber can clear one it holds.
+///
+/// # Errors
+///
+/// Returns [`SubscriptionValidationReason::TemporalQNotForEntitySubscription`]
+/// when the request sets a `temporalQ`.
+pub const fn validate_no_temporal_q(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+    if request.temporal_q.as_set().is_some() {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::TemporalQNotForEntitySubscription));
+    }
+    Ok(())
+}
+
 /// Validate the notification an update fragment names: it replaces the stored
 /// one (clause 5.8.3), so it has to name the endpoint too.
 ///

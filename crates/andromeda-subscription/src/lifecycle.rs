@@ -155,6 +155,7 @@ where
     ) -> Result<Identifier, SubscriptionError> {
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
+            self.variant.validate_members(&request)?;
             request_validation::validate_create_request(&request, self.geo_q_admission, self.language_targeting)?;
 
             validate_endpoint(
@@ -231,6 +232,7 @@ where
                 self.endpoint_validator.as_ref(),
             )?;
 
+            self.variant.validate_members(&request)?;
             request_validation::validate_common_members(&request, self.geo_q_admission, self.language_targeting)?;
             self.variant.validate_update_extra(&request)?;
             request_validation::validate_notification_fragment(&request)?;

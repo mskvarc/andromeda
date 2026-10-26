@@ -51,6 +51,15 @@ pub trait SubscriptionVariant: Send + Sync {
     /// what this kind of subscription serves that the store does not hold.
     fn present(&self, subscription: &mut Subscription);
 
+    /// Refuse the members of a create body or update fragment that Table
+    /// 5.2.12-1 reserves for the other kind of subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Validation`] naming the member this kind
+    /// of subscription does not carry.
+    fn validate_members(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError>;
+
     /// Additional update-specific validation (e.g. `expiresAt` future check).
     ///
     /// # Errors
