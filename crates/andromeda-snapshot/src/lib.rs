@@ -12,6 +12,8 @@ pub mod executor;
 pub mod expiry;
 pub mod prepare;
 pub mod query_validation;
+/// Admitting a Snapshot's `receiverInfo` against its endpoint.
+pub mod receiver_info_admission;
 /// Snapshot lifecycle service and purge outcomes.
 pub mod service;
 /// The invariants Snapshot policy relies on.

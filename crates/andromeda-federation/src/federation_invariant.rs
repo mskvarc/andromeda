@@ -7,7 +7,6 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
-use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use mediatype::MediaTypeBuf;
 use thiserror::Error;
 use url::Url;
@@ -55,12 +54,6 @@ pub enum FederationInvariant {
         #[source]
         source: ContextSourceInfoError,
     },
-    /// A `contextSourceInfo` key is not an HTTP header name.
-    #[error("a contextSourceInfo key is not an HTTP header name: {0}")]
-    ContextSourceInfoHeaderName(#[source] InvalidHeaderName),
-    /// A `contextSourceInfo` value is not an HTTP header value.
-    #[error("a contextSourceInfo value is not an HTTP header value: {0}")]
-    ContextSourceInfoHeaderValue(#[source] InvalidHeaderValue),
     /// A registration's endpoint cannot carry a path.
     #[error("the context source endpoint {endpoint} cannot be a base URL")]
     EndpointCannotBeBase {

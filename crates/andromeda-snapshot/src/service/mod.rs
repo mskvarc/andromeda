@@ -17,6 +17,7 @@ use crate::{
     executor::{SnapshotPreparation, SnapshotPreparationOutcome},
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
+    receiver_info_admission::validate_receiver_info,
     service::lifetime::effective_snapshot_lifetime,
     snapshot_invariant::SnapshotInvariant,
     snapshot_validation_reason::SnapshotValidationReason,
@@ -122,8 +123,9 @@ impl SnapshotService {
     /// # Errors
     ///
     /// Returns [`SnapshotError::Validation`] when both query collections are
-    /// absent, when a query occupies the wrong collection, or when the requested
-    /// lifetime is not positive; [`SnapshotError::AlreadyExists`] when the
+    /// absent, when a query occupies the wrong collection, when an `http`
+    /// endpoint carries a `receiverInfo` entry that is not an HTTP header field,
+    /// or when the requested lifetime is not positive; [`SnapshotError::AlreadyExists`] when the
     /// requested identifier is already taken; [`SnapshotError::Internal`] when a
     /// generated identifier, the configured default lifetime or the request
     /// context cannot be materialised; and the store's own failure when the
@@ -136,6 +138,7 @@ impl SnapshotService {
         // an unparseable `q`, geometry or `timerel` is a 400 rather than a
         // snapshot created 201 that only fails when its queries execute.
         validate_snapshot_query_shapes(input.snapshot_queries.as_deref(), input.snapshot_temporal_queries.as_deref())?;
+        validate_receiver_info(input.endpoint.as_ref(), input.receiver_info.as_deref())?;
 
         let id = match input.id {
             Some(snapshot_id) => snapshot_id,
@@ -210,11 +213,12 @@ impl SnapshotService {
     ///
     /// Returns [`SnapshotError::NotFound`] when the snapshot is absent or
     /// expired, [`SnapshotError::Validation`] when the patch changes the
-    /// identifier or either query collection or supplies a non-positive
-    /// lifetime, and the store's own failure when the metadata write does not
+    /// identifier or either query collection, supplies a non-positive
+    /// lifetime or leaves an `http` endpoint with a `receiverInfo` entry that is
+    /// not an HTTP header field, and the store's own failure when the metadata write does not
     /// complete.
     pub async fn update(&self, id: &Identifier, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
-        self.get(id).await?;
+        let stored = self.get(id).await?;
 
         if patch.id.as_ref().is_some_and(|patch_id| patch_id != id) {
             return Err(SnapshotValidationReason::IdImmutable.into());
@@ -222,6 +226,18 @@ impl SnapshotService {
         if !patch.snapshot_queries.is_absent() || !patch.snapshot_temporal_queries.is_absent() {
             return Err(SnapshotValidationReason::QueryDefinitionsImmutable.into());
         }
+
+        let merged_endpoint = match &patch.endpoint {
+            Clearable::Absent => stored.endpoint.as_ref(),
+            Clearable::NgsiLdNull => None,
+            Clearable::Set(endpoint) => Some(endpoint),
+        };
+        let merged_receiver_info = match &patch.receiver_info {
+            Clearable::Absent => stored.receiver_info.as_deref(),
+            Clearable::NgsiLdNull => None,
+            Clearable::Set(receiver_info) => Some(receiver_info.as_slice()),
+        };
+        validate_receiver_info(merged_endpoint, merged_receiver_info)?;
 
         let patch_priority = patch.snapshot_priority;
         let endpoint = match &patch.endpoint {

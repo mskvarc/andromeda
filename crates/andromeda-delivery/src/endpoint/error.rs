@@ -1,6 +1,7 @@
 //! Why an endpoint URI could not be read.
 
 use crate::endpoint::topic::MqttTopicError;
+use andromeda_ngsi_ld_model::http_header_field::HttpHeaderFieldError;
 
 /// Errors that can occur when parsing an endpoint URI.
 #[derive(Debug, thiserror::Error)]
@@ -26,4 +27,8 @@ pub enum EndpointParseError {
     /// `notifierInfo` asked for a `QoS` level MQTT does not define.
     #[error("unsupported MQTT-QoS; expected 0, 1 or 2")]
     UnsupportedMqttQos,
+    /// An `http` or `https` endpoint's `receiverInfo` holds an entry that is
+    /// not an HTTP header field (clauses 6.3.8 and 6.3.9).
+    #[error("receiverInfo holds an invalid HTTP header: {0}")]
+    ReceiverInfo(#[from] HttpHeaderFieldError),
 }

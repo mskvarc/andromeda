@@ -222,7 +222,7 @@ impl SubscriptionForwardingHook for RecordingHook {
 struct AcceptingEndpointValidator;
 
 impl SubscriptionEndpointValidator for AcceptingEndpointValidator {
-    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
+    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>, _receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
         Ok(())
     }
 }

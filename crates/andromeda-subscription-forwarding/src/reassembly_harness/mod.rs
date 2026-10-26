@@ -95,7 +95,7 @@ pub(crate) struct ReassemblyScene {
 struct AcceptingEndpoints;
 
 impl SubscriptionEndpointValidator for AcceptingEndpoints {
-    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
+    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>, _receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
         Ok(())
     }
 }

@@ -26,7 +26,7 @@ impl RegistrationService {
     /// failure when the context cannot be retrieved, the scoped-context refusal
     /// when it declares a JSON-LD Scoped Context, and the JSON-LD processing
     /// failure when it is not a valid `@context`.
-    pub(crate) async fn admit_forwarding_context(&self, info: &ContextSourceInfo<'_>) -> Result<(), RegistrationError> {
+    pub(crate) async fn admit_forwarding_context(&self, info: &ContextSourceInfo) -> Result<(), RegistrationError> {
         if let Some(reference) = &info.jsonld_context {
             admit_context_reference(&self.engine, reference).await?;
         }

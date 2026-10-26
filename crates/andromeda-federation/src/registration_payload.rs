@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registrati
 /// Read a registration's `contextSourceInfo`; stored registrations passed the
 /// clause 4.3.6.6 restrictions at registration time, so a failure here is an
 /// invariant violation rather than a request error.
-pub(crate) fn context_source_info(registration: &ContextSourceRegistration) -> Result<ContextSourceInfo<'_>, FederationError> {
+pub(crate) fn context_source_info(registration: &ContextSourceRegistration) -> Result<ContextSourceInfo, FederationError> {
     let pairs = registration.access.context_source_info.as_deref().unwrap_or_default();
     ContextSourceInfo::try_from(pairs).map_err(|source| {
         FederationInvariant::ContextSourceInfo {

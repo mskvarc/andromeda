@@ -26,4 +26,10 @@ pub enum EndpointRefusal {
     /// `notifierInfo` asked for a `QoS` level MQTT does not define.
     #[error("unsupported MQTT-QoS; expected 0, 1 or 2")]
     UnsupportedMqttQos,
+    /// An `http` or `https` endpoint's `receiverInfo` key is not an HTTP header field name.
+    #[error("receiverInfo key is not a valid HTTP header field name")]
+    ReceiverInfoHeaderName,
+    /// An `http` or `https` endpoint's `receiverInfo` value is not an HTTP header field value.
+    #[error("receiverInfo value is not a valid HTTP header field value")]
+    ReceiverInfoHeaderValue,
 }

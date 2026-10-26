@@ -8,7 +8,7 @@ use crate::{
     },
     host_port::HostPort,
 };
-use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderField, key_value_pair::KeyValuePair};
 use secrecy::SecretString;
 use std::str::FromStr;
 use url::Url;
@@ -81,6 +81,35 @@ pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]
     }
 }
 
+/// Admit an endpoint at subscription time: the transport it names, and for an
+/// `http` or `https` endpoint a `receiverInfo` whose every entry is an HTTP
+/// header field, as clauses 6.3.8 and 6.3.9 require. An `mqtt` or `mqtts`
+/// endpoint carries its `receiverInfo` as message metadata (clause 7.2), which
+/// has no such rule.
+///
+/// # Errors
+///
+/// Returns what [`parse_endpoint_transport`] returns, and
+/// [`EndpointParseError::ReceiverInfo`] for an `http` or `https` endpoint with an
+/// entry that is not a header field.
+pub fn admit_endpoint_transport(
+    uri: &Url,
+    notifier_info: Option<&[KeyValuePair]>,
+    receiver_info: Option<&[KeyValuePair]>,
+) -> Result<EndpointTransport, EndpointParseError> {
+    let transport = parse_endpoint_transport(uri, notifier_info)?;
+    match transport {
+        EndpointTransport::Http => {
+            receiver_info
+                .unwrap_or_default()
+                .iter()
+                .try_for_each(|pair| HttpHeaderField::try_from(pair).map(|_field| ()))?;
+        }
+        EndpointTransport::Mqtt(_) => {}
+    }
+    Ok(transport)
+}
+
 /// Read the broker, topic and credentials out of an `mqtt` or `mqtts` URI.
 fn parse_mqtt_endpoint(parsed: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<MqttEndpointConfig, EndpointParseError> {
     let use_tls = parsed.scheme() == "mqtts";
@@ -144,9 +173,9 @@ mod tests {
     use crate::endpoint::{
         error::EndpointParseError,
         mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
-        transport::{EndpointTransport, parse_endpoint_transport as parse_typed_endpoint_transport},
+        transport::{EndpointTransport, admit_endpoint_transport, parse_endpoint_transport as parse_typed_endpoint_transport},
     };
-    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderFieldError, key_value_pair::KeyValuePair};
     use secrecy::ExposeSecret;
     use url::Url;
 
@@ -316,5 +345,46 @@ mod tests {
         let rendered = format!("{config:?}");
         assert!(!rendered.contains("hunter2"), "{rendered}");
         assert!(rendered.contains("myuser"), "{rendered}");
+    }
+
+    fn admit(uri: &str, notifier: Option<&[KeyValuePair]>, receiver: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
+        let uri = Url::parse(uri)?;
+        admit_endpoint_transport(&uri, notifier, receiver)
+    }
+
+    #[test]
+    fn an_http_endpoint_with_a_bad_receiver_info_key_is_refused() {
+        let receiver = notifier_info(&[("Bad Name", "x")]);
+        assert!(matches!(
+            admit("http://example.com/notify", None, Some(&receiver)),
+            Err(EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Name(_)))
+        ));
+    }
+
+    #[test]
+    fn an_https_endpoint_with_a_bad_receiver_info_value_is_refused() {
+        let receiver = notifier_info(&[("X-A", "a\nb")]);
+        assert!(matches!(
+            admit("https://example.com/notify", None, Some(&receiver)),
+            Err(EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Value(_)))
+        ));
+    }
+
+    #[test]
+    fn an_http_endpoint_with_a_good_receiver_info_is_admitted() {
+        let receiver = notifier_info(&[("Authorization", "Bearer abc")]);
+        assert!(admit("http://example.com/notify", None, Some(&receiver)).is_ok());
+    }
+
+    #[test]
+    fn an_mqtt_endpoint_keeps_a_receiver_info_key_with_a_space() {
+        let receiver = notifier_info(&[("Bad Name", "x")]);
+        assert!(admit("mqtt://broker:1883/topic", None, Some(&receiver)).is_ok());
+    }
+
+    #[test]
+    fn a_notifier_info_key_with_a_space_on_an_http_endpoint_is_not_checked() {
+        let notifier = notifier_info(&[("Bad Name", "x")]);
+        assert!(admit("http://example.com/notify", Some(&notifier), None).is_ok());
     }
 }

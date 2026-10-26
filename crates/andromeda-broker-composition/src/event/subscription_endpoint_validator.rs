@@ -1,7 +1,7 @@
 //! Delivery-backed validation of subscription endpoint configuration.
 
-use andromeda_delivery::endpoint::{error::EndpointParseError, transport::parse_endpoint_transport};
-use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+use andromeda_delivery::endpoint::{error::EndpointParseError, transport::admit_endpoint_transport};
+use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderFieldError, key_value_pair::KeyValuePair};
 use andromeda_subscription::{endpoint_admission::SubscriptionEndpointValidator, endpoint_refusal::EndpointRefusal};
 use url::Url;
 
@@ -9,8 +9,8 @@ use url::Url;
 pub struct DeliverySubscriptionEndpointValidator;
 
 impl SubscriptionEndpointValidator for DeliverySubscriptionEndpointValidator {
-    fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
-        parse_endpoint_transport(endpoint, notifier_info)
+    fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>, receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
+        admit_endpoint_transport(endpoint, notifier_info, receiver_info)
             .map(|_transport| ())
             .map_err(|error| endpoint_refusal(&error))
     }
@@ -29,5 +29,7 @@ const fn endpoint_refusal(error: &EndpointParseError) -> EndpointRefusal {
         EndpointParseError::InvalidTopic(_) => EndpointRefusal::MqttTopicInvalid,
         EndpointParseError::UnsupportedMqttVersion => EndpointRefusal::UnsupportedMqttVersion,
         EndpointParseError::UnsupportedMqttQos => EndpointRefusal::UnsupportedMqttQos,
+        EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Name(_)) => EndpointRefusal::ReceiverInfoHeaderName,
+        EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Value(_)) => EndpointRefusal::ReceiverInfoHeaderValue,
     }
 }

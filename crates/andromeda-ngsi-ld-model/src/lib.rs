@@ -34,6 +34,7 @@ mod entity_node;
 pub mod entity_system_times;
 pub mod entity_type;
 pub mod entity_type_list;
+pub mod http_header_field;
 pub mod ignored_member;
 pub mod jsonld_context;
 pub mod key_value_pair;

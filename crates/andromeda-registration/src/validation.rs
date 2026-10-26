@@ -32,7 +32,7 @@ pub(super) struct RegistrationShape<'a> {
 
 /// Apply the clause 5.2.9 cross-member rules and the clause 4.3.6.6
 /// `contextSourceInfo` restrictions, returning the reserved keys read.
-pub(super) fn validate_shape<'a>(shape: &RegistrationShape<'a>) -> Result<ContextSourceInfo<'a>, RegistrationError> {
+pub(super) fn validate_shape(shape: &RegistrationShape<'_>) -> Result<ContextSourceInfo, RegistrationError> {
     if !RegistrationLifecycle::expiry_in_force_at(shape.expires_at, Utc::now()) {
         return Err(RegistrationError::Validation(RegistrationValidationReason::ExpiresAtInPast));
     }
@@ -108,6 +108,35 @@ mod tests {
             assert!(validate_shape(&shape).is_err(), "{pairs:?} must be rejected");
         }
         let valid = [pair("accept", "application/ld+json"), pair("Authorization", "Bearer x")];
+        let shape = RegistrationShape {
+            mode: ForwardingMode::Inclusive,
+            information: &information,
+            operations: &[CsrOperation::FederationOps],
+            context_source_info: Some(&valid),
+            expires_at: None,
+        };
+        assert!(validate_shape(&shape).is_ok());
+    }
+
+    #[test]
+    fn a_custom_context_source_info_that_is_not_an_http_header_is_rejected() {
+        let information = information();
+        for pairs in [
+            vec![pair("Bad Name", "x")],
+            vec![pair("X-Api-Key", "a\nb")],
+            vec![pair("NGSILD-Tenant", "t1")],
+            vec![pair("ngsild-tenant", "t1")],
+        ] {
+            let shape = RegistrationShape {
+                mode: ForwardingMode::Inclusive,
+                information: &information,
+                operations: &[CsrOperation::FederationOps],
+                context_source_info: Some(&pairs),
+                expires_at: None,
+            };
+            assert!(validate_shape(&shape).is_err(), "{pairs:?} must be rejected");
+        }
+        let valid = [pair("X-Api-Key", "secret"), pair("Authorization", "urn:ngsi-ld:request")];
         let shape = RegistrationShape {
             mode: ForwardingMode::Inclusive,
             information: &information,

@@ -13,7 +13,8 @@ use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, subscription::Endpoi
 use url::Url;
 
 /// Reject a subscription whose endpoint names a transport this broker cannot
-/// deliver over, or a `notifierInfo` it cannot honour.
+/// deliver over, a `notifierInfo` it cannot honour, or a `receiverInfo` the
+/// endpoint's binding cannot send.
 ///
 /// Takes the endpoint a request carries rather than a stored `Subscription`
 /// because an update carries a fragment, and the same check has to hold for a
@@ -30,20 +31,20 @@ pub(crate) fn validate_endpoint(endpoint: Option<&Endpoint>, validator: &dyn Sub
         return Ok(());
     };
     validator
-        .validate(endpoint.uri.url(), endpoint.notifier_info.as_deref())
+        .validate(endpoint.uri.url(), endpoint.notifier_info.as_deref(), endpoint.receiver_info.as_deref())
         .map_err(|refusal| SubscriptionError::Validation(SubscriptionValidationReason::EndpointRejected(refusal)))
 }
 
 /// Validates whether endpoint configuration can be served by the selected delivery bindings.
 pub trait SubscriptionEndpointValidator: Send + Sync + 'static {
-    /// Validate one endpoint URL and its optional notifier metadata.
+    /// Validate one endpoint URL with its optional notifier and receiver metadata.
     ///
     /// # Errors
     ///
     /// Returns the [`EndpointRefusal`] when no delivery binding this broker was
     /// built with serves the endpoint's scheme, or when the binding that does
-    /// cannot honour the `notifierInfo` the endpoint carries.
-    fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal>;
+    /// cannot honour the `notifierInfo` or `receiverInfo` the endpoint carries.
+    fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>, receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal>;
 }
 
 #[cfg(test)]
@@ -65,8 +66,11 @@ mod tests {
     struct RejectingEndpointValidator;
 
     impl SubscriptionEndpointValidator for RejectingEndpointValidator {
-        fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
-            Err(EndpointRefusal::UnsupportedScheme)
+        fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>, receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
+            match receiver_info {
+                Some(_pairs) => Err(EndpointRefusal::ReceiverInfoHeaderName),
+                None => Err(EndpointRefusal::UnsupportedScheme),
+            }
         }
     }
 
@@ -83,6 +87,19 @@ mod tests {
             error,
             Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRejected(
                 EndpointRefusal::UnsupportedScheme
+            )))
+        ));
+    }
+
+    #[test]
+    fn endpoint_validation_hands_the_binding_the_receiver_info_the_endpoint_carries() {
+        let endpoint: Endpoint = serde_json::from_value(json!({"uri": "http://example.com/notify", "receiverInfo": [{"key": "Bad Name", "value": "x"}]}))
+            .expect("a readable endpoint");
+        let error = validate_endpoint(Some(&endpoint), &RejectingEndpointValidator);
+        assert!(matches!(
+            error,
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::EndpointRejected(
+                EndpointRefusal::ReceiverInfoHeaderName
             )))
         ));
     }

@@ -3,7 +3,6 @@
 use crate::{
     FederationService,
     error::FederationError,
-    federation_invariant::FederationInvariant,
     forwarded_payload::ForwardedPayload,
     forwarding_url::with_local_scope,
     registration_payload::context_source_info,
@@ -23,7 +22,7 @@ use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registrati
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use iri_rs::{Iri, iri};
-use std::{iter, str::FromStr};
+use std::iter;
 use url::Url;
 
 /// The value of a `contextSourceInfo` pair that is copied from the triggering request (clause 6.3.19).
@@ -108,7 +107,7 @@ impl FederationService {
         }
 
         let mut request = self.http_client.request(method, url).headers(typed_headers);
-        request = apply_custom_headers(request, &info, triggering.headers)?;
+        request = apply_custom_headers(request, &info, triggering.headers);
         if let Some(body) = &payload.body {
             request = request.body(body.clone()); // clone: reqwest owns the body it sends
         }
@@ -152,43 +151,35 @@ impl FederationService {
 /// carries (clause 4.3.6.8): the version the registration's
 /// `ngsildConformance` says the source understands, else the one this broker
 /// conforms to, so the source can amend its payload to it.
-fn conformance_preference(info: &ContextSourceInfo<'_>) -> Prefer {
+fn conformance_preference(info: &ContextSourceInfo) -> Prefer {
     Prefer::version(info.ngsild_conformance.unwrap_or(SpecVersion::CONFORMANT))
 }
 
 /// Add the `contextSourceInfo` pairs outside the reserved keys as custom
 /// headers (clause 6.3.19), copying a `urn:ngsi-ld:request` value from the
 /// triggering request and never overriding a protected header.
-fn apply_custom_headers(
-    mut request: reqwest::RequestBuilder,
-    info: &ContextSourceInfo<'_>,
-    incoming: Option<&HeaderMap>,
-) -> Result<reqwest::RequestBuilder, FederationError> {
-    for pair in &info.custom {
-        let key = pair.key.as_str();
-        if protected_header(key) {
+fn apply_custom_headers(mut request: reqwest::RequestBuilder, info: &ContextSourceInfo, incoming: Option<&HeaderMap>) -> reqwest::RequestBuilder {
+    for field in &info.custom {
+        if protected_header(&field.name) {
             continue;
         }
-        let name = HeaderName::from_str(key).map_err(|error| FederationError::from(FederationInvariant::ContextSourceInfoHeaderName(error)))?;
-        if pair.value == FROM_TRIGGERING_REQUEST.as_str() {
-            let Some(value) = incoming.and_then(|headers| headers.get(&name)) else {
+        if field.value == FROM_TRIGGERING_REQUEST.as_str() {
+            let Some(value) = incoming.and_then(|headers| headers.get(&field.name)) else {
                 continue;
             };
-            request = request.header(name, value.clone()); // clone: the forwarded request owns its header value
+            request = request.header(field.name.clone(), value.clone()); // clone: the forwarded request owns its header value
             continue;
         }
-        let value =
-            HeaderValue::from_str(pair.value.as_str()).map_err(|error| FederationError::from(FederationInvariant::ContextSourceInfoHeaderValue(error)))?;
-        request = request.header(name, value);
+        request = request.header(field.name.clone(), field.value.clone()); // clone: the forwarded request owns its header value
     }
-    Ok(request)
+    request
 }
 
 /// Headers derived from the registration itself or set by HTTP, which clause
 /// 6.3.19 forbids `contextSourceInfo` from overriding.
-fn protected_header(name: &str) -> bool {
+fn protected_header(name: &HeaderName) -> bool {
     matches!(
-        name.to_ascii_lowercase().as_str(),
+        name.as_str(),
         "connection" | "content-length" | "content-type" | "host" | "link" | "ngsild-tenant" | "transfer-encoding" | "via"
     )
 }
@@ -208,7 +199,7 @@ mod tests {
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
     use headers::Header;
-    use http::{HeaderMap, HeaderValue};
+    use http::{HeaderMap, HeaderName, HeaderValue};
     use iri_rs::IriBuf;
     use serde_json::json;
     use url::Url;
@@ -367,12 +358,12 @@ mod tests {
 
         let mut incoming = HeaderMap::new();
         incoming.insert("authorization", HeaderValue::from_static("Bearer token"));
-        let forwarded = apply_custom_headers(client.get("http://peer/"), &info, Some(&incoming)).expect("headers apply");
+        let forwarded = apply_custom_headers(client.get("http://peer/"), &info, Some(&incoming));
         let headers = headers_of(forwarded);
         pretty_assertions::assert_eq!(headers.get("authorization").map(HeaderValue::as_bytes), Some(b"Bearer token".as_slice()));
         pretty_assertions::assert_eq!(headers.get("x-static").map(HeaderValue::as_bytes), Some(b"fixed".as_slice()));
 
-        let forwarded = apply_custom_headers(client.get("http://peer/"), &info, None).expect("headers apply");
+        let forwarded = apply_custom_headers(client.get("http://peer/"), &info, None);
         assert!(headers_of(forwarded).get("authorization").is_none());
     }
 
@@ -396,13 +387,15 @@ mod tests {
 
     #[test]
     fn protected_headers_cannot_be_overridden_by_context_source_info() {
-        for name in ["Via", "NGSILD-Tenant", "content-length", "Link", "Content-Type", "Host"] {
-            assert!(protected_header(name), "{name}");
+        for name in ["via", "ngsild-tenant", "content-length", "link", "content-type", "host"] {
+            assert!(protected_header(&HeaderName::from_static(name)), "{name}");
         }
-        assert!(!protected_header("Authorization"));
-        let pairs = [pair("Via", "1.1 attacker")];
+        assert!(!protected_header(&HeaderName::from_static("authorization")));
+        let pairs = [pair("Via", "1.1 attacker"), pair("Content-Length", "99")];
         let info = ContextSourceInfo::try_from(pairs.as_slice()).expect("valid info");
-        let forwarded = apply_custom_headers(reqwest::Client::new().get("http://peer/"), &info, None).expect("headers apply");
-        assert!(headers_of(forwarded).get("via").is_none());
+        let forwarded = apply_custom_headers(reqwest::Client::new().get("http://peer/"), &info, None);
+        let headers = headers_of(forwarded);
+        assert!(headers.get("via").is_none());
+        assert!(headers.get("content-length").is_none());
     }
 }

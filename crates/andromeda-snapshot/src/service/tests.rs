@@ -2,17 +2,23 @@ use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
     service::{SnapshotService, SnapshotServiceConfig},
+    snapshot_validation_reason::SnapshotValidationReason,
     store_double::{ClaimHold, StoreDouble},
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    request_body::RequestBody,
     snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_clone::SnapshotCloneInput,
     snapshot_input::SnapshotInput,
+    snapshot_patch::SnapshotPatch,
 };
+use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::{sync::Arc, time::Duration};
+use url::Url;
 
 const SNAPSHOT_ID: &str = "urn:ngsi-ld:Snapshot:scoped";
 
@@ -21,15 +27,31 @@ fn snapshot_id() -> Identifier {
 }
 
 fn service(condition: BranchCondition) -> SnapshotService {
+    service_holding(stored_snapshot(None, None), condition)
+}
+
+fn stored_snapshot(endpoint: Option<&str>, receiver_info: Option<Vec<KeyValuePair>>) -> Snapshot {
     let now = Utc::now();
-    let snapshot = Snapshot::builder()
+    Snapshot::builder()
         .id(snapshot_id())
         .snapshot_priority(SnapshotPriority::default())
         .status(SnapshotStatus::Success)
+        .endpoint(endpoint.and_then(|raw| Url::parse(raw).ok()))
+        .receiver_info(receiver_info)
         .created_at(now)
         .modified_at(now)
         .expires_at(now + ChronoDuration::hours(1))
-        .build();
+        .build()
+}
+
+fn bad_pair() -> KeyValuePair {
+    KeyValuePair {
+        key: "Bad Name".into(),
+        value: "x".into(),
+    }
+}
+
+fn service_holding(snapshot: Snapshot, condition: BranchCondition) -> SnapshotService {
     SnapshotService::new(
         Arc::new(StoreDouble::new(snapshot, condition, ClaimHold::Held)),
         None,
@@ -108,4 +130,75 @@ async fn a_cloned_snapshot_answers_with_the_system_times_a_read_returns() {
         "{cloned:?}"
     );
     pretty_assertions::assert_eq!((read.created_at, read.modified_at), (cloned.created_at, cloned.modified_at));
+}
+
+async fn create_with(endpoint: &str, receiver_info: &str) -> Result<Snapshot, SnapshotError> {
+    let body = format!(
+        r#"{{"type": "Snapshot", "snapshotQueries": [{{"type": "Query", "entities": [{{"type": "Vehicle"}}]}}], "endpoint": "{endpoint}", "receiverInfo": {receiver_info}}}"#
+    );
+    service(BranchCondition::Current)
+        .create(
+            serde_json::from_str::<SnapshotInput>(&body).expect("a Snapshot body"),
+            AdmittedContext::core_only(),
+        )
+        .await
+}
+
+fn patch(body: &str) -> SnapshotPatch {
+    SnapshotPatch::from_request_text(body.as_bytes(), CoreTermAliases::keyword_spellings()).expect("a Snapshot fragment")
+}
+
+#[tokio::test]
+async fn creating_a_snapshot_with_a_bad_receiver_info_key_on_an_http_endpoint_is_refused() {
+    let refused = create_with("http://example.com/s", r#"[{"key": "Bad Name", "value": "x"}]"#).await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn creating_a_snapshot_with_a_bad_receiver_info_value_on_an_http_endpoint_is_refused() {
+    let refused = create_with("http://example.com/s", r#"[{"key": "X-A", "value": "a\nb"}]"#).await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn creating_a_snapshot_with_the_same_receiver_info_on_an_mqtt_endpoint_is_accepted() {
+    let created = create_with("mqtt://broker:1883/status", r#"[{"key": "Bad Name", "value": "x"}]"#).await;
+    assert!(created.is_ok(), "{created:?}");
+}
+
+#[tokio::test]
+async fn creating_a_snapshot_with_a_good_receiver_info_on_an_http_endpoint_is_accepted() {
+    let created = create_with("http://example.com/s", r#"[{"key": "Authorization", "value": "Bearer abc"}]"#).await;
+    assert!(created.is_ok(), "{created:?}");
+}
+
+#[tokio::test]
+async fn patching_a_bad_receiver_info_onto_a_stored_http_endpoint_is_refused() {
+    let service = service_holding(stored_snapshot(Some("http://example.com/s"), None), BranchCondition::Current);
+    let refused = service
+        .update(&snapshot_id(), patch(r#"{"receiverInfo": [{"key": "Bad Name", "value": "x"}]}"#))
+        .await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn patching_the_endpoint_to_http_while_a_bad_receiver_info_is_stored_is_refused() {
+    let service = service_holding(
+        stored_snapshot(Some("mqtt://broker:1883/status"), Some(vec![bad_pair()])),
+        BranchCondition::Current,
+    );
+    let refused = service.update(&snapshot_id(), patch(r#"{"endpoint": "http://example.com/s"}"#)).await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
 }

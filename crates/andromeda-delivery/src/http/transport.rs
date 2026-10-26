@@ -15,14 +15,12 @@ use crate::{
     transport::NotificationTransport,
 };
 use andromeda_http_headers::link::field_layout::LinkFieldLayout;
+use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use headers::HeaderMapExt;
 use moka::future::Cache;
-use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
-    redirect::Policy,
-};
+use reqwest::{header::HeaderMap, redirect::Policy};
 use std::{
     error::Error,
     iter,
@@ -298,21 +296,21 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
         header_map.typed_insert(snapshot.clone());
     }
     for pair in &req.receiver_info {
-        match (HeaderName::from_bytes(pair.key.as_bytes()), HeaderValue::from_str(&pair.value)) {
-            (Ok(name), Ok(value)) => {
-                header_map.append(name, value);
+        match HttpHeaderField::try_from(pair) {
+            Ok(field) => {
+                header_map.append(field.name, field.value);
             }
-            // A receiverInfo entry that cannot become an HTTP header is not
+            // Admission refuses such an entry, so one only reaches delivery from
+            // a resource stored without that check. It is surfaced rather than
             // dropped in silence: a discarded `Authorization` header would
-            // deliver the notification unauthenticated, which the receiver
-            // would refuse or, worse, accept as anonymous. Surface it so the
-            // misconfiguration is visible rather than a quiet auth failure.
-            (Err(_), _) | (_, Err(_)) => {
+            // deliver the notification unauthenticated.
+            Err(error) => {
                 warn!(
                     subscription_id = %req.subscription_id,
                     endpoint = %req.endpoint_uri,
                     header_key = %pair.key,
-                    "dropping receiverInfo entry that is not a valid HTTP header name/value"
+                    %error,
+                    "dropping receiverInfo entry that is not a valid HTTP header"
                 );
             }
         }

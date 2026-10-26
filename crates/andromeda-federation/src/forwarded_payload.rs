@@ -232,7 +232,7 @@ pub(crate) async fn build_forwarded_payload(
     inbound: &ContextSpec,
     decision: &ForwardingDecision,
     body: Option<OutgoingBody<'_>>,
-    info: &ContextSourceInfo<'_>,
+    info: &ContextSourceInfo,
 ) -> Result<ForwardedPayload, FederationError> {
     let media_type = decision.media_type;
     let link_context = decision.context.link();
@@ -289,7 +289,7 @@ pub(crate) async fn build_items_payload(
     engine: &JsonLdEngine,
     decision: &ForwardingDecision,
     items: Vec<ItemBody<'_>>,
-    info: &ContextSourceInfo<'_>,
+    info: &ContextSourceInfo,
 ) -> Result<ForwardedPayload, FederationError> {
     let mut patches = Vec::with_capacity(items.len());
     for ItemBody { document, context } in items {

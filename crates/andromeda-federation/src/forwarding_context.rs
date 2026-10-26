@@ -160,7 +160,7 @@ pub(crate) struct ForwardingDecision {
 /// registration's admitted `contentType` is not a forwardable media type, and
 /// [`FederationError::JsonLd`] when the inbound context cannot be written
 /// inline.
-pub(crate) fn decide(inbound: &ContextSpec, info: &ContextSourceInfo<'_>, presence: BodyPresence) -> Result<ForwardingDecision, FederationError> {
+pub(crate) fn decide(inbound: &ContextSpec, info: &ContextSourceInfo, presence: BodyPresence) -> Result<ForwardingDecision, FederationError> {
     let configured = info.jsonld_context.clone(); // clone: the decision owns the IRI the registration keeps
     // Clause 6.3.19: a configured `jsonldContext` forces `application/json`,
     // the one form that names a context in a `Link` header; otherwise
@@ -232,7 +232,7 @@ fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
 /// As [`decide`].
 pub(crate) fn decide_for_items<'c>(
     contexts: impl IntoIterator<Item = &'c BatchContext>,
-    info: &ContextSourceInfo<'_>,
+    info: &ContextSourceInfo,
 ) -> Result<ForwardingDecision, FederationError> {
     // The batch parser gave every distinct context its identity once, so the
     // distinct ones are told apart by that identity and never compared again.
@@ -250,7 +250,7 @@ pub(crate) fn decide_for_items<'c>(
 }
 
 /// The decision for a batch whose entities name the different `contexts`.
-fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo<'_>) -> Result<ForwardingDecision, FederationError> {
+fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo) -> Result<ForwardingDecision, FederationError> {
     let decision = decide(&ContextSpec::none(), info, BodyPresence::Present)?;
     let context = match decision.context {
         configured @ ForwardingContext::Configured(_) => configured,

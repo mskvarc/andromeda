@@ -5,11 +5,17 @@
 //! (clause 6.3.19). Four keys are reserved: clause 4.3.6.6 gives them a fixed
 //! meaning and a restriction on their value, and clause 5.9.2.4 makes a
 //! violation of those restrictions a `BadRequestData` error at registration
-//! time. This module is the one reading of the array both the registration
-//! policy (validation) and forwarding (application) share.
+//! time. Every other pair becomes an HTTP header field, so a key or value that
+//! breaks IETF RFC 7230 is refused when the registration is written rather than
+//! when a request is forwarded. This module is the one reading of the array both
+//! the registration policy (validation) and forwarding (application) share.
 
-use crate::key_value_pair::KeyValuePair;
+use crate::{
+    http_header_field::{HttpHeaderField, HttpHeaderFieldError},
+    key_value_pair::KeyValuePair,
+};
 use andromeda_ngsi_ld_lexicon::spec_version::{SpecVersion, SpecVersionParseError};
+use http::HeaderName;
 use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{
     MediaType,
@@ -21,6 +27,9 @@ use mediatype::{
 use std::str::FromStr;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
+
+/// The tenant header, which clause 4.3.6.5 keeps out of `contextSourceInfo`.
+static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
 
 /// The `accept` key: the media type the source must answer in.
 pub const ACCEPT_KEY: &str = "accept";
@@ -70,12 +79,18 @@ pub enum ContextSourceInfoError {
     /// `ngsildConformance` is not of the form `major.minor`.
     #[error("contextSourceInfo ngsildConformance must be of the form major.minor")]
     InvalidConformance(#[source] SpecVersionParseError),
+    /// A pair outside the reserved keys is not an HTTP header field (clause 6.3.19).
+    #[error("contextSourceInfo holds an invalid HTTP header: {0}")]
+    CustomHeader(#[source] HttpHeaderFieldError),
+    /// The `NGSILD-Tenant` key: the tenant is never part of `contextSourceInfo` (clause 4.3.6.5).
+    #[error("contextSourceInfo must not carry the NGSILD-Tenant key")]
+    TenantKey,
 }
 
 /// The reserved keys of a `contextSourceInfo` array, read into their types, and
 /// the remaining pairs that are forwarded verbatim (clause 6.3.19).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ContextSourceInfo<'a> {
+pub struct ContextSourceInfo {
     /// The media type the registered source shall answer in.
     pub accept: Option<MediaTypeBuf>,
     /// The media type a forwarded payload shall be sent as.
@@ -84,8 +99,10 @@ pub struct ContextSourceInfo<'a> {
     pub jsonld_context: Option<IriBuf>,
     /// The specification version the forwarded payload shall conform to.
     pub ngsild_conformance: Option<SpecVersion>,
-    /// Every pair outside the reserved keys, in registration order.
-    pub custom: Vec<&'a KeyValuePair>,
+    /// Every pair outside the reserved keys as an HTTP header field, in
+    /// registration order. Binding-specific connection headers are kept: the
+    /// forwarder ignores them (clauses 4.3.6.5 and 6.3.19).
+    pub custom: Vec<HttpHeaderField>,
 }
 
 /// Whether a media type is one clause 4.3.6.6 admits for `accept` and `contentType`.
@@ -104,10 +121,10 @@ fn parse_media_type(key: MediaTypeKey, value: &str) -> Result<MediaTypeBuf, Cont
     Ok(media_type)
 }
 
-impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
+impl TryFrom<&[KeyValuePair]> for ContextSourceInfo {
     type Error = ContextSourceInfoError;
 
-    fn try_from(pairs: &'a [KeyValuePair]) -> Result<ContextSourceInfo<'a>, ContextSourceInfoError> {
+    fn try_from(pairs: &[KeyValuePair]) -> Result<ContextSourceInfo, ContextSourceInfoError> {
         let mut info = ContextSourceInfo::default();
         for pair in pairs {
             match pair.key.as_str() {
@@ -119,7 +136,13 @@ impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
                 NGSILD_CONFORMANCE_KEY => {
                     info.ngsild_conformance = Some(SpecVersion::from_str(&pair.value).map_err(ContextSourceInfoError::InvalidConformance)?);
                 }
-                _custom => info.custom.push(pair),
+                _custom => {
+                    let field = HttpHeaderField::try_from(pair).map_err(ContextSourceInfoError::CustomHeader)?;
+                    if field.name == NGSILD_TENANT {
+                        return Err(ContextSourceInfoError::TenantKey);
+                    }
+                    info.custom.push(field);
+                }
             }
         }
         Ok(info)
@@ -135,6 +158,7 @@ impl<'a> TryFrom<&'a [KeyValuePair]> for ContextSourceInfo<'a> {
 mod tests {
     use crate::{
         context_source_info::{ContextSourceInfo, ContextSourceInfoError, MediaTypeKey},
+        http_header_field::HttpHeaderFieldError,
         key_value_pair::KeyValuePair,
     };
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
@@ -163,7 +187,59 @@ mod tests {
             Some("https://example.org/context.jsonld".to_string())
         );
         pretty_assertions::assert_eq!(info.ngsild_conformance, Some(SpecVersion::new(1, 6)));
-        pretty_assertions::assert_eq!(info.custom, vec![&pairs[4]]);
+        pretty_assertions::assert_eq!(info.custom.len(), 1);
+        pretty_assertions::assert_eq!(info.custom[0].name, "authorization");
+        pretty_assertions::assert_eq!(info.custom[0].value, "Bearer x");
+    }
+
+    fn custom_error(key: &str, value: &str) -> ContextSourceInfoError {
+        let pairs = [pair(key, value)];
+        ContextSourceInfo::try_from(pairs.as_slice()).expect_err("the pair is refused")
+    }
+
+    #[test]
+    fn a_custom_key_with_a_space_is_refused() {
+        assert!(matches!(
+            custom_error("Bad Name", "x"),
+            ContextSourceInfoError::CustomHeader(HttpHeaderFieldError::Name(_))
+        ));
+    }
+
+    #[test]
+    fn a_custom_value_with_a_newline_is_refused() {
+        assert!(matches!(
+            custom_error("X-Api-Key", "a\nb"),
+            ContextSourceInfoError::CustomHeader(HttpHeaderFieldError::Value(_))
+        ));
+    }
+
+    #[test]
+    fn the_tenant_key_is_refused_in_any_casing() {
+        for key in ["NGSILD-Tenant", "ngsild-tenant", "Ngsild-TENANT"] {
+            assert!(matches!(custom_error(key, "t1"), ContextSourceInfoError::TenantKey), "{key} must be refused");
+        }
+    }
+
+    #[test]
+    fn urn_ngsi_ld_request_is_accepted_as_a_custom_value() {
+        let pairs = [pair("X-Api-Key", "urn:ngsi-ld:request")];
+        let info = ContextSourceInfo::try_from(pairs.as_slice()).expect("a placeholder value");
+        pretty_assertions::assert_eq!(info.custom[0].value, "urn:ngsi-ld:request");
+    }
+
+    #[test]
+    fn a_reserved_key_keeps_its_own_value_rule() {
+        assert!(matches!(
+            custom_error("accept", "text/plain"),
+            ContextSourceInfoError::UnsupportedMediaType { key: MediaTypeKey::Accept, .. }
+        ));
+    }
+
+    #[test]
+    fn a_content_length_key_is_accepted_and_left_for_the_forwarder_to_ignore() {
+        let pairs = [pair("Content-Length", "10")];
+        let info = ContextSourceInfo::try_from(pairs.as_slice()).expect("connection headers are ignored, not refused");
+        pretty_assertions::assert_eq!(info.custom.len(), 1);
     }
 
     #[test]
