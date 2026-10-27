@@ -7,12 +7,15 @@
 //! orders by, and every other database (the server's own, a suspended
 //! tenant's, one no registry row names) is reported without a visit. The pass
 //! takes this observation before it selects a tenant; the telemetry reports
-//! the whole cluster.
+//! the whole cluster. The platform database's change counters leave out the
+//! platform tables, so the controller's own bookkeeping does not make the
+//! default tenant due.
 
 use crate::{
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
     freeze_policy::{FreezeAge, FreezePressure, freeze_pressure},
+    platform_relations::platform_tuple_changes,
     state::TenantKey,
     unvisited_database::{DatabaseName, UnvisitedDatabase, UnvisitedRegistration},
 };
@@ -48,15 +51,31 @@ impl DatabaseFreeze {
     }
 }
 
-/// A database's cumulative change counters as `pg_stat_database` reports
-/// them.
+/// A tenant database's cumulative change counters as `pg_stat_database`
+/// reports them, without the writes to the platform tables.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ChangeCounters {
     /// `tup_inserted + tup_updated + tup_deleted` since the statistics were
-    /// last reset.
+    /// last reset, less the platform tables' share.
     pub(crate) tuple_changes: u64,
     /// When the database's statistics were last reset, `None` if never.
     pub(crate) stats_reset: Option<DateTime<Utc>>,
+}
+
+impl ChangeCounters {
+    /// The counters of a database whose `database_changes` include the
+    /// `platform_changes` made to the platform tables, zero outside the
+    /// platform database.
+    ///
+    /// The database total accumulates every table's counters, so it never
+    /// holds less than the platform tables' share except for a read that
+    /// lands between two flushes; that read counts no change.
+    pub(crate) const fn of_tenant(database_changes: u64, platform_changes: u64, stats_reset: Option<DateTime<Utc>>) -> ChangeCounters {
+        ChangeCounters {
+            tuple_changes: database_changes.saturating_sub(platform_changes),
+            stats_reset,
+        }
+    }
 }
 
 /// What the fleet statement saw of one active tenant's database.
@@ -184,6 +203,9 @@ enum FleetColumn {
     MultixactFreezeMaximum,
     /// `tup_inserted + tup_updated + tup_deleted`.
     TupleChanges,
+    /// The platform tables' share of `TupleChanges`, zero outside the
+    /// platform database.
+    PlatformTupleChanges,
 }
 
 /// The registry and catalogue labels the fleet statement projects.
@@ -235,6 +257,10 @@ fn fleet_observation_statement() -> SelectStatement {
                 .add(catalog_column("pg_stat_database", "tup_deleted")),
             FleetColumn::TupleChanges,
         )
+        .expr_as(
+            platform_tuple_changes(catalog_column("pg_database", "datname")),
+            FleetColumn::PlatformTupleChanges,
+        )
         .expr_as(catalog_column("pg_stat_database", "stats_reset"), FleetInstant::StatsReset)
         .from(Alias::new("pg_database"))
         .join(
@@ -257,7 +283,7 @@ fn fleet_row_of(row: &PgRow) -> Result<FleetRow, MaintenanceError> {
         let kind = match column {
             FleetColumn::TransactionIdAge | FleetColumn::MultixactIdAge => CatalogCounter::DatabaseFreezeAge,
             FleetColumn::TransactionFreezeMaximum | FleetColumn::MultixactFreezeMaximum => CatalogCounter::FreezeMaxAge,
-            FleetColumn::TupleChanges => CatalogCounter::TupleChanges,
+            FleetColumn::TupleChanges | FleetColumn::PlatformTupleChanges => CatalogCounter::TupleChanges,
         };
         non_negative(row.try_get(column.to_string().as_str())?, kind)
     };
@@ -279,10 +305,11 @@ fn fleet_row_of(row: &PgRow) -> Result<FleetRow, MaintenanceError> {
                 freeze_max_age: counter(FleetColumn::MultixactFreezeMaximum)?,
             },
         },
-        changes: ChangeCounters {
-            tuple_changes: counter(FleetColumn::TupleChanges)?,
-            stats_reset: row.try_get(FleetInstant::StatsReset.to_string().as_str())?,
-        },
+        changes: ChangeCounters::of_tenant(
+            counter(FleetColumn::TupleChanges)?,
+            counter(FleetColumn::PlatformTupleChanges)?,
+            row.try_get(FleetInstant::StatsReset.to_string().as_str())?,
+        ),
     })
 }
 
@@ -403,5 +430,16 @@ mod tests {
         );
         assert!(sql.contains(r#""pg_stat_database"."stats_reset""#), "{sql}");
         assert!(sql.contains(r#"FROM "pg_database""#), "both catalogs are read by one statement: {sql}");
+        assert!(
+            sql.contains(r#"CASE WHEN ("pg_database"."datname" = current_database()) THEN"#),
+            "the platform tables are read for the platform database's row: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_platform_tables_share_is_left_out_of_the_change_counters() {
+        assert_eq!(ChangeCounters::of_tenant(1_040, 340, None).tuple_changes, 700);
+        assert_eq!(ChangeCounters::of_tenant(1_040, 0, None).tuple_changes, 1_040);
+        assert_eq!(ChangeCounters::of_tenant(300, 340, None).tuple_changes, 0);
     }
 }

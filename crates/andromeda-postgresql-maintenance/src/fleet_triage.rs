@@ -264,6 +264,26 @@ mod tests {
         standing
     }
 
+    /// `standing` of the default tenant, whose platform database counted
+    /// `tenant_changes` rows of its own and `bookkeeping` platform table rows
+    /// since its last visit.
+    fn platform_database(now: DateTime<Utc>, tenant_changes: u64, bookkeeping: u64) -> TenantStanding {
+        let mut default = standing(1, now, 1, 0);
+        default.record.recorded = Some(ChangeCounters::of_tenant(5_000, 4_000, None));
+        default.observed = default.observed.map(|mut database| {
+            database.changes = ChangeCounters::of_tenant(5_000 + tenant_changes + bookkeeping, 4_000 + bookkeeping, None);
+            database
+        });
+        default
+    }
+
+    #[test]
+    fn a_bookkeeping_write_alone_does_not_make_the_default_tenant_due() {
+        let now = Utc::now();
+        assert_eq!(selected(&[platform_database(now, 0, 19)], now), None);
+        assert_eq!(selected(&[platform_database(now, 1, 19)], now), Some(1));
+    }
+
     #[test]
     fn a_statistics_reset_makes_a_tenant_due_even_without_changes_since() {
         let now = Utc::now();
