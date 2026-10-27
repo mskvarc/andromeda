@@ -23,8 +23,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// tenants until the process ends, and release a suspended tenant's retired
     /// runtime the moment its last lease drops.
     pub(super) async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
-        let interval = self.config.janitor_interval.duration().max(Duration::from_secs(1));
-        let ttl = self.config.runtime_idle_ttl.duration().max(Duration::from_secs(1));
+        let interval = self.config.residency.sweep_interval.duration().max(Duration::from_secs(1));
+        let ttl = self.config.residency.idle_eviction_after.duration().max(Duration::from_secs(1));
         let mut ticker = tokio_interval(interval);
         loop {
             tokio::select! {
@@ -61,7 +61,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
             let trimmed = self.trim_excess_runtimes(None).await;
             if trimmed > 0 {
-                info!(trimmed, max = self.config.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
+                info!(
+                    trimmed,
+                    max = self.config.residency.max_resident.get(),
+                    "Janitor trimmed excess tenant runtimes"
+                );
             }
 
             let evicted = self.sweep_idle_dormant(ttl).await;
@@ -172,7 +176,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// while more than that many requests are in flight at once; the next sweep
     /// or insert-trim brings it back down as their leases drop.
     pub(super) fn excess_runtimes(&self) -> Vec<(TenantRef, Instant)> {
-        let over = self.runtimes.len().saturating_sub(self.config.runtime_max_cached);
+        let over = self.runtimes.len().saturating_sub(self.config.residency.max_resident.get());
         if over == 0 {
             return Vec::new();
         }

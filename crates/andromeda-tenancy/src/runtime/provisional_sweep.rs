@@ -77,7 +77,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let outcome = if self.runtimes.contains_key(tenant) {
             Ok(Retirement::Kept)
         } else {
-            self.database.retire_provisional(name, self.config.provisional_tenant_ttl.duration()).await
+            self.database.retire_provisional(name, self.config.provisional_tenant_lifetime.duration()).await
         };
         self.build_locks.remove_if(tenant, |_, existing| Arc::ptr_eq(existing, &build_lock));
         drop(guard);

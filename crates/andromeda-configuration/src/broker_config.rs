@@ -1,21 +1,19 @@
-//! The root of the configuration: every top-level section.
+//! The root of the configuration: every top-level table.
 
 use crate::schema::{
     database::DatabaseConfig,
     entity::EntityConfig,
+    expiry::ExpiryConfig,
     extensions::ExtensionsConfig,
     federation::FederationConfig,
     http::HttpStackConfig,
-    http3::Http3Config,
-    identity::InfoConfig,
     jsonld::JsonLdConfig,
     management::ManagementConfig,
     notifications::NotificationsConfig,
     observability::ObservabilityConfig,
-    pagination::PaginationConfig,
+    request_limits::RequestLimitsConfig,
     server::ServerConfig,
     snapshot::SnapshotConfig,
-    spatial::SpatialConfig,
     temporal::TemporalConfig,
     tenancy::TenancyConfig,
     tls::TlsConfig,
@@ -23,67 +21,62 @@ use crate::schema::{
 use serde::{Deserialize, Serialize};
 use toml_comment::TomlComment;
 
-/// The whole broker configuration: one section per top-level table.
+/// The whole broker configuration: one table per concern an operator
+/// configures.
 ///
-/// The broker composition reads it and hands each crate the one section that
+/// The broker composition reads it and hands each crate the one table that
 /// crate reads.
 #[derive(Deserialize, Serialize, Default, TomlComment, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct BrokerConfig {
-    /// HTTP listener and graceful-drain configuration.
+    /// The data-plane listener and its HTTP/3 sibling.
     pub server: ServerConfig,
 
-    /// Process-wide inbound HTTP stack configuration.
-    pub http: HttpStackConfig,
-
-    /// Opt-in HTTP/3 (QUIC) listener configuration, sharing the TCP port.
-    pub http3: Http3Config,
-
-    /// The TLS identity every TLS-terminating listener presents; read only
-    /// when some listener terminates TLS.
+    /// The identity every TLS-terminating listener presents; read only when
+    /// some listener terminates TLS.
     pub tls: TlsConfig,
 
-    /// Primary and tenant PostgreSQL connection configuration.
-    pub database: DatabaseConfig,
-
-    /// JSON-LD processing and context-loading configuration.
-    pub jsonld: JsonLdConfig,
-
-    /// Temporal history, paging and intent-drain configuration.
-    pub temporal: TemporalConfig,
-
-    /// Tenant creation and runtime-cache configuration.
-    pub tenancy: TenancyConfig,
-
-    /// Context Source identity configuration.
-    pub identity: InfoConfig,
-
-    /// Entity batching, expiry, and durable side-effect configuration.
-    pub entity: EntityConfig,
-
-    /// Distributed Context Source forwarding configuration.
-    pub federation: FederationConfig,
-
-    /// Snapshot operation configuration.
-    pub snapshot: SnapshotConfig,
-
-    /// Durable and live notification delivery configuration.
-    pub notifications: NotificationsConfig,
-
-    /// Spatial projection and reconciliation configuration.
-    pub spatial: SpatialConfig,
-
-    /// Composition-owned tracing configuration.
-    pub observability: ObservabilityConfig,
-
-    /// Management-plane topology and metrics-exposure configuration.
+    /// Where the broker serves its operational endpoints.
     pub management: ManagementConfig,
 
-    /// Opt-in, non-standard extension configuration (off by default, but for
-    /// cursor pagination).
+    /// What one request may cost, identical on every replica.
+    pub request_limits: RequestLimitsConfig,
+
+    /// How the inbound HTTP stack treats a request it accepts.
+    pub http: HttpStackConfig,
+
+    /// The PostgreSQL the broker stores in, and how it connects.
+    pub database: DatabaseConfig,
+
+    /// Named tenants: whether they are served, where their data lives, how
+    /// many stay open.
+    pub tenancy: TenancyConfig,
+
+    /// The sweeps that delete what is past its `expiresAt`.
+    pub expiry: ExpiryConfig,
+
+    /// How `@context` documents are resolved.
+    pub jsonld: JsonLdConfig,
+
+    /// Entity batches, their deferred side effects, and the spatial index.
+    pub entity: EntityConfig,
+
+    /// Reading, recording and storing Temporal Evolutions.
+    pub temporal: TemporalConfig,
+
+    /// Delivering notifications, evaluating live changes, and draining
+    /// periodic subscriptions.
+    pub notifications: NotificationsConfig,
+
+    /// Forwarding to Context Sources and this broker's identity among them.
+    pub federation: FederationConfig,
+
+    /// Snapshot lifetimes, quotas and preparation.
+    pub snapshot: SnapshotConfig,
+
+    /// Andromeda's opt-in, non-standard features.
     pub extensions: ExtensionsConfig,
 
-    /// How a collection request that names neither `offset` nor `cursor` is
-    /// paged.
-    pub pagination: PaginationConfig,
+    /// Logging and metrics.
+    pub observability: ObservabilityConfig,
 }

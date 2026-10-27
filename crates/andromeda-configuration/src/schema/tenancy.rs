@@ -1,335 +1,316 @@
-//! The tunables that decide how many tenant runtimes stay open, and for how
-//! long.
+//! The `[tenancy]` table: whether named tenants are served, where their data
+//! lives, how many stay open, and how one is opened.
 
-use crate::{human_duration::HumanDuration, schema::db_name_prefix::DbNamePrefix};
+use crate::{
+    human_duration::HumanDuration,
+    schema::{db_name_prefix::DbNamePrefix, feature_mode::FeatureMode},
+};
 use serde::{Deserialize, Serialize};
+use std::num::{NonZeroU32, NonZeroUsize};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
-/// Invalid tenancy provisioning or runtime-cache configuration.
+/// Invalid tenancy configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TenancyConfigError {
-    /// Per-tenant pool size was configured as zero.
-    #[error("tenancy.tenant_max_connections must be at least 1")]
-    ZeroTenantMaxConnections,
-    /// Runtime idle retention was configured as zero.
-    #[error("tenancy.runtime_idle_ttl must be greater than zero")]
-    ZeroRuntimeIdleTtl,
-    /// Runtime cache capacity was configured as zero.
-    #[error("tenancy.runtime_max_cached must be at least 1")]
-    ZeroRuntimeMaxCached,
-    /// Runtime janitor cadence was configured as zero.
-    #[error("tenancy.janitor_interval must be greater than zero")]
-    ZeroJanitorInterval,
-    /// The concurrent cold-build admission bound was configured as zero.
-    #[error("tenancy.max_concurrent_builds must be at least 1")]
-    ZeroMaxConcurrentBuilds,
-    /// The concurrent-eviction bound was configured as zero.
-    #[error("tenancy.eviction_concurrency must be at least 1")]
-    ZeroEvictionConcurrency,
+    /// The provisional-tenant lifetime was configured as zero.
+    #[error("tenancy.provisional_tenant_lifetime must be greater than zero")]
+    ZeroProvisionalTenantLifetime,
+    /// Runtime idle eviction was configured as zero.
+    #[error("tenancy.residency.idle_eviction_after must be greater than zero")]
+    ZeroIdleEvictionAfter,
+    /// The residency sweep cadence was configured as zero.
+    #[error("tenancy.residency.sweep_interval must be greater than zero")]
+    ZeroSweepInterval,
     /// The dormant-tenant re-wake floor was configured as zero.
-    #[error("tenancy.min_dormancy must be greater than zero")]
-    ZeroMinDormancy,
-    /// The woken-runtime residency was configured as zero.
-    #[error("tenancy.wake_residency must be greater than zero")]
-    ZeroWakeResidency,
-    /// The per-pass wake bound was configured as zero.
-    #[error("tenancy.waker_max_wakes_per_pass must be at least 1")]
-    ZeroWakerMaxWakesPerPass,
+    #[error("tenancy.residency.min_wake_interval must be greater than zero")]
+    ZeroMinWakeInterval,
+    /// The woken-runtime lifetime was configured as zero.
+    #[error("tenancy.residency.woken_lifetime must be greater than zero")]
+    ZeroWokenLifetime,
     /// The cold-build admission deadline was configured as zero.
-    #[error("tenancy.build_admission_timeout must be greater than zero")]
-    ZeroBuildAdmissionTimeout,
-    /// The provisional-tenant time to live was configured as zero.
-    #[error("tenancy.provisional_tenant_ttl must be greater than zero")]
-    ZeroProvisionalTenantTtl,
+    #[error("tenancy.build.admission_timeout must be greater than zero")]
+    ZeroAdmissionTimeout,
 }
 
-/// Multi-tenancy configuration.
-///
-/// Two of these settings are read by this crate and two by whichever store
-/// provisions a tenant: `tenant_db_prefix` and `tenant_max_connections` mean
-/// nothing to a runtime cache. They live together because they are one
-/// operator-facing section, not because one type uses them all.
+/// Where each named tenant's data lives.
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TenantDatabasesConfig {
+    /// The prefix of every per-tenant database name the broker provisions.
+    #[toml_comment(inline)]
+    pub name_prefix: DbNamePrefix,
+    /// The most connections one tenant's pool opens.
+    ///
+    /// With `tenancy.residency.max_resident`, which caps how many tenants
+    /// stay open at once, this bounds the live connection count at
+    /// `max_resident * max_connections` (plus the platform pools), so tenant
+    /// churn cannot exhaust the server's connection limit.
+    #[toml_comment(inline)]
+    pub max_connections: NonZeroU32,
+}
+
+impl Default for TenantDatabasesConfig {
+    fn default() -> TenantDatabasesConfig {
+        TenantDatabasesConfig {
+            name_prefix: DbNamePrefix::default(),
+            max_connections: NonZeroU32::MIN.saturating_add(15),
+        }
+    }
+}
+
+/// How many tenant runtimes stay open, and for how long.
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ResidencyConfig {
+    /// How long an unused tenant runtime stays open before it is evicted, in
+    /// human-readable form (`"15m"`).
+    #[toml_comment(inline)]
+    pub idle_eviction_after: HumanDuration,
+    /// The most tenant runtimes open at once.
+    ///
+    /// Enforced on every sweep and whenever a cold build adds a runtime. A
+    /// runtime a request currently holds is never evicted, so while more
+    /// tenants than this have requests in flight at once the cache overshoots
+    /// it by at most the number of concurrent requests, trimmed back as they
+    /// complete.
+    #[toml_comment(inline)]
+    pub max_resident: NonZeroUsize,
+    /// How often idle and orphaned runtimes are swept, in human-readable form
+    /// (`"30s"`).
+    #[toml_comment(inline)]
+    pub sweep_interval: HumanDuration,
+    /// The shortest wait before a just-evicted tenant with due work is woken
+    /// again, in human-readable form (`"30s"`).
+    ///
+    /// When a tenant is evicted its earliest due work is probed and a wake
+    /// recorded for it; a due instant sooner than this is pushed back to it,
+    /// so evicting a tenant that is only a little overdue and reloading it
+    /// cannot thrash. A failed probe records a retry this far out.
+    #[toml_comment(inline)]
+    pub min_wake_interval: HumanDuration,
+    /// How long a runtime woken for its due work stays open, in
+    /// human-readable form (`"1m"`). It is the first idle-eviction candidate
+    /// yet keeps this much idle life, so it never displaces a runtime a
+    /// request touched. Below `idle_eviction_after` to have that effect.
+    #[toml_comment(inline)]
+    pub woken_lifetime: HumanDuration,
+    /// The most dormant tenants one wake pass opens. Woken runtimes are
+    /// built through the same admission bound as request cold builds, so this
+    /// keeps a wake burst from starving request-driven cold loads.
+    #[toml_comment(inline)]
+    pub max_wakes_per_pass: NonZeroUsize,
+    /// The most tenant runtimes torn down at once.
+    ///
+    /// Eviction closes a runtime's pool and stops its workers; every eviction
+    /// takes a teardown slot first, so the runtimes alive at once stay within
+    /// `max_resident` plus this bound. A cold build that must make room while
+    /// every slot is busy waits for one within `tenancy.build.admission_timeout`.
+    #[toml_comment(inline)]
+    pub max_concurrent_evictions: NonZeroUsize,
+}
+
+impl Default for ResidencyConfig {
+    fn default() -> ResidencyConfig {
+        ResidencyConfig {
+            idle_eviction_after: HumanDuration::from_secs(900),
+            max_resident: NonZeroUsize::MIN.saturating_add(63),
+            sweep_interval: HumanDuration::from_secs(30),
+            min_wake_interval: HumanDuration::from_secs(30),
+            woken_lifetime: HumanDuration::from_secs(60),
+            max_wakes_per_pass: NonZeroUsize::MIN.saturating_add(3),
+            max_concurrent_evictions: NonZeroUsize::MIN.saturating_add(7),
+        }
+    }
+}
+
+/// How a tenant runtime is opened on its first request.
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TenantBuildConfig {
+    /// The most tenant runtimes built at once.
+    ///
+    /// A cold build opens a connection pool and, on a schema that is behind or
+    /// absent, runs the migrator over a direct connection. Requests past the
+    /// bound wait for a build permit for at most `admission_timeout`; the wait
+    /// is reported as `andromeda_tenant_build_admission_wait_seconds`.
+    #[toml_comment(inline)]
+    pub max_concurrent: NonZeroUsize,
+    /// How long a request may wait to be admitted to a cold build before it is
+    /// answered 503 with `Retry-After`, in human-readable form (`"20s"`).
+    ///
+    /// Covers every wait ahead of the build itself: another request's build of
+    /// the same tenant, a build permit, and a teardown slot when the cache is
+    /// full. Below `request_limits.timeout`, which it would otherwise race.
+    #[toml_comment(inline)]
+    pub admission_timeout: HumanDuration,
+}
+
+impl Default for TenantBuildConfig {
+    fn default() -> TenantBuildConfig {
+        TenantBuildConfig {
+            max_concurrent: NonZeroUsize::MIN.saturating_add(7),
+            admission_timeout: HumanDuration::from_secs(20),
+        }
+    }
+}
+
+/// Whether named tenants are served, where their data lives, how many stay
+/// open, and how one is opened.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TenancyConfig {
-    /// Whether named tenants are served at all.
-    pub enabled: bool,
-
-    /// Prefix for the per-tenant database names the store provisions.
+    /// Whether named tenants are served: `enabled` or `disabled`.
     #[toml_comment(inline)]
-    pub tenant_db_prefix: DbNamePrefix,
-
-    /// Maximum number of connections in per-tenant database pools.
-    ///
-    /// Each tenant gets its own connection pool capped at this value. Combined
-    /// with `runtime_max_cached`, which caps how many per-tenant runtimes stay
-    /// open at once, this bounds the live connection count at
-    /// `runtime_max_cached * tenant_max_connections` (plus the platform pools),
-    /// so tenant churn cannot exhaust the server's connection limit.
-    pub tenant_max_connections: u32,
-
-    /// How long an unused tenant runtime is held open before eviction, in
-    /// human-readable form (`"15m"`).
-    #[toml_comment(inline)]
-    pub runtime_idle_ttl: HumanDuration,
-
-    /// How many tenant runtimes may be held open at once.
-    ///
-    /// The cap is enforced both on the janitor tick and synchronously when a
-    /// cold build inserts a runtime, so `runtime_max_cached *
-    /// tenant_max_connections` bounds the live per-tenant pool count between
-    /// sweeps rather than letting it climb until the next tick.
-    ///
-    /// The bound is honoured for runtimes nobody is using. A runtime a request
-    /// currently holds is leased and never evicted, so while more than
-    /// `runtime_max_cached` distinct tenants have requests in flight at once the
-    /// cache overshoots this cap transiently; the overshoot is bounded by the
-    /// number of concurrent requests and is trimmed back by the next sweep or
-    /// insert as those requests complete and drop their leases.
-    pub runtime_max_cached: usize,
-
-    /// How often the janitor sweeps for idle and orphaned runtimes, in
-    /// human-readable form (`"30s"`).
-    #[toml_comment(inline)]
-    pub janitor_interval: HumanDuration,
-
-    /// How many tenant runtimes may be cold-built at once.
-    ///
-    /// A cold build opens a connection pool and, on a schema that is behind or
-    /// absent, runs the migrator over a direct connection. Without a bound a
-    /// burst of first requests for distinct tenants would open that many pools
-    /// and migrator connections at once and exhaust the server. Requests past
-    /// the bound wait for a build permit for at most `build_admission_timeout`;
-    /// the wait is reported as `andromeda_tenant_build_admission_wait_seconds`.
-    pub max_concurrent_builds: usize,
-
-    /// How long a request may wait to be admitted to a cold build before it is
-    /// refused as saturated, in human-readable form (`"20s"`).
-    ///
-    /// Covers every wait ahead of the build itself: another request's in-flight
-    /// build of the same tenant, a build permit under `max_concurrent_builds`,
-    /// and a teardown slot under `eviction_concurrency` when the cache is full
-    /// and a runtime must be released first. A request that cannot be admitted
-    /// within it is answered `503` with `Retry-After` rather than stalling until
-    /// the HTTP request timeout, which it must therefore stay below.
-    #[toml_comment(inline)]
-    pub build_admission_timeout: HumanDuration,
-
-    /// How many tenant runtimes may be torn down at once.
-    ///
-    /// Eviction closes a runtime's connection pool and stops its workers. Every
-    /// eviction path takes a teardown slot before it removes a runtime from the
-    /// cache, so a runtime is either cached or in one of these slots and the
-    /// runtimes alive at once stay within `runtime_max_cached` plus this bound,
-    /// beyond the transient overshoot of runtimes leased by in-flight requests
-    /// (see `runtime_max_cached`) or still being built. A cold build
-    /// that must make room while every slot is busy waits for one within
-    /// `build_admission_timeout`.
-    pub eviction_concurrency: usize,
-
-    /// The shortest delay before a just-evicted dormant tenant is woken again.
-    ///
-    /// When the janitor evicts a tenant it probes for the earliest instant the
-    /// tenant has work due and records a wake for it. A due instant sooner than
-    /// `now + min_dormancy` is clamped up to it, so evicting a tenant that
-    /// is only a little overdue and immediately reloading it cannot thrash. A
-    /// failed probe records a retry this far out rather than leaving the tenant
-    /// unscheduled. Human-readable form (`"30s"`).
-    #[toml_comment(inline)]
-    pub min_dormancy: HumanDuration,
-
-    /// How long a woken runtime is held resident to do its due work.
-    ///
-    /// A runtime the waker loads exists only to drain the work its probe found.
-    /// Its last use is backdated so it is the first idle-eviction victim yet
-    /// keeps this much idle life, so it never displaces a runtime a request
-    /// touched. Must be below `runtime_idle_ttl` to have that effect.
-    /// Human-readable form (`"1m"`).
-    #[toml_comment(inline)]
-    pub wake_residency: HumanDuration,
-
-    /// How many dormant tenants a single wake pass loads at most.
-    ///
-    /// Woken runtimes are cold-built through the same admission bound as request
-    /// cold builds; this caps how much of a pass's budget the waker takes so a
-    /// wake burst cannot starve request-driven cold loads.
-    pub waker_max_wakes_per_pass: usize,
-
+    pub mode: FeatureMode,
     /// How long a provisional tenant whose database holds no information is
-    /// kept before the janitor retires it, in human-readable form (`"10m"`).
+    /// kept before it is retired, in human-readable form (`"10m"`).
     ///
     /// A creating operation registers a tenant it targets for the first time
     /// and prepares its database before the operation runs; until that
     /// database holds information the tenant is answered as nonexistent
     /// (clause 5.5.10). A refused creating operation leaves such a tenant
-    /// behind, and the janitor drops its database and removes its row once it
-    /// has not been provisioned for this long. Measured from the last
-    /// provisioning, so it must exceed the longest a creating request can take,
-    /// or a request still running could find its database gone.
+    /// behind, and its database and row are removed once it has not been
+    /// provisioned for this long. Longer than the longest a creating request
+    /// can take, or a request still running could find its database gone.
     #[toml_comment(inline)]
-    pub provisional_tenant_ttl: HumanDuration,
+    pub provisional_tenant_lifetime: HumanDuration,
+    /// Where each named tenant's data lives.
+    pub databases: TenantDatabasesConfig,
+    /// How many tenant runtimes stay open, and for how long.
+    pub residency: ResidencyConfig,
+    /// How a tenant runtime is opened on its first request.
+    pub build: TenantBuildConfig,
 }
 
 impl Default for TenancyConfig {
     fn default() -> TenancyConfig {
         TenancyConfig {
-            enabled: true,
-            tenant_db_prefix: DbNamePrefix::default(),
-            tenant_max_connections: 16,
-            runtime_idle_ttl: HumanDuration::from_secs(900),
-            runtime_max_cached: 64,
-            janitor_interval: HumanDuration::from_secs(30),
-            max_concurrent_builds: 8,
-            build_admission_timeout: HumanDuration::from_secs(20),
-            eviction_concurrency: 8,
-            min_dormancy: HumanDuration::from_secs(30),
-            wake_residency: HumanDuration::from_secs(60),
-            waker_max_wakes_per_pass: 4,
-            provisional_tenant_ttl: HumanDuration::from_secs(600),
+            mode: FeatureMode::Enabled,
+            provisional_tenant_lifetime: HumanDuration::from_secs(600),
+            databases: TenantDatabasesConfig::default(),
+            residency: ResidencyConfig::default(),
+            build: TenantBuildConfig::default(),
         }
     }
 }
 
 impl TenancyConfig {
-    /// Validate tenant pool and runtime-cache limits.
+    /// Validate the tenancy durations.
     ///
     /// # Errors
     ///
-    /// Returns the [`TenancyConfigError`] naming the first setting configured
-    /// as zero: the per-tenant pool size, the runtime idle retention, the
-    /// runtime cache capacity, the janitor cadence, the concurrent cold-build
-    /// bound, the cold-build admission deadline, the concurrent-eviction bound,
-    /// the dormant re-wake floor, the woken-runtime residency, the per-pass
-    /// wake bound or the provisional-tenant time to live.
+    /// Returns the [`TenancyConfigError`] naming the first duration configured
+    /// as zero.
     pub const fn validate(&self) -> Result<(), TenancyConfigError> {
-        if self.tenant_max_connections == 0 {
-            return Err(TenancyConfigError::ZeroTenantMaxConnections);
+        if self.provisional_tenant_lifetime.is_zero() {
+            Err(TenancyConfigError::ZeroProvisionalTenantLifetime)
+        } else if self.residency.idle_eviction_after.is_zero() {
+            Err(TenancyConfigError::ZeroIdleEvictionAfter)
+        } else if self.residency.sweep_interval.is_zero() {
+            Err(TenancyConfigError::ZeroSweepInterval)
+        } else if self.residency.min_wake_interval.is_zero() {
+            Err(TenancyConfigError::ZeroMinWakeInterval)
+        } else if self.residency.woken_lifetime.is_zero() {
+            Err(TenancyConfigError::ZeroWokenLifetime)
+        } else if self.build.admission_timeout.is_zero() {
+            Err(TenancyConfigError::ZeroAdmissionTimeout)
+        } else {
+            Ok(())
         }
-        if self.runtime_idle_ttl.is_zero() {
-            return Err(TenancyConfigError::ZeroRuntimeIdleTtl);
-        }
-        if self.runtime_max_cached == 0 {
-            return Err(TenancyConfigError::ZeroRuntimeMaxCached);
-        }
-        if self.janitor_interval.is_zero() {
-            return Err(TenancyConfigError::ZeroJanitorInterval);
-        }
-        if self.max_concurrent_builds == 0 {
-            return Err(TenancyConfigError::ZeroMaxConcurrentBuilds);
-        }
-        if self.build_admission_timeout.is_zero() {
-            return Err(TenancyConfigError::ZeroBuildAdmissionTimeout);
-        }
-        if self.eviction_concurrency == 0 {
-            return Err(TenancyConfigError::ZeroEvictionConcurrency);
-        }
-        if self.min_dormancy.is_zero() {
-            return Err(TenancyConfigError::ZeroMinDormancy);
-        }
-        if self.wake_residency.is_zero() {
-            return Err(TenancyConfigError::ZeroWakeResidency);
-        }
-        if self.waker_max_wakes_per_pass == 0 {
-            return Err(TenancyConfigError::ZeroWakerMaxWakesPerPass);
-        }
-        if self.provisional_tenant_ttl.is_zero() {
-            return Err(TenancyConfigError::ZeroProvisionalTenantTtl);
-        }
-        Ok(())
+    }
+
+    /// Whether named tenants are served.
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self.mode, FeatureMode::Enabled)
     }
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
-mod config_tests {
-    use super::{TenancyConfig, TenancyConfigError};
-    use crate::{human_duration::HumanDuration, schema::db_name_prefix::DbNamePrefix};
+mod tests {
+    use crate::{
+        human_duration::HumanDuration,
+        schema::tenancy::{ResidencyConfig, TenancyConfig, TenancyConfigError, TenantBuildConfig},
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn zero_runtime_cache_capacity_is_rejected() {
-        let config = TenancyConfig {
-            enabled: true,
-            tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("database prefix"),
-            tenant_max_connections: 16,
-            runtime_idle_ttl: HumanDuration::from_secs(900),
-            runtime_max_cached: 0,
-            janitor_interval: HumanDuration::from_secs(30),
-            max_concurrent_builds: 8,
-            build_admission_timeout: HumanDuration::from_secs(20),
-            eviction_concurrency: 8,
-            min_dormancy: HumanDuration::from_secs(30),
-            wake_residency: HumanDuration::from_secs(60),
-            waker_max_wakes_per_pass: 4,
-            provisional_tenant_ttl: HumanDuration::from_secs(600),
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
+    fn the_default_tenancy_is_valid() {
+        assert_eq!(TenancyConfig::default().validate(), Ok(()));
+        assert!(TenancyConfig::default().is_enabled());
     }
 
     #[test]
-    fn a_zero_concurrent_build_bound_is_rejected() {
-        let config = TenancyConfig {
-            max_concurrent_builds: 0,
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMaxConcurrentBuilds));
+    fn every_zero_duration_is_refused_by_its_key() {
+        let zero = HumanDuration::from_secs(0);
+        let residency = ResidencyConfig::default();
+        for (config, error) in [
+            (
+                TenancyConfig {
+                    provisional_tenant_lifetime: zero,
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroProvisionalTenantLifetime,
+            ),
+            (
+                TenancyConfig {
+                    residency: ResidencyConfig {
+                        idle_eviction_after: zero,
+                        ..residency
+                    },
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroIdleEvictionAfter,
+            ),
+            (
+                TenancyConfig {
+                    residency: ResidencyConfig {
+                        sweep_interval: zero,
+                        ..residency
+                    },
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroSweepInterval,
+            ),
+            (
+                TenancyConfig {
+                    residency: ResidencyConfig {
+                        min_wake_interval: zero,
+                        ..residency
+                    },
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroMinWakeInterval,
+            ),
+            (
+                TenancyConfig {
+                    residency: ResidencyConfig {
+                        woken_lifetime: zero,
+                        ..residency
+                    },
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroWokenLifetime,
+            ),
+            (
+                TenancyConfig {
+                    build: TenantBuildConfig {
+                        admission_timeout: zero,
+                        ..TenantBuildConfig::default()
+                    },
+                    ..TenancyConfig::default()
+                },
+                TenancyConfigError::ZeroAdmissionTimeout,
+            ),
+        ] {
+            assert_eq!(config.validate(), Err(error));
+        }
     }
 
     #[test]
-    fn a_zero_build_admission_timeout_is_rejected() {
-        let config = TenancyConfig {
-            build_admission_timeout: HumanDuration::from_secs(0),
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroBuildAdmissionTimeout));
-    }
-
-    #[test]
-    fn a_zero_eviction_concurrency_is_rejected() {
-        let config = TenancyConfig {
-            eviction_concurrency: 0,
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroEvictionConcurrency));
-    }
-
-    #[test]
-    fn a_zero_min_dormancy_is_rejected() {
-        let config = TenancyConfig {
-            min_dormancy: HumanDuration::from_secs(0),
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroMinDormancy));
-    }
-
-    #[test]
-    fn a_zero_wake_residency_is_rejected() {
-        let config = TenancyConfig {
-            wake_residency: HumanDuration::from_secs(0),
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakeResidency));
-    }
-
-    #[test]
-    fn a_zero_per_pass_wake_bound_is_rejected() {
-        let config = TenancyConfig {
-            waker_max_wakes_per_pass: 0,
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroWakerMaxWakesPerPass));
-    }
-
-    #[test]
-    fn a_zero_provisional_tenant_ttl_is_rejected() {
-        let config = TenancyConfig {
-            provisional_tenant_ttl: HumanDuration::from_secs(0),
-            ..TenancyConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroProvisionalTenantTtl));
+    fn a_zero_count_is_refused_as_it_is_read() {
+        let refused = toml::from_str::<TenantBuildConfig>("max_concurrent = 0\nadmission_timeout = \"20s\"\n");
+        assert!(refused.is_err());
     }
 }

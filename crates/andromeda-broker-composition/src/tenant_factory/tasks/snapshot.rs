@@ -5,7 +5,7 @@ use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
     tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError},
 };
-use andromeda_configuration::schema::delivery::DeliveryConfig;
+use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_postgresql_context_store::snapshot::status_outbox::SnapshotStatusOutbox;
 use andromeda_retry::schedule::BackoffSchedule;
@@ -88,14 +88,15 @@ pub(super) fn register_snapshot_workers(
         )
         .map_err(|error| AssemblyInvariant::SnapshotStatusDrain(Box::new(error)))?,
     );
-    let floor = config.poll_interval.duration().max(Duration::from_secs(1));
+    let floor = config.queue.poll_interval.duration().max(Duration::from_secs(1));
     let ceiling = config
-        .poll_interval_max
+        .queue
+        .max_poll_interval
         .duration()
-        .max(config.poll_interval.duration())
+        .max(config.queue.poll_interval.duration())
         .max(Duration::from_secs(1));
     register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver, pacer)?; // clone: delivery and cleanup share one drain.
-    register_snapshot_status_cleanup(supervisor, drain, config.cleanup_interval.duration().max(Duration::from_secs(1)))
+    register_snapshot_status_cleanup(supervisor, drain, config.retention.cleanup_interval.duration().max(Duration::from_secs(1)))
 }
 
 /// Register the sweep that removes Snapshots past their `expiresAt`.

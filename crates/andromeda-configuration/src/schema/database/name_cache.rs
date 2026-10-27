@@ -11,6 +11,7 @@
 use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use strum::{Display, EnumString};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
@@ -19,33 +20,51 @@ use toml_comment::TomlComment;
 pub enum NameCacheConfigError {
     /// A cache with no capacity would read every name from its table on every
     /// resolution.
-    #[error("database.name_cache.capacity_per_dictionary must be greater than zero")]
+    #[error("database.name_cache.max_size_per_dictionary must be greater than zero")]
     ZeroCapacity,
     /// A zero idle timeout would evict every name the moment it was cached.
-    #[error("database.name_cache.idle_eviction must be greater than zero, or \"unlimited\"")]
+    #[error("database.name_cache.idle_eviction_after must be greater than zero, or \"unlimited\"")]
     ZeroIdleEviction,
 }
 
-/// The memory budget and idle timeout of one tenant's name dictionary caches.
+/// When a tenant's name caches are filled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+pub enum NameLoading {
+    /// Every stored name is read into its cache when the tenant opens, so
+    /// the first requests resolve names from memory.
+    #[default]
+    Eager,
+    /// A name is read into its cache the first time it is resolved.
+    Lazy,
+}
+
+/// When a tenant's name dictionary caches are filled, how much memory each
+/// may hold, and how long an unused name stays in one.
 ///
 /// Each tenant holds two caches, one over `attribute_names` and one over
 /// `entity_type_names`, and each is given the whole budget. A tenant therefore
-/// holds at most twice [`capacity_per_dictionary`](Self::capacity_per_dictionary)
+/// holds at most twice [`max_size_per_dictionary`](Self::max_size_per_dictionary)
 /// of cached names, and only as much as it has actually resolved: the budget is
 /// a ceiling, not an allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TomlComment)]
 #[serde(deny_unknown_fields)]
 pub struct NameCacheConfig {
+    /// When the caches are filled: `eager` (as the tenant opens) or `lazy`
+    /// (as names are first resolved).
+    #[toml_comment(inline)]
+    pub loading: NameLoading,
     /// Memory each dictionary's cache may hold, in human-readable form
     /// (`"16 MiB"`). When it is full, the least valuable names are dropped to
     /// make room; a dropped name is read from its table when next resolved.
     #[toml_comment(inline)]
-    pub capacity_per_dictionary: HumanByteSize,
+    pub max_size_per_dictionary: HumanByteSize,
     /// How long a cached name may go unused before it is dropped, in
     /// human-readable form (`"8h"`), or `"unlimited"` to drop names only when
     /// the capacity is full.
     #[toml_comment(inline)]
-    pub idle_eviction: IdleEviction,
+    pub idle_eviction_after: IdleEviction,
 }
 
 // Manual because the defaults are chosen values rather than each field's own
@@ -53,10 +72,11 @@ pub struct NameCacheConfig {
 impl Default for NameCacheConfig {
     fn default() -> NameCacheConfig {
         NameCacheConfig {
+            loading: NameLoading::Eager,
             // Roughly a hundred thousand names, against the hundreds a data
             // space's models actually use, so a normal tenant never evicts.
-            capacity_per_dictionary: HumanByteSize::mib(16),
-            idle_eviction: IdleEviction::After(HumanDuration::from_secs(8 * 60 * 60)),
+            max_size_per_dictionary: HumanByteSize::mib(16),
+            idle_eviction_after: IdleEviction::After(HumanDuration::from_secs(8 * 60 * 60)),
         }
     }
 }
@@ -70,10 +90,10 @@ impl NameCacheConfig {
     /// and [`NameCacheConfigError::ZeroIdleEviction`] when the idle timeout is a
     /// zero duration.
     pub const fn validate(&self) -> Result<(), NameCacheConfigError> {
-        if self.capacity_per_dictionary.as_u64() == 0 {
+        if self.max_size_per_dictionary.as_u64() == 0 {
             return Err(NameCacheConfigError::ZeroCapacity);
         }
-        match self.idle_eviction {
+        match self.idle_eviction_after {
             IdleEviction::After(idle) if idle.is_zero() => Err(NameCacheConfigError::ZeroIdleEviction),
             IdleEviction::After(_) | IdleEviction::Never(_) => Ok(()),
         }
@@ -82,14 +102,14 @@ impl NameCacheConfig {
     /// The capacity of one dictionary's cache, in bytes.
     #[must_use]
     pub const fn capacity_bytes(&self) -> u64 {
-        self.capacity_per_dictionary.as_u64()
+        self.max_size_per_dictionary.as_u64()
     }
 
     /// How long a cached name may go unused, or `None` when only the capacity
     /// evicts.
     #[must_use]
     pub const fn idle_timeout(&self) -> Option<Duration> {
-        match self.idle_eviction {
+        match self.idle_eviction_after {
             IdleEviction::After(idle) => Some(idle.duration()),
             IdleEviction::Never(_) => None,
         }
@@ -125,7 +145,7 @@ mod tests {
     use crate::{
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
-        schema::name_cache::{IdleEviction, NameCacheConfig, NameCacheConfigError, Unlimited},
+        schema::database::name_cache::{IdleEviction, NameCacheConfig, NameCacheConfigError, Unlimited},
     };
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -140,42 +160,44 @@ mod tests {
 
     #[test]
     fn a_human_readable_capacity_and_idle_timeout_parse() {
-        let config: NameCacheConfig = toml::from_str("capacity_per_dictionary = \"32 MiB\"\nidle_eviction = \"30m\"").expect("a capacity and a duration parse");
+        let config: NameCacheConfig =
+            toml::from_str("loading = \"lazy\"\nmax_size_per_dictionary = \"32 MiB\"\nidle_eviction_after = \"30m\"").expect("a capacity and a duration parse");
         assert_eq!(config.capacity_bytes(), 32 * 1024 * 1024);
         assert_eq!(config.idle_timeout(), Some(Duration::from_mins(30)));
     }
 
     #[test]
     fn unlimited_idle_eviction_leaves_only_the_capacity_evicting() {
-        let config: NameCacheConfig = toml::from_str("capacity_per_dictionary = \"16 MiB\"\nidle_eviction = \"unlimited\"").expect("unlimited parses");
-        assert_eq!(config.idle_eviction, IdleEviction::Never(Unlimited::Unlimited));
+        let config: NameCacheConfig =
+            toml::from_str("loading = \"lazy\"\nmax_size_per_dictionary = \"16 MiB\"\nidle_eviction_after = \"unlimited\"").expect("unlimited parses");
+        assert_eq!(config.idle_eviction_after, IdleEviction::Never(Unlimited::Unlimited));
         assert_eq!(config.idle_timeout(), None);
         assert_eq!(config.validate(), Ok(()));
     }
 
     #[test]
     fn an_idle_eviction_that_is_neither_a_duration_nor_unlimited_is_refused() {
-        let parsed = toml::from_str::<NameCacheConfig>("capacity_per_dictionary = \"16 MiB\"\nidle_eviction = \"forever\"");
+        let parsed = toml::from_str::<NameCacheConfig>("loading = \"lazy\"\nmax_size_per_dictionary = \"16 MiB\"\nidle_eviction_after = \"forever\"");
         assert!(parsed.is_err(), "only a duration or \"unlimited\" is an idle timeout");
     }
 
     #[test]
     fn both_idle_eviction_spellings_render_as_they_are_written() {
         let rendered = toml::to_string(&NameCacheConfig::default()).expect("the default renders");
-        assert!(rendered.contains("idle_eviction = \"8h\""), "{rendered}");
-        assert!(rendered.contains("capacity_per_dictionary = \"16.0 MiB\""), "{rendered}");
+        assert!(rendered.contains("idle_eviction_after = \"8h\""), "{rendered}");
+        assert!(rendered.contains("max_size_per_dictionary = \"16.0 MiB\""), "{rendered}");
         let unlimited = NameCacheConfig {
-            idle_eviction: IdleEviction::Never(Unlimited::Unlimited),
+            idle_eviction_after: IdleEviction::Never(Unlimited::Unlimited),
             ..NameCacheConfig::default()
         };
         let rendered = toml::to_string(&unlimited).expect("unlimited renders");
-        assert!(rendered.contains("idle_eviction = \"unlimited\""), "{rendered}");
+        assert!(rendered.contains("idle_eviction_after = \"unlimited\""), "{rendered}");
     }
 
     #[test]
     fn a_zero_capacity_is_refused() {
         let config = NameCacheConfig {
-            capacity_per_dictionary: HumanByteSize::b(0),
+            max_size_per_dictionary: HumanByteSize::b(0),
             ..NameCacheConfig::default()
         };
         assert_eq!(config.validate(), Err(NameCacheConfigError::ZeroCapacity));
@@ -184,7 +206,7 @@ mod tests {
     #[test]
     fn a_zero_idle_timeout_is_refused() {
         let config = NameCacheConfig {
-            idle_eviction: IdleEviction::After(HumanDuration::from_secs(0)),
+            idle_eviction_after: IdleEviction::After(HumanDuration::from_secs(0)),
             ..NameCacheConfig::default()
         };
         assert_eq!(config.validate(), Err(NameCacheConfigError::ZeroIdleEviction));

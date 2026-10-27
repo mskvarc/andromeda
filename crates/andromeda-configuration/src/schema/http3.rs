@@ -33,14 +33,14 @@ pub enum Http3Mode {
 #[serde(deny_unknown_fields)]
 pub struct Http3Config {
     /// Whether the QUIC/HTTP/3 listener is served alongside the TCP listener.
-    /// Enabling it requires the `[tls]` certificate and key.
+    /// Enabling it requires the `[tls]` certificate and private key.
     #[toml_comment(inline)]
     pub mode: Http3Mode,
     /// How long a client may cache the `Alt-Svc` advertisement of this listener
     /// before rediscovering it (RFC 7838 `ma`), in human-readable form
     /// (`"24h"`).
     #[toml_comment(inline)]
-    pub advertisement_max_age: HumanDuration,
+    pub advertisement_lifetime: HumanDuration,
 }
 
 impl Default for Http3Config {
@@ -49,7 +49,7 @@ impl Default for Http3Config {
     fn default() -> Http3Config {
         Http3Config {
             mode: Http3Mode::Disabled,
-            advertisement_max_age: HumanDuration::from_secs(86_400),
+            advertisement_lifetime: HumanDuration::from_secs(86_400),
         }
     }
 }
@@ -74,7 +74,7 @@ mod tests {
         let rendered = toml::to_string(&config)?;
         let parsed: Http3Config = toml::from_str(&rendered)?;
         assert_eq!(parsed.mode, Http3Mode::Enabled);
-        assert_eq!(parsed.advertisement_max_age, config.advertisement_max_age);
+        assert_eq!(parsed.advertisement_lifetime, config.advertisement_lifetime);
         Ok(())
     }
 }

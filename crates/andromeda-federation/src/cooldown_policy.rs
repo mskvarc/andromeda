@@ -5,7 +5,7 @@
 //! further requests to a failed endpoint; this policy decides how long it
 //! declines when the registration sets no cooldown, or a shorter one.
 
-use andromeda_configuration::schema::federation::{CooldownMode, FederationConfig};
+use andromeda_configuration::schema::federation::cooldown::{CooldownConfig, CooldownMode};
 use andromeda_retry::{cursor::BackoffCursor, growth::Growth, jitter::Jitter, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use std::time::Duration;
 
@@ -30,23 +30,23 @@ impl CooldownPolicy {
 }
 
 /// The windows the broker holds a failed source back for: none when the
-/// mode is `off`, `cooldown_window` after every failure when `constant`,
-/// and when `exponential` a window doubling from `cooldown_window` with
-/// each failure of an unbroken episode, jittered upwards by up to itself
-/// and never past `cooldown_max`.
+/// mode is `disabled`, `retry_interval` after every failure when `constant`,
+/// and when `exponential` a window doubling from `retry_interval` with each
+/// failure of an unbroken episode, jittered upwards by up to itself and never
+/// past `max_retry_interval`.
 ///
 /// # Errors
 ///
-/// Returns the [`BackoffScheduleError`] of a mode other than `off` with a
+/// Returns the [`BackoffScheduleError`] of a mode other than `disabled` with a
 /// zero window, or of an `exponential` cap below its first window; the
 /// configuration loader asks for the schedule, so a broker never starts
 /// with one.
-pub const fn cooldown_schedule(config: &FederationConfig) -> Result<Option<BackoffSchedule>, BackoffScheduleError> {
-    let window = config.cooldown_window.duration();
-    let schedule = match config.cooldown_mode {
-        CooldownMode::Off => return Ok(None),
+pub const fn cooldown_schedule(config: &CooldownConfig) -> Result<Option<BackoffSchedule>, BackoffScheduleError> {
+    let window = config.retry_interval.duration();
+    let schedule = match config.mode {
+        CooldownMode::Disabled => return Ok(None),
         CooldownMode::Constant => BackoffSchedule::validated(window, window, Growth::Doubling),
-        CooldownMode::Exponential => match BackoffSchedule::validated(window, config.cooldown_max.duration(), Growth::Doubling) {
+        CooldownMode::Exponential => match BackoffSchedule::validated(window, config.max_retry_interval.duration(), Growth::Doubling) {
             Ok(schedule) => Ok(schedule.with_jitter(Jitter::Additive)),
             Err(error) => Err(error),
         },
@@ -57,10 +57,10 @@ pub const fn cooldown_schedule(config: &FederationConfig) -> Result<Option<Backo
     }
 }
 
-impl TryFrom<&FederationConfig> for CooldownPolicy {
+impl TryFrom<&CooldownConfig> for CooldownPolicy {
     type Error = BackoffScheduleError;
 
-    fn try_from(config: &FederationConfig) -> Result<CooldownPolicy, BackoffScheduleError> {
+    fn try_from(config: &CooldownConfig) -> Result<CooldownPolicy, BackoffScheduleError> {
         Ok(cooldown_schedule(config)?.map_or(CooldownPolicy::Off, CooldownPolicy::Windowed))
     }
 }
@@ -102,7 +102,7 @@ mod tests {
     use crate::cooldown_policy::{CooldownEpisode, CooldownPolicy, cooldown_schedule};
     use andromeda_configuration::{
         human_duration::HumanDuration,
-        schema::federation::{CooldownMode, FederationConfig},
+        schema::federation::cooldown::{CooldownConfig, CooldownMode},
     };
     use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
     use std::time::Duration;
@@ -145,26 +145,26 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_cooldown_window_is_rejected_unless_the_mode_is_off() {
-        let zero = |cooldown_mode| FederationConfig {
-            cooldown_mode,
-            cooldown_window: HumanDuration::from_millis(0),
-            ..FederationConfig::default()
+    fn a_zero_cooldown_window_is_rejected_unless_the_mode_is_disabled() {
+        let zero = |mode| CooldownConfig {
+            mode,
+            retry_interval: HumanDuration::from_millis(0),
+            ..CooldownConfig::default()
         };
         pretty_assertions::assert_eq!(cooldown_schedule(&zero(CooldownMode::Constant)).map(drop), Err(BackoffScheduleError::ZeroFirst));
         pretty_assertions::assert_eq!(
             cooldown_schedule(&zero(CooldownMode::Exponential)).map(drop),
             Err(BackoffScheduleError::ZeroFirst)
         );
-        assert!(cooldown_schedule(&zero(CooldownMode::Off)).expect("off holds no window").is_none());
+        assert!(cooldown_schedule(&zero(CooldownMode::Disabled)).expect("disabled holds no window").is_none());
     }
 
     #[test]
     fn an_exponential_cap_below_its_first_window_is_rejected() {
-        let config = FederationConfig {
-            cooldown_window: HumanDuration::from_secs(10),
-            cooldown_max: HumanDuration::from_secs(5),
-            ..FederationConfig::default()
+        let config = CooldownConfig {
+            retry_interval: HumanDuration::from_secs(10),
+            max_retry_interval: HumanDuration::from_secs(5),
+            ..CooldownConfig::default()
         };
         pretty_assertions::assert_eq!(cooldown_schedule(&config).map(drop), Err(BackoffScheduleError::CeilingBelowFirst));
     }

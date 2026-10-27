@@ -3,29 +3,25 @@
 use crate::{
     error::ParameterError,
     pagination::{
-        cursor_availability::CursorAvailability,
         cursor_request::CursorRequest,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
         parameters::PageParameters,
     },
 };
-use andromeda_configuration::schema::paging_mode::PagingMode;
+use andromeda_configuration::schema::extensions::{ExtensionsConfig, ExtensionsMode, cursor_pagination::CursorPaginationMode};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
 };
-use thiserror::Error;
 
 /// How the broker pages its collections, resolved once at startup from the
-/// operator's `[pagination] default_mode` and whether cursor pagination is
-/// available.
+/// `[extensions]` table.
 ///
 /// Clause 4.12 leaves the mechanism to the broker and clause 5.5.9 offers
 /// both: offset pagination (clause 5.5.9.2) is always available, opaque
-/// cursors (clause 5.5.9.1) only while the `cursor_pagination` extension is on.
-/// A default of cursors without cursors is refused at resolution, so it cannot
-/// be represented here.
+/// cursors (clause 5.5.9.1) only while the `cursor_pagination` extension is
+/// on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaginationPolicy {
     /// A fresh request walks by cursor; `offset` and `cursor=` both remain
@@ -37,39 +33,20 @@ pub enum PaginationPolicy {
     OffsetOnly,
 }
 
-/// A pagination configuration no policy satisfies.
-#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
-pub enum PaginationPolicyError {
-    /// The operator made cursors the default and disabled them.
-    #[error(
-        "pagination.default_mode = \"cursor\" requires extensions.cursor_pagination = \"enabled\"; enable cursor pagination or set pagination.default_mode = \"offset\""
-    )]
-    CursorDefaultWithoutCursorPagination,
+impl From<&ExtensionsConfig> for PaginationPolicy {
+    /// The policy `extensions.cursor_pagination.mode` names, or offsets alone
+    /// under the conformance override, which forces every extension off.
+    fn from(extensions: &ExtensionsConfig) -> PaginationPolicy {
+        match (extensions.mode, extensions.cursor_pagination.mode) {
+            (ExtensionsMode::Conformance, CursorPaginationMode::Disabled | CursorPaginationMode::Available | CursorPaginationMode::Default)
+            | (ExtensionsMode::Configured, CursorPaginationMode::Disabled) => PaginationPolicy::OffsetOnly,
+            (ExtensionsMode::Configured, CursorPaginationMode::Available) => PaginationPolicy::OffsetDefault,
+            (ExtensionsMode::Configured, CursorPaginationMode::Default) => PaginationPolicy::CursorDefault,
+        }
+    }
 }
 
 impl PaginationPolicy {
-    /// Resolve the policy from the configured default mode and whether cursors
-    /// are available.
-    ///
-    /// The conformance override forcing cursors off overrides whatever default
-    /// the operator chose, so the broker falls back to offsets; an operator
-    /// disabling cursors while keeping them the default has written a
-    /// contradiction instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PaginationPolicyError::CursorDefaultWithoutCursorPagination`]
-    /// when the operator disabled cursor pagination and left it the default.
-    pub const fn resolve(default_mode: PagingMode, cursor: CursorAvailability) -> Result<PaginationPolicy, PaginationPolicyError> {
-        match (default_mode, cursor) {
-            (PagingMode::Cursor, CursorAvailability::Enabled) => Ok(PaginationPolicy::CursorDefault),
-            (PagingMode::Offset, CursorAvailability::Enabled) => Ok(PaginationPolicy::OffsetDefault),
-            (PagingMode::Offset, CursorAvailability::DisabledByOperator | CursorAvailability::ForcedOffByConformance)
-            | (PagingMode::Cursor, CursorAvailability::ForcedOffByConformance) => Ok(PaginationPolicy::OffsetOnly),
-            (PagingMode::Cursor, CursorAvailability::DisabledByOperator) => Err(PaginationPolicyError::CursorDefaultWithoutCursorPagination),
-        }
-    }
-
     /// The window `page` asks for of the collection `request` describes.
     ///
     /// Every pagination rule is applied here, in this order: a followed pointer
@@ -162,17 +139,20 @@ mod tests {
     use crate::{
         error::ParameterError,
         pagination::{
-            cursor_availability::CursorAvailability,
             cursor_request::CursorRequest,
             page_context::PageContext,
             page_pointers::PagePointers,
             page_request::{CollectionOrder, PageRequest},
             page_size::{PageSizeBounds, PageSizeCap, PageSizeExceeded},
             parameters::PageParameters,
-            policy::{PaginationPolicy, PaginationPolicyError},
+            policy::PaginationPolicy,
         },
     };
-    use andromeda_configuration::schema::paging_mode::PagingMode;
+    use andromeda_configuration::schema::extensions::{
+        ExtensionsConfig,
+        ExtensionsMode,
+        cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
+    };
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,
@@ -227,48 +207,40 @@ mod tests {
         policy.window(page, request)
     }
 
+    fn resolved(mode: ExtensionsMode, cursor: CursorPaginationMode) -> PaginationPolicy {
+        PaginationPolicy::from(&ExtensionsConfig {
+            mode,
+            cursor_pagination: CursorPaginationConfig { mode: cursor },
+            ..ExtensionsConfig::default()
+        })
+    }
+
     #[test]
-    fn cursor_default_with_cursor_enabled_is_cursor_default() {
+    fn each_cursor_pagination_mode_names_its_policy() {
         assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Cursor, CursorAvailability::Enabled),
-            Ok(PaginationPolicy::CursorDefault)
+            resolved(ExtensionsMode::Configured, CursorPaginationMode::Default),
+            PaginationPolicy::CursorDefault
+        );
+        assert_eq!(
+            resolved(ExtensionsMode::Configured, CursorPaginationMode::Available),
+            PaginationPolicy::OffsetDefault
+        );
+        assert_eq!(
+            resolved(ExtensionsMode::Configured, CursorPaginationMode::Disabled),
+            PaginationPolicy::OffsetOnly
         );
     }
 
     #[test]
-    fn offset_default_with_cursor_enabled_is_offset_default() {
-        assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Offset, CursorAvailability::Enabled),
-            Ok(PaginationPolicy::OffsetDefault)
-        );
+    fn the_conformance_override_pages_by_offset_alone_whatever_the_mode() {
+        for cursor in [CursorPaginationMode::Default, CursorPaginationMode::Available, CursorPaginationMode::Disabled] {
+            assert_eq!(resolved(ExtensionsMode::Conformance, cursor), PaginationPolicy::OffsetOnly, "{cursor:?}");
+        }
     }
 
     #[test]
-    fn offset_default_without_cursor_is_offset_only() {
-        assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Offset, CursorAvailability::DisabledByOperator),
-            Ok(PaginationPolicy::OffsetOnly)
-        );
-        assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Offset, CursorAvailability::ForcedOffByConformance),
-            Ok(PaginationPolicy::OffsetOnly)
-        );
-    }
-
-    #[test]
-    fn conformance_forcing_cursor_off_makes_a_cursor_default_offset_only() {
-        assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Cursor, CursorAvailability::ForcedOffByConformance),
-            Ok(PaginationPolicy::OffsetOnly)
-        );
-    }
-
-    #[test]
-    fn operator_disabling_cursor_with_a_cursor_default_is_refused() {
-        assert_eq!(
-            PaginationPolicy::resolve(PagingMode::Cursor, CursorAvailability::DisabledByOperator),
-            Err(PaginationPolicyError::CursorDefaultWithoutCursorPagination)
-        );
+    fn a_default_broker_walks_by_cursor() {
+        assert_eq!(PaginationPolicy::from(&ExtensionsConfig::default()), PaginationPolicy::CursorDefault);
     }
 
     #[test]

@@ -26,32 +26,33 @@ x-broker-base: &broker-base
     - "host.docker.internal:host-gateway"
   # The ETSI test-suite contexts are served from the repository: forge outages
   # would otherwise make every run depend on an external host.
+  command: ["--config", "/etc/andromeda/andromeda.toml"]
   volumes:
     - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+    - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro
   environment: &broker-env
-    ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
-    ANDROMEDA__TENANCY__ENABLED: "true"
+    ANDROMEDA__TENANCY__MODE: "enabled"
     ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
     # First retry must fit the test deadline.
-    ANDROMEDA__NOTIFICATIONS__DELIVERY__BASE_BACKOFF: "1s"
-    ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+    ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__RETRY_INTERVAL: "1s"
+    ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "8"
-    ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "2"
-    ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "60s"
-    ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "4"
-    ANDROMEDA__TENANCY__JANITOR_INTERVAL: "1s"
-    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "1s"
-    ANDROMEDA__TEMPORAL__DEFAULT_LAST_N: "1000"
-    ANDROMEDA__TEMPORAL__MAX_LAST_N: "1000"
+    ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "2"
+    ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "60s"
+    ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "4"
+    ANDROMEDA__TENANCY__RESIDENCY__SWEEP_INTERVAL: "1s"
+    ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
+    ANDROMEDA__TEMPORAL__QUERY__DEFAULT_LAST_N: "1000"
+    ANDROMEDA__TEMPORAL__QUERY__MAX_LAST_N: "1000"
     ANDROMEDA__SNAPSHOT__DEFAULT_LIFETIME: "1h"
-    ANDROMEDA__SNAPSHOT__MAXIMUM_LIFETIME: "30days"
-    ANDROMEDA__SNAPSHOT__CAPTURE_PAGE_SIZE: "250"
-    ANDROMEDA__SNAPSHOT__PREPARATION_CONCURRENCY: "4"
-    ANDROMEDA__SNAPSHOT__PREPARATION_LEASE: "30s"
+    ANDROMEDA__SNAPSHOT__MAX_LIFETIME: "30days"
+    ANDROMEDA__SNAPSHOT__PREPARATION__PAGE_SIZE: "250"
+    ANDROMEDA__SNAPSHOT__PREPARATION__MAX_CONCURRENT: "4"
+    ANDROMEDA__SNAPSHOT__PREPARATION__LEASE_TIMEOUT: "30s"
     # Lease reclaim must fit the test wait; far below the 30s lease.
-    ANDROMEDA__SNAPSHOT__PREPARATION_RECOVERY: "2s"
-    ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT: "30s"
+    ANDROMEDA__SNAPSHOT__PREPARATION__RECOVERY_INTERVAL: "2s"
+    ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "30s"
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
     interval: 3s
@@ -66,9 +67,9 @@ x-broker-base: &broker-base
 x-primary-env: &primary-env
   <<: *broker-env
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_primary"
-  ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
-  ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-primary"
-  ANDROMEDA__IDENTITY__SOURCE_ALIAS: "snapshot-primary"
+  ANDROMEDA__ENTITY__SPATIAL_INDEX__CONSISTENCY: "watermark"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-primary"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-primary"
 
 services:
   # Five brokers share this server, each holding up to 8 platform plus
@@ -99,8 +100,8 @@ services:
     environment:
       <<: *primary-env
       ANDROMEDA__SERVER__PORT: "1081"
-      ANDROMEDA__SNAPSHOT__SCOPED_OPERATION_WAIT: "2s"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-primary:1081"
+      ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "2s"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-primary:1081"
     ports:
       - "1081:1081"
 
@@ -114,7 +115,7 @@ services:
     environment:
       <<: *primary-env
       ANDROMEDA__SERVER__PORT: "1082"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-replica:1082"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-replica:1082"
     ports:
       - "1082:1082"
 
@@ -127,9 +128,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1083"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-remote:5432/snapshot_remote"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-remote"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "snapshot-remote"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-remote:1083"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-remote"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-remote"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-remote:1083"
     ports:
       - "1083:1083"
 
@@ -142,10 +143,10 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1084"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_nonmultitenant"
-      ANDROMEDA__TENANCY__ENABLED: "false"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-nonmultitenant"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "snapshot-nonmultitenant"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-nonmultitenant:1084"
+      ANDROMEDA__TENANCY__MODE: "disabled"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-nonmultitenant"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-nonmultitenant"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-nonmultitenant:1084"
     ports:
       - "1084:1084"
 
@@ -158,11 +159,11 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1085"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-primary:5432/snapshot_quota"
-      ANDROMEDA__TENANCY__ENABLED: "false"
-      ANDROMEDA__SNAPSHOT__TENANT_COUNT_QUOTA: "3"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-quota"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "snapshot-quota"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://snapshot-quota:1085"
+      ANDROMEDA__TENANCY__MODE: "disabled"
+      ANDROMEDA__SNAPSHOT__QUOTA__MAX_PER_TENANT: "3"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-quota"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-quota"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-quota:1085"
     ports:
       - "1085:1085"
 

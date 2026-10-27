@@ -1,7 +1,7 @@
 //! Pure profile thresholds and maintenance decision policy.
 
 use crate::{columnstore_partiality::ChunkPartiality, statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
-use andromeda_configuration::schema::maintenance::{MaintenanceMode, MaintenanceProfile};
+use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
@@ -397,7 +397,7 @@ mod tests {
         statistics_freshness::StatisticsFreshness,
         vacuum_horizon::HorizonHolderKind,
     };
-    use andromeda_configuration::schema::maintenance::{MaintenanceMode, MaintenanceProfile};
+    use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
     use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
 

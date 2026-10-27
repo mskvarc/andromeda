@@ -6,7 +6,10 @@
 
 use andromeda_configuration::{
     broker_config::BrokerConfig,
-    schema::observability::{FileLoggingConfig, FileLoggingMode, LogCompression, LogFileFormat, LogLevel, LogRotationInterval},
+    schema::{
+        feature_mode::FeatureMode,
+        observability::{LogCompression, LogFileConfig, LogFileFormat, LogLevel, LogRotationInterval},
+    },
 };
 use etcetera::{BaseStrategy, choose_base_strategy};
 use file_rotate::{
@@ -62,13 +65,13 @@ pub enum TracingInitError {
 /// cannot be created, and [`TracingInitError::Install`] when a subscriber is
 /// already installed for the process.
 pub fn initialize(config: &BrokerConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
-    let observability = &config.observability;
-    let stdout_layer = fmt::layer().compact().with_filter(stdout_env_filter(observability.log_level));
+    let log = &config.observability.log;
+    let stdout_layer = fmt::layer().compact().with_filter(stdout_env_filter(log.level));
 
-    let (file_layer, guard) = match observability.file_logging.mode {
-        FileLoggingMode::Disabled => (None, None),
-        FileLoggingMode::Enabled => {
-            let (layer, guard) = build_file_layer(&observability.file_logging)?;
+    let (file_layer, guard) = match log.file.mode {
+        FeatureMode::Disabled => (None, None),
+        FeatureMode::Enabled => {
+            let (layer, guard) = build_file_layer(&log.file)?;
             (Some(layer), Some(guard))
         }
     };
@@ -87,8 +90,8 @@ fn stdout_env_filter(level: LogLevel) -> EnvFilter {
 /// The layer emits JSON records to a [`FileRotate`] writer wrapped in a
 /// non-blocking appender, filtered at the file sink's own configured level
 /// independently of `RUST_LOG`.
-fn build_file_layer(config: &FileLoggingConfig) -> Result<(Box<dyn Layer<Registry> + Send + Sync>, WorkerGuard), TracingInitError> {
-    let directory = resolve_log_directory(&config.directory);
+fn build_file_layer(config: &LogFileConfig) -> Result<(Box<dyn Layer<Registry> + Send + Sync>, WorkerGuard), TracingInitError> {
+    let directory = resolve_log_directory(config.directory.as_deref());
     // Created ahead of `FileRotate::new`, which would otherwise panic internally
     // if the directory could not be made; here the failure is a typed error.
     fs::create_dir_all(&directory).map_err(|source| TracingInitError::LogDirectory {
@@ -105,8 +108,8 @@ fn build_file_layer(config: &FileLoggingConfig) -> Result<(Box<dyn Layer<Registr
         LogCompression::Gzip => Compression::OnRotate(0),
     };
     let writer = FileRotate::new(
-        directory.join(&config.file_name),
-        AppendTimestamp::default(FileLimit::MaxFiles(config.retained_files)),
+        directory.join(&config.name),
+        AppendTimestamp::default(FileLimit::MaxFiles(config.max_retained_files)),
         ContentLimit::Time(frequency),
         compression,
         None,
@@ -123,10 +126,10 @@ fn build_file_layer(config: &FileLoggingConfig) -> Result<(Box<dyn Layer<Registr
 
 /// Resolve the directory the file sink writes to.
 ///
-/// An empty configured directory falls back to the platform state directory, or
-/// the data directory where no state directory exists, under `andromeda`.
-fn resolve_log_directory(configured: &Path) -> PathBuf {
-    if !configured.as_os_str().is_empty() {
+/// A directory left out falls back to the platform state directory, or the
+/// data directory where no state directory exists, under `andromeda`.
+fn resolve_log_directory(configured: Option<&Path>) -> PathBuf {
+    if let Some(configured) = configured {
         return configured.to_path_buf();
     }
     choose_base_strategy()
@@ -138,18 +141,18 @@ fn resolve_log_directory(configured: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use crate::logging::resolve_log_directory;
-    use andromeda_configuration::schema::observability::FileLoggingConfig;
+    use andromeda_configuration::schema::observability::LogFileConfig;
     use std::path::{Path, PathBuf};
 
     #[test]
     fn an_explicit_directory_is_used_verbatim() {
-        let directory = resolve_log_directory(Path::new("/var/log/andromeda"));
+        let directory = resolve_log_directory(Some(Path::new("/var/log/andromeda")));
         pretty_assertions::assert_eq!(directory, PathBuf::from("/var/log/andromeda"));
     }
 
     #[test]
-    fn an_empty_directory_resolves_to_a_platform_default_under_andromeda() {
-        let directory = resolve_log_directory(&FileLoggingConfig::default().directory);
+    fn a_directory_left_out_resolves_to_a_platform_default_under_andromeda() {
+        let directory = resolve_log_directory(LogFileConfig::default().directory.as_deref());
         assert!(
             directory.ends_with("andromeda") || directory == Path::new("andromeda-logs"),
             "unexpected default log directory: {directory:?}"

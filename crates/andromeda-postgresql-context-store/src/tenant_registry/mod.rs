@@ -30,7 +30,7 @@ use crate::{
         status_code::{StoredStanding, standing_of, stored_status},
     },
 };
-use andromeda_configuration::schema::tenancy::TenancyConfig;
+use andromeda_configuration::schema::tenancy::TenantDatabasesConfig;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
@@ -75,8 +75,8 @@ pub struct PostgresTenantRegistry {
     direct_url: DatabaseUrl,
     /// The database the unnamed default tenant uses.
     default_database: TenantDatabaseName,
-    /// Prefix and pool size for provisioning.
-    tenancy: TenancyConfig,
+    /// Where each named tenant's data lives: the database name prefix.
+    databases: TenantDatabasesConfig,
     /// How long a checkout waits for a connection before the migration and
     /// provisioning pools give up, matching the request path's acquire deadline.
     acquire_timeout: Duration,
@@ -101,7 +101,7 @@ impl PostgresTenantRegistry {
     pub async fn connect(
         main_pool_options: PgPoolOptions,
         direct_url: DatabaseUrl,
-        tenancy: TenancyConfig,
+        databases: TenantDatabasesConfig,
         defaults: &DatabaseDefaults,
         acquire_timeout: Duration,
     ) -> Result<PostgresTenantRegistry, ContextStoreError> {
@@ -125,7 +125,7 @@ impl PostgresTenantRegistry {
             main_pool: main_pool_options.connect(platform_url.as_str()).await?,
             direct_url,
             default_database,
-            tenancy,
+            databases,
             acquire_timeout,
         };
         registry.register_default_tenant().await?;
@@ -349,7 +349,7 @@ impl PostgresTenantRegistry {
                 }
             }
         } else {
-            let database_name = generate_database_name(&self.tenancy.tenant_db_prefix, name);
+            let database_name = generate_database_name(&self.databases.name_prefix, name);
             let statement = tenant_insert(name.as_str(), database_name.as_str(), TenantStatusCode::Provisional)?;
             statement.to_query().execute(&mut *tx).await?;
             database_name

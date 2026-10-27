@@ -22,8 +22,8 @@ pub struct ClosePolicy {
 impl From<&ServerConfig> for ClosePolicy {
     fn from(server: &ServerConfig) -> ClosePolicy {
         ClosePolicy {
-            drain_deadline: server.graceful_drain.duration(),
-            announced_close_delay: server.announced_close_delay.duration(),
+            drain_deadline: server.graceful_drain_timeout.duration(),
+            announced_close_delay: server.announced_close_timeout.duration(),
         }
     }
 }

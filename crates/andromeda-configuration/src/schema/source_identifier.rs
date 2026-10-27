@@ -7,7 +7,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 /// The IRI configured as this broker's Context Source identifier
-/// (`identity.source_id`, ETSI GS CIM 009 v1.9.1 Table 5.2.40-1).
+/// (`federation.identity.source_id`, ETSI GS CIM 009 v1.9.1 Table 5.2.40-1).
 ///
 /// A value of this type is a syntactically valid IRI, so a configuration that
 /// names anything else is refused when it loads. The bound an identifier of a
@@ -18,9 +18,9 @@ use thiserror::Error;
 #[serde(try_from = "String", into = "IriBuf")]
 pub struct SourceIdentifier(IriBuf);
 
-/// The configured `identity.source_id` is not an IRI.
+/// The configured `federation.identity.source_id` is not an IRI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("identity.source_id is not an IRI")]
+#[error("federation.identity.source_id is not an IRI")]
 pub struct SourceIdentifierError;
 
 impl SourceIdentifier {

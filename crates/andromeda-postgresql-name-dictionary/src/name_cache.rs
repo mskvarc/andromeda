@@ -18,7 +18,7 @@ use crate::{
     name_lookup::{NameLookup, NameLookupError},
     schema_epoch::{EPOCH_CHECK_INTERVAL, UNKNOWN_EPOCH, now_millis, read_schema_epoch},
 };
-use andromeda_configuration::schema::name_cache::NameCacheConfig;
+use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
 use andromeda_postgresql_seaquery::statement::Statement;
 use moka::sync::Cache;
@@ -334,7 +334,7 @@ mod tests {
         name_cache::{NameCache, distinct_text, names_not_yet_held},
         name_lookup::NameLookup,
     };
-    use andromeda_configuration::schema::name_cache::NameCacheConfig;
+    use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
     use sea_query::PostgresQueryBuilder;

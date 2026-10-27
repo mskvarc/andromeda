@@ -1,4 +1,4 @@
-//! The engine a `[jsonld]` section describes.
+//! The engine a `[jsonld]` table describes.
 
 use crate::{
     context_cache::ContextCache,
@@ -24,17 +24,23 @@ pub fn build_engine(
     hosted: Arc<dyn HostedContextRecognizer>,
 ) -> Result<JsonLdEngine, JsonLdError> {
     let mut builder = JsonLdEngineBuilder::new()
-        .allow_remote(config.allow_remote_contexts)
-        .timeout(config.timeout.duration())
-        .max_redirects(config.max_redirects)
-        .cache_capacity(config.cache_capacity)
-        .cache_ttl(CacheLifetime::from(config.cache_ttl))
-        .hosted_context_revalidation(CacheLifetime::from(config.hosted_context_revalidation))
-        .max_context_bytes(config.max_context.as_u64())
+        .allow_remote(config.fetch.is_enabled())
+        .timeout(config.fetch.timeout.duration())
+        .max_redirects(config.fetch.max_redirects)
+        .cache_capacity(config.cache.max_entries.get())
+        .cache_ttl(CacheLifetime::from(config.cache.default_lifetime))
+        .hosted_context_revalidation(CacheLifetime::from(config.cache.hosted_revalidation_interval))
+        .max_context_bytes(config.fetch.max_size.as_u64())
         .with_l2_cache(l2_cache)
         .hosted_contexts(hosted);
-    if !config.preload_contexts.is_empty() {
-        builder = builder.preload_contexts(config.preload_contexts.clone()); // clone: the configuration is borrowed and stays valid
+    if !config.preloaded_contexts.is_empty() {
+        // clone: the configuration is borrowed and stays valid; the engine owns its preload table.
+        let preloaded = config
+            .preloaded_contexts
+            .iter()
+            .map(|context| (context.url.clone(), context.path.clone()))
+            .collect();
+        builder = builder.preload_contexts(preloaded);
     }
     builder.build()
 }

@@ -13,7 +13,7 @@ use andromeda_configuration::{
     human_duration::HumanDuration,
     schema::{
         listener_transport::ListenerTransport,
-        tls::{ClientAuthentication, MinimumProtocolVersion, TlsConfig},
+        tls::{ClientAuthenticationConfig, ClientAuthenticationMode, MinimumProtocolVersion, TlsConfig},
     },
 };
 use andromeda_server_tls::{
@@ -23,7 +23,7 @@ use andromeda_server_tls::{
 };
 use axum::{Router, routing::get};
 use reqwest::{Certificate, Client, ClientBuilder, Identity, Response, StatusCode, Version, tls};
-use std::{error::Error, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::AsyncReadExt,
     net::{TcpListener, TcpStream},
@@ -72,18 +72,20 @@ impl RunningTlsListener {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
         let (client_authentication, client_ca_path) = match clients {
-            ClientPolicy::Anonymous => (ClientAuthentication::None, PathBuf::new()),
-            ClientPolicy::Optional(issuer) => (ClientAuthentication::Optional, files.write_client_ca(issuer)?),
-            ClientPolicy::Required(issuer) => (ClientAuthentication::Required, files.write_client_ca(issuer)?),
+            ClientPolicy::Anonymous => (ClientAuthenticationMode::Disabled, None),
+            ClientPolicy::Optional(issuer) => (ClientAuthenticationMode::Optional, Some(files.write_client_ca(issuer)?)),
+            ClientPolicy::Required(issuer) => (ClientAuthenticationMode::Required, Some(files.write_client_ca(issuer)?)),
         };
         let config = TlsConfig {
-            certificate_path: files.certificate_path().to_path_buf(),
-            private_key_path: files.private_key_path().to_path_buf(),
-            client_authentication,
-            client_ca_path,
+            certificate: Some(files.certificate_path().to_path_buf()),
+            private_key: Some(files.private_key_path().to_path_buf()),
+            client_authentication: ClientAuthenticationConfig {
+                mode: client_authentication,
+                ca: client_ca_path,
+            },
             minimum_protocol_version,
             handshake_timeout: HumanDuration::new(HANDSHAKE_TIMEOUT),
-            reload_debounce: HumanDuration::from_millis(100),
+            reload_settle_after: HumanDuration::from_millis(100),
         };
         let watch = TlsMaterialWatch::start(&config)?;
         let feed = watch.feed(TCP_HANDSHAKE_POLICY)?;

@@ -179,7 +179,7 @@ use crate::{
     source_identity::SourceIdentityCache,
     split_entities::{SplitEntities, resolve_split_entities},
 };
-use andromeda_configuration::schema::federation::{FederationConfig, SplitEntitiesDefault};
+use andromeda_configuration::schema::federation::{FederationConfig, forwarding::SplitEntitiesDefault};
 use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
@@ -257,7 +257,7 @@ impl FederationService {
             .no_brotli()
             .no_deflate()
             .no_zstd()
-            .connect_timeout(config.connect_timeout())
+            .connect_timeout(config.forwarding.connect_timeout())
             .build()
             .map_err(|error| FederationError::from(FederationInvariant::HttpClient(error)))?;
         let received_protocol = ReceivedProtocol::try_from("1.1").map_err(|error| FederationError::from(FederationInvariant::ForwardingProtocol(error)))?;
@@ -268,16 +268,16 @@ impl FederationService {
             engine,
             source_alias,
             received_protocol,
-            csr_concurrency: config.forward_concurrency.max(1),
-            default_timeout: config.request_timeout(),
+            csr_concurrency: config.forwarding.max_concurrent.get(),
+            default_timeout: config.forwarding.request_timeout(),
             cooldowns: CooldownRegistry::new(
-                CooldownPolicy::try_from(config).map_err(|error| FederationError::from(FederationInvariant::CooldownPolicy(error)))?,
+                CooldownPolicy::try_from(&config.cooldown).map_err(|error| FederationError::from(FederationInvariant::CooldownPolicy(error)))?,
             ),
-            cache: ForwardedGetCache::new(config.cache_max_entries),
+            cache: ForwardedGetCache::new(config.response_cache.max_entries.get()),
             source_identities: SourceIdentityCache::default(),
-            split_entities_default: config.split_entities_default,
-            max_query_entities: config.max_query_entities,
-            max_query_instances: config.max_query_instances,
+            split_entities_default: config.forwarding.split_entities,
+            max_query_entities: config.forwarding.max_query_entities,
+            max_query_instances: config.forwarding.max_query_instances,
         })
     }
 

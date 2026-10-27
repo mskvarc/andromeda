@@ -229,7 +229,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
-    use andromeda_configuration::schema::entity::EntityConfig;
+    use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_linked_retrieval::{
@@ -515,7 +515,7 @@ mod tests {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(remote_linked)
             .geo_admission(GeoQueryAdmission::new(
-                geometry_census_limits(&EntityConfig::default()),
+                geometry_census_limits(&RequestLimitsConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

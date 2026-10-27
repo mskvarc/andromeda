@@ -22,7 +22,10 @@ use crate::{
 };
 use andromeda_configuration::{
     human_duration::HumanDuration,
-    schema::{db_name_prefix::DbNamePrefix, tenancy::TenancyConfig},
+    schema::{
+        feature_mode::FeatureMode,
+        tenancy::{ResidencyConfig, TenancyConfig, TenantBuildConfig},
+    },
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -30,6 +33,7 @@ use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
+    num::NonZeroUsize,
     sync::{
         Arc,
         Mutex as StdMutex,
@@ -172,29 +176,29 @@ fn named(raw: &str) -> TenantName {
 
 fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
     TenancyConfig {
-        enabled,
-        tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
-        tenant_max_connections: 16,
-        runtime_idle_ttl: HumanDuration::from_secs(900),
-        runtime_max_cached: max_cached,
-        janitor_interval: HumanDuration::from_secs(30),
-        max_concurrent_builds: 8,
-        build_admission_timeout: HumanDuration::from_secs(20),
-        eviction_concurrency: 8,
-        min_dormancy: HumanDuration::from_secs(30),
-        wake_residency: HumanDuration::from_secs(60),
-        waker_max_wakes_per_pass: 4,
-        provisional_tenant_ttl: HumanDuration::from_secs(600),
+        mode: if enabled { FeatureMode::Enabled } else { FeatureMode::Disabled },
+        residency: ResidencyConfig {
+            max_resident: NonZeroUsize::new(max_cached).expect("a positive cache size"),
+            ..ResidencyConfig::default()
+        },
+        ..TenancyConfig::default()
     }
 }
 
 /// A config with an explicit build-admission and eviction bound, for the tests
 /// that assert those bounds are honoured.
 fn bounded_config(max_cached: usize, max_concurrent_builds: usize, eviction_concurrency: usize) -> TenancyConfig {
+    let base = config(true, max_cached);
     TenancyConfig {
-        max_concurrent_builds,
-        eviction_concurrency,
-        ..config(true, max_cached)
+        residency: ResidencyConfig {
+            max_concurrent_evictions: NonZeroUsize::new(eviction_concurrency).expect("a positive eviction bound"),
+            ..base.residency
+        },
+        build: TenantBuildConfig {
+            max_concurrent: NonZeroUsize::new(max_concurrent_builds).expect("a positive build bound"),
+            ..base.build
+        },
+        ..base
     }
 }
 
@@ -1866,9 +1870,13 @@ impl TenantStateFactory for LatchedShutdownFactory {
 
 /// A config whose admission deadline is short enough for a test to reach it.
 fn deadline_config(max_cached: usize, max_concurrent_builds: usize, eviction_concurrency: usize) -> TenancyConfig {
+    let bounded = bounded_config(max_cached, max_concurrent_builds, eviction_concurrency);
     TenancyConfig {
-        build_admission_timeout: HumanDuration::from_millis(300),
-        ..bounded_config(max_cached, max_concurrent_builds, eviction_concurrency)
+        build: TenantBuildConfig {
+            admission_timeout: HumanDuration::from_millis(300),
+            ..bounded.build
+        },
+        ..bounded
     }
 }
 

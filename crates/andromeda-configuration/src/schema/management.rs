@@ -1,10 +1,12 @@
-//! Management-plane topology and metrics-exposure configuration.
+//! The `[management]` table: where the broker serves its operational
+//! endpoints.
 //!
-//! The management plane carries observability endpoints (`/livez`, `/readyz`,
-//! and, when enabled, `/metrics`) on a bare middleware stack, isolated from the
-//! public NGSI-LD data plane so a Prometheus scraper or a kubelet is never
-//! subject to CORS, CSRF, helmet, body-limit or compression, and so probes and
-//! metrics keep answering while the data plane is saturated or draining.
+//! The management plane carries `/livez`, `/readyz` and, when
+//! `[observability.metrics]` enables them, `/metrics` on a bare middleware
+//! stack, isolated from the public NGSI-LD data plane so a Prometheus scraper
+//! or a kubelet is never subject to CORS, CSRF, security headers, body limits
+//! or compression, and so probes and metrics keep answering while the data
+//! plane is saturated or draining.
 
 use crate::schema::listener_transport::ListenerTransport;
 use serde::{Deserialize, Serialize};
@@ -13,34 +15,21 @@ use strum::{Display, EnumString};
 use thiserror::Error;
 use toml_comment::TomlComment;
 
-/// Where, and whether, the broker serves its observability endpoints.
+/// Where, and whether, the broker serves its management endpoints.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum ManagementMode {
+    /// No management plane is served; the data-plane probes remain and metrics
+    /// cannot be enabled.
+    Disabled,
+    /// The management endpoints are mounted at the root of the data-plane port,
+    /// behind the full inbound stack.
+    SharedPort,
     /// The management endpoints bind their own TCP port, isolated from the public
     /// data plane by a bare middleware stack.
     #[default]
     SeparatePort,
-    /// The management endpoints are mounted at the root of the data-plane port,
-    /// behind the full inbound stack.
-    Merged,
-    /// No management plane is served; the data-plane probes remain and metrics
-    /// cannot be enabled.
-    Disabled,
-}
-
-/// Whether, and in which format, the broker exposes its metrics.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum MetricsExposure {
-    /// No recorder is installed and no scrape endpoint is mounted.
-    #[default]
-    Disabled,
-    /// A Prometheus recorder is installed and served at `GET /metrics` on the
-    /// management plane.
-    Prometheus,
 }
 
 /// Invalid management-plane configuration.
@@ -59,37 +48,35 @@ pub enum ManagementConfigError {
     },
     /// Metrics were enabled while no management plane exists to serve them.
     #[error(
-        "management.metrics is \"prometheus\" but management.mode is \"disabled\"; \
-         set management.mode to \"separate-port\" or \"merged\", or disable metrics"
+        "observability.metrics.mode is \"prometheus\" but management.mode is \"disabled\"; \
+         set management.mode to \"separate-port\" or \"shared-port\", or disable metrics"
     )]
     MetricsWithoutManagementPlane,
 }
 
-/// Management-plane configuration.
+/// The management plane's topology and listener.
 ///
 /// `host`, `port` and `transport` are read only in [`ManagementMode::SeparatePort`]; in
-/// [`ManagementMode::Merged`] the endpoints ride the data-plane listener, and in
+/// [`ManagementMode::SharedPort`] the endpoints ride the data-plane listener, and in
 /// [`ManagementMode::Disabled`] no management listener is bound.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ManagementConfig {
-    /// Management-plane topology.
+    /// Where the management endpoints are served: `disabled`, `shared-port` or
+    /// `separate-port`.
     #[toml_comment(inline)]
     pub mode: ManagementMode,
-    /// Management listener address. Ignored unless `mode` is `separate-port`.
+    /// Management listener address. Read only when `mode` is `separate-port`.
     #[toml_comment(inline)]
     pub host: IpAddr,
-    /// Management listener port. Ignored unless `mode` is `separate-port`.
+    /// Management listener port. Read only when `mode` is `separate-port`.
     #[toml_comment(inline)]
     pub port: u16,
     /// Whether the management listener serves plaintext or terminates TLS with
-    /// the `[tls]` identity: `plaintext` or `tls`. Ignored unless `mode` is
+    /// the `[tls]` identity: `plaintext` or `tls`. Read only when `mode` is
     /// `separate-port`.
     #[toml_comment(inline)]
     pub transport: ListenerTransport,
-    /// Metrics exposure mode.
-    #[toml_comment(inline)]
-    pub metrics: MetricsExposure,
 }
 
 impl Default for ManagementConfig {
@@ -101,7 +88,6 @@ impl Default for ManagementConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 1086,
             transport: ListenerTransport::Plaintext,
-            metrics: MetricsExposure::Disabled,
         }
     }
 }
@@ -109,29 +95,14 @@ impl Default for ManagementConfig {
 impl ManagementConfig {
     /// Validate the management-plane configuration in isolation.
     ///
-    /// The cross-section rule that the separate management port must differ from
-    /// the data-plane port cannot be checked here, since it spans two sections;
-    /// it is enforced by the aggregate validation pipeline.
-    ///
     /// # Errors
     ///
     /// Returns [`ManagementConfigError::ZeroPort`] when a `separate-port` plane is
-    /// configured on port zero, and [`ManagementConfigError::MetricsWithoutManagementPlane`]
-    /// when metrics are requested with no management plane to serve them.
+    /// configured on port zero.
     pub const fn validate(&self) -> Result<(), ManagementConfigError> {
         match self.mode {
-            ManagementMode::SeparatePort => {
-                if self.port == 0 {
-                    return Err(ManagementConfigError::ZeroPort);
-                }
-            }
-            ManagementMode::Merged | ManagementMode::Disabled => {}
-        }
-        match (self.mode, self.metrics) {
-            (ManagementMode::Disabled, MetricsExposure::Prometheus) => Err(ManagementConfigError::MetricsWithoutManagementPlane),
-            (ManagementMode::SeparatePort | ManagementMode::Merged | ManagementMode::Disabled, MetricsExposure::Prometheus | MetricsExposure::Disabled) => {
-                Ok(())
-            }
+            ManagementMode::SeparatePort if self.port == 0 => Err(ManagementConfigError::ZeroPort),
+            ManagementMode::SeparatePort | ManagementMode::SharedPort | ManagementMode::Disabled => Ok(()),
         }
     }
 }
@@ -144,46 +115,34 @@ impl ManagementConfig {
 mod tests {
     use crate::schema::{
         listener_transport::ListenerTransport,
-        management::{ManagementConfig, ManagementConfigError, ManagementMode, MetricsExposure},
+        management::{ManagementConfig, ManagementConfigError, ManagementMode},
     };
     use std::str::FromStr;
 
     #[test]
-    fn mode_defaults_to_separate_port() {
-        pretty_assertions::assert_eq!(ManagementConfig::default().mode, ManagementMode::SeparatePort);
+    fn the_default_plane_binds_port_1086_in_plaintext() {
+        let config = ManagementConfig::default();
+        pretty_assertions::assert_eq!(config.mode, ManagementMode::SeparatePort);
+        pretty_assertions::assert_eq!(config.port, 1086);
+        pretty_assertions::assert_eq!(config.transport, ListenerTransport::Plaintext);
     }
 
     #[test]
-    fn port_defaults_to_1086() {
-        pretty_assertions::assert_eq!(ManagementConfig::default().port, 1086);
-    }
-
-    #[test]
-    fn management_transport_defaults_to_plaintext() {
-        pretty_assertions::assert_eq!(ManagementConfig::default().transport, ListenerTransport::Plaintext);
-    }
-
-    #[test]
-    fn metrics_defaults_to_disabled() {
-        pretty_assertions::assert_eq!(ManagementConfig::default().metrics, MetricsExposure::Disabled);
-    }
-
-    #[test]
-    fn mode_and_metrics_round_trip_kebab_case_through_serde_and_from_str() {
-        assert_eq!(serde_json::to_string(&ManagementMode::SeparatePort).expect("serialises"), "\"separate-port\"");
-        assert_eq!(serde_json::to_string(&ManagementMode::Merged).expect("serialises"), "\"merged\"");
-        assert_eq!(serde_json::to_string(&ManagementMode::Disabled).expect("serialises"), "\"disabled\"");
-        assert_eq!(serde_json::to_string(&MetricsExposure::Prometheus).expect("serialises"), "\"prometheus\"");
-        assert_eq!(ManagementMode::from_str("separate-port").expect("parses"), ManagementMode::SeparatePort);
-        assert_eq!(ManagementMode::from_str("merged").expect("parses"), ManagementMode::Merged);
-        assert_eq!(ManagementMode::from_str("disabled").expect("parses"), ManagementMode::Disabled);
-        assert_eq!(MetricsExposure::from_str("prometheus").expect("parses"), MetricsExposure::Prometheus);
+    fn mode_round_trips_kebab_case_through_serde_and_from_str() {
+        for (mode, token) in [
+            (ManagementMode::Disabled, "disabled"),
+            (ManagementMode::SharedPort, "shared-port"),
+            (ManagementMode::SeparatePort, "separate-port"),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).expect("serialises"), format!("\"{token}\""));
+            assert_eq!(ManagementMode::from_str(token).expect("parses"), mode);
+        }
+        assert!(serde_json::from_str::<ManagementMode>("\"merged\"").is_err());
     }
 
     #[test]
     fn separate_port_zero_is_rejected() {
         let config = ManagementConfig {
-            mode: ManagementMode::SeparatePort,
             port: 0,
             ..ManagementConfig::default()
         };
@@ -191,35 +150,14 @@ mod tests {
     }
 
     #[test]
-    fn disabled_plane_with_prometheus_metrics_is_rejected() {
-        let config = ManagementConfig {
-            mode: ManagementMode::Disabled,
-            metrics: MetricsExposure::Prometheus,
-            ..ManagementConfig::default()
-        };
-        pretty_assertions::assert_eq!(config.validate(), Err(ManagementConfigError::MetricsWithoutManagementPlane));
-    }
-
-    #[test]
-    fn merged_plane_with_prometheus_metrics_is_accepted() {
-        let config = ManagementConfig {
-            mode: ManagementMode::Merged,
-            metrics: MetricsExposure::Prometheus,
-            ..ManagementConfig::default()
-        };
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn disabled_mode_ignores_port_zero() {
-        // A disabled plane binds nothing, so its port is never read and a zero is
-        // not an error.
-        let config = ManagementConfig {
-            mode: ManagementMode::Disabled,
-            port: 0,
-            metrics: MetricsExposure::Disabled,
-            ..ManagementConfig::default()
-        };
-        assert!(config.validate().is_ok());
+    fn a_plane_without_its_own_listener_ignores_port_zero() {
+        for mode in [ManagementMode::Disabled, ManagementMode::SharedPort] {
+            let config = ManagementConfig {
+                mode,
+                port: 0,
+                ..ManagementConfig::default()
+            };
+            assert!(config.validate().is_ok());
+        }
     }
 }

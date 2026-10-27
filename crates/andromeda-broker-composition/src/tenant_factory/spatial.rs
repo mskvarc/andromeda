@@ -2,7 +2,7 @@
 //! consistency mode.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
-use andromeda_configuration::schema::spatial::SpatialConsistency;
+use andromeda_configuration::schema::entity::spatial_index::SpatialConsistency;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::{
     port::spatial_snapshot::EntitySpatialSnapshotSource,
@@ -90,7 +90,7 @@ pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement
 )]
 mod tests {
     use crate::tenant_factory::spatial::{indexed_commits, initialize_spatial};
-    use andromeda_configuration::schema::spatial::SpatialConfig;
+    use andromeda_configuration::schema::entity::spatial_index::SpatialIndexConfig;
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         commit_replay::CommitReplay,
@@ -161,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn the_default_configuration_composes_a_watermarked_index_and_plain_commits() {
         let source: Arc<dyn EntitySpatialSnapshotSource> = Arc::new(EmptyStore);
-        let spatial = initialize_spatial(SpatialConfig::default().consistency, &source, &TenantRef::UnnamedDefault)
+        let spatial = initialize_spatial(SpatialIndexConfig::default().consistency, &source, &TenantRef::UnnamedDefault)
             .await
             .expect("the default composes");
         assert!(matches!(spatial, SpatialAcceleration::Watermark(_)), "the default is the watermark mode");

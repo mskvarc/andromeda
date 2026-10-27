@@ -28,8 +28,9 @@ use crate::{
 };
 use andromeda_configuration::schema::{
     forwarded_header_trust::ForwardedHeaderTrust,
-    http::{HttpStackConfig, HttpStackConfigError, server_timing::ServerTimingConfig},
+    http::{HttpStackConfig, body_decoding::BodyDecodingConfigError, server_timing::ServerTimingConfig},
     link_field_layout::LinkFieldLayout,
+    request_limits::{RequestLimitsConfig, RequestLimitsConfigError},
 };
 use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
 use andromeda_http_headers::{link::field_layout::apply_link_field_layout, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
@@ -62,9 +63,12 @@ use tower_http::{
 /// A fallible middleware layer could not be built from its configuration.
 #[derive(Debug, Error)]
 pub enum HttpStackBuildError {
-    /// A configured size does not fit the platform address width.
+    /// The body ceiling does not fit the platform address width.
     #[error(transparent)]
-    Config(#[from] HttpStackConfigError),
+    RequestLimits(#[from] RequestLimitsConfigError),
+    /// The blocking-decode threshold does not fit the platform address width.
+    #[error(transparent)]
+    BodyDecoding(#[from] BodyDecodingConfigError),
     /// The security-header layer could not be rendered.
     #[error("failed to build the security-header layer: {0}")]
     Helmet(#[from] HelmetError),
@@ -113,24 +117,25 @@ pub struct HttpStack {
 }
 
 impl HttpStack {
-    /// Construct an HTTP stack from its owner-defined configuration.
+    /// Construct the HTTP stack `config` describes, enforcing `limits` on every
+    /// request.
     ///
     /// # Errors
     ///
     /// Returns [`HttpStackBuildError`] when a configured size does not fit the
     /// platform address width, the security-header layer cannot be rendered or a
     /// CSRF trusted origin is not one the CSRF layer accepts.
-    pub fn new(config: HttpStackConfig) -> Result<HttpStack, HttpStackBuildError> {
-        let request_body_limit = RequestBodyLimit::new(config.max_request_body_bytes()?);
-        let blocking_decode = BlockingDecodePolicy::new(config.blocking_decode_threshold_bytes()?, config.max_concurrent_blocking_decodes);
+    pub fn new(config: HttpStackConfig, limits: RequestLimitsConfig) -> Result<HttpStack, HttpStackBuildError> {
+        let request_body_limit = RequestBodyLimit::new(limits.max_body_bytes()?);
+        let blocking_decode = BlockingDecodePolicy::new(config.body_decoding.blocking_threshold_bytes()?, config.body_decoding.max_concurrent_blocking);
         Ok(HttpStack {
             request_body_limit,
-            request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(config.max_request_json_values)),
+            request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(limits.max_json_values)),
             blocking_decode,
             forwarded_headers: config.forwarded_headers,
             link_field: config.link_field,
-            request_deadline: RequestDeadline::new(config.request_timeout.duration()),
-            helmet: build_helmet_layer(config.helmet)?,
+            request_deadline: RequestDeadline::new(limits.timeout.duration()),
+            helmet: build_helmet_layer(config.security_headers)?,
             cors: build_cors_layer(&config.cors)?,
             compression: build_compression_layer(&config.compression),
             encoded_entity_tags: EncodedEntityTags::new(config.compression.algorithms),
@@ -297,18 +302,20 @@ mod tests {
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
         schema::{
-            feature_mode::HttpFeatureMode,
+            feature_mode::FeatureMode,
             forwarded_header_trust::ForwardedHeaderTrust,
             http::{
                 HttpStackConfig,
+                body_decoding::BodyDecodingConfig,
                 compression::{CompressionConfig, CompressionQuality},
                 cors::{CorsConfig, CorsMode},
                 csrf::CsrfConfig,
-                decompression::DecompressionConfig,
-                helmet::HelmetConfig,
+                decompression::{DecompressionConfig, UnacceptedEncoding},
+                security_headers::SecurityHeadersConfig,
                 server_timing::{ServerTimingConfig, ServerTimingPhase},
             },
             link_field_layout::LinkFieldLayout,
+            request_limits::RequestLimitsConfig,
         },
     };
     use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_json_value_limit::RequestJsonValueLimit};
@@ -330,11 +337,10 @@ mod tests {
     /// A stack configuration with every optional feature switched off.
     fn disabled_config() -> HttpStackConfig {
         HttpStackConfig {
-            request_timeout: HumanDuration::from_secs(30),
-            max_request_body: HumanByteSize::kib(1),
-            max_request_json_values: NonZeroUsize::MIN.saturating_add(99),
-            blocking_decode_threshold: HumanByteSize::kib(256),
-            max_concurrent_blocking_decodes: NonZeroUsize::MIN,
+            body_decoding: BodyDecodingConfig {
+                blocking_threshold: HumanByteSize::kib(256),
+                max_concurrent_blocking: NonZeroUsize::MIN,
+            },
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             link_field: LinkFieldLayout::Combined,
             cors: CorsConfig {
@@ -347,19 +353,28 @@ mod tests {
             },
             decompression: DecompressionConfig {
                 algorithms: EnumSet::empty(),
-                pass_through_unaccepted: false,
+                unaccepted_encoding: UnacceptedEncoding::Refuse,
             },
             server_timing: ServerTimingConfig {
-                mode: HttpFeatureMode::Disabled,
+                mode: FeatureMode::Disabled,
                 phases: ServerTimingPhase::Total.into(),
             },
-            helmet: HelmetConfig {
-                mode: HttpFeatureMode::Disabled,
-            },
+            security_headers: SecurityHeadersConfig { mode: FeatureMode::Disabled },
             csrf: CsrfConfig {
-                mode: HttpFeatureMode::Disabled,
+                mode: FeatureMode::Disabled,
                 trusted_origins: Vec::new(),
             },
+        }
+    }
+
+    /// The request limits the tests run under: a 1 KiB body of at most 100
+    /// JSON values.
+    fn test_limits() -> RequestLimitsConfig {
+        RequestLimitsConfig {
+            timeout: HumanDuration::from_secs(30),
+            max_body: HumanByteSize::kib(1),
+            max_json_values: NonZeroUsize::MIN.saturating_add(99),
+            ..RequestLimitsConfig::default()
         }
     }
 
@@ -504,10 +519,13 @@ mod tests {
     #[tokio::test]
     async fn the_api_stack_installs_the_configured_forwarded_header_trust() -> Result<(), Box<dyn Error>> {
         for declared in [ForwardedHeaderTrust::Untrusted, ForwardedHeaderTrust::Trusted] {
-            let stack = HttpStack::new(HttpStackConfig {
-                forwarded_headers: declared,
-                ..disabled_config()
-            })?;
+            let stack = HttpStack::new(
+                HttpStackConfig {
+                    forwarded_headers: declared,
+                    ..disabled_config()
+                },
+                test_limits(),
+            )?;
             let router = stack.apply_api(Router::new().route(
                 "/probe",
                 get(|Extension(trust): Extension<ForwardedHeaderTrust>| async move { trust.to_string() }),
@@ -532,10 +550,13 @@ mod tests {
             (LinkFieldLayout::Grouped, vec![CONTEXT.to_owned(), NEXT.to_owned()]),
             (LinkFieldLayout::Separate, vec![CONTEXT.to_owned(), NEXT.to_owned()]),
         ] {
-            let stack = HttpStack::new(HttpStackConfig {
-                link_field: layout,
-                ..disabled_config()
-            })?;
+            let stack = HttpStack::new(
+                HttpStackConfig {
+                    link_field: layout,
+                    ..disabled_config()
+                },
+                test_limits(),
+            )?;
             let router = stack.apply_api(Router::new().route(
                 "/probe",
                 get(|| async {
@@ -561,11 +582,19 @@ mod tests {
     /// from the request, so the API stack has to publish both as configured.
     #[tokio::test]
     async fn the_stack_publishes_the_json_value_limit_and_the_decode_threshold() -> Result<(), Box<dyn Error>> {
-        let stack = HttpStack::new(HttpStackConfig {
-            max_request_json_values: NonZeroUsize::MIN.saturating_add(41),
-            blocking_decode_threshold: HumanByteSize::kib(2),
-            ..disabled_config()
-        })?;
+        let stack = HttpStack::new(
+            HttpStackConfig {
+                body_decoding: BodyDecodingConfig {
+                    blocking_threshold: HumanByteSize::kib(2),
+                    max_concurrent_blocking: NonZeroUsize::MIN,
+                },
+                ..disabled_config()
+            },
+            RequestLimitsConfig {
+                max_json_values: NonZeroUsize::MIN.saturating_add(41),
+                ..test_limits()
+            },
+        )?;
         let router = stack.apply_api(Router::new().route(
             "/probe",
             get(
@@ -584,12 +613,13 @@ mod tests {
     /// The API subtree carries the security headers when helmet is enabled.
     #[tokio::test]
     async fn helmet_layer_is_installed_on_the_api_subtree() -> Result<(), Box<dyn Error>> {
-        let stack = HttpStack::new(HttpStackConfig {
-            helmet: HelmetConfig {
-                mode: HttpFeatureMode::Enabled,
+        let stack = HttpStack::new(
+            HttpStackConfig {
+                security_headers: SecurityHeadersConfig { mode: FeatureMode::Enabled },
+                ..disabled_config()
             },
-            ..disabled_config()
-        })?;
+            test_limits(),
+        )?;
         let router = stack.apply_api(Router::new().route("/probe", get(|| async { StatusCode::OK })));
         let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
         assert!(
@@ -602,7 +632,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_stack_normalizes_paths_before_route_matching() -> Result<(), Box<dyn Error>> {
-        let stack = HttpStack::new(disabled_config())?;
+        let stack = HttpStack::new(disabled_config(), test_limits())?;
         let service = stack.apply_process(Router::new().route("/health", get(|| async { StatusCode::OK })));
         let response = service.oneshot(Request::get("/health/").body(Body::empty())?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
@@ -613,13 +643,16 @@ mod tests {
     /// process stack applies, while the process stack still emits them.
     #[tokio::test]
     async fn apply_management_installs_no_cors_csrf_or_helmet() -> Result<(), Box<dyn Error>> {
-        let stack = HttpStack::new(HttpStackConfig {
-            cors: CorsConfig {
-                mode: CorsMode::Permissive,
-                ..CorsConfig::default()
+        let stack = HttpStack::new(
+            HttpStackConfig {
+                cors: CorsConfig {
+                    mode: CorsMode::Permissive,
+                    ..CorsConfig::default()
+                },
+                ..disabled_config()
             },
-            ..disabled_config()
-        })?;
+            test_limits(),
+        )?;
         let route = || Router::new().route("/livez", get(|| async { StatusCode::OK }));
 
         let management = stack.apply_management(route());

@@ -4,7 +4,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
 /// The alias configured for this broker as a Context Source
-/// (`identity.source_alias`, ETSI GS CIM 009 v1.9.1 Table 5.2.40-1).
+/// (`federation.identity.source_alias`, ETSI GS CIM 009 v1.9.1 Table 5.2.40-1).
 ///
 /// The token grammar a `Via` element's `received-by` imposes (RFC 9110 clause
 /// 7.6.3) belongs to the lexicon's pseudonym, which also reads every token

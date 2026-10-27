@@ -21,7 +21,7 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
     storage_profile::StorageProfile,
 };
-use andromeda_configuration::schema::entity::EntityConfig;
+use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -155,7 +155,7 @@ fn service() -> EntityQueryService {
         .tenant(TenantRef::UnnamedDefault)
         .remote_linked(None)
         .geo_admission(GeoQueryAdmission::new(
-            geometry_census_limits(&EntityConfig::default()),
+            geometry_census_limits(&RequestLimitsConfig::default()),
             NearDistanceBand::Refused,
         ))
         .language_targeting(LanguageTargeting::Specification)

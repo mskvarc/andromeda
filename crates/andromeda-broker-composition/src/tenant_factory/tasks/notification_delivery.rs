@@ -16,7 +16,7 @@ use crate::tenant_factory::{
     storage::TenantStorage,
     tasks::{notification_schedule::classify_notification_failure, retention::retention_duration},
 };
-use andromeda_configuration::schema::delivery::DeliveryConfig;
+use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_notification::{
     delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
     delivery_store::DeliveryStore,
@@ -95,11 +95,12 @@ fn register_delivery_drain(
     wake: DrainWakeReceiver,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let fallback_floor = config.poll_interval.duration().max(Duration::from_secs(1));
+    let fallback_floor = config.queue.poll_interval.duration().max(Duration::from_secs(1));
     let fallback_ceiling = config
-        .poll_interval_max
+        .queue
+        .max_poll_interval
         .duration()
-        .max(config.poll_interval.duration())
+        .max(config.queue.poll_interval.duration())
         .max(Duration::from_secs(1));
     let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("notification-delivery").map_err(AssemblyInvariant::from)?;
@@ -144,9 +145,15 @@ impl CleanupRetention {
     /// The retention ages `config` sets.
     fn configured(config: &DeliveryConfig) -> Result<CleanupRetention, TenantAssemblyError> {
         Ok(CleanupRetention {
-            delivered: retention_duration(config.cleanup_after.duration().as_secs(), RetentionSetting::NotificationCleanup)?,
-            dead_lettered: retention_duration(config.dead_letter_after.duration().as_secs(), RetentionSetting::NotificationDeadLetter)?,
-            orphaned: retention_duration(config.orphan_event_after.duration().as_secs(), RetentionSetting::NotificationOrphanEvent)?,
+            delivered: retention_duration(config.retention.acknowledged_after.duration().as_secs(), RetentionSetting::NotificationCleanup)?,
+            dead_lettered: retention_duration(
+                config.retention.dead_letter_after.duration().as_secs(),
+                RetentionSetting::NotificationDeadLetter,
+            )?,
+            orphaned: retention_duration(
+                config.retention.orphan_event_after.duration().as_secs(),
+                RetentionSetting::NotificationOrphanEvent,
+            )?,
         })
     }
 }
@@ -159,7 +166,7 @@ fn register_delivery_cleanup(
     config: &DeliveryConfig,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let cadence = config.cleanup_interval.duration().max(Duration::from_secs(1));
+    let cadence = config.retention.cleanup_interval.duration().max(Duration::from_secs(1));
     let retention = CleanupRetention::configured(config)?;
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("notification-delivery-cleanup").map_err(AssemblyInvariant::from)?;
@@ -229,7 +236,7 @@ mod tests {
         background_pacer::{BackgroundPacer, ObligationSource},
         tasks::notification_delivery::{CleanupRetention, paced_cleanup},
     };
-    use andromeda_configuration::schema::delivery::DeliveryConfig;
+    use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_notification::{

@@ -6,7 +6,7 @@ use crate::{
     error::TransportError,
     host_port::HostPort,
     http::{
-        config::{HttpTransportConfig, PrivateIpBlocking},
+        config::HttpTransportConfig,
         private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
         resolver::PrivateIpResolver,
     },
@@ -14,7 +14,7 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
-use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
+use andromeda_configuration::schema::{link_field_layout::LinkFieldLayout, notifications::delivery::PrivateAddresses};
 use andromeda_http_headers::link::field_layout::apply_link_field_layout;
 use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
@@ -80,7 +80,7 @@ impl HttpTransport {
             // Vet the addresses the client actually connects to, closing the
             // DNS-rebinding window between the pre-send guard's resolution and
             // reqwest's own.
-            .dns_resolver(PrivateIpResolver::new(config.private_ip_blocking))
+            .dns_resolver(PrivateIpResolver::new(config.private_addresses))
             .build()
             .map_err(TransportError::ClientInitializationFailed)?;
         let dns_cache = Cache::builder().max_capacity(DNS_CHECK_CAPACITY).time_to_live(DNS_CHECK_TTL).build();
@@ -221,7 +221,7 @@ impl HttpTransport {
             });
         }
 
-        if self.config.private_ip_blocking == PrivateIpBlocking::Enabled {
+        if self.config.private_addresses == PrivateAddresses::Refused {
             self.check_private_ip(&req.endpoint_uri).await?;
         }
 

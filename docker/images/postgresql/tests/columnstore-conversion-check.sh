@@ -71,7 +71,7 @@ expect "timescaledb.max_background_workers" 1 "$(sql postgres 'SHOW timescaledb.
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
 	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
-	-e ANDROMEDA__TEMPORAL__COLUMNSTORE_SWEEP_INTERVAL=2s \
+	-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \
 	"$broker_image" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 for _ in $(seq 1 120); do

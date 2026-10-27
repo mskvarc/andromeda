@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::{Table, Value};
 
-/// The `[identity.source_extras]` table (ETSI GS CIM 009 v1.9.1 Table
+/// The `[federation.identity.extras]` table (ETSI GS CIM 009 v1.9.1 Table
 /// 5.2.40-1 `contextSourceExtras`).
 ///
 /// Its content is the operator's: the broker reports it verbatim and never
@@ -15,17 +15,17 @@ use toml::{Table, Value};
 #[serde(transparent)]
 pub struct SourceExtras(Table);
 
-/// A value in `[identity.source_extras]` that JSON cannot spell.
+/// A value in `[federation.identity.extras]` that JSON cannot spell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SourceExtrasError {
     /// TOML has date-times and JSON does not.
-    #[error("identity.source_extras holds a date-time, which JSON cannot spell; write it as a string")]
+    #[error("federation.identity.extras holds a date-time, which JSON cannot spell; write it as a string")]
     DateTime,
     /// TOML has `inf` and `nan` and JSON does not.
-    #[error("identity.source_extras holds an infinite or not-a-number float, which JSON cannot spell")]
+    #[error("federation.identity.extras holds an infinite or not-a-number float, which JSON cannot spell")]
     NonFiniteFloat,
     /// The table could not be written as JSON text.
-    #[error("identity.source_extras could not be written as JSON")]
+    #[error("federation.identity.extras could not be written as JSON")]
     Unwritable,
 }
 

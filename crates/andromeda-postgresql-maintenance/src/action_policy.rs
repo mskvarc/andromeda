@@ -104,7 +104,7 @@ mod tests {
         columnstore_partiality::ChunkPartiality,
         policy::PolicyProfile,
     };
-    use andromeda_configuration::schema::maintenance::MaintenanceProfile;
+    use andromeda_configuration::schema::database::maintenance::MaintenanceProfile;
     use andromeda_retry::retry_number::RetryNumber;
     use chrono::{Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;

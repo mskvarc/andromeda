@@ -4,7 +4,7 @@
 use crate::stack::HttpStack;
 use andromeda_configuration::{
     human_byte_size::HumanByteSize,
-    schema::{content_coding::ContentCoding, http::HttpStackConfig},
+    schema::{content_coding::ContentCoding, http::HttpStackConfig, request_limits::RequestLimitsConfig},
 };
 use andromeda_http_extraction::request_payload::RequestPayload;
 use axum::{
@@ -50,11 +50,11 @@ async fn echo(RequestPayload(body): RequestPayload) -> Response {
 
 /// The process and API stacks, every coding accepted both ways, over the echo route.
 fn router() -> Result<NormalizePath<Router>, Box<dyn Error>> {
-    let config = HttpStackConfig {
-        max_request_body: BODY_LIMIT,
-        ..HttpStackConfig::default()
+    let limits = RequestLimitsConfig {
+        max_body: BODY_LIMIT,
+        ..RequestLimitsConfig::default()
     };
-    let stack = HttpStack::new(config)?;
+    let stack = HttpStack::new(HttpStackConfig::default(), limits)?;
     Ok(stack.apply_process(stack.apply_api(Router::new().route("/echo", post(echo)))))
 }
 

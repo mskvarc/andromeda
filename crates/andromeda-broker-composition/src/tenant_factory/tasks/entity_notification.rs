@@ -92,7 +92,10 @@ pub(super) fn compose_notification_query(
             // from its stored form, admitted once when it was written, so neither a
             // lower limit nor the band switched off since refuses a stored
             // subscription.
-            .geo_admission(GeoQueryAdmission::new(geometry_census_limits(&config.entity), NearDistanceBand::Admitted))
+            .geo_admission(GeoQueryAdmission::new(
+                geometry_census_limits(&config.request_limits),
+                NearDistanceBand::Admitted,
+            ))
             // A subscription's filters read under the broker's live mode.
             .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
             .build(),
@@ -157,7 +160,7 @@ pub(super) fn register_notification_workers(
         subscription_changes,
         Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
-        config.live_evaluation_lanes,
+        config.evaluation.max_concurrent_changes,
     )?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }

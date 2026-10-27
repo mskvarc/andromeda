@@ -1,7 +1,7 @@
 //! Installation of the per-phase `Server-Timing` mechanism.
 
 use andromeda_configuration::schema::{
-    feature_mode::HttpFeatureMode,
+    feature_mode::FeatureMode,
     http::server_timing::{ServerTimingConfig, ServerTimingPhase},
 };
 use axum::{
@@ -30,7 +30,7 @@ const DISPATCH_METRIC: &str = "dispatch";
 /// span into the same extension. Deeper per-subsystem spans are recorded by their
 /// owning crates into this extension and are not installed here.
 pub(crate) fn apply_server_timing(router: Router, config: &ServerTimingConfig) -> Router {
-    if let HttpFeatureMode::Disabled = config.mode {
+    if let FeatureMode::Disabled = config.mode {
         return router;
     }
     // The dispatch middleware must run inside the timing layer so the extension
@@ -72,7 +72,7 @@ fn lock_recovering(extension: &ServerTimingExtension) -> MutexGuard<'_, ServerTi
 mod tests {
     use crate::stack::server_timing::apply_server_timing;
     use andromeda_configuration::schema::{
-        feature_mode::HttpFeatureMode,
+        feature_mode::FeatureMode,
         http::server_timing::{ServerTimingConfig, ServerTimingPhase},
     };
     use axum::{Router, body::Body, extract::Request, http::StatusCode, routing::get};
@@ -86,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn server_timing_records_multiple_named_entries() -> Result<(), Box<dyn Error>> {
         let config = ServerTimingConfig {
-            mode: HttpFeatureMode::Enabled,
+            mode: FeatureMode::Enabled,
             phases: ServerTimingPhase::Total | ServerTimingPhase::Dispatch,
         };
         let response = probe_router(&config).oneshot(Request::get("/probe").body(Body::empty())?).await?;
@@ -106,7 +106,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_server_timing_emits_no_header() -> Result<(), Box<dyn Error>> {
         let config = ServerTimingConfig {
-            mode: HttpFeatureMode::Disabled,
+            mode: FeatureMode::Disabled,
             phases: ServerTimingPhase::Total.into(),
         };
         let response = probe_router(&config).oneshot(Request::get("/probe").body(Body::empty())?).await?;

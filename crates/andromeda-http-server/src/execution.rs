@@ -10,7 +10,7 @@ use crate::{
     staged_close_listener::StagedCloseListener,
     tls_tcp_listener::TlsTcpListener,
 };
-use andromeda_configuration::schema::server::ServerConfig;
+use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::server::ServerConfig};
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request},
@@ -27,7 +27,8 @@ use tower::{Layer, Service, ServiceExt};
 /// Bind the configured listener and serve until the supplied shutdown future resolves.
 ///
 /// `security` decides whether the bound socket serves plaintext or terminates
-/// TLS; composition derives it from the listener's configured transport.
+/// TLS; composition derives it from the listener's configured transport. A
+/// request whose header section is over `max_header_section` is answered 431.
 ///
 /// # Errors
 ///
@@ -35,7 +36,13 @@ use tower::{Layer, Service, ServiceExt};
 /// [`HttpServerError::LocalAddress`] when the bound listener's effective address cannot be read,
 /// and [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight
 /// once the configured graceful-drain deadline has passed.
-pub async fn serve<S, F>(config: &ServerConfig, security: ListenerSecurity, service: S, shutdown: F) -> Result<(), HttpServerError>
+pub async fn serve<S, F>(
+    config: &ServerConfig,
+    max_header_section: HeaderSectionLimit,
+    security: ListenerSecurity,
+    service: S,
+    shutdown: F,
+) -> Result<(), HttpServerError>
 where
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + Sync + 'static,
     S::Future: Send + 'static,
@@ -43,18 +50,27 @@ where
 {
     let address = SocketAddr::from((config.host, config.port));
     let listener = TcpListener::bind(address).await.map_err(|source| HttpServerError::Bind { address, source })?;
-    serve_bound(config, listener, security, service, shutdown).await
+    serve_bound(config, max_header_section, listener, security, service, shutdown).await
 }
 
 /// Serve an already bound TCP `listener` under `config`'s policies until the
 /// supplied shutdown future resolves; `config`'s host and port are not read.
+/// A request whose header section is over `max_header_section` is answered
+/// 431.
 ///
 /// # Errors
 ///
 /// Returns [`HttpServerError::LocalAddress`] when the listener's effective address cannot be read,
 /// and [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in flight
 /// once the configured graceful-drain deadline has passed.
-pub async fn serve_bound<S, F>(config: &ServerConfig, listener: TcpListener, security: ListenerSecurity, service: S, shutdown: F) -> Result<(), HttpServerError>
+pub async fn serve_bound<S, F>(
+    config: &ServerConfig,
+    max_header_section: HeaderSectionLimit,
+    listener: TcpListener,
+    security: ListenerSecurity,
+    service: S,
+    shutdown: F,
+) -> Result<(), HttpServerError>
 where
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + Sync + 'static,
     S::Future: Send + 'static,
@@ -64,7 +80,7 @@ where
     tracing::info!(address = %local_address, transport = %security.transport(), "HTTP listener accepting connections");
     let policy = ClosePolicy::from(config);
     let header_section = HeaderSectionPolicy {
-        limit: config.max_request_header_section,
+        limit: max_header_section,
         transport: security.transport(),
     };
     match security {

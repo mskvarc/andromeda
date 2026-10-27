@@ -181,6 +181,18 @@ cors_rule! {
     }
 }
 
+/// Whether CORS grants a browser something it asks for.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+pub enum CorsPermission {
+    /// The browser is granted it.
+    Allowed,
+    /// The browser is not granted it.
+    #[default]
+    Disallowed,
+}
+
 /// CORS policy configuration for the broker edge.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -201,17 +213,21 @@ pub struct CorsConfig {
     /// Response headers exposed to the browser when `mode = enabled`.
     #[toml_comment(inline)]
     pub expose_headers: ExposeRule,
-    /// Whether credentialed requests (cookies, HTTP auth) are permitted. The
-    /// Fetch standard forbids combining this with an `any` wildcard, which the
-    /// broker rejects at configuration time rather than letting the CORS layer
-    /// panic.
-    pub allow_credentials: bool,
-    /// How long a browser may cache a preflight result. Omitted by default.
+    /// Whether credentialed requests (cookies, HTTP auth) are `allowed` or
+    /// `disallowed`. The Fetch standard forbids allowing them with an `any`
+    /// wildcard, which the broker refuses at configuration time rather than
+    /// letting the CORS layer panic.
+    #[toml_comment(inline)]
+    pub credentials: CorsPermission,
+    /// Whether `Access-Control-Allow-Private-Network` is granted to a
+    /// private-network preflight: `allowed` or `disallowed`.
+    #[toml_comment(inline)]
+    pub private_network: CorsPermission,
+    /// How long a browser may cache a preflight result
+    /// (`Access-Control-Max-Age`), in human-readable form (`"10m"`). Left out,
+    /// the browser's own default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_age: Option<HumanDuration>,
-    /// Whether the `Access-Control-Allow-Private-Network` response is granted for
-    /// private-network preflights.
-    pub allow_private_network: bool,
+    pub preflight_lifetime: Option<HumanDuration>,
 }
 
 impl Default for CorsConfig {
@@ -222,9 +238,9 @@ impl Default for CorsConfig {
             allow_methods: MethodRule::Any,
             allow_headers: HeaderRule::Any,
             expose_headers: ExposeRule::List(Vec::new()),
-            allow_credentials: false,
-            max_age: None,
-            allow_private_network: false,
+            credentials: CorsPermission::Disallowed,
+            private_network: CorsPermission::Disallowed,
+            preflight_lifetime: None,
         }
     }
 }
@@ -239,7 +255,7 @@ impl CorsConfig {
     /// the profile modes never read these fields.
     #[must_use]
     pub const fn has_credentialed_wildcard(&self) -> bool {
-        if !matches!(self.mode, CorsMode::Enabled) || !self.allow_credentials {
+        if !matches!(self.mode, CorsMode::Enabled) || matches!(self.credentials, CorsPermission::Disallowed) {
             return false;
         }
         matches!(self.allow_origins, OriginRule::Any)
@@ -256,7 +272,7 @@ impl CorsConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::http::cors::{CorsConfig, CorsMode, ExposeRule, HeaderRule, MethodRule, OriginRule};
+    use crate::schema::http::cors::{CorsConfig, CorsMode, CorsPermission, ExposeRule, HeaderRule, MethodRule, OriginRule};
 
     #[derive(serde::Deserialize)]
     struct RuleHolder {
@@ -306,7 +322,7 @@ expose = ["x-trace-id"]
     fn cors_enabled_credentials_with_wildcard_is_flagged() {
         let config = CorsConfig {
             mode: CorsMode::Enabled,
-            allow_credentials: true,
+            credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };
@@ -317,7 +333,7 @@ expose = ["x-trace-id"]
     fn cors_enabled_credentials_with_explicit_origins_is_not_flagged() {
         let config = CorsConfig {
             mode: CorsMode::Enabled,
-            allow_credentials: true,
+            credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::List(vec!["https://ui.example".parse().expect("origin URL")]),
             allow_methods: MethodRule::List(Vec::new()),
             allow_headers: HeaderRule::List(Vec::new()),
@@ -333,7 +349,7 @@ expose = ["x-trace-id"]
         // so a combination that is invalid under `enabled` is inert under them.
         let config = CorsConfig {
             mode: CorsMode::Permissive,
-            allow_credentials: true,
+            credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };

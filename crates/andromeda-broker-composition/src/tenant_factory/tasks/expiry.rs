@@ -50,8 +50,8 @@ use tokio::sync::broadcast;
 ///
 /// # Errors
 ///
-/// Returns [`TenantAssemblyError`] when the configured expiry batch size or
-/// check interval is rejected, or when the supervisor refuses a registration.
+/// Returns [`TenantAssemblyError`] when the configured sweep interval is
+/// rejected, or when the supervisor refuses a registration.
 pub(super) fn register_expiry_workers(
     supervisor: &TaskSupervisor,
     config: &TenantFactoryConfig,
@@ -60,7 +60,7 @@ pub(super) fn register_expiry_workers(
     registration_changes: &broadcast::Sender<CsrChangeEvent>,
     pacer: &Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let interval = config.temporal.expiration_check_interval.duration();
+    let interval = config.expiry.sweep_interval.duration();
     // clone: every sweep of the tenant consults the tenant's one pacer.
     let shared_pacer = || Arc::clone(pacer);
     register_subscription_expiry(
@@ -98,7 +98,7 @@ pub(super) fn register_expiry_workers(
         Arc::clone(&state.entities), // clone: request handling and the sweep share one policy.
         Arc::clone(&storage.entity_ports.expiry),
         interval,
-        config.entity.expiry_batch_size,
+        EntityExpiryBatchSize::from(config.expiry.batch_size),
     )?;
     register_snapshot_expiry(supervisor, shared_pacer(), Arc::clone(&storage.snapshot_store), interval)?; // clone: every snapshot worker shares one store.
     register_entity_map_expiry(supervisor, shared_pacer(), Arc::clone(&storage.entity_map_store), interval)?; // clone: request handling and the sweep share one store.
@@ -154,7 +154,7 @@ fn register_entity_expiry(
     entity_policy: Arc<EntityService>,
     entity_expiry_source: Arc<dyn EntityExpirySource>,
     cadence: Duration,
-    expiry_batch_size: usize,
+    expiry_batch_size: EntityExpiryBatchSize,
 ) -> Result<(), TenantAssemblyError> {
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("entity-expiry").map_err(AssemblyInvariant::from)?;
@@ -164,7 +164,6 @@ fn register_entity_expiry(
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
-    let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(AssemblyInvariant::from)?;
     let sweep = Arc::new(EntityExpirySweep::new(target, entity_policy, entity_expiry_source, expiry_batch_size));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
@@ -234,8 +233,7 @@ where
 ///
 /// Clause 5.9.2.4: a registration with a future `expiresAt` is deleted when
 /// that instant is reached. The sweep runs immediately at start-up and then
-/// every `cadence` (`ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL`,
-/// 30 s by default, 5 s in the conformance stacks), deleting every
+/// every `cadence` (`expiry.sweep_interval`, 30 s by default), deleting every
 /// registration whose `expiresAt` is at or before the sweep's cutoff and
 /// publishing the clause 5.11 `NoLongerMatching` change for each. A missed
 /// tick is skipped rather than replayed, so the sweep never runs twice in one

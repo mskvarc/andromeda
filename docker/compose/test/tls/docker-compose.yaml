@@ -15,24 +15,25 @@ x-broker-base: &broker-base
   depends_on:
     postgres:
       condition: service_healthy
+  command: ["--config", "/etc/andromeda/andromeda.toml"]
   volumes:
     - *test-contexts-mount
+    - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro
   environment: &broker-env
-    ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
     ANDROMEDA__SERVER__PORT: "1056"
     ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
     # Four brokers share the default max_connections.
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "8"
-    ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+    ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
 
 # A native-TLS broker presenting the shared identity mounted at /etc/andromeda/tls.
 x-native-env: &native-env
   <<: *broker-env
   ANDROMEDA__SERVER__TRANSPORT: "tls"
-  ANDROMEDA__TLS__CERTIFICATE_PATH: "/etc/andromeda/tls/broker.crt"
-  ANDROMEDA__TLS__PRIVATE_KEY_PATH: "/etc/andromeda/tls/broker.key"
-  ANDROMEDA__TLS__RELOAD_DEBOUNCE: "500ms"
+  ANDROMEDA__TLS__CERTIFICATE: "/etc/andromeda/tls/broker.crt"
+  ANDROMEDA__TLS__PRIVATE_KEY: "/etc/andromeda/tls/broker.key"
+  ANDROMEDA__TLS__RELOAD_SETTLE_AFTER: "500ms"
 
 services:
   postgres:
@@ -56,12 +57,12 @@ services:
     <<: *broker-base
     environment:
       <<: *broker-env
-      ANDROMEDA__TENANCY__ENABLED: "true"
+      ANDROMEDA__TENANCY__MODE: "enabled"
       # Safe only because no host port is published and nginx replaces these headers.
       ANDROMEDA__HTTP__FORWARDED_HEADERS: "trusted"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "https://127.0.0.1:8443"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "https://127.0.0.1:8443"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "tls-broker"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
       interval: 3s
@@ -87,11 +88,11 @@ services:
     <<: *broker-base
     environment:
       <<: *native-env
-      ANDROMEDA__TLS__CLIENT_AUTHENTICATION: "optional"
-      ANDROMEDA__TLS__CLIENT_CA_PATH: "/etc/andromeda/tls/client-ca.crt"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__MODE: "optional"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__CA: "/etc/andromeda/tls/client-ca.crt"
       ANDROMEDA__MANAGEMENT__TRANSPORT: "tls"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-native-broker"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-native-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-native-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "tls-native-broker"
     ports:
       - "1156:1056"
       - "1186:1086"
@@ -110,11 +111,11 @@ services:
     <<: *broker-base
     environment:
       <<: *native-env
-      ANDROMEDA__TLS__CLIENT_AUTHENTICATION: "required"
-      ANDROMEDA__TLS__CLIENT_CA_PATH: "/etc/andromeda/tls/client-ca.crt"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__MODE: "required"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__CA: "/etc/andromeda/tls/client-ca.crt"
       ANDROMEDA__TLS__MINIMUM_PROTOCOL_VERSION: "tls1.3"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-mutual-broker"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-mutual-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-mutual-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "tls-mutual-broker"
     ports:
       - "1157:1056"
     volumes:
@@ -133,10 +134,10 @@ services:
     <<: *broker-base
     environment:
       <<: *native-env
-      ANDROMEDA__TLS__CERTIFICATE_PATH: "/etc/andromeda/tls/tls.crt"
-      ANDROMEDA__TLS__PRIVATE_KEY_PATH: "/etc/andromeda/tls/tls.key"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-rotating-broker"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "tls-rotating-broker"
+      ANDROMEDA__TLS__CERTIFICATE: "/etc/andromeda/tls/tls.crt"
+      ANDROMEDA__TLS__PRIVATE_KEY: "/etc/andromeda/tls/tls.key"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-rotating-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "tls-rotating-broker"
     ports:
       - "1158:1056"
     volumes:

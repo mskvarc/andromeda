@@ -2,7 +2,7 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::section_admission::{database_defaults, expected_deployment, resolve_pagination},
+    config::section_admission::{database_defaults, expected_deployment},
     extension_routing::{accept_language_reading, tenant_management_mode},
     listeners,
     logging,
@@ -25,7 +25,7 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
-use andromeda_configuration::{broker_config::BrokerConfig, schema::management::MetricsExposure};
+use andromeda_configuration::{broker_config::BrokerConfig, schema::observability::MetricsMode};
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
@@ -44,7 +44,7 @@ use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
-use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
@@ -124,9 +124,6 @@ enum BrokerStartupError {
     /// A fallible inbound HTTP middleware layer could not be built.
     #[error(transparent)]
     HttpStack(#[from] HttpStackBuildError),
-    /// `[pagination]` and `[extensions]` together name no pagination policy.
-    #[error(transparent)]
-    Pagination(#[from] PaginationPolicyError),
     /// The `/info/sourceIdentity` route could not be built from the configured identity.
     #[error(transparent)]
     SourceIdentity(#[from] SourceIdentityRouteError),
@@ -145,7 +142,7 @@ pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
     };
     report_startup(&config);
     let config = Arc::new(config);
-    let telemetry = match install_telemetry(config.management.metrics) {
+    let telemetry = match install_telemetry(config.observability.metrics.mode) {
         Ok(telemetry) => telemetry,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
@@ -189,10 +186,10 @@ pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
 ///
 /// The recorder is installed before any pool or worker opens so the first
 /// statement the broker runs is already observed.
-fn install_telemetry(exposure: MetricsExposure) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
+fn install_telemetry(exposure: MetricsMode) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
     match exposure {
-        MetricsExposure::Disabled => Ok(None),
-        MetricsExposure::Prometheus => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
+        MetricsMode::Disabled => Ok(None),
+        MetricsMode::Prometheus => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
     }
 }
 
@@ -224,7 +221,7 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dy
     Arc::new(PostgresTenantUsageProbe::new(
         request_url,
         config.database.acquire_timeout(),
-        config.snapshot.tenant_count_quota.map(|quota| u64::try_from(quota).unwrap_or(u64::MAX)),
+        config.snapshot.quota.max_per_tenant.map(|quota| u64::try_from(quota.get()).unwrap_or(u64::MAX)),
     ))
 }
 
@@ -251,8 +248,8 @@ async fn construct(
     let registry = Arc::new(
         PostgresTenantRegistry::connect(
             configure_pool_options(config.database.max_connections, config.database.acquire_timeout()),
-            direct_url.clone(),     // clone: the registry provisions and migrates over the direct base
-            config.tenancy.clone(), // clone: registry owns its runtime tenancy policy
+            direct_url.clone(),               // clone: the registry provisions and migrates over the direct base
+            config.tenancy.databases.clone(), // clone: the registry owns where tenant data lives
             &database_defaults(&config),
             config.database.acquire_timeout(),
         )
@@ -310,7 +307,7 @@ async fn construct(
 
     let enabled_extensions = EnabledExtensions::from(&config.extensions);
     log_conformance_override(&config.extensions);
-    let pagination = resolve_pagination(&config.extensions, config.pagination)?;
+    let pagination = PaginationPolicy::from(&config.extensions);
 
     let accept_language = accept_language_reading(enabled_extensions);
     let entity_routes = EntityRoutes::new(
@@ -339,7 +336,7 @@ async fn construct(
         .subscription(subscription_routes)
         .entity_map(entity_map_routes)
         .snapshot(snapshot_routes)
-        .source_identity(source_identity_routes(&config.identity, started_at, enabled_extensions, &tenants)?)
+        .source_identity(source_identity_routes(&config.federation.identity, started_at, enabled_extensions, &tenants)?)
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),
             forwarded_subscription_router,
@@ -347,10 +344,10 @@ async fn construct(
         .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
         .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
-        .advertised_api_root(config.identity.advertised_url.clone().map(AdvertisedApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
+        .advertised_api_root(config.federation.identity.advertised_url.clone().map(AdvertisedApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
         .pagination(pagination)
         .build();
-    let stack = HttpStack::new(config.http.clone())?; // clone: the assembled stack owns its process-wide configuration
+    let stack = HttpStack::new(config.http.clone(), config.request_limits)?; // clone: the assembled stack owns its process-wide configuration
     let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);
     Ok(BrokerExecution {
         api,

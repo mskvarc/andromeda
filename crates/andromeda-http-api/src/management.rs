@@ -63,13 +63,14 @@ impl ManagementApi {
 mod tests {
     use crate::management::{ManagementApi, ManagementRoutes};
     use andromeda_configuration::schema::{
-        feature_mode::HttpFeatureMode,
+        feature_mode::FeatureMode,
         http::{
             HttpStackConfig,
             cors::{CorsConfig, CorsMode},
             csrf::CsrfConfig,
-            helmet::HelmetConfig,
+            security_headers::SecurityHeadersConfig,
         },
+        request_limits::RequestLimitsConfig,
     };
     use andromeda_health::aggregate::Health;
     use andromeda_http_health::routes::HealthRoutes;
@@ -86,20 +87,21 @@ mod tests {
     /// A stack with CORS and helmet enabled, to prove the management plane omits
     /// their headers even when the process-wide stack would carry them.
     fn stack_with_edge_features() -> Result<HttpStack, Box<dyn Error>> {
-        Ok(HttpStack::new(HttpStackConfig {
-            cors: CorsConfig {
-                mode: CorsMode::Permissive,
-                ..CorsConfig::default()
+        Ok(HttpStack::new(
+            HttpStackConfig {
+                cors: CorsConfig {
+                    mode: CorsMode::Permissive,
+                    ..CorsConfig::default()
+                },
+                security_headers: SecurityHeadersConfig { mode: FeatureMode::Enabled },
+                csrf: CsrfConfig {
+                    mode: FeatureMode::Disabled,
+                    trusted_origins: Vec::new(),
+                },
+                ..HttpStackConfig::default()
             },
-            helmet: HelmetConfig {
-                mode: HttpFeatureMode::Enabled,
-            },
-            csrf: CsrfConfig {
-                mode: HttpFeatureMode::Disabled,
-                trusted_origins: Vec::new(),
-            },
-            ..HttpStackConfig::default()
-        })?)
+            RequestLimitsConfig::default(),
+        )?)
     }
 
     fn management_routes(metrics: Option<TelemetryRoutes>) -> ManagementRoutes {

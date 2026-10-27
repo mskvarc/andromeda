@@ -65,7 +65,7 @@ impl TenantAssemblyError {
 #[cfg(test)]
 mod tests {
     use crate::tenant_factory::{
-        assembly_invariant::{AssemblyInvariant, CountSetting},
+        assembly_invariant::{AssemblyInvariant, RetentionSetting},
         error::TenantAssemblyError,
     };
     use andromeda_postgresql_context_store::error::ContextStoreError;
@@ -78,6 +78,6 @@ mod tests {
         assert!(TenantAssemblyError::Database(SqlxError::PoolTimedOut).is_saturation());
         assert!(TenantAssemblyError::ContextStore(ContextStoreError::Saturated).is_saturation());
         assert!(!TenantAssemblyError::Database(SqlxError::RowNotFound).is_saturation());
-        assert!(!TenantAssemblyError::from(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize)).is_saturation());
+        assert!(!TenantAssemblyError::from(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon)).is_saturation());
     }
 }

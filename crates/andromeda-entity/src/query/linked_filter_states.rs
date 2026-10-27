@@ -117,7 +117,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
-    use andromeda_configuration::schema::entity::EntityConfig;
+    use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
@@ -270,7 +270,7 @@ mod tests {
             .tenant(TenantRef::UnnamedDefault)
             .remote_linked(None)
             .geo_admission(GeoQueryAdmission::new(
-                geometry_census_limits(&EntityConfig::default()),
+                geometry_census_limits(&RequestLimitsConfig::default()),
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)

@@ -77,10 +77,10 @@ pub(crate) fn register_tenant_waker(
     schedule: Arc<dyn TenantWakeSchedule>,
     tenancy: &TenancyConfig,
 ) -> Result<(), TenantWakerRegistrationError> {
-    if !tenancy.enabled {
+    if !tenancy.is_enabled() {
         return Ok(());
     }
-    let limit = tenancy.waker_max_wakes_per_pass;
+    let limit = tenancy.residency.max_wakes_per_pass.get();
     register_waker(supervisor, Arc::clone(&manager), Arc::clone(&schedule), limit)?;
     register_reconciliation(supervisor, manager, schedule, limit)
 }

@@ -1,6 +1,6 @@
 //! Construction of the security-header (helmet) middleware layer.
 
-use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::helmet::HelmetConfig};
+use andromeda_configuration::schema::{feature_mode::FeatureMode, http::security_headers::SecurityHeadersConfig};
 use axum_helmet::{
     ContentSecurityPolicy,
     CrossOriginOpenerPolicy,
@@ -28,10 +28,10 @@ use axum_helmet::{
 ///
 /// Returns [`HelmetError`] when the default header set cannot be rendered into a
 /// layer.
-pub(crate) fn build_helmet_layer(config: HelmetConfig) -> Result<Option<HelmetLayer>, HelmetError> {
+pub(crate) fn build_helmet_layer(config: SecurityHeadersConfig) -> Result<Option<HelmetLayer>, HelmetError> {
     match config.mode {
-        HttpFeatureMode::Disabled => Ok(None),
-        HttpFeatureMode::Enabled => security_header_policy().try_into().map(Some),
+        FeatureMode::Disabled => Ok(None),
+        FeatureMode::Enabled => security_header_policy().try_into().map(Some),
     }
 }
 
@@ -61,7 +61,7 @@ fn security_header_policy() -> Helmet {
 )]
 mod tests {
     use crate::stack::helmet_layer::build_helmet_layer;
-    use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::helmet::HelmetConfig};
+    use andromeda_configuration::schema::{feature_mode::FeatureMode, http::security_headers::SecurityHeadersConfig};
     use axum::{
         Router,
         body::Body,
@@ -73,28 +73,19 @@ mod tests {
 
     #[test]
     fn an_enabled_policy_builds_a_layer() {
-        let layer = build_helmet_layer(HelmetConfig {
-            mode: HttpFeatureMode::Enabled,
-        })
-        .expect("default helmet builds");
+        let layer = build_helmet_layer(SecurityHeadersConfig { mode: FeatureMode::Enabled }).expect("default helmet builds");
         assert!(layer.is_some());
     }
 
     #[test]
     fn a_disabled_policy_builds_no_layer() {
-        let layer = build_helmet_layer(HelmetConfig {
-            mode: HttpFeatureMode::Disabled,
-        })
-        .expect("disabled helmet builds");
+        let layer = build_helmet_layer(SecurityHeadersConfig { mode: FeatureMode::Disabled }).expect("disabled helmet builds");
         assert!(layer.is_none());
     }
 
     #[tokio::test]
     async fn the_enabled_policy_sets_its_headers_but_not_strict_transport_security() -> Result<(), Box<dyn Error>> {
-        let layer = build_helmet_layer(HelmetConfig {
-            mode: HttpFeatureMode::Enabled,
-        })?
-        .ok_or("an enabled policy builds a layer")?;
+        let layer = build_helmet_layer(SecurityHeadersConfig { mode: FeatureMode::Enabled })?.ok_or("an enabled policy builds a layer")?;
         let router = Router::new().route("/", get(|| async { StatusCode::OK })).layer(layer);
         let response = router.oneshot(Request::get("/").body(Body::empty())?).await?;
         assert!(response.headers().contains_key(header::X_CONTENT_TYPE_OPTIONS));

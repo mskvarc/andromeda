@@ -18,7 +18,7 @@ use crate::{
     state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
 };
-use andromeda_configuration::schema::maintenance::MaintenanceMode;
+use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use andromeda_postgresql_seaquery::{command::Command, maintenance::MaintenanceCommand};
 use andromeda_retry::retry_number::RetryNumber;
 use andromeda_telemetry::maintenance::{MaintenanceAction, MaintenanceActionOutcome, record_action};

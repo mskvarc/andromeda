@@ -1,6 +1,6 @@
 //! Delivery binding for snapshot status notifications.
 
-use andromeda_configuration::schema::delivery::DeliveryConfig;
+use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -54,20 +54,20 @@ impl SnapshotStatusDeliveryDrain {
             outbox,
             transport,
             worker: LeaseHolder::mint(),
-            lease: Duration::seconds(i64::try_from(config.lease.duration().as_secs()).unwrap_or(i64::MAX)),
-            max_attempts: config.max_attempts.max(1),
+            lease: Duration::seconds(i64::try_from(config.queue.lease_timeout.duration().as_secs()).unwrap_or(i64::MAX)),
+            max_attempts: i32::try_from(config.queue.max_attempts.get()).unwrap_or(i32::MAX),
             retry_schedule: retry_schedule(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule
             })?,
-            batch_size: config.batch_size.max(1),
-            concurrency: usize::try_from(config.concurrency).unwrap_or(usize::MAX).max(1),
+            batch_size: i32::try_from(config.queue.batch_size.get()).unwrap_or(i32::MAX),
+            concurrency: usize::try_from(config.max_concurrent.get()).unwrap_or(usize::MAX),
             error_bound: error_bound(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
                 SnapshotInvariant::NotificationErrorBound
             })?,
-            delivered_retention: Duration::seconds(i64::try_from(config.cleanup_after.duration().as_secs()).unwrap_or(i64::MAX)),
-            dead_retention: Duration::seconds(i64::try_from(config.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
+            delivered_retention: Duration::seconds(i64::try_from(config.retention.acknowledged_after.duration().as_secs()).unwrap_or(i64::MAX)),
+            dead_retention: Duration::seconds(i64::try_from(config.retention.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
         })
     }
 

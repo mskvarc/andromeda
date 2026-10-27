@@ -205,7 +205,7 @@ pub(super) fn supervise_tasks(
             transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
         },
         interval_subscription_changes,
-        config.notifications.interval_max_sleep.duration(),
+        config.notifications.periodic.max_poll_interval.duration(),
         Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
     )?;
     register_csource_notification_workers(
@@ -217,7 +217,7 @@ pub(super) fn supervise_tasks(
             registrations: registration,
             subscriptions: csource_subscription,
         },
-        config.notifications.interval_max_sleep.duration(),
+        config.notifications.periodic.max_poll_interval.duration(),
         Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
@@ -227,7 +227,7 @@ pub(super) fn supervise_tasks(
         &storage.pool,
         PreparationRecovery {
             preparation: Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
-            cadence: config.snapshot.preparation_recovery.duration(),
+            cadence: config.snapshot.preparation.recovery_interval.duration(),
             pacer,
         },
         transport,

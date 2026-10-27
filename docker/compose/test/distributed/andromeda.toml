@@ -1,0 +1,15 @@
+# The ETSI test-suite contexts, read from the mounted repository copy, and
+# the deployment member every distributed-operation broker reports in
+# /info/sourceIdentity. Lists of tables and tables are set in a
+# configuration file only.
+
+[[jsonld.preloaded_contexts]]
+url = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld"
+path = "/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld"
+
+[[jsonld.preloaded_contexts]]
+url = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+path = "/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"
+
+[federation.identity.extras]
+deployment = "distop"

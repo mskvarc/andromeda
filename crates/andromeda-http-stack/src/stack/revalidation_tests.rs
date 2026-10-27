@@ -8,6 +8,7 @@ use andromeda_configuration::schema::{
         HttpStackConfig,
         compression::{CompressionConfig, CompressionQuality},
     },
+    request_limits::RequestLimitsConfig,
 };
 use axum::{
     Router,
@@ -55,7 +56,7 @@ fn stack() -> Result<HttpStack, Box<dyn Error>> {
         },
         ..HttpStackConfig::default()
     };
-    Ok(HttpStack::new(config)?)
+    Ok(HttpStack::new(config, RequestLimitsConfig::default())?)
 }
 
 /// The answer to a GET of the tagged route with `headers`.

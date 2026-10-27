@@ -121,8 +121,8 @@ mod tests {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
         let tls = TlsConfig {
-            certificate_path: files.certificate_path().to_path_buf(),
-            private_key_path: files.private_key_path().to_path_buf(),
+            certificate: Some(files.certificate_path().to_path_buf()),
+            private_key: Some(files.private_key_path().to_path_buf()),
             ..TlsConfig::default()
         };
         let config = build_server_config(&TlsMaterial::load(&tls.material_sources()?)?, configured, policy)?;

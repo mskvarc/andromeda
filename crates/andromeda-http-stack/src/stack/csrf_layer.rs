@@ -1,6 +1,6 @@
 //! Construction of the CSRF middleware layer.
 
-use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::csrf::CsrfConfig};
+use andromeda_configuration::schema::{feature_mode::FeatureMode, http::csrf::CsrfConfig};
 use thiserror::Error;
 use tower_http::csrf::{ConfigError, CsrfLayer};
 
@@ -20,8 +20,8 @@ pub enum CsrfLayerError {
 /// not one the CSRF layer accepts.
 pub(crate) fn build_csrf_layer(config: &CsrfConfig) -> Result<Option<CsrfLayer>, CsrfLayerError> {
     match config.mode {
-        HttpFeatureMode::Disabled => Ok(None),
-        HttpFeatureMode::Enabled => {
+        FeatureMode::Disabled => Ok(None),
+        FeatureMode::Enabled => {
             let mut layer = CsrfLayer::new();
             for origin in &config.trusted_origins {
                 // The CSRF layer matches the request `Origin` header, which is a
@@ -42,12 +42,12 @@ pub(crate) fn build_csrf_layer(config: &CsrfConfig) -> Result<Option<CsrfLayer>,
 )]
 mod tests {
     use crate::stack::csrf_layer::build_csrf_layer;
-    use andromeda_configuration::schema::{feature_mode::HttpFeatureMode, http::csrf::CsrfConfig};
+    use andromeda_configuration::schema::{feature_mode::FeatureMode, http::csrf::CsrfConfig};
 
     #[test]
     fn csrf_disabled_builds_no_layer() {
         let config = CsrfConfig {
-            mode: HttpFeatureMode::Disabled,
+            mode: FeatureMode::Disabled,
             trusted_origins: Vec::new(),
         };
         assert!(build_csrf_layer(&config).expect("disabled csrf builds").is_none());
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn csrf_enabled_with_trusted_origins_builds_layer() {
         let config = CsrfConfig {
-            mode: HttpFeatureMode::Enabled,
+            mode: FeatureMode::Enabled,
             trusted_origins: vec!["https://ui.example".parse().expect("origin URL")],
         };
         assert!(build_csrf_layer(&config).expect("enabled csrf builds").is_some());

@@ -30,9 +30,9 @@ pub enum NotificationInvariant {
     /// The configured attempt ceiling is unusable.
     #[error("the notification delivery attempt ceiling is unusable: {0}")]
     AttemptCeiling(#[from] DeliveryAttemptCeilingError),
-    /// The configured batch size is not positive.
-    #[error("the notification delivery batch size is not positive")]
-    BatchSizeNotPositive,
+    /// The configured batch size does not fit the platform address width.
+    #[error("the notification delivery batch size does not fit the platform address width")]
+    BatchSizeExceedsAddressWidth,
     /// A claim width the drain computed does not fit the store's claim bound.
     #[error("the notification delivery claim width is out of range: {0}")]
     ClaimWidth(#[source] TryFromIntError),

@@ -20,7 +20,7 @@
 //! and clauses 5.7.1 and 5.7.2 raise `BadRequestData` for the one depth limit
 //! the specification names, a "too deep query".
 
-use andromeda_configuration::schema::entity::DEFAULT_MAX_ATTRIBUTE_NESTING;
+use andromeda_configuration::schema::request_limits::DEFAULT_MAX_ATTRIBUTE_NESTING;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::json_value::READER_NESTING_LIMIT;
 use derive_more::Display;

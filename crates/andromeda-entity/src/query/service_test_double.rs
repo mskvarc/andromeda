@@ -16,7 +16,7 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
     storage_profile::StorageProfile,
 };
-use andromeda_configuration::schema::entity::EntityConfig;
+use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -112,7 +112,7 @@ pub(crate) fn service() -> EntityQueryService {
 
 /// The [`service`] test double, narrowing geo queries through `spatial`.
 pub(crate) fn service_narrowing_through(spatial: SpatialAcceleration) -> EntityQueryService {
-    service_with(spatial, geometry_census_limits(&EntityConfig::default()))
+    service_with(spatial, geometry_census_limits(&RequestLimitsConfig::default()))
 }
 
 /// The [`service`] test double, resolving reference geometries of at most

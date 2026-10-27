@@ -1,6 +1,6 @@
 //! Cross-Site Request Forgery protection policy.
 
-use crate::{comma_list::array_or_comma_list, schema::feature_mode::HttpFeatureMode};
+use crate::{comma_list::array_or_comma_list, schema::feature_mode::FeatureMode};
 use serde::{Deserialize, Serialize};
 use toml_comment::TomlComment;
 use url::Url;
@@ -15,7 +15,7 @@ use url::Url;
 pub struct CsrfConfig {
     /// Whether the CSRF layer is installed.
     #[toml_comment(inline)]
-    pub mode: HttpFeatureMode,
+    pub mode: FeatureMode,
     /// Browser origins whose cross-site requests are trusted, in addition to
     /// same-origin requests which are always allowed.
     #[serde(deserialize_with = "array_or_comma_list")]
@@ -25,7 +25,7 @@ pub struct CsrfConfig {
 impl Default for CsrfConfig {
     fn default() -> CsrfConfig {
         CsrfConfig {
-            mode: HttpFeatureMode::Disabled,
+            mode: FeatureMode::Disabled,
             trusted_origins: Vec::new(),
         }
     }
@@ -37,18 +37,18 @@ impl Default for CsrfConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::{feature_mode::HttpFeatureMode, http::csrf::CsrfConfig};
+    use crate::schema::{feature_mode::FeatureMode, http::csrf::CsrfConfig};
 
     #[test]
     fn csrf_disabled_by_default() {
-        pretty_assertions::assert_eq!(CsrfConfig::default().mode, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(CsrfConfig::default().mode, FeatureMode::Disabled);
         pretty_assertions::assert_eq!(CsrfConfig::default().trusted_origins, Vec::<url::Url>::new());
     }
 
     #[test]
     fn csrf_config_round_trips_through_toml() {
         let config = CsrfConfig {
-            mode: HttpFeatureMode::Enabled,
+            mode: FeatureMode::Enabled,
             trusted_origins: vec!["https://ui.example".parse().expect("origin URL")],
         };
         let rendered = toml::to_string(&config).expect("csrf serialises");

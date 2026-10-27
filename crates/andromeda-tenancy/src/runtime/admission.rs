@@ -49,7 +49,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// provisioning the tenant and building its runtime each surface the
     /// failure the store or the factory reported.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<LeasedState<F::State>, TenancyError> {
-        if !self.config.enabled && !tenant.is_unnamed_default() {
+        if !self.config.is_enabled() && !tenant.is_unnamed_default() {
             return Err(TenancyError::MultiTenancyDisabled);
         }
 
@@ -61,7 +61,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // permit and a teardown slot to make room) answers to one deadline, so
         // an overloaded broker sheds the request as retryable backpressure before
         // the HTTP request deadline instead of stalling into it.
-        let deadline = Instant::now() + self.config.build_admission_timeout.duration();
+        let deadline = Instant::now() + self.config.build.admission_timeout.duration();
 
         // Single-flight the cold build: concurrent first requests for one tenant
         // share its build lock, so exactly one opens a runtime. The rest wait,
@@ -268,7 +268,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// proceeds and the cache overshoots by at most the requests in flight, as
     /// `runtime_max_cached` documents.
     async fn make_room(&self, tenant: &TenantRef, deadline: Instant) -> Result<(), TenancyError> {
-        while self.runtimes.len() >= self.config.runtime_max_cached {
+        while self.runtimes.len() >= self.config.residency.max_resident.get() {
             let Some((victim, chosen_at)) = self.lru_unleased_named(tenant) else {
                 return Ok(());
             };

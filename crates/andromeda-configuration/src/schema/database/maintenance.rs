@@ -44,7 +44,7 @@ pub struct MaintenanceConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::maintenance::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile};
+    use crate::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile};
     use pretty_assertions::assert_eq;
 
     #[test]

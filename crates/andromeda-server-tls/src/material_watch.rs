@@ -75,7 +75,7 @@ impl TlsMaterialWatch {
             sources: sources.into_owned(),
             sender,
         };
-        let mut debouncer = new_debouncer(config.reload_debounce.duration(), None, reloader)?;
+        let mut debouncer = new_debouncer(config.reload_settle_after.duration(), None, reloader)?;
         directories
             .iter()
             .try_for_each(|directory| debouncer.watch(directory, RecursiveMode::NonRecursive))?;
@@ -181,9 +181,9 @@ mod tests {
     /// A configuration reading `certificate` and `key`, reloading quickly.
     fn config_for(certificate: &Path, key: &Path) -> TlsConfig {
         TlsConfig {
-            certificate_path: certificate.to_path_buf(),
-            private_key_path: key.to_path_buf(),
-            reload_debounce: HumanDuration::from_millis(100),
+            certificate: Some(certificate.to_path_buf()),
+            private_key: Some(key.to_path_buf()),
+            reload_settle_after: HumanDuration::from_millis(100),
             ..TlsConfig::default()
         }
     }

@@ -18,6 +18,7 @@
 use crate::listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme};
 use andromeda_configuration::{
     broker_config::BrokerConfig,
+    header_section_limit::HeaderSectionLimit,
     schema::{http3::Http3Mode, server::ServerConfig},
 };
 use andromeda_http_api::{api::HttpApi, management::ManagementApi};
@@ -91,7 +92,7 @@ pub async fn serve(
     // certificate files, and each listener keeps the last configuration it had.
     let mut identity = SharedTlsIdentity::new(&config.tls);
     let tcp_security = identity.tcp_security(config.server.transport)?;
-    let quic_feed = match config.http3.mode {
+    let quic_feed = match config.server.http3.mode {
         Http3Mode::Disabled => None,
         Http3Mode::Enabled => Some(identity.quic_feed()?),
     };
@@ -104,7 +105,7 @@ pub async fn serve(
     let advertisement = match quic_feed {
         Some(_) => {
             let port = NonZeroU16::new(config.server.port).ok_or(ListenerError::ZeroPort)?;
-            Some(AltSvcAdvertisement::h3(port, config.http3.advertisement_max_age.duration())?)
+            Some(AltSvcAdvertisement::h3(port, config.server.http3.advertisement_lifetime.duration())?)
         }
         None => None,
     };
@@ -126,7 +127,8 @@ pub async fn serve(
     });
 
     let mut listeners: Vec<ListenerFuture<'_>> = Vec::new();
-    let tcp = serve_tcp(&config.server, tcp_security, tcp_service, wait_for(&shutdown_token));
+    let max_header_section = config.request_limits.max_header_section;
+    let tcp = serve_tcp(&config.server, max_header_section, tcp_security, tcp_service, wait_for(&shutdown_token));
     listeners.push(Box::pin(async move { tcp.await.map_err(ListenerError::from) }));
 
     if let (Some(feed), Some(router)) = (quic_feed, h3_router) {
@@ -135,7 +137,7 @@ pub async fn serve(
             endpoint,
             feed,
             router,
-            config.server.max_request_header_section,
+            max_header_section,
             ClosePolicy::from(&config.server),
             wait_for(&shutdown_token),
         );
@@ -144,17 +146,15 @@ pub async fn serve(
 
     if let (Some(management), Some(security)) = (management, management_security) {
         // The management listener is TCP-only and reuses the data plane's
-        // graceful-drain deadline, announced-close delay and request header
+        // graceful-drain deadline, announced-close timeout and request header
         // section limit on its own host and port.
         let management_config = ServerConfig {
             host: config.management.host,
             port: config.management.port,
             transport: config.management.transport,
-            graceful_drain: config.server.graceful_drain,
-            announced_close_delay: config.server.announced_close_delay,
-            max_request_header_section: config.server.max_request_header_section,
+            ..config.server.clone() // clone: the management listener owns its synthesized configuration
         };
-        let management_serve = serve_management(management_config, security, management, wait_for(&shutdown_token));
+        let management_serve = serve_management(management_config, max_header_section, security, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));
     }
 
@@ -177,12 +177,13 @@ pub async fn serve(
 /// data-plane listeners under one shutdown token.
 async fn serve_management(
     config: ServerConfig,
+    max_header_section: HeaderSectionLimit,
     security: ListenerSecurity,
     management: ManagementApi,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), HttpServerError> {
     let service = AddExtensionLayer::new(listener_scheme(config.transport)).layer(management.into_service());
-    serve_tcp(&config, security, service, shutdown).await
+    serve_tcp(&config, max_header_section, security, service, shutdown).await
 }
 
 /// A future that resolves when `token` is cancelled, owning a clone of it so it

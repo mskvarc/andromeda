@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::warn;
 
 /// How the query path consults the resident spatial index, one variant per
-/// [`SpatialConsistency`](andromeda_configuration::schema::spatial::SpatialConsistency) mode.
+/// [`SpatialConsistency`](andromeda_configuration::schema::entity::spatial_index::SpatialConsistency) mode.
 ///
 /// Cloning shares the index: every query service of a tenant narrows through
 /// the one index the tenant's commits and rebuilds maintain.

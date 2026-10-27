@@ -22,7 +22,7 @@ use crate::{
     state::{RegisteredTenant, target_record},
     statistics_freshness::{self, HeapStatistics},
 };
-use andromeda_configuration::schema::maintenance::MaintenanceMode;
+use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use andromeda_telemetry::maintenance::record_overdue_relations;
 use chrono::Utc;
 use sqlx::PgConnection;

@@ -80,7 +80,7 @@ docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=automatic \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
-	-e ANDROMEDA__TEMPORAL__COLUMNSTORE_SWEEP_INTERVAL=2s \
+	-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \
 	"$broker_image" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 for _ in $(seq 1 120); do

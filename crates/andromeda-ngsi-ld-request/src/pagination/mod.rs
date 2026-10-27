@@ -10,7 +10,6 @@
 //! operator-configured [`policy::PaginationPolicy`], which alone decides the
 //! [`andromeda_ngsi_ld_query::page_window::PageWindow`] the stores read.
 
-pub mod cursor_availability;
 pub mod cursor_request;
 pub mod page_context;
 pub mod page_pointers;

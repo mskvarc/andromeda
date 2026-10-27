@@ -5,36 +5,36 @@ name: andromeda-pgbouncer
 # would otherwise make every run depend on an external host.
 x-test-contexts-volumes: &test-contexts-volumes
   - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+  - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro
 
 x-broker-env: &broker-env
-  ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
   ANDROMEDA__SERVER__HOST: "0.0.0.0"
   # Provisioning, migration and maintenance bypass the pooler.
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
   ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
-  ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "120s"
-  ANDROMEDA__TENANCY__JANITOR_INTERVAL: "5s"
+  ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "120s"
+  ANDROMEDA__TENANCY__RESIDENCY__SWEEP_INTERVAL: "5s"
   # Re-wake must be observable within a test.
-  ANDROMEDA__TENANCY__MIN_DORMANCY: "3s"
+  ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "3s"
   # A failing delivery keeps retrying for ~42 min (5s x (2^9 - 1) at the 5s
   # base backoff) instead of ~75s, so the dormant-retry tests still have a
   # retry due after eviction pressure however slow the host.
-  ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_ATTEMPTS: "10"
-  ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT: "enabled"
+  ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_ATTEMPTS: "10"
+  ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
   # Suites scrape GET /metrics on the published data-plane port.
-  ANDROMEDA__MANAGEMENT__MODE: "merged"
-  ANDROMEDA__MANAGEMENT__METRICS: "prometheus"
-  ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+  ANDROMEDA__MANAGEMENT__MODE: "shared-port"
+  ANDROMEDA__OBSERVABILITY__METRICS__MODE: "prometheus"
+  ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
   # Every broker here writes the same tenant databases. The spatial index's
   # default watermark mode is the one that stays exact across them; it is
   # pinned so a change of default cannot silently weaken this stack
   # (docs/spatial-index-consistency.md).
-  ANDROMEDA__SPATIAL__CONSISTENCY: "watermark"
+  ANDROMEDA__ENTITY__SPATIAL_INDEX__CONSISTENCY: "watermark"
 
 # Pooled tenant pools size from the pooler section, not tenancy.
 x-pooled-env: &pooled-env
   ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
-  ANDROMEDA__DATABASE__POOLER__TENANT_MAX_CONNECTIONS: "2"
+  ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
 
 x-broker-features: &broker-features
   ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
@@ -96,12 +96,13 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    command: ["--config", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1067"
       PGAPPNAME: "broker"
-      ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
     ports:
       - "1067:1067"
     healthcheck:
@@ -123,12 +124,13 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    command: ["--config", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1068"
       PGAPPNAME: "broker-replica"
-      ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
     ports:
       - "1068:1068"
     healthcheck:
@@ -150,17 +152,18 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    command: ["--config", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1069"
       PGAPPNAME: "broker-wide"
-      ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "1000"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "1000"
       # Every touched tenant stays resident for the whole idle-cost scenario:
       # touching 300 tenants one after another takes longer than the shared
       # 120s idle TTL, which would otherwise evict the earliest before the
       # cache is measured.
-      ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL: "900s"
+      ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "900s"
     ports:
       - "1069:1069"
     healthcheck:
@@ -180,14 +183,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    command: ["--config", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1070"
       PGAPPNAME: "broker-direct"
       # Un-pooled, each tenant pool is a real backend pool.
-      ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "4"
-      ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED: "32"
+      ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
     ports:
       - "1070:1070"
     healthcheck:

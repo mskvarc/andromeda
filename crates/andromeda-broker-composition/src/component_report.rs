@@ -80,7 +80,7 @@ pub(crate) async fn collect(pool: &PgPool, config: &BrokerConfig) -> Result<Vec<
 fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     let database = &config.database;
     let tenancy = &config.tenancy;
-    let builds = u32::try_from(tenancy.max_concurrent_builds).unwrap_or(u32::MAX);
+    let builds = u32::try_from(tenancy.build.max_concurrent.get()).unwrap_or(u32::MAX);
     let direct = database
         .max_connections
         .saturating_add(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
@@ -89,10 +89,10 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     if database.is_pooled() {
         return direct;
     }
-    let cached = u32::try_from(tenancy.runtime_max_cached).unwrap_or(u32::MAX);
+    let cached = u32::try_from(tenancy.residency.max_resident.get()).unwrap_or(u32::MAX);
     direct
         .saturating_add(database.max_connections)
-        .saturating_add(cached.saturating_mul(tenancy.tenant_max_connections))
+        .saturating_add(cached.saturating_mul(tenancy.databases.max_connections.get()))
         .saturating_add(REQUEST_PROBE_CONNECTIONS)
 }
 
@@ -116,16 +116,17 @@ fn andromeda_report() -> ComponentReport {
 mod tests {
     use crate::component_report::{andromeda_report, broker_connection_ceiling, build};
     use andromeda_component_report::ComponentReport;
-    use andromeda_configuration::{broker_config::BrokerConfig, schema::database::PoolerConfig};
+    use andromeda_configuration::{broker_config::BrokerConfig, schema::database::pooler::PoolerConfig};
     use pretty_assertions::{assert_eq, assert_ne};
+    use std::num::{NonZeroU32, NonZeroUsize};
 
     /// A configuration with small, distinct pool sizes.
     fn sized() -> BrokerConfig {
         let mut config = BrokerConfig::default();
         config.database.max_connections = 10;
-        config.tenancy.max_concurrent_builds = 4;
-        config.tenancy.runtime_max_cached = 20;
-        config.tenancy.tenant_max_connections = 3;
+        config.tenancy.build.max_concurrent = NonZeroUsize::MIN.saturating_add(3);
+        config.tenancy.residency.max_resident = NonZeroUsize::MIN.saturating_add(19);
+        config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(2);
         config
     }
 

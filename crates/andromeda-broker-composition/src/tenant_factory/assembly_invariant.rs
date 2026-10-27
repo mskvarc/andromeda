@@ -6,7 +6,7 @@
 
 use andromeda_configuration::schema::temporal::error::TemporalConfigError;
 use andromeda_delivery::error::TransportError;
-use andromeda_entity::{error::EntityError, expiry::EntityExpiryBatchSizeError};
+use andromeda_entity::{configured_policy::SideEffectAttemptsAboveCeiling, error::EntityError};
 use andromeda_federation::error::FederationError;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonymError;
 use andromeda_notification::error::NotificationError;
@@ -15,17 +15,6 @@ use andromeda_retry::schedule_error::BackoffScheduleError;
 use andromeda_snapshot::error::SnapshotError;
 use andromeda_task_runtime::{periodic_trigger::PeriodicScheduleError, registration::TaskRegistrationError, task_name::TaskNameError};
 use thiserror::Error;
-
-/// A setting that must name a positive count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
-pub(super) enum CountSetting {
-    /// How many intents one temporal delivery pass claims.
-    #[display("temporal.intent_batch_size")]
-    TemporalIntentBatchSize,
-    /// How many failed attempts mark a temporal intent stuck.
-    #[display("temporal.intent_stuck_after_attempts")]
-    TemporalIntentStuckAfterAttempts,
-}
 
 /// A retention age that is subtracted from an instant as a signed duration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
@@ -50,9 +39,9 @@ pub(super) enum RetentionSetting {
 /// A part of a tenant runtime that refused to be constructed.
 #[derive(Debug, Error)]
 pub(super) enum AssemblyInvariant {
-    /// The configured `identity.source_alias` is not a pseudonym; loading
-    /// refuses it first.
-    #[error("identity.source_alias is not valid: {0}")]
+    /// The configured `federation.identity.source_alias` is not a pseudonym;
+    /// loading refuses it first.
+    #[error("federation.identity.source_alias is not valid: {0}")]
     SourceAlias(#[from] ContextSourcePseudonymError),
     /// A background task's name is not a task name.
     #[error("a background task name is not valid: {0}")]
@@ -66,9 +55,6 @@ pub(super) enum AssemblyInvariant {
     /// The task supervisor refused a registration.
     #[error("the task supervisor refused a registration: {0}")]
     Registration(#[from] TaskRegistrationError),
-    /// A count setting is zero.
-    #[error("{0} must be non-zero")]
-    ZeroCount(CountSetting),
     /// A retention age is past the range a signed duration represents.
     #[error("{0} is out of range")]
     RetentionOutOfRange(RetentionSetting),
@@ -80,15 +66,15 @@ pub(super) enum AssemblyInvariant {
     /// valid.
     #[error("the pending side-effect retry schedule is not valid: {0}")]
     SideEffectRetry(#[source] BackoffScheduleError),
+    /// The pending side-effect attempt ceiling is above what a job counts.
+    #[error("the pending side-effect attempt ceiling is not valid: {0}")]
+    SideEffectAttempts(#[source] SideEffectAttemptsAboveCeiling),
     /// The temporal storage policy the configuration names is not valid.
     #[error("the temporal storage policy is not valid: {0}")]
     StoragePolicy(#[from] TemporalConfigError),
     /// The temporal retention horizon is not one the sweep accepts.
     #[error("the temporal retention horizon is not valid: {0}")]
     RetentionHorizon(#[from] TemporalRetentionHorizonInvalid),
-    /// The entity expiry batch size is not one the sweep accepts.
-    #[error("the entity expiry batch size is not valid: {0}")]
-    ExpiryBatchSize(#[from] EntityExpiryBatchSizeError),
     /// The notification transport dispatcher could not be created.
     #[error("the transport dispatcher could not be created: {0}")]
     TransportDispatcher(#[from] TransportError),
@@ -108,15 +94,7 @@ pub(super) enum AssemblyInvariant {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_factory::assembly_invariant::{AssemblyInvariant, CountSetting, RetentionSetting};
-
-    #[test]
-    fn a_zero_count_names_the_configuration_key() {
-        pretty_assertions::assert_eq!(
-            AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize).to_string(),
-            "temporal.intent_batch_size must be non-zero"
-        );
-    }
+    use crate::tenant_factory::assembly_invariant::{AssemblyInvariant, RetentionSetting};
 
     #[test]
     fn an_out_of_range_retention_names_the_setting() {

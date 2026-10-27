@@ -27,18 +27,18 @@ x-broker-base: &broker-base
     - "host.docker.internal:host-gateway"
   # The ETSI test-suite contexts are served from the repository: forge outages
   # would otherwise make every run depend on an external host.
+  command: ["--config", "/etc/andromeda/andromeda.toml"]
   volumes:
     - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+    - ./andromeda.toml:/etc/andromeda/andromeda.toml:ro
   environment: &broker-env
-    ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
-    ANDROMEDA__TENANCY__ENABLED: "true"
+    ANDROMEDA__TENANCY__MODE: "enabled"
     ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
-    ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
+    ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
     ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
-    ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS: "8"
-    ANDROMEDA__IDENTITY__SOURCE_EXTRAS: '{"deployment":"federation"}'
-    ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL: "5s"
+    ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "8"
+    ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "5s"
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
     interval: 3s
@@ -96,9 +96,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1071"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-hub:5432/fed_hub"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-hub"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "fed-hub"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://fed-hub:1071"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-hub"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-hub"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-hub:1071"
     ports:
       - "1071:1071"
 
@@ -111,9 +111,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1072"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-madrid:5432/fed_madrid"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-madrid"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "fed-domain-madrid"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://fed-domain-madrid:1072"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-madrid"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-madrid"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-madrid:1072"
     ports:
       - "1072:1072"
 
@@ -126,9 +126,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1073"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-berlin:5432/fed_berlin"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-berlin"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "fed-domain-berlin"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://fed-domain-berlin:1073"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-berlin"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-berlin"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-berlin:1073"
     ports:
       - "1073:1073"
 
@@ -141,9 +141,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1074"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-nordic:5432/fed_nordic"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-nordic"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "fed-domain-nordic"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://fed-domain-nordic:1074"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-nordic"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-nordic"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-nordic:1074"
     ports:
       - "1074:1074"
 
@@ -156,9 +156,9 @@ services:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1075"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-north:5432/fed_north"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-north"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "fed-domain-north"
-      ANDROMEDA__IDENTITY__ADVERTISED_URL: "http://fed-domain-north:1075"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-north"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-north"
+      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-north:1075"
     ports:
       - "1075:1075"
 

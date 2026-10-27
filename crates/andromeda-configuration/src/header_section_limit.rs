@@ -11,13 +11,13 @@ use thiserror::Error;
 pub enum HeaderSectionLimitError {
     /// The HTTP/1.1 listener reads a request head into a buffer whose ceiling
     /// is this limit, and that buffer is never smaller than 8 KiB.
-    #[error("server.max_request_header_section of {0} bytes is below the 8 KiB minimum")]
+    #[error("request_limits.max_header_section of {0} bytes is below the 8 KiB minimum")]
     BelowMinimum(u64),
     /// The HTTP/1.1 parser refuses a target URI over 65,534 bytes with 414
     /// once it holds the whole head, and its read buffer can grow to twice its
     /// ceiling. At 32 KiB that buffer never holds a whole head carrying such a
     /// URI, so every request over the limit is refused 431 there too.
-    #[error("server.max_request_header_section of {0} bytes is above the 32 KiB maximum")]
+    #[error("request_limits.max_header_section of {0} bytes is above the 32 KiB maximum")]
     AboveMaximum(u64),
 }
 

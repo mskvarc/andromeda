@@ -1,12 +1,12 @@
-//! The `[tls]` configuration section: where the broker's identity lives and
-//! how its handshakes are negotiated.
+//! The `[tls]` table: where the broker's identity lives and how its handshakes
+//! are negotiated.
 //!
-//! The section is inert on its own. It is read only when a listener is
-//! configured to terminate TLS -- `server.transport = "tls"`, an enabled
-//! `[http3]` listener, or a `separate-port` management listener with
-//! `management.transport = "tls"` -- and the composition layer asks for its
-//! [`TlsMaterialSources`] only then, so an unconfigured broker is never refused
-//! for lacking a certificate it does not use.
+//! The table is inert on its own. It is read only when a listener terminates
+//! TLS (`server.transport = "tls"`, an enabled `[server.http3]` listener, or a
+//! `separate-port` management listener with `management.transport = "tls"`),
+//! and the composition layer asks for its [`TlsMaterialSources`] only then, so
+//! an unconfigured broker is never refused for lacking a certificate it does
+//! not use.
 
 use crate::{
     human_duration::HumanDuration,
@@ -22,11 +22,11 @@ use toml_comment::TomlComment;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum ClientAuthentication {
+pub enum ClientAuthenticationMode {
     /// No client certificate is requested; authentication, if any, is an
     /// application-layer concern.
     #[default]
-    None,
+    Disabled,
     /// A client certificate is requested and verified when presented, but a
     /// client presenting none is still served. A certificate from an unknown
     /// issuer fails the handshake.
@@ -53,21 +53,36 @@ pub enum MinimumProtocolVersion {
     Tls13,
 }
 
-/// A `[tls]` section that cannot supply a listener with an identity.
+/// A `[tls]` table that cannot supply a listener with an identity.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TlsConfigError {
-    /// No certificate chain path was configured.
-    #[error("tls.certificate_path must be set when a listener terminates TLS")]
+    /// No certificate chain was configured.
+    #[error("tls.certificate must be set when a listener terminates TLS")]
     MissingCertificate,
-    /// No private key path was configured.
-    #[error("tls.private_key_path must be set when a listener terminates TLS")]
+    /// No private key was configured.
+    #[error("tls.private_key must be set when a listener terminates TLS")]
     MissingPrivateKey,
     /// Client certificates are requested but nothing says which issuer to trust.
-    #[error("tls.client_ca_path must be set when tls.client_authentication is \"optional\" or \"required\"")]
+    #[error("tls.client_authentication.ca must be set when tls.client_authentication.mode is \"optional\" or \"required\"")]
     MissingClientCa,
     /// A client CA bundle was configured while client certificates are not requested.
-    #[error("tls.client_ca_path is set but tls.client_authentication is \"none\"; set client_authentication or remove the bundle")]
+    #[error("tls.client_authentication.ca is set but tls.client_authentication.mode is \"disabled\"; set the mode or remove the bundle")]
     ClientCaWithoutClientAuthentication,
+}
+
+/// Whether connecting clients are asked for a certificate, and which issuer
+/// it must chain to.
+#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClientAuthenticationConfig {
+    /// Whether clients are asked for a certificate: `disabled`, `optional` or
+    /// `required`.
+    #[toml_comment(inline)]
+    pub mode: ClientAuthenticationMode,
+    /// PEM bundle of the CAs client certificates must chain to. Required
+    /// exactly when `mode` is not `disabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<PathBuf>,
 }
 
 /// The broker's TLS identity and handshake policy, shared by every listener
@@ -76,18 +91,11 @@ pub enum TlsConfigError {
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// PEM-encoded certificate chain the broker presents, leaf first.
-    #[toml_comment(inline)]
-    pub certificate_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<PathBuf>,
     /// PEM-encoded private key for the leaf certificate (PKCS#8, SEC1 or PKCS#1).
-    #[toml_comment(inline)]
-    pub private_key_path: PathBuf,
-    /// Whether clients are asked for a certificate: `none`, `optional` or `required`.
-    #[toml_comment(inline)]
-    pub client_authentication: ClientAuthentication,
-    /// PEM bundle of the CAs client certificates must chain to. Required
-    /// exactly when `client_authentication` is not `none`.
-    #[toml_comment(inline)]
-    pub client_ca_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<PathBuf>,
     /// Oldest TLS version a TCP handshake may negotiate: `tls1.2` or `tls1.3`.
     #[toml_comment(inline)]
     pub minimum_protocol_version: MinimumProtocolVersion,
@@ -95,10 +103,13 @@ pub struct TlsConfig {
     /// connection is dropped, in human-readable form (`"10s"`).
     #[toml_comment(inline)]
     pub handshake_timeout: HumanDuration,
-    /// How long the certificate files must stay quiet after a change before
-    /// they are reloaded, in human-readable form (`"2s"`).
+    /// How long the certificate files must stay unchanged after a change
+    /// before they are reloaded, in human-readable form (`"2s"`), so a
+    /// certificate and key replaced one after the other load together.
     #[toml_comment(inline)]
-    pub reload_debounce: HumanDuration,
+    pub reload_settle_after: HumanDuration,
+    /// Client certificate authentication.
+    pub client_authentication: ClientAuthenticationConfig,
 }
 
 impl Default for TlsConfig {
@@ -106,56 +117,47 @@ impl Default for TlsConfig {
     // field-wise derive cannot express.
     fn default() -> TlsConfig {
         TlsConfig {
-            certificate_path: PathBuf::new(),
-            private_key_path: PathBuf::new(),
-            client_authentication: ClientAuthentication::None,
-            client_ca_path: PathBuf::new(),
+            certificate: None,
+            private_key: None,
             minimum_protocol_version: MinimumProtocolVersion::Tls12,
             handshake_timeout: HumanDuration::from_secs(10),
-            reload_debounce: HumanDuration::from_secs(2),
+            reload_settle_after: HumanDuration::from_secs(2),
+            client_authentication: ClientAuthenticationConfig::default(),
         }
     }
 }
 
 impl TlsConfig {
-    /// Validate the section as the identity of a TLS-terminating listener and
+    /// Validate the table as the identity of a TLS-terminating listener and
     /// return the files it is loaded from.
     ///
     /// # Errors
     ///
     /// Returns [`TlsConfigError::MissingCertificate`] or
-    /// [`TlsConfigError::MissingPrivateKey`] when a key-pair path is empty,
-    /// [`TlsConfigError::MissingClientCa`] when client certificates are
-    /// requested without a CA bundle, and
-    /// [`TlsConfigError::ClientCaWithoutClientAuthentication`] when a bundle is
-    /// configured that nothing would read.
+    /// [`TlsConfigError::MissingPrivateKey`] when a key-pair file is not
+    /// configured, [`TlsConfigError::MissingClientCa`] when client
+    /// certificates are requested without a CA bundle, and
+    /// [`TlsConfigError::ClientCaWithoutClientAuthentication`] when a bundle
+    /// is configured that nothing would read.
     pub fn material_sources(&self) -> Result<TlsMaterialSources<'_>, TlsConfigError> {
-        if self.certificate_path.as_os_str().is_empty() {
-            return Err(TlsConfigError::MissingCertificate);
-        }
-        if self.private_key_path.as_os_str().is_empty() {
-            return Err(TlsConfigError::MissingPrivateKey);
-        }
-        let bundle = (!self.client_ca_path.as_os_str().is_empty()).then_some(Cow::Borrowed(self.client_ca_path.as_path()));
-        let client_trust = match (self.client_authentication, bundle) {
-            (ClientAuthentication::None, None) => ClientTrust::Anonymous,
-            (ClientAuthentication::None, Some(_)) => return Err(TlsConfigError::ClientCaWithoutClientAuthentication),
-            (ClientAuthentication::Optional | ClientAuthentication::Required, None) => return Err(TlsConfigError::MissingClientCa),
-            (ClientAuthentication::Optional, Some(bundle)) => ClientTrust::Optional(bundle),
-            (ClientAuthentication::Required, Some(bundle)) => ClientTrust::Required(bundle),
+        let certificate = self.certificate.as_deref().ok_or(TlsConfigError::MissingCertificate)?;
+        let private_key = self.private_key.as_deref().ok_or(TlsConfigError::MissingPrivateKey)?;
+        let bundle = self.client_authentication.ca.as_deref().map(Cow::Borrowed);
+        let client_trust = match (self.client_authentication.mode, bundle) {
+            (ClientAuthenticationMode::Disabled, None) => ClientTrust::Anonymous,
+            (ClientAuthenticationMode::Disabled, Some(_)) => return Err(TlsConfigError::ClientCaWithoutClientAuthentication),
+            (ClientAuthenticationMode::Optional | ClientAuthenticationMode::Required, None) => return Err(TlsConfigError::MissingClientCa),
+            (ClientAuthenticationMode::Optional, Some(bundle)) => ClientTrust::Optional(bundle),
+            (ClientAuthenticationMode::Required, Some(bundle)) => ClientTrust::Required(bundle),
         };
-        Ok(TlsMaterialSources::new(
-            Cow::Borrowed(&self.certificate_path),
-            Cow::Borrowed(&self.private_key_path),
-            client_trust,
-        ))
+        Ok(TlsMaterialSources::new(Cow::Borrowed(certificate), Cow::Borrowed(private_key), client_trust))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::schema::{
-        tls::{ClientAuthentication, MinimumProtocolVersion, TlsConfig, TlsConfigError},
+        tls::{ClientAuthenticationConfig, ClientAuthenticationMode, MinimumProtocolVersion, TlsConfig, TlsConfigError},
         tls_material_sources::ClientTrust,
     };
     use pretty_assertions::assert_eq;
@@ -166,12 +168,14 @@ mod tests {
     };
 
     /// A configuration naming a key pair, with client authentication as given.
-    fn with_key_pair(client_authentication: ClientAuthentication, client_ca_path: &str) -> TlsConfig {
+    fn with_key_pair(mode: ClientAuthenticationMode, ca: Option<&str>) -> TlsConfig {
         TlsConfig {
-            certificate_path: PathBuf::from("/etc/andromeda/broker.crt"),
-            private_key_path: PathBuf::from("/etc/andromeda/broker.key"),
-            client_authentication,
-            client_ca_path: PathBuf::from(client_ca_path),
+            certificate: Some(PathBuf::from("/etc/andromeda/broker.crt")),
+            private_key: Some(PathBuf::from("/etc/andromeda/broker.key")),
+            client_authentication: ClientAuthenticationConfig {
+                mode,
+                ca: ca.map(PathBuf::from),
+            },
             ..TlsConfig::default()
         }
     }
@@ -179,7 +183,7 @@ mod tests {
     #[test]
     fn default_config_yields_no_material_sources_error_only_when_asked() {
         let config = TlsConfig::default();
-        assert_eq!(config.client_authentication, ClientAuthentication::None);
+        assert_eq!(config.client_authentication.mode, ClientAuthenticationMode::Disabled);
         assert_eq!(config.minimum_protocol_version, MinimumProtocolVersion::Tls12);
         assert_eq!(config.material_sources().map(|_| ()), Err(TlsConfigError::MissingCertificate));
     }
@@ -187,59 +191,55 @@ mod tests {
     #[test]
     fn material_sources_without_private_key_are_rejected() {
         let config = TlsConfig {
-            certificate_path: PathBuf::from("/etc/andromeda/broker.crt"),
+            certificate: Some(PathBuf::from("/etc/andromeda/broker.crt")),
             ..TlsConfig::default()
         };
         assert_eq!(config.material_sources().map(|_| ()), Err(TlsConfigError::MissingPrivateKey));
     }
 
     #[test]
-    fn required_client_authentication_without_ca_is_rejected() {
-        let config = with_key_pair(ClientAuthentication::Required, "");
-        assert_eq!(config.material_sources().map(|_| ()), Err(TlsConfigError::MissingClientCa));
-    }
-
-    #[test]
-    fn optional_client_authentication_without_ca_is_rejected() {
-        let config = with_key_pair(ClientAuthentication::Optional, "");
-        assert_eq!(config.material_sources().map(|_| ()), Err(TlsConfigError::MissingClientCa));
+    fn requested_client_certificates_without_ca_are_rejected() {
+        for mode in [ClientAuthenticationMode::Optional, ClientAuthenticationMode::Required] {
+            assert_eq!(with_key_pair(mode, None).material_sources().map(|_| ()), Err(TlsConfigError::MissingClientCa));
+        }
     }
 
     #[test]
     fn client_ca_without_client_authentication_is_rejected() {
-        let config = with_key_pair(ClientAuthentication::None, "/etc/andromeda/clients.pem");
+        let config = with_key_pair(ClientAuthenticationMode::Disabled, Some("/etc/andromeda/clients.pem"));
         assert_eq!(config.material_sources().map(|_| ()), Err(TlsConfigError::ClientCaWithoutClientAuthentication));
     }
 
     #[test]
     fn complete_sources_expose_their_paths() -> Result<(), TlsConfigError> {
-        let config = with_key_pair(ClientAuthentication::Required, "/etc/andromeda/clients.pem");
+        let config = with_key_pair(ClientAuthenticationMode::Required, Some("/etc/andromeda/clients.pem"));
         let sources = config.material_sources()?;
-        assert_eq!(sources.certificate_path(), config.certificate_path);
-        assert_eq!(sources.private_key_path(), config.private_key_path);
+        assert_eq!(sources.certificate_path(), Path::new("/etc/andromeda/broker.crt"));
+        assert_eq!(sources.private_key_path(), Path::new("/etc/andromeda/broker.key"));
         assert_eq!(sources.client_trust(), &ClientTrust::Required(Path::new("/etc/andromeda/clients.pem").into()));
-        let optional = with_key_pair(ClientAuthentication::Optional, "/etc/andromeda/clients.pem");
+        let optional = with_key_pair(ClientAuthenticationMode::Optional, Some("/etc/andromeda/clients.pem"));
         assert_eq!(
             optional.material_sources()?.client_trust().bundle_path(),
             Some(Path::new("/etc/andromeda/clients.pem"))
         );
-        let anonymous = with_key_pair(ClientAuthentication::None, "");
+        let anonymous = with_key_pair(ClientAuthenticationMode::Disabled, None);
         assert_eq!(anonymous.material_sources()?.client_trust(), &ClientTrust::Anonymous);
         Ok(())
     }
 
     #[test]
-    fn client_authentication_round_trips_kebab_case() -> Result<(), Box<dyn Error>> {
+    fn client_authentication_mode_round_trips_kebab_case() -> Result<(), Box<dyn Error>> {
         for (mode, token) in [
-            (ClientAuthentication::None, "none"),
-            (ClientAuthentication::Optional, "optional"),
-            (ClientAuthentication::Required, "required"),
+            (ClientAuthenticationMode::Disabled, "disabled"),
+            (ClientAuthenticationMode::Optional, "optional"),
+            (ClientAuthenticationMode::Required, "required"),
         ] {
             assert_eq!(serde_json::to_string(&mode)?, format!("\"{token}\""));
-            assert_eq!(serde_json::from_str::<ClientAuthentication>(&format!("\"{token}\""))?, mode);
-            assert_eq!(ClientAuthentication::from_str(token)?, mode);
+            assert_eq!(serde_json::from_str::<ClientAuthenticationMode>(&format!("\"{token}\""))?, mode);
+            assert_eq!(ClientAuthenticationMode::from_str(token)?, mode);
             assert_eq!(mode.to_string(), token);
         }
+        assert!(serde_json::from_str::<ClientAuthenticationMode>("\"none\"").is_err());
         Ok(())
     }
 
@@ -260,12 +260,22 @@ mod tests {
     fn tls_config_round_trips_through_toml() -> Result<(), Box<dyn Error>> {
         let config = TlsConfig {
             minimum_protocol_version: MinimumProtocolVersion::Tls13,
-            ..with_key_pair(ClientAuthentication::Optional, "/etc/andromeda/clients.pem")
+            ..with_key_pair(ClientAuthenticationMode::Optional, Some("/etc/andromeda/clients.pem"))
         };
         let rendered = toml::to_string(&config)?;
         assert!(rendered.contains("minimum_protocol_version = \"tls1.3\""), "{rendered}");
-        assert!(rendered.contains("client_authentication = \"optional\""), "{rendered}");
+        assert!(rendered.contains("[client_authentication]\nmode = \"optional\""), "{rendered}");
         assert_eq!(toml::from_str::<TlsConfig>(&rendered)?, config);
+        Ok(())
+    }
+
+    #[test]
+    fn absent_files_are_left_out_rather_than_written_empty() -> Result<(), Box<dyn Error>> {
+        let rendered = toml::to_string(&TlsConfig::default())?;
+        assert!(
+            !rendered.contains("certificate") && !rendered.contains("private_key") && !rendered.contains("ca ="),
+            "{rendered}"
+        );
         Ok(())
     }
 }

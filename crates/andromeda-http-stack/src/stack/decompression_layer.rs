@@ -1,7 +1,10 @@
 //! Mapping of the decompression configuration onto a `tower-http` layer, and
 //! the record of the `Content-Length` that decoding removes.
 
-use andromeda_configuration::schema::{content_coding::ContentCoding, http::decompression::DecompressionConfig};
+use andromeda_configuration::schema::{
+    content_coding::ContentCoding,
+    http::decompression::{DecompressionConfig, UnacceptedEncoding},
+};
 use andromeda_http_extraction::content_length_precondition::ReceivedContentLength;
 use axum::extract::Request;
 use tower_http::decompression::RequestDecompressionLayer;
@@ -28,7 +31,7 @@ pub(crate) fn build_decompression_layer(config: &DecompressionConfig) -> Option<
     if !config.algorithms.contains(ContentCoding::Zstd) {
         layer = layer.no_zstd();
     }
-    Some(layer.pass_through_unaccepted(config.pass_through_unaccepted))
+    Some(layer.pass_through_unaccepted(matches!(config.unaccepted_encoding, UnacceptedEncoding::PassThrough)))
 }
 
 /// Record the `Content-Length` a request was received with, ahead of the
@@ -45,14 +48,17 @@ pub(crate) async fn record_received_content_length(mut request: Request) -> Requ
 #[cfg(test)]
 mod tests {
     use crate::stack::decompression_layer::build_decompression_layer;
-    use andromeda_configuration::schema::{content_coding::ContentCoding, http::decompression::DecompressionConfig};
+    use andromeda_configuration::schema::{
+        content_coding::ContentCoding,
+        http::decompression::{DecompressionConfig, UnacceptedEncoding},
+    };
     use enumset::EnumSet;
 
     #[test]
     fn empty_algorithms_builds_no_layer() {
         let config = DecompressionConfig {
             algorithms: EnumSet::empty(),
-            pass_through_unaccepted: false,
+            unaccepted_encoding: UnacceptedEncoding::Refuse,
         };
         assert!(build_decompression_layer(&config).is_none());
     }
@@ -61,7 +67,7 @@ mod tests {
     fn a_non_empty_selection_builds_a_layer() {
         let config = DecompressionConfig {
             algorithms: ContentCoding::Gzip | ContentCoding::Brotli,
-            pass_through_unaccepted: true,
+            unaccepted_encoding: UnacceptedEncoding::PassThrough,
         };
         assert!(build_decompression_layer(&config).is_some());
     }

@@ -2,7 +2,7 @@
 # The subject broker of the core_write_history suite, run on the host against
 # any PostgreSQL. The recording broker leaves the history setting at its
 # default, on its own port.
-ANDROMEDA__TEMPORAL__CORE_WRITE_HISTORY=not-recorded
-ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=1000
-ANDROMEDA__TEMPORAL__MAX_LAST_N=1000
-ANDROMEDA__TEMPORAL__EXPIRATION_CHECK_INTERVAL=1s
+ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES=not-recorded
+ANDROMEDA__TEMPORAL__QUERY__DEFAULT_LAST_N=1000
+ANDROMEDA__TEMPORAL__QUERY__MAX_LAST_N=1000
+ANDROMEDA__EXPIRY__SWEEP_INTERVAL=1s

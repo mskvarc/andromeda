@@ -33,7 +33,7 @@ pub(crate) fn assemble_planes(
     };
     match mode {
         ManagementMode::SeparatePort => (HttpApi::assemble(routes, None, stack), Some(ManagementApi::assemble(management_routes, stack))),
-        ManagementMode::Merged => (HttpApi::assemble(routes, Some(management_routes), stack), None),
+        ManagementMode::SharedPort => (HttpApi::assemble(routes, Some(management_routes), stack), None),
         ManagementMode::Disabled => (HttpApi::assemble(routes, None, stack), None),
     }
 }

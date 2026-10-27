@@ -32,21 +32,22 @@ services:
       - "1056:1056/udp"
     # The ETSI test-suite contexts are served from the repository: forge outages
     # would otherwise make every run depend on an external host.
+    command: ["--config", "/etc/andromeda/andromeda.toml"]
     volumes:
       - ./certs:/etc/andromeda/certs:ro
       - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+      - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro
     environment:
-      ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
       ANDROMEDA__SERVER__HOST: "0.0.0.0"
       ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
-      ANDROMEDA__TENANCY__ENABLED: "true"
-      ANDROMEDA__OBSERVABILITY__LOG_LEVEL: "info"
-      ANDROMEDA__HTTP3__MODE: "enabled"
-      ANDROMEDA__TLS__CERTIFICATE_PATH: "/etc/andromeda/certs/broker.crt"
-      ANDROMEDA__TLS__PRIVATE_KEY_PATH: "/etc/andromeda/certs/broker.key"
-      ANDROMEDA__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:http3-broker"
-      ANDROMEDA__IDENTITY__SOURCE_ALIAS: "http3-broker"
+      ANDROMEDA__TENANCY__MODE: "enabled"
+      ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
+      ANDROMEDA__SERVER__HTTP3__MODE: "enabled"
+      ANDROMEDA__TLS__CERTIFICATE: "/etc/andromeda/certs/broker.crt"
+      ANDROMEDA__TLS__PRIVATE_KEY: "/etc/andromeda/certs/broker.key"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:http3-broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "http3-broker"
     healthcheck:
       # localhost resolves to ::1 first.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]

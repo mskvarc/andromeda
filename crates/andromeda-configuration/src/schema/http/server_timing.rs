@@ -1,6 +1,6 @@
 //! `Server-Timing` policy: whether it is emitted, and which stack phases appear.
 
-use crate::{comma_list::array_or_comma_list, schema::feature_mode::HttpFeatureMode};
+use crate::{comma_list::array_or_comma_list, schema::feature_mode::FeatureMode};
 use enumset::{EnumSet, EnumSetType};
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -30,7 +30,7 @@ pub enum ServerTimingPhase {
 pub struct ServerTimingConfig {
     /// Whether the broker emits a `Server-Timing` response header at all.
     #[toml_comment(inline)]
-    pub mode: HttpFeatureMode,
+    pub mode: FeatureMode,
     /// Which stack-level phases are reported when the header is emitted.
     #[serde(deserialize_with = "array_or_comma_list")]
     pub phases: EnumSet<ServerTimingPhase>,
@@ -39,7 +39,7 @@ pub struct ServerTimingConfig {
 impl Default for ServerTimingConfig {
     fn default() -> ServerTimingConfig {
         ServerTimingConfig {
-            mode: HttpFeatureMode::Enabled,
+            mode: FeatureMode::Enabled,
             phases: EnumSet::only(ServerTimingPhase::Total),
         }
     }
@@ -52,7 +52,7 @@ impl Default for ServerTimingConfig {
 )]
 mod tests {
     use crate::schema::{
-        feature_mode::HttpFeatureMode,
+        feature_mode::FeatureMode,
         http::server_timing::{ServerTimingConfig, ServerTimingPhase},
     };
     use enumset::EnumSet;
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn enabled_by_default_with_the_total_phase() {
         let config = ServerTimingConfig::default();
-        pretty_assertions::assert_eq!(config.mode, HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(config.mode, FeatureMode::Enabled);
         pretty_assertions::assert_eq!(config.phases, EnumSet::only(ServerTimingPhase::Total));
     }
 
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn server_timing_config_round_trips_through_toml() {
         let config = ServerTimingConfig {
-            mode: HttpFeatureMode::Disabled,
+            mode: FeatureMode::Disabled,
             phases: ServerTimingPhase::Dispatch.into(),
         };
         let rendered = toml::to_string(&config).expect("server timing serialises");

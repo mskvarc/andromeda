@@ -363,7 +363,6 @@ mod tests {
         NotificationWriteConfig,
         building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache, subscription_key},
         change_sink::EntityChangeSink,
-        configured_policy::PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY,
         error::EntityError,
         side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
         side_effect_notification::SideEffectNotificationRoute,
@@ -618,7 +617,7 @@ mod tests {
             lease_seconds: 30,
             batch_size: 1,
             max_attempts: 3,
-            retry_schedule: BackoffSchedule::growing_until(Duration::from_secs(5), Growth::Doubling, PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY),
+            retry_schedule: BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling),
             lease_holder: lease_holder(),
         }
     }

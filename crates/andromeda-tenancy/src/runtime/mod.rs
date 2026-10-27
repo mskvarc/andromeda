@@ -120,14 +120,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         probe: Arc<dyn PendingWorkProbe>,
         schedule: Arc<dyn TenantWakeSchedule>,
     ) -> Arc<TenantRuntimeManager<D, F>> {
-        let build_permits = Semaphore::new(config.max_concurrent_builds);
-        let eviction_permits = Arc::new(Semaphore::new(config.eviction_concurrency));
-        let wake_probe_permits = Arc::new(Semaphore::new(config.eviction_concurrency));
+        let build_permits = Semaphore::new(config.build.max_concurrent.get());
+        let eviction_permits = Arc::new(Semaphore::new(config.residency.max_concurrent_evictions.get()));
+        let wake_probe_permits = Arc::new(Semaphore::new(config.residency.max_concurrent_evictions.get()));
         let waker = WakerPolicy::new(
-            config.min_dormancy.duration(),
-            config.wake_residency.duration(),
-            config.runtime_idle_ttl.duration(),
-            config.waker_max_wakes_per_pass,
+            config.residency.min_wake_interval.duration(),
+            config.residency.woken_lifetime.duration(),
+            config.residency.idle_eviction_after.duration(),
+            config.residency.max_wakes_per_pass.get(),
         );
         Arc::new(TenantRuntimeManager {
             config,
@@ -152,7 +152,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// so the sweep would have nothing to do.
     #[must_use]
     pub fn spawn_janitor(self: &Arc<TenantRuntimeManager<D, F>>) -> Option<JoinHandle<()>> {
-        if !self.config.enabled {
+        if !self.config.is_enabled() {
             return None;
         }
         let manager = Arc::clone(self);

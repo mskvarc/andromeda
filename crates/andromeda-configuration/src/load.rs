@@ -3,8 +3,8 @@
 //! The layers, in increasing precedence, are the built-in defaults, the TOML
 //! file, the `ANDROMEDA__`-prefixed environment, and the command-line listener
 //! overrides. An environment variable nests with `__` between every level, so
-//! `ANDROMEDA__NOTIFICATIONS__INTERVAL_MAX_SLEEP` sets
-//! `notifications.interval_max_sleep`; a single underscore separates the words
+//! `ANDROMEDA__NOTIFICATIONS__PERIODIC__MAX_POLL_INTERVAL` sets
+//! `notifications.periodic.max_poll_interval`; a single underscore separates the words
 //! of one key and never nests. An environment variable sets a scalar only: a
 //! list setting takes its members separated by commas, and a table is set in
 //! the file alone.

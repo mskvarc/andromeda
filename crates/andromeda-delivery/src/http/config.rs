@@ -1,6 +1,6 @@
 //! How the HTTP transport is tuned.
 
-use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
+use andromeda_configuration::schema::{link_field_layout::LinkFieldLayout, notifications::delivery::PrivateAddresses};
 use std::time::Duration;
 
 /// Default per-delivery timeout.
@@ -26,28 +26,15 @@ pub struct HttpTransportConfig {
     pub timeout: Duration,
     /// The largest notification this transport will attempt to deliver.
     pub max_payload_size: usize,
-    /// Whether to refuse endpoints that resolve into private or reserved
-    /// address space.
-    pub private_ip_blocking: PrivateIpBlocking,
+    /// Whether an endpoint that resolves into private or reserved address
+    /// space is refused. A subscription's endpoint is client-supplied, so an
+    /// unguarded broker POSTs to anything its network reaches; allowed by
+    /// default, since a single-network deployment notifies internal hosts.
+    pub private_addresses: PrivateAddresses,
     /// How long an idle pooled connection is kept for reuse.
     pub pool_idle_timeout: Duration,
     /// How a notification's link-values are laid out over `Link` field lines.
     pub link_field: LinkFieldLayout,
-}
-
-/// Whether the SSRF guard is armed.
-///
-/// A subscription's endpoint is client-supplied, so an unguarded broker will
-/// happily POST to anything its network can reach. The guard is off by default
-/// because a single-network deployment legitimately notifies internal hosts,
-/// and turning it on there would break every one of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PrivateIpBlocking {
-    /// Endpoints resolving to private or reserved addresses are refused.
-    Enabled,
-    /// Any resolvable endpoint is delivered to.
-    #[default]
-    Disabled,
 }
 
 impl Default for HttpTransportConfig {
@@ -55,7 +42,7 @@ impl Default for HttpTransportConfig {
         HttpTransportConfig {
             timeout: DEFAULT_TIMEOUT,
             max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE,
-            private_ip_blocking: PrivateIpBlocking::Disabled,
+            private_addresses: PrivateAddresses::Allowed,
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
             link_field: LinkFieldLayout::Combined,
         }

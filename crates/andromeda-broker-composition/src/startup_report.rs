@@ -9,12 +9,12 @@ pub(crate) fn report_startup(config: &BrokerConfig) {
     info!(
         host = %config.server.host,
         port = config.server.port,
-        tenancy_enabled = config.tenancy.enabled,
+        tenancy_mode = %config.tenancy.mode,
         database_transaction_pooled = config.database.is_pooled(),
         notification_delivery_mode = %config.notifications.delivery.mode,
-        log_level = %config.observability.log_level,
+        log_level = %config.observability.log.level,
         management_mode = %config.management.mode,
-        metrics = %config.management.metrics,
+        metrics = %config.observability.metrics.mode,
         precedence = PRECEDENCE,
         "Starting Andromeda"
     );
@@ -30,13 +30,13 @@ fn report_management_plane(config: &BrokerConfig) {
         ManagementMode::SeparatePort => info!(
             data_plane = %data_plane,
             management_plane = %SocketAddr::from((config.management.host, config.management.port)),
-            metrics = %config.management.metrics,
+            metrics = %config.observability.metrics.mode,
             "Management plane on a separate port serves /livez, /readyz and, when enabled, /metrics"
         ),
-        ManagementMode::Merged => info!(
+        ManagementMode::SharedPort => info!(
             data_plane = %data_plane,
-            metrics = %config.management.metrics,
-            "Management plane merged onto the data-plane port at /livez, /readyz and, when enabled, /metrics"
+            metrics = %config.observability.metrics.mode,
+            "Management plane shares the data-plane port at /livez, /readyz and, when enabled, /metrics"
         ),
         ManagementMode::Disabled => info!(
             data_plane = %data_plane,

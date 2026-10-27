@@ -1,4 +1,5 @@
-//! Entity spatial-index consistency configuration.
+//! The `[entity.spatial_index]` table: how the resident spatial index is kept
+//! consistent with the store.
 
 use crate::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
@@ -8,9 +9,9 @@ use toml_comment::TomlComment;
 
 /// Invalid spatial-index configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum SpatialConfigError {
+pub enum SpatialIndexConfigError {
     /// Rebuild cadence was configured as zero.
-    #[error("spatial.rebuild_interval must be greater than zero")]
+    #[error("entity.spatial_index.rebuild_interval must be greater than zero")]
     ZeroRebuildInterval,
 }
 
@@ -53,7 +54,7 @@ pub enum SpatialConsistency {
 /// Spatial-index consistency and rebuild policy.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct SpatialConfig {
+pub struct SpatialIndexConfig {
     /// How the index is kept consistent with the store: `watermark`
     /// (default), `commit-synchronous` or `store-verified`.
     #[toml_comment(inline)]
@@ -69,25 +70,25 @@ pub struct SpatialConfig {
     pub rebuild_interval: HumanDuration,
 }
 
-impl Default for SpatialConfig {
-    fn default() -> SpatialConfig {
-        SpatialConfig {
+impl Default for SpatialIndexConfig {
+    fn default() -> SpatialIndexConfig {
+        SpatialIndexConfig {
             consistency: SpatialConsistency::default(),
             rebuild_interval: HumanDuration::from_secs(1800),
         }
     }
 }
 
-impl SpatialConfig {
+impl SpatialIndexConfig {
     /// Validate the spatial-index configuration.
     ///
     /// # Errors
     ///
-    /// Reports [`SpatialConfigError::ZeroRebuildInterval`] when the rebuild
+    /// Reports [`SpatialIndexConfigError::ZeroRebuildInterval`] when the rebuild
     /// cadence is configured as zero.
-    pub const fn validate(&self) -> Result<(), SpatialConfigError> {
+    pub const fn validate(&self) -> Result<(), SpatialIndexConfigError> {
         if self.rebuild_interval.is_zero() {
-            return Err(SpatialConfigError::ZeroRebuildInterval);
+            return Err(SpatialIndexConfigError::ZeroRebuildInterval);
         }
         Ok(())
     }
@@ -101,18 +102,18 @@ impl SpatialConfig {
 mod tests {
     use crate::{
         human_duration::HumanDuration,
-        schema::spatial::{SpatialConfig, SpatialConfigError, SpatialConsistency},
+        schema::entity::spatial_index::{SpatialConsistency, SpatialIndexConfig, SpatialIndexConfigError},
     };
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     #[test]
     fn a_zero_rebuild_interval_is_rejected_by_the_owner() {
-        let config = SpatialConfig {
+        let config = SpatialIndexConfig {
             consistency: SpatialConsistency::CommitSynchronous,
             rebuild_interval: HumanDuration::from_secs(0),
         };
-        assert_eq!(config.validate(), Err(SpatialConfigError::ZeroRebuildInterval));
+        assert_eq!(config.validate(), Err(SpatialIndexConfigError::ZeroRebuildInterval));
     }
 
     /// The default must be exact whether or not another broker process writes
@@ -120,7 +121,7 @@ mod tests {
     /// of the two only `watermark` keeps the index.
     #[test]
     fn the_default_consistency_catches_the_index_up_from_the_store() {
-        assert_eq!(SpatialConfig::default().consistency, SpatialConsistency::Watermark);
+        assert_eq!(SpatialIndexConfig::default().consistency, SpatialConsistency::Watermark);
         assert_eq!(SpatialConsistency::default(), SpatialConsistency::Watermark);
     }
 

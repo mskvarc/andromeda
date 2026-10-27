@@ -4,7 +4,7 @@ use crate::{
     context_hit_flush::ContextHitFlushWorker,
     tenant_factory::{TenantFactoryConfig, assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, spatial::initialize_spatial},
 };
-use andromeda_configuration::schema::temporal::TemporalConfig;
+use andromeda_configuration::schema::{database::name_cache::NameLoading, temporal::storage::TemporalStorageConfig};
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -171,7 +171,7 @@ async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssembly
 /// resolved from its storage, never fetched over HTTP from this broker.
 fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>) -> Result<JsonLdEngine, TenantAssemblyError> {
     let recognizer = Arc::new(TenantHostedContexts::new(
-        config.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
+        config.federation.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
     ));
     Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }
@@ -196,7 +196,7 @@ pub(super) async fn initialize_storage(
         // working set larger than the runtime cache cannot churn the host's
         // sockets into ephemeral-port exhaustion. Direct, it is the real backend
         // pool and takes the tenancy-configured size.
-        TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.tenant_max_connections),
+        TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.databases.max_connections.get()),
     };
     // Open the serving pool first -- the pooler when one is configured -- and
     // migrate only when the schema is not already current. A warm-schema cold
@@ -214,7 +214,7 @@ pub(super) async fn initialize_storage(
             ContextHitFlushWorker::spawn(
                 hit_counter,
                 Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
-                config.database.context_hit_flush.duration(),
+                config.jsonld.cache.hit_flush_interval.duration(),
             )
         }),
     };
@@ -238,7 +238,7 @@ pub(super) async fn initialize_storage(
         }
         Err(error) => tracing::warn!(%error, event = "name_dictionary_epoch_unestablished"),
     }
-    if config.database.preload_name_dictionaries {
+    if matches!(config.database.name_cache.loading, NameLoading::Eager) {
         if let Err(error) = attribute_names.preload().await {
             tracing::warn!(%error, event = "attribute_names_preload_failed");
         }
@@ -266,7 +266,7 @@ pub(super) async fn initialize_storage(
         Arc::clone(&entity_type_names),
         columnstore,
     ));
-    reconcile_temporal_storage(&temporal_repo, &config.temporal).await?;
+    reconcile_temporal_storage(&temporal_repo, &config.temporal.storage).await?;
     let entity_repository = Arc::new(EntityRepository::new(
         &pool,
         reads,
@@ -299,7 +299,7 @@ pub(super) async fn initialize_storage(
     {
         tracing::error!(%error, "failed to load subscription cache");
     }
-    let spatial = initialize_spatial(config.spatial.consistency, &entity_ports.spatial_snapshots, tenant).await?;
+    let spatial = initialize_spatial(config.entity.spatial_index.consistency, &entity_ports.spatial_snapshots, tenant).await?;
     Ok(TenantStorage {
         tenant: tenant.clone(), // clone: the storage graph names the tenant it was opened for.
         pool,
@@ -331,8 +331,8 @@ pub(super) async fn initialize_storage(
 ///
 /// Returns [`TenantAssemblyError`] when the configuration names no valid
 /// policy or the reconciliation fails.
-async fn reconcile_temporal_storage(temporal_repo: &TemporalRepository, temporal: &TemporalConfig) -> Result<(), TenantAssemblyError> {
-    let policy = TemporalStoragePolicy::try_from(temporal).map_err(AssemblyInvariant::from)?;
+async fn reconcile_temporal_storage(temporal_repo: &TemporalRepository, storage: &TemporalStorageConfig) -> Result<(), TenantAssemblyError> {
+    let policy = TemporalStoragePolicy::try_from(storage).map_err(AssemblyInvariant::from)?;
     let outcome = temporal_repo.reconcile_storage_policy(&policy).await?;
     if !outcome.is_unchanged() {
         tracing::info!(outcome = ?outcome, event = "temporal_storage_policy_reconciled");

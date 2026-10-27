@@ -1,7 +1,7 @@
 //! Mapping of the CORS configuration onto a `tower-http` CORS layer.
 
 use crate::cors_tokens::{CorsTokenError, cors_header_name, cors_method};
-use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, ExposeRule, HeaderRule, MethodRule, OriginRule};
+use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, CorsPermission, ExposeRule, HeaderRule, MethodRule, OriginRule};
 use axum::http::HeaderValue;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, ExposeHeaders};
 use url::Url;
@@ -32,10 +32,10 @@ fn build_enabled_cors_layer(config: &CorsConfig) -> Result<CorsLayer, CorsTokenE
         .allow_methods(method_rule(&config.allow_methods)?)
         .allow_headers(header_rule(&config.allow_headers)?)
         .expose_headers(expose_rule(&config.expose_headers)?)
-        .allow_credentials(config.allow_credentials)
-        .allow_private_network(config.allow_private_network);
-    if let Some(max_age) = config.max_age {
-        layer = layer.max_age(max_age.duration());
+        .allow_credentials(matches!(config.credentials, CorsPermission::Allowed))
+        .allow_private_network(matches!(config.private_network, CorsPermission::Allowed));
+    if let Some(lifetime) = config.preflight_lifetime {
+        layer = layer.max_age(lifetime.duration());
     }
     Ok(layer)
 }
@@ -89,7 +89,7 @@ fn origin_header_value(url: &Url) -> Option<HeaderValue> {
 )]
 mod tests {
     use crate::stack::cors_layer::build_cors_layer;
-    use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, HeaderRule, MethodRule, OriginRule};
+    use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, CorsPermission, HeaderRule, MethodRule, OriginRule};
 
     #[test]
     fn cors_disabled_builds_no_layer() {
@@ -106,7 +106,7 @@ mod tests {
         // it, so building the permissive layer must succeed regardless.
         let config = CorsConfig {
             mode: CorsMode::Permissive,
-            allow_credentials: true,
+            credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };
@@ -117,7 +117,7 @@ mod tests {
     fn cors_very_permissive_ignores_custom_settings() {
         let config = CorsConfig {
             mode: CorsMode::VeryPermissive,
-            allow_credentials: true,
+            credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
         };
@@ -133,8 +133,8 @@ allow_origins = ["https://ui.example"]
 allow_methods = ["GET", "POST"]
 allow_headers = ["content-type"]
 expose_headers = ["x-trace-id"]
-allow_credentials = true
-allow_private_network = false
+credentials = "allowed"
+private_network = "disallowed"
 "#,
         )
         .expect("cors config parses");

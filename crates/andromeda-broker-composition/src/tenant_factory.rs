@@ -25,14 +25,14 @@ use andromeda_configuration::{
     schema::{
         database::DatabaseConfig,
         entity::EntityConfig,
+        expiry::ExpiryConfig,
         extensions::ExtensionsConfig,
         federation::FederationConfig,
-        identity::InfoConfig,
         jsonld::JsonLdConfig,
         link_field_layout::LinkFieldLayout,
         notifications::NotificationsConfig,
+        request_limits::RequestLimitsConfig,
         snapshot::SnapshotConfig,
-        spatial::SpatialConfig,
         temporal::TemporalConfig,
         tenancy::TenancyConfig,
     },
@@ -49,7 +49,6 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::Hasher,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 use tracing::debug;
 use url::Url;
@@ -91,27 +90,35 @@ pub struct BrokerTenantFactory {
     subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
 }
 
-/// Focused owner configuration retained by tenant construction.
+/// The tables tenant construction reads, kept for every tenant it builds.
 struct TenantFactoryConfig {
+    /// How a tenant's database is reached and its caches sized.
     database: DatabaseConfig,
     /// The session defaults reconciled on each tenant database it opens.
     database_defaults: DatabaseDefaults,
+    /// What one request may cost, which bounds every write a tenant admits.
+    request_limits: RequestLimitsConfig,
+    /// How a tenant's expired resources are swept.
+    expiry: ExpiryConfig,
+    /// Entity batches, their side effects, and the spatial index.
     entity: EntityConfig,
+    /// Forwarding to Context Sources and this broker's identity.
     federation: FederationConfig,
-    identity: InfoConfig,
+    /// How a tenant's `@context` documents are resolved.
     jsonld: JsonLdConfig,
+    /// How a tenant's notifications are delivered.
     notifications: NotificationsConfig,
+    /// How a tenant's Snapshots are kept and prepared.
     snapshot: SnapshotConfig,
-    spatial: SpatialConfig,
+    /// How a tenant's Temporal Evolutions are read, recorded and stored.
     temporal: TemporalConfig,
+    /// How tenants are provisioned and kept resident.
     tenancy: TenancyConfig,
+    /// Which extensions a tenant serves.
     extensions: ExtensionsConfig,
     /// How every HTTP notification lays out its `Link` field lines, as the
     /// `[http]` table decides for responses.
     link_field: LinkFieldLayout,
-    /// The deadline every HTTP request runs under, which bounds how long a
-    /// Temporal API mutation waits for queued history held elsewhere.
-    request_timeout: Duration,
 }
 
 impl From<&BrokerConfig> for TenantFactoryConfig {
@@ -119,18 +126,17 @@ impl From<&BrokerConfig> for TenantFactoryConfig {
         Self {
             database: config.database.clone(),
             database_defaults: database_defaults(config),
+            request_limits: config.request_limits,
+            expiry: config.expiry,
             entity: config.entity.clone(),
             federation: config.federation.clone(),
-            identity: config.identity.clone(),
             jsonld: config.jsonld.clone(),
-            notifications: config.notifications.clone(),
-            snapshot: config.snapshot.clone(),
-            spatial: config.spatial.clone(),
-            temporal: config.temporal.clone(),
+            notifications: config.notifications,
+            snapshot: config.snapshot,
+            temporal: config.temporal,
             tenancy: config.tenancy.clone(),
-            extensions: config.extensions.clone(),
+            extensions: config.extensions,
             link_field: config.http.link_field,
-            request_timeout: config.http.request_timeout.duration(),
         }
     }
 }
@@ -233,7 +239,7 @@ async fn build_tenant_state(
     let entity_change_capacity = if config.notifications.delivery.is_durable() {
         1
     } else {
-        config.notifications.live_change_capacity
+        config.notifications.evaluation.max_queued_changes.get()
     };
     let signals = TenantSignals::new(entity_change_capacity);
     let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
@@ -241,14 +247,14 @@ async fn build_tenant_state(
     // first of them is registered, so one obligation read decides for all of
     // them while the tenant is quiet.
     let pacer = Arc::new(BackgroundPacer::new(
-        config.temporal.expiration_check_interval.duration(),
+        config.expiry.sweep_interval.duration(),
         Arc::new(TenantObligations::new(&storage.pool)),
     ));
     let temporal = compose_temporal_history(
         &storage.pool,
         &storage.temporal_repo,
-        &config.temporal,
-        config.request_timeout,
+        &config.temporal.history,
+        config.request_limits.timeout.duration(),
         &task_supervisor,
         &pacer,
     )?;
@@ -279,13 +285,13 @@ async fn build_tenant_state(
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
         temporal.history_mode,
-        config.temporal.core_write_history,
+        config.temporal.history.core_writes,
         Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
         consequence_publisher,
     ));
     let writes = indexed_commits(writes, &storage.spatial, tenant)?;
-    let dispatcher = construct_dispatcher(config.notifications.delivery.request_timeout(), config.link_field)?;
+    let dispatcher = construct_dispatcher(&config.notifications.delivery, config.link_field)?;
     let services = construct_services(
         config,
         &storage,

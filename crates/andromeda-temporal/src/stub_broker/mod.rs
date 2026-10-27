@@ -13,7 +13,7 @@ use crate::{
     service::TemporalService,
     service_limits::TemporalServiceLimits,
 };
-use andromeda_configuration::schema::{entity::EntityConfig, temporal::DEFAULT_AGGREGATION_INSTANCE_BUDGET};
+use andromeda_configuration::schema::{request_limits::RequestLimitsConfig, temporal::query::DEFAULT_MAX_AGGREGATION_INSTANCES};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -253,11 +253,11 @@ pub(crate) fn limits() -> TemporalServiceLimits {
             default_page: 100,
             maximum: 1000,
             edge_group: 100_000,
-            aggregation_instances: DEFAULT_AGGREGATION_INSTANCE_BUDGET,
+            aggregation_instances: DEFAULT_MAX_AGGREGATION_INSTANCES,
         },
         delete_by_query_max_matches: 100,
         aggregation_grouping_max_groups: 100,
-        payload_budget: payload_budget(&EntityConfig::default()),
+        payload_budget: payload_budget(&RequestLimitsConfig::default()),
         near_band: NearDistanceBand::Refused,
         language_targeting: LanguageTargeting::Specification,
     }

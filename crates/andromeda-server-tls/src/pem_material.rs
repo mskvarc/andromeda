@@ -230,7 +230,7 @@ mod tests {
         pem_material::{ClientVerification, MaterialChange, TlsMaterial, TlsMaterialError, load_certificate_chain, load_client_roots, load_private_key},
         test_identity::{authority::TestAuthority, identity_files::IdentityFiles},
     };
-    use andromeda_configuration::schema::tls::{ClientAuthentication, TlsConfig};
+    use andromeda_configuration::schema::tls::{ClientAuthenticationConfig, ClientAuthenticationMode, TlsConfig};
     use std::{error::Error, fs, path::Path};
     use tempfile::TempDir;
 
@@ -238,10 +238,12 @@ mod tests {
     /// certificates chained to `client_ca` when one is given.
     fn section_of(files: &IdentityFiles, client_ca: Option<&Path>) -> TlsConfig {
         TlsConfig {
-            certificate_path: files.certificate_path().to_path_buf(),
-            private_key_path: files.private_key_path().to_path_buf(),
-            client_authentication: client_ca.map_or(ClientAuthentication::None, |_| ClientAuthentication::Required),
-            client_ca_path: client_ca.map(Path::to_path_buf).unwrap_or_default(),
+            certificate: Some(files.certificate_path().to_path_buf()),
+            private_key: Some(files.private_key_path().to_path_buf()),
+            client_authentication: ClientAuthenticationConfig {
+                mode: client_ca.map_or(ClientAuthenticationMode::Disabled, |_| ClientAuthenticationMode::Required),
+                ca: client_ca.map(Path::to_path_buf),
+            },
             ..TlsConfig::default()
         }
     }

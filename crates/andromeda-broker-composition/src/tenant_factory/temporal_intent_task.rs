@@ -1,11 +1,7 @@
 //! Composition of temporal intent policy with drain runtime mechanics.
 
-use crate::tenant_factory::{
-    assembly_invariant::{AssemblyInvariant, CountSetting},
-    background_pacer::BackgroundPacer,
-    error::TenantAssemblyError,
-};
-use andromeda_configuration::schema::temporal::TemporalConfig;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
+use andromeda_configuration::schema::temporal::history::TemporalHistoryConfig;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -31,7 +27,7 @@ use andromeda_temporal::{
     },
 };
 use chrono::{DateTime, Utc};
-use std::{num::NonZeroU32, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 /// Runtime wake capability exposed through the temporal-owned commit notification port.
 struct RuntimeTemporalIntentPublisher {
@@ -75,32 +71,31 @@ fn barrier_wait(intent_lease: Duration, request_timeout: Duration) -> Duration {
 /// Register temporal-intent delivery as the first managed drain operation,
 /// its mutation barrier bounded by the HTTP `request_timeout`.
 pub(super) fn register_temporal_intent_drain(
-    config: &TemporalConfig,
+    config: &TemporalHistoryConfig,
     request_timeout: Duration,
     supervisor: &TaskSupervisor,
     queue: Arc<dyn TemporalIntentQueue>,
     application: Arc<dyn TemporalIntentApplication>,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<TemporalIntentRegistration, TenantAssemblyError> {
-    let fallback_floor = config.intent_fallback.duration();
-    let fallback_ceiling = config.intent_fallback_max.duration().max(config.intent_fallback.duration());
-    let fallback = DrainFallbackPolicy::new(fallback_floor, fallback_ceiling).map_err(AssemblyInvariant::from)?;
-    let batch_size = NonZeroU32::new(config.intent_batch_size)
-        .map(TemporalIntentBatchSize::new)
-        .ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentBatchSize))?;
-    let stuck_after =
-        NonZeroU32::new(config.intent_stuck_after_attempts).ok_or(AssemblyInvariant::ZeroCount(CountSetting::TemporalIntentStuckAfterAttempts))?;
-    let retry_policy = TemporalIntentRetryPolicy::new(intent_retry_schedule(config).map_err(AssemblyInvariant::IntentRetry)?, stuck_after);
+    let queue_config = &config.queue;
+    let fallback =
+        DrainFallbackPolicy::new(queue_config.poll_interval.duration(), queue_config.max_poll_interval.duration()).map_err(AssemblyInvariant::from)?;
+    let batch_size = TemporalIntentBatchSize::new(queue_config.batch_size);
+    let retry_policy = TemporalIntentRetryPolicy::new(
+        intent_retry_schedule(config).map_err(AssemblyInvariant::IntentRetry)?,
+        queue_config.max_attempts,
+    );
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
         application,
         TemporalIntentClaim {
             owner: LeaseHolder::mint(),
             batch_size,
-            lease_duration: config.intent_lease.duration(),
+            lease_duration: queue_config.lease_timeout.duration(),
             retry_policy,
         },
-        barrier_wait(config.intent_lease.duration(), request_timeout),
+        barrier_wait(queue_config.lease_timeout.duration(), request_timeout),
     ));
     let scheduled_drain = Arc::clone(&drain);
     let name = TaskName::try_from("temporal-intent-delivery").map_err(AssemblyInvariant::from)?;
@@ -108,7 +103,7 @@ pub(super) fn register_temporal_intent_drain(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, fallback.schedule()),
-        ShutdownPolicy::new(config.intent_lease.duration()),
+        ShutdownPolicy::new(queue_config.lease_timeout.duration()),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
         let drain = Arc::clone(&scheduled_drain); // clone: each bounded runtime future owns the shared policy operation.

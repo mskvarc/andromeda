@@ -7,7 +7,7 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals},
 };
-use andromeda_configuration::schema::identity::InfoConfig;
+use andromeda_configuration::schema::federation::identity::IdentityConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
@@ -65,7 +65,7 @@ impl<'edge> DistributedSubscriptionEdge<'edge> {
     /// Without an advertised origin the distributed side stays off, and the
     /// broker says so once per tenant.
     pub(super) fn resolve(
-        info: &InfoConfig,
+        info: &IdentityConfig,
         router: &'edge Arc<dyn ForwardedSubscriptionRouter>,
         federation: &'edge Arc<FederationService>,
         tenant: &TenantRef,

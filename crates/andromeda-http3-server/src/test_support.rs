@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_configuration::{
     human_duration::HumanDuration,
-    schema::tls::{ClientAuthentication, TlsConfig},
+    schema::tls::{ClientAuthenticationConfig, ClientAuthenticationMode, TlsConfig},
 };
 use andromeda_server_tls::{
     material_watch::TlsMaterialWatch,
@@ -21,7 +21,7 @@ use andromeda_server_tls::{
     test_identity::{authority::TestAuthority, identity::TestIdentity, identity_files::IdentityFiles},
 };
 use rustls::RootCertStore;
-use std::{error::Error, net::SocketAddr, path::PathBuf};
+use std::{error::Error, net::SocketAddr};
 
 /// A server identity on disk, watched and fed to the QUIC endpoint exactly as
 /// the broker feeds its shared identity, with the authority that issued it
@@ -42,25 +42,27 @@ impl QuicIdentity {
     ///
     /// Must be called from within a Tokio runtime, which rebuilds the feed.
     pub(crate) fn anonymous() -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
-        QuicIdentity::start(ClientAuthentication::None, None)
+        QuicIdentity::start(ClientAuthenticationMode::Disabled, None)
     }
 
     /// An identity requiring a client certificate issued by `clients`.
     pub(crate) fn requiring_clients_of(clients: &TestAuthority) -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
-        QuicIdentity::start(ClientAuthentication::Required, Some(clients))
+        QuicIdentity::start(ClientAuthenticationMode::Required, Some(clients))
     }
 
     /// Write a fresh `localhost` identity and feed it under the QUIC policy.
-    fn start(client_authentication: ClientAuthentication, clients: Option<&TestAuthority>) -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
+    fn start(client_authentication: ClientAuthenticationMode, clients: Option<&TestAuthority>) -> Result<QuicIdentity, Box<dyn Error + Send + Sync>> {
         let authority = TestAuthority::generate()?;
         let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
-        let client_ca_path = clients.map(|issuer| files.write_client_ca(issuer)).transpose()?.unwrap_or_else(PathBuf::new);
+        let ca = clients.map(|issuer| files.write_client_ca(issuer)).transpose()?;
         let config = TlsConfig {
-            certificate_path: files.certificate_path().to_path_buf(),
-            private_key_path: files.private_key_path().to_path_buf(),
-            client_authentication,
-            client_ca_path,
-            reload_debounce: HumanDuration::from_millis(100),
+            certificate: Some(files.certificate_path().to_path_buf()),
+            private_key: Some(files.private_key_path().to_path_buf()),
+            client_authentication: ClientAuthenticationConfig {
+                mode: client_authentication,
+                ca,
+            },
+            reload_settle_after: HumanDuration::from_millis(100),
             ..TlsConfig::default()
         };
         let watch = TlsMaterialWatch::start(&config)?;

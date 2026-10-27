@@ -45,18 +45,18 @@ pub(super) fn register_temporal_retention(
     repository: Arc<TemporalRepository>,
     config: &TemporalConfig,
 ) -> Result<(), TenantAssemblyError> {
-    let Some(horizon) = config.retention_horizon else {
+    let Some(horizon) = config.storage.retention_age() else {
         return Ok(());
     };
-    // A validated retention horizon is a whole number of days (see
-    // `TemporalConfig::validate`), so integer division recovers it exactly.
+    // A validated retention age is a whole number of days, so integer
+    // division recovers it exactly.
     let horizon_days =
         i64::try_from(horizon.duration().as_secs() / 86_400).map_err(|_| AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon))?;
     let span = TimeDelta::try_days(horizon_days).ok_or(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon))?;
     let retention = TemporalRetention::Enabled {
         horizon: TemporalRetentionHorizon::new(span).map_err(AssemblyInvariant::from)?,
     };
-    let cadence = config.retention_sweep_interval.duration();
+    let cadence = config.storage.retention.sweep_interval.duration();
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("temporal-retention").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(

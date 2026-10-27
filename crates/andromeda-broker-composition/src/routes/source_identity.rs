@@ -2,7 +2,7 @@
 //! it answers under.
 
 use crate::tenant_factory::BrokerTenantFactory;
-use andromeda_configuration::schema::identity::InfoConfig;
+use andromeda_configuration::schema::federation::identity::IdentityConfig;
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_source_identity::{
     default_tenant_contexts::{DefaultTenantContexts, DefaultTenantContextsResolver},
@@ -81,7 +81,7 @@ impl DefaultTenantContextsResolver for BrokerDefaultTenantContexts {
 /// or [`SourceIdentityRouteError::Alias`] for a configured identifier past
 /// the bound or an alias that is not a token, both of which loading already refuses.
 pub(crate) fn source_identity_routes(
-    identity: &InfoConfig,
+    identity: &IdentityConfig,
     started_at: DateTime<Utc>,
     enabled_extensions: EnabledExtensions,
     tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
@@ -92,7 +92,7 @@ pub(crate) fn source_identity_routes(
         // every other tenant's is derived from it.
         ContextSourceAliases::new(ContextSourcePseudonym::try_from(&identity.source_alias)?),
         started_at,
-        identity.source_extras.as_ref().map(JsonLiteral::try_from).transpose()?,
+        identity.extras.as_ref().map(JsonLiteral::try_from).transpose()?,
         enabled_extensions,
         Arc::new(BrokerDefaultTenantContexts::new(Arc::clone(tenants))),
     )?))

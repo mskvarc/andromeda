@@ -120,7 +120,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// by an in-flight request so no slot can be freed, defers the wake.
     async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: RuntimeExistence, tenant: &TenantName) -> WakeOutcome {
         let now = SystemTime::now();
-        if self.runtimes.len() >= self.config.runtime_max_cached && !self.evict_one_for_wake(tenant_ref).await {
+        if self.runtimes.len() >= self.config.residency.max_resident.get() && !self.evict_one_for_wake(tenant_ref).await {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
             return WakeOutcome::Deferred;
         }

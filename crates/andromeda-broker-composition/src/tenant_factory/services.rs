@@ -56,7 +56,7 @@ use andromeda_temporal::{
     service_limits::TemporalServiceLimits,
 };
 use andromeda_tenancy::context_source_alias::ContextSourceAliases;
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
 pub(super) struct ConstructedServices {
@@ -98,7 +98,7 @@ pub(super) fn construct_services(
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
     // 4.3.6.4 considers each Tenant of a registered Context Source separately).
-    let aliases = ContextSourceAliases::new(ContextSourcePseudonym::try_from(&config.identity.source_alias).map_err(AssemblyInvariant::from)?);
+    let aliases = ContextSourceAliases::new(ContextSourcePseudonym::try_from(&config.federation.identity.source_alias).map_err(AssemblyInvariant::from)?);
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
@@ -118,7 +118,7 @@ pub(super) fn construct_services(
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let context_hosting = TenantContextHosting::new(contexts);
     let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
-    let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
+    let edge = DistributedSubscriptionEdge::resolve(&config.federation.identity, subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(
         storage,
         signals,
@@ -179,6 +179,7 @@ fn compose_entity_service(
     writes: &Arc<dyn ContextCommitter>,
 ) -> Arc<EntityService> {
     let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
+    let batch = &config.entity.batch;
     Arc::new(EntityService::new(
         EntityServicePorts {
             reader: Arc::clone(&storage.entity_ports.reader),
@@ -191,14 +192,14 @@ fn compose_entity_service(
         storage.engine.clone(), // clone: entity policy owns its engine handle.
         Arc::clone(notifier),
         BatchExecutionConfig {
-            chunk_concurrency: config.entity.batch_chunk_concurrency.unwrap_or(4),
-            chunk_write_concurrency: config.entity.batch_chunk_write_concurrency.unwrap_or(4),
-            chunk_size: config.entity.batch_chunk_size,
-            large_threshold: config.entity.batch_large_threshold,
-            prepare_blocking_threshold: config.entity.batch_prepare_blocking_threshold,
-            async_side_effect_threshold: config.entity.batch_async_side_effect_threshold,
+            chunk_concurrency: batch.max_concurrent_chunks.get(),
+            chunk_write_concurrency: batch.max_concurrent_chunk_writes.get(),
+            chunk_size: batch.chunk_size.get(),
+            large_threshold: batch.large_threshold.get(),
+            prepare_blocking_threshold: batch.prepare_blocking_threshold.get(),
+            async_side_effect_threshold: batch.async_side_effect_threshold.map(NonZeroUsize::get),
         },
-        payload_budget(&config.entity),
+        payload_budget(&config.request_limits),
     ))
 }
 
@@ -223,16 +224,16 @@ fn compose_temporal_service(
         storage.engine.clone(), // clone: temporal policy owns its engine handle.
         Arc::clone(notifier),
         TemporalServiceLimits {
-            instance_limits: TemporalInstanceLimits::from(&config.temporal),
+            instance_limits: TemporalInstanceLimits::from(&config.temporal.query),
             // The delete-by-query extension's `TooManyResults` bound; inert
             // unless the extension is routed, which composition gates
             // separately.
-            delete_by_query_max_matches: config.extensions.temporal_delete_by_query_max_matches,
+            delete_by_query_max_matches: config.extensions.temporal_delete_by_query.max_matches.get(),
             // The grouped-aggregation extension's `TooManyResults` bound;
             // likewise inert unless the extension is routed.
-            aggregation_grouping_max_groups: config.extensions.temporal_aggregation_grouping_max_groups,
+            aggregation_grouping_max_groups: config.extensions.temporal_aggregation_grouping.max_groups.get(),
             // A temporal write is admitted under the budget a Core write is.
-            payload_budget: payload_budget(&config.entity),
+            payload_budget: payload_budget(&config.request_limits),
             near_band: near_distance_band(EnabledExtensions::from(&config.extensions)),
             language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
         },
@@ -270,7 +271,7 @@ fn near_distance_band(enabled: EnabledExtensions) -> NearDistanceBand {
 /// What every geo-query a request of the tenant writes is admitted under.
 fn geo_query_admission(config: &TenantFactoryConfig) -> GeoQueryAdmission {
     GeoQueryAdmission::new(
-        geometry_census_limits(&config.entity),
+        geometry_census_limits(&config.request_limits),
         near_distance_band(EnabledExtensions::from(&config.extensions)),
     )
 }
@@ -317,12 +318,12 @@ fn compose_snapshot_services(
         Arc::clone(&storage.snapshot_store),
         Arc::clone(writes),
         SnapshotPreparationConfig {
-            capture_page_size: snapshot.capture_page_size,
-            max_per_pass: snapshot.preparation_concurrency,
-            lease_duration: snapshot.preparation_lease.duration(),
-            tenant_count_quota: snapshot.tenant_count_quota,
-            tenant_byte_quota: snapshot.tenant_storage_quota.map(HumanByteSize::as_u64),
-            attribute_nesting: payload_budget(&config.entity).attribute_nesting,
+            capture_page_size: snapshot.preparation.page_size.get(),
+            max_per_pass: snapshot.preparation.max_concurrent.get(),
+            lease_duration: snapshot.preparation.lease_timeout.duration(),
+            tenant_count_quota: snapshot.quota.max_per_tenant.map(NonZeroUsize::get),
+            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.map(HumanByteSize::as_u64),
+            attribute_nesting: payload_budget(&config.request_limits).attribute_nesting,
         },
     ));
     let service = Arc::new(SnapshotService::new(
@@ -331,10 +332,10 @@ fn compose_snapshot_services(
         Some(delivery_signal),
         SnapshotServiceConfig {
             default_lifetime: snapshot.default_lifetime.duration(),
-            maximum_lifetime: snapshot.maximum_lifetime.duration(),
-            scoped_operation_wait: snapshot.scoped_operation_wait.duration(),
-            tenant_count_quota: snapshot.tenant_count_quota,
-            tenant_byte_quota: snapshot.tenant_storage_quota.map(HumanByteSize::as_u64),
+            maximum_lifetime: snapshot.max_lifetime.duration(),
+            scoped_operation_wait: snapshot.preparation.scoped_operation_timeout.duration(),
+            tenant_count_quota: snapshot.quota.max_per_tenant.map(NonZeroUsize::get),
+            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.map(HumanByteSize::as_u64),
         },
     ));
     (preparation, service)

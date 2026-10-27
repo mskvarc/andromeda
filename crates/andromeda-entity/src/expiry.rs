@@ -18,7 +18,6 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use chrono::{DateTime, Utc};
 use std::{num::NonZeroU32, sync::Arc};
-use thiserror::Error;
 use tracing::warn;
 
 /// One entity-policy-owned bounded expiry operation.
@@ -70,7 +69,7 @@ impl EntityExpirySweep {
 }
 
 /// Non-zero maximum candidate count read by each phase of one expiry sweep.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::From)]
 pub struct EntityExpiryBatchSize(NonZeroU32);
 
 impl EntityExpiryBatchSize {
@@ -79,27 +78,6 @@ impl EntityExpiryBatchSize {
     pub const fn get(self) -> u32 {
         self.0.get()
     }
-}
-
-impl TryFrom<usize> for EntityExpiryBatchSize {
-    type Error = EntityExpiryBatchSizeError;
-
-    fn try_from(value: usize) -> Result<EntityExpiryBatchSize, EntityExpiryBatchSizeError> {
-        let value = u32::try_from(value).map_err(|_| EntityExpiryBatchSizeError::TooLarge)?;
-        let value = NonZeroU32::new(value).ok_or(EntityExpiryBatchSizeError::Zero)?;
-        Ok(EntityExpiryBatchSize(value))
-    }
-}
-
-/// Invalid expiry sweep candidate limit.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-pub enum EntityExpiryBatchSizeError {
-    /// A bounded sweep cannot have an empty limit.
-    #[error("entity expiry batch size must be at least one")]
-    Zero,
-    /// The configured limit exceeds the portable 32-bit port representation.
-    #[error("entity expiry batch size must fit in an unsigned 32-bit integer")]
-    TooLarge,
 }
 
 /// What one bounded entity expiry reconciliation removed at its cutoff.
@@ -253,14 +231,14 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
 mod tests {
     use crate::{
         entity_snapshot::EntitySnapshot,
-        expiry::{EntityExpiryBatchSize, EntityExpiryBatchSizeError, landed_ids, purge_write},
+        expiry::{EntityExpiryBatchSize, landed_ids, purge_write},
     };
     use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
-    use std::sync::Arc;
+    use std::{num::NonZeroU32, sync::Arc};
 
     fn identifiers(raw: &[&str]) -> Result<Vec<Identifier>, IdentifierParseError> {
         raw.iter().map(|identifier| identifier.parse()).collect()
@@ -334,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn expiry_batch_size_rejects_zero() {
-        assert_eq!(EntityExpiryBatchSize::try_from(0), Err(EntityExpiryBatchSizeError::Zero));
+    fn the_expiry_batch_size_keeps_the_configured_count() {
+        assert_eq!(EntityExpiryBatchSize::from(NonZeroU32::MIN.saturating_add(999)).get(), 1_000);
     }
 }

@@ -6,7 +6,7 @@ See [`docs/distributed-operations-test-plan.md`](../../docs/distributed-operatio
 
 ## Topology
 
-Three broker identities, each backed by its own TimescaleDB/PostGIS Postgres server (`postgres-a`, `postgres-b`, `postgres-c`, one database each, created by `initdb/<role>/10-create-broker-database.sql`). The stores are fully isolated: nothing broker-b persists is reachable from broker-a's server, so any state that shows up on a peer got there over NGSI-LD, never through a shared table. Each identity has a distinct `ANDROMEDA__IDENTITY__SOURCE_ID` / `ANDROMEDA__IDENTITY__SOURCE_ALIAS`, which is what makes `Via` / `contextSourceAlias` loop detection meaningful across instances.
+Three broker identities, each backed by its own TimescaleDB/PostGIS Postgres server (`postgres-a`, `postgres-b`, `postgres-c`, one database each, created by `initdb/<role>/10-create-broker-database.sql`). The stores are fully isolated: nothing broker-b persists is reachable from broker-a's server, so any state that shows up on a peer got there over NGSI-LD, never through a shared table. Each identity has a distinct `ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID` / `ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS`, which is what makes `Via` / `contextSourceAlias` loop detection meaningful across instances.
 
 broker-a additionally runs as a **replica pair**: `broker-a2` is a second instance of the same identity (same source id, alias and database on `postgres-a`). It exists to prove that durable state - EntityMaps, registrations, platform routing - is shared across the instances of one broker and only across those: a map minted on broker-a is `200` on broker-a2 and `404` on broker-b.
 
@@ -21,7 +21,7 @@ The two URL families matter: the test client on the host reaches brokers via pub
 
 ## Connection budget
 
-Each Postgres server runs with `max_connections = 400`. The brokers run with `ANDROMEDA__DATABASE__MAX_CONNECTIONS=16` and `ANDROMEDA__TENANCY__TENANT_MAX_CONNECTIONS=8`, and idle connections are reclaimed after 30 s. The busiest server (`postgres-a`, broker-a and its replica broker-a2) holds 2 x (16 + tenants x 8) for the tenants live at once: the default tenant, the four tenants the harness leases to concurrent topologies (one per test thread), and the tenants the tenant-specific suites name, plus the harness's own lazily opened pools. With a dozen tenants live that approaches 250, which the image default of 100 cannot hold.
+Each Postgres server runs with `max_connections = 400`. The brokers run with `ANDROMEDA__DATABASE__MAX_CONNECTIONS=16` and `ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS=8`, and idle connections are reclaimed after 30 s. The busiest server (`postgres-a`, broker-a and its replica broker-a2) holds 2 x (16 + tenants x 8) for the tenants live at once: the default tenant, the four tenants the harness leases to concurrent topologies (one per test thread), and the tenants the tenant-specific suites name, plus the harness's own lazily opened pools. With a dozen tenants live that approaches 250, which the image default of 100 cannot hold.
 
 ## Bring up / tear down
 
@@ -45,4 +45,4 @@ The broker image (`docker/images/andromeda/Dockerfile`) builds a release binary 
 
 - **Fault injection** (timeouts, `403`, malformed payloads, loops, unsupported operations) is not driven from these real peers - a real Andromeda peer answers correctly by construction. Those cases use the in-process `ContextSourceServer` mock as the registered peer, per the plan. This stack is for genuine broker-to-broker federation semantics; the mock is for controllable adversarial peers.
 - **Mock reachability**: brokers reach the test process's mock servers via `host.docker.internal` (mapped through `host-gateway` on Linux), the same mechanism the existing suites use via `ANDROMEDA_TEST_CALLBACK_HOST`.
-- **Source identity extras**: every broker sets `ANDROMEDA__IDENTITY__SOURCE_EXTRAS='{"deployment":"distop"}'` so `/info/sourceIdentity` carries a deployment-specific member (clause 5.2.37).
+- **Source identity extras**: every broker reads `[federation.identity.extras] deployment = "distop"` from the mounted `andromeda.toml`, so `/info/sourceIdentity` carries a deployment-specific member (clause 5.2.40).

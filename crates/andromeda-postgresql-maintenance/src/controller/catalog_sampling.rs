@@ -14,7 +14,7 @@ use crate::{
     state::{RegisteredTenant, target_record},
     statistics_freshness::HeapStatistics,
 };
-use andromeda_configuration::schema::maintenance::MaintenanceMode;
+use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use chrono::Utc;
 use sqlx::PgConnection;
 use tracing::info;

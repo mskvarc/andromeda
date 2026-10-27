@@ -112,9 +112,9 @@ mod tests {
         let second = authority.issue_server_identity()?;
         let files = IdentityFiles::write(&first)?;
         let config = TlsConfig {
-            certificate_path: files.certificate_path().to_path_buf(),
-            private_key_path: files.private_key_path().to_path_buf(),
-            reload_debounce: HumanDuration::from_millis(100),
+            certificate: Some(files.certificate_path().to_path_buf()),
+            private_key: Some(files.private_key_path().to_path_buf()),
+            reload_settle_after: HumanDuration::from_millis(100),
             ..TlsConfig::default()
         };
         let watch = TlsMaterialWatch::start(&config)?;

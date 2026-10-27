@@ -1,31 +1,46 @@
-//! Request-decompression policy: which codings, and how to treat unaccepted ones.
+//! Request decompression: which codings are decoded, and what happens to a
+//! body in any other.
 
 use crate::{comma_list::array_or_comma_list, schema::content_coding::ContentCoding};
 use enumset::EnumSet;
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use toml_comment::TomlComment;
+
+/// What happens to a request body whose content coding is not among the
+/// decoded `algorithms`.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+pub enum UnacceptedEncoding {
+    /// The request is answered 415 Unsupported Media Type.
+    #[default]
+    Refuse,
+    /// The body is handed on still encoded.
+    PassThrough,
+}
 
 /// Request-decompression configuration.
 ///
-/// The accepted codings are a single typed set listed as an array; an empty set
-/// means inbound decompression is off, so there is no separate umbrella toggle.
+/// The decoded codings are a single typed set listed as an array; an empty set
+/// turns inbound decompression off, so there is no separate switch.
 #[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DecompressionConfig {
-    /// The content codings the broker will decode request bodies from. An empty
-    /// array disables inbound decompression entirely.
+    /// The content codings request bodies are decoded from. An empty array
+    /// turns inbound decompression off.
     #[serde(deserialize_with = "array_or_comma_list")]
     pub algorithms: EnumSet<ContentCoding>,
-    /// Whether a body whose coding is not among [`algorithms`](Self::algorithms)
-    /// is passed through untouched (`true`) rather than rejected (`false`).
-    pub pass_through_unaccepted: bool,
+    /// What happens to a body in any other coding: `refuse` or `pass-through`.
+    #[toml_comment(inline)]
+    pub unaccepted_encoding: UnacceptedEncoding,
 }
 
 impl Default for DecompressionConfig {
     fn default() -> DecompressionConfig {
         DecompressionConfig {
             algorithms: EnumSet::all(),
-            pass_through_unaccepted: false,
+            unaccepted_encoding: UnacceptedEncoding::Refuse,
         }
     }
 }
@@ -36,31 +51,31 @@ impl Default for DecompressionConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::{content_coding::ContentCoding, http::decompression::DecompressionConfig};
+    use crate::schema::{
+        content_coding::ContentCoding,
+        http::decompression::{DecompressionConfig, UnacceptedEncoding},
+    };
     use enumset::{EnumSet, enum_set};
 
     #[test]
-    fn default_accepts_every_coding() {
-        pretty_assertions::assert_eq!(DecompressionConfig::default().algorithms, EnumSet::<ContentCoding>::all());
+    fn the_default_decodes_every_coding_and_refuses_the_rest() {
+        let config = DecompressionConfig::default();
+        pretty_assertions::assert_eq!(config.algorithms, EnumSet::<ContentCoding>::all());
+        pretty_assertions::assert_eq!(config.unaccepted_encoding, UnacceptedEncoding::Refuse);
     }
 
     #[test]
-    fn pass_through_unaccepted_defaults_false() {
-        assert!(!DecompressionConfig::default().pass_through_unaccepted);
-    }
-
-    #[test]
-    fn algorithms_array_parses_from_toml() {
-        let config: DecompressionConfig = toml::from_str("algorithms = [\"gzip\"]\npass_through_unaccepted = true").expect("decompression parses");
+    fn the_table_parses_from_toml() {
+        let config: DecompressionConfig = toml::from_str("algorithms = [\"gzip\"]\nunaccepted_encoding = \"pass-through\"").expect("decompression parses");
         pretty_assertions::assert_eq!(config.algorithms, enum_set!(ContentCoding::Gzip));
-        assert!(config.pass_through_unaccepted);
+        pretty_assertions::assert_eq!(config.unaccepted_encoding, UnacceptedEncoding::PassThrough);
     }
 
     #[test]
     fn decompression_config_round_trips_through_toml() {
         let config = DecompressionConfig {
             algorithms: ContentCoding::Brotli | ContentCoding::Deflate,
-            pass_through_unaccepted: true,
+            unaccepted_encoding: UnacceptedEncoding::PassThrough,
         };
         let rendered = toml::to_string(&config).expect("decompression serialises");
         let parsed: DecompressionConfig = toml::from_str(&rendered).expect("decompression parses");

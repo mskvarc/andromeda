@@ -204,8 +204,16 @@ mod tests {
         enabled::{EnabledExtensions, Extension},
     };
     use andromeda_configuration::schema::{
-        extensions::{ExtensionsConfig, QTargetLanguages},
-        feature_mode::HttpFeatureMode,
+        extensions::{
+            ExtensionsConfig,
+            ExtensionsMode,
+            QTargetLanguages,
+            QTargetLanguagesConfig,
+            bounded::{TemporalAggregationGroupingConfig, TemporalDeleteByQueryConfig},
+            cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
+            switch::ExtensionSwitch,
+        },
+        feature_mode::FeatureMode,
     };
     use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
@@ -233,18 +241,26 @@ mod tests {
 
     fn both_enabled() -> EnabledExtensions {
         EnabledExtensions::from(&ExtensionsConfig {
-            conformance_mode: HttpFeatureMode::Disabled,
-            temporal_delete_by_query: HttpFeatureMode::Enabled,
-            purge_dataset_scope: HttpFeatureMode::Enabled,
-            temporal_aggregation_grouping: HttpFeatureMode::Enabled,
-            temporal_linked_retrieval: HttpFeatureMode::Enabled,
-            tenant_management: HttpFeatureMode::Enabled,
-            cursor_pagination: HttpFeatureMode::Enabled,
-            near_distance_band: HttpFeatureMode::Enabled,
-            accept_language: HttpFeatureMode::Enabled,
-            q_target_languages: QTargetLanguages::LanguageRanges,
-            temporal_delete_by_query_max_matches: 100,
-            temporal_aggregation_grouping_max_groups: 100,
+            mode: ExtensionsMode::Configured,
+            temporal_delete_by_query: TemporalDeleteByQueryConfig {
+                mode: FeatureMode::Enabled,
+                ..TemporalDeleteByQueryConfig::default()
+            },
+            purge_dataset_scope: ExtensionSwitch::new(FeatureMode::Enabled),
+            temporal_aggregation_grouping: TemporalAggregationGroupingConfig {
+                mode: FeatureMode::Enabled,
+                ..TemporalAggregationGroupingConfig::default()
+            },
+            temporal_linked_retrieval: ExtensionSwitch::new(FeatureMode::Enabled),
+            tenant_management: ExtensionSwitch::new(FeatureMode::Enabled),
+            cursor_pagination: CursorPaginationConfig {
+                mode: CursorPaginationMode::Default,
+            },
+            near_distance_band: ExtensionSwitch::new(FeatureMode::Enabled),
+            accept_language: ExtensionSwitch::new(FeatureMode::Enabled),
+            q_target_languages: QTargetLanguagesConfig {
+                mode: QTargetLanguages::LanguageRanges,
+            },
         })
     }
 
@@ -270,8 +286,10 @@ mod tests {
     #[test]
     fn tenant_management_is_advertised_only_when_it_is_enabled() {
         let config = ExtensionsConfig {
-            tenant_management: HttpFeatureMode::Enabled,
-            cursor_pagination: HttpFeatureMode::Disabled,
+            tenant_management: ExtensionSwitch::new(FeatureMode::Enabled),
+            cursor_pagination: CursorPaginationConfig {
+                mode: CursorPaginationMode::Disabled,
+            },
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -281,7 +299,9 @@ mod tests {
 
         // With the extension off, nothing about it is advertised.
         let neither = ExtensionsConfig {
-            cursor_pagination: HttpFeatureMode::Disabled,
+            cursor_pagination: CursorPaginationConfig {
+                mode: CursorPaginationMode::Disabled,
+            },
             ..ExtensionsConfig::default()
         };
         assert!(extras(None, EnabledExtensions::from(&neither)).is_none());
@@ -290,8 +310,10 @@ mod tests {
     #[test]
     fn temporal_linked_retrieval_is_advertised_only_when_enabled() {
         let config = ExtensionsConfig {
-            temporal_linked_retrieval: HttpFeatureMode::Enabled,
-            cursor_pagination: HttpFeatureMode::Disabled,
+            temporal_linked_retrieval: ExtensionSwitch::new(FeatureMode::Enabled),
+            cursor_pagination: CursorPaginationConfig {
+                mode: CursorPaginationMode::Disabled,
+            },
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -309,8 +331,10 @@ mod tests {
     #[test]
     fn accept_language_is_advertised_only_when_enabled() {
         let config = ExtensionsConfig {
-            accept_language: HttpFeatureMode::Enabled,
-            cursor_pagination: HttpFeatureMode::Disabled,
+            accept_language: ExtensionSwitch::new(FeatureMode::Enabled),
+            cursor_pagination: CursorPaginationConfig {
+                mode: CursorPaginationMode::Disabled,
+            },
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -335,8 +359,10 @@ mod tests {
             ),
         ] {
             let config = ExtensionsConfig {
-                q_target_languages: level,
-                cursor_pagination: HttpFeatureMode::Disabled,
+                q_target_languages: QTargetLanguagesConfig { mode: level },
+                cursor_pagination: CursorPaginationConfig {
+                    mode: CursorPaginationMode::Disabled,
+                },
                 ..ExtensionsConfig::default()
             };
             let advertised = extras(None, EnabledExtensions::from(&config)).expect("extras present");

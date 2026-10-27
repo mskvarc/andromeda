@@ -70,8 +70,12 @@ pub(super) fn register_columnstore_conversion(
         ColumnstoreSupport::Absent => return Ok(()),
         ColumnstoreSupport::Present => {}
     }
-    let horizon = ColumnstoreHorizon::of_days(TemporalStoragePolicy::try_from(config).map_err(AssemblyInvariant::from)?.columnstore_after_days);
-    let cadence = config.columnstore_sweep_interval.duration();
+    let horizon = ColumnstoreHorizon::of_days(
+        TemporalStoragePolicy::try_from(&config.storage)
+            .map_err(AssemblyInvariant::from)?
+            .columnstore_after_days,
+    );
+    let cadence = config.storage.columnstore.sweep_interval.duration();
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("temporal-columnstore-conversion").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(

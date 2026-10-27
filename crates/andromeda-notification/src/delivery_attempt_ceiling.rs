@@ -3,9 +3,9 @@
 //! The worker, not the schema, owns the ceiling: the attempt that reaches it is
 //! acknowledged as exhausted, which stamps the delivery's `exhausted_at` and
 //! takes it out of the claimable set for good. The queue never repeats the
-//! number — neither in a check constraint nor in the claim index — so the
+//! number, neither in a check constraint nor in the claim index, so the
 //! setting can be raised or lowered without a migration. The only bound
-//! validated at configuration time is that at least one attempt is allowed.
+//! validated at configuration time is that the store can count that high.
 
 use andromeda_retry::retry_number::RetryNumber;
 use std::num::{NonZeroI32, NonZeroU32};
@@ -14,9 +14,15 @@ use thiserror::Error;
 /// Rejected delivery-attempt ceiling.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryAttemptCeilingError {
-    /// A ceiling of zero or less leaves every delivery permanently exhausted.
-    #[error("notification delivery attempt ceiling must be at least one attempt")]
-    NonPositiveAttempts,
+    /// The store counts a delivery's attempts in a signed 32-bit column, so a
+    /// ceiling past it could never be reached.
+    #[error("notification delivery attempt ceiling of {attempts} exceeds the {maximum} attempts the store counts")]
+    AboveStoredRange {
+        /// The rejected ceiling.
+        attempts: u32,
+        /// The most attempts the store counts.
+        maximum: i32,
+    },
 }
 
 /// The number of attempts a delivery is given before it is dead-lettered.
@@ -28,13 +34,15 @@ impl DeliveryAttemptCeiling {
     ///
     /// # Errors
     ///
-    /// Returns [`DeliveryAttemptCeilingError::NonPositiveAttempts`] when the
-    /// number is zero or negative.
-    pub const fn from_attempts(attempts: i32) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
-        match NonZeroI32::new(attempts) {
-            Some(attempts) if attempts.get() > 0 => Ok(DeliveryAttemptCeiling(attempts)),
-            Some(_) | None => Err(DeliveryAttemptCeilingError::NonPositiveAttempts),
-        }
+    /// Returns [`DeliveryAttemptCeilingError::AboveStoredRange`] when the
+    /// number exceeds what the store counts.
+    pub fn from_attempts(attempts: NonZeroU32) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
+        NonZeroI32::try_from(attempts)
+            .map(DeliveryAttemptCeiling)
+            .map_err(|_| DeliveryAttemptCeilingError::AboveStoredRange {
+                attempts: attempts.get(),
+                maximum: i32::MAX,
+            })
     }
 
     /// The ceiling as a whole number of attempts.
@@ -71,26 +79,33 @@ impl DeliveryAttemptCeiling {
 mod tests {
     use crate::delivery_attempt_ceiling::{DeliveryAttemptCeiling, DeliveryAttemptCeilingError};
     use pretty_assertions::assert_eq;
+    use std::num::NonZeroU32;
+
+    fn attempts(count: u32) -> NonZeroU32 {
+        NonZeroU32::new(count).expect("a positive count")
+    }
 
     #[test]
-    fn a_non_positive_ceiling_is_rejected() {
-        for attempts in [0, -1] {
-            assert_eq!(
-                DeliveryAttemptCeiling::from_attempts(attempts),
-                Err(DeliveryAttemptCeilingError::NonPositiveAttempts)
-            );
-        }
+    fn a_ceiling_past_the_stored_range_is_rejected_and_the_range_end_accepted() {
+        assert_eq!(
+            DeliveryAttemptCeiling::from_attempts(attempts(2_147_483_648)),
+            Err(DeliveryAttemptCeilingError::AboveStoredRange {
+                attempts: 2_147_483_648,
+                maximum: i32::MAX,
+            })
+        );
+        assert!(DeliveryAttemptCeiling::from_attempts(attempts(2_147_483_647)).is_ok());
     }
 
     #[test]
     fn a_ceiling_above_five_is_accepted_because_the_schema_no_longer_pins_one() {
-        let ceiling = DeliveryAttemptCeiling::from_attempts(12).expect("any positive ceiling is accepted");
+        let ceiling = DeliveryAttemptCeiling::from_attempts(attempts(12)).expect("any positive ceiling is accepted");
         assert_eq!(ceiling.attempts(), 12);
     }
 
     #[test]
     fn the_attempt_that_reaches_the_ceiling_is_the_final_one() {
-        let ceiling = DeliveryAttemptCeiling::from_attempts(3).expect("a positive ceiling");
+        let ceiling = DeliveryAttemptCeiling::from_attempts(attempts(3)).expect("a positive ceiling");
         assert!(!ceiling.is_final_attempt(0));
         assert!(!ceiling.is_final_attempt(1));
         assert!(ceiling.is_final_attempt(2));
@@ -99,7 +114,7 @@ mod tests {
 
     #[test]
     fn a_ceiling_of_one_makes_the_first_attempt_final() {
-        let ceiling = DeliveryAttemptCeiling::from_attempts(1).expect("a positive ceiling");
+        let ceiling = DeliveryAttemptCeiling::from_attempts(attempts(1)).expect("a positive ceiling");
         assert!(ceiling.is_final_attempt(0));
     }
 }

@@ -1,26 +1,31 @@
-//! On/off umbrella switch shared by the HTTP stack's optional features.
+//! The `mode` of a feature that is either wholly on or wholly off.
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// Shared on/off switch for an HTTP stack feature.
+/// The `mode` of a feature that is either wholly on or wholly off.
 ///
-/// This is the configuration surface's single convention for a feature that is
-/// either wholly on or wholly off -- the Server-Timing and CSRF umbrellas both
-/// use it. A feature that instead exposes an enumerable set of independent
-/// choices (the content codings) is modelled as a typed set listed as an array,
-/// never as a family of boolean fields, and a genuine policy boolean that maps to
-/// a boolean wire semantic (`allow_credentials`, `pass_through_unaccepted`) stays
-/// a bare `bool`.
+/// A feature switch is always a named `mode`, never a boolean. A feature with
+/// more than two states has a mode enum of its own, and an enumerable set of
+/// independent choices (the content codings) is a typed set listed as an
+/// array.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-pub enum HttpFeatureMode {
-    /// Disable the feature and install no middleware for it.
+pub enum FeatureMode {
+    /// The feature is off.
     Disabled,
     /// Enable the feature.
     #[default]
     Enabled,
+}
+
+impl FeatureMode {
+    /// Whether the feature is on.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, FeatureMode::Enabled)
+    }
 }
 
 #[cfg(test)]
@@ -29,18 +34,18 @@ pub enum HttpFeatureMode {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::feature_mode::HttpFeatureMode;
+    use crate::schema::feature_mode::FeatureMode;
 
     #[test]
     fn feature_mode_round_trips_through_kebab_tokens() {
-        for (mode, token) in [(HttpFeatureMode::Disabled, "disabled"), (HttpFeatureMode::Enabled, "enabled")] {
+        for (mode, token) in [(FeatureMode::Disabled, "disabled"), (FeatureMode::Enabled, "enabled")] {
             pretty_assertions::assert_eq!(mode.to_string(), token);
-            pretty_assertions::assert_eq!(token.parse::<HttpFeatureMode>().expect("mode parses"), mode);
+            pretty_assertions::assert_eq!(token.parse::<FeatureMode>().expect("mode parses"), mode);
         }
     }
 
     #[test]
     fn feature_mode_defaults_to_enabled() {
-        pretty_assertions::assert_eq!(HttpFeatureMode::default(), HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(FeatureMode::default(), FeatureMode::Enabled);
     }
 }

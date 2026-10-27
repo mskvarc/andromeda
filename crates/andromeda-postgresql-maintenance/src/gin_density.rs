@@ -175,7 +175,7 @@ mod tests {
         gin_density::{Density, DensityReading, gin_coverage_statement},
         policy::PolicyProfile,
     };
-    use andromeda_configuration::schema::maintenance::MaintenanceProfile;
+    use andromeda_configuration::schema::database::maintenance::MaintenanceProfile;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroU64;

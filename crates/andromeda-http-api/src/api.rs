@@ -109,15 +109,16 @@ mod tests {
     };
     use andromeda_component_report::{ComponentReport, ComponentVersion, ConnectionCapacity};
     use andromeda_configuration::schema::{
-        feature_mode::HttpFeatureMode,
+        feature_mode::FeatureMode,
         forwarded_header_trust::ForwardedHeaderTrust,
         http::{
             HttpStackConfig,
             cors::{CorsConfig, CorsMode},
             csrf::CsrfConfig,
-            helmet::HelmetConfig,
+            security_headers::SecurityHeadersConfig,
             server_timing::ServerTimingConfig,
         },
+        request_limits::RequestLimitsConfig,
     };
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
@@ -338,20 +339,18 @@ mod tests {
                 ..CorsConfig::default()
             },
             server_timing: ServerTimingConfig {
-                mode: HttpFeatureMode::Disabled,
+                mode: FeatureMode::Disabled,
                 ..ServerTimingConfig::default()
             },
-            helmet: HelmetConfig {
-                mode: HttpFeatureMode::Disabled,
-            },
+            security_headers: SecurityHeadersConfig { mode: FeatureMode::Disabled },
             csrf: CsrfConfig {
-                mode: HttpFeatureMode::Disabled,
+                mode: FeatureMode::Disabled,
                 trusted_origins: Vec::new(),
             },
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
             ..HttpStackConfig::default()
         };
-        Ok(HttpStack::new(http_config)?)
+        Ok(HttpStack::new(http_config, RequestLimitsConfig::default())?)
     }
 
     fn test_api() -> Result<HttpApi, Box<dyn Error>> {

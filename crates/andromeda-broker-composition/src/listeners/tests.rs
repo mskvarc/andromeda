@@ -1,7 +1,7 @@
 //! One request header section limit across the broker's three HTTP versions.
 
 use crate::listener_tls::SharedTlsIdentity;
-use andromeda_configuration::schema::{listener_transport::ListenerTransport, server::ServerConfig, tls::TlsConfig};
+use andromeda_configuration::schema::{listener_transport::ListenerTransport, request_limits::RequestLimitsConfig, server::ServerConfig, tls::TlsConfig};
 use andromeda_http_server::{close_policy::ClosePolicy, execution::serve_bound};
 use andromeda_http3_server::{endpoint, execution::serve_endpoint, quic_crypto::H3_ALPN};
 use andromeda_server_tls::test_identity::{authority::TestAuthority, identity_files::IdentityFiles};
@@ -98,15 +98,15 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
     let authority = TestAuthority::generate()?;
     let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
     let tls = TlsConfig {
-        certificate_path: files.certificate_path().to_path_buf(),
-        private_key_path: files.private_key_path().to_path_buf(),
+        certificate: Some(files.certificate_path().to_path_buf()),
+        private_key: Some(files.private_key_path().to_path_buf()),
         ..TlsConfig::default()
     };
     let server = ServerConfig {
         transport: ListenerTransport::Tls,
         ..ServerConfig::default()
     };
-    let limit = server.max_request_header_section;
+    let limit = RequestLimitsConfig::default().max_header_section;
     let policy = ClosePolicy::from(&server);
     let mut identity = SharedTlsIdentity::new(&tls);
     let security = identity.tcp_security(ListenerTransport::Tls)?;
@@ -119,7 +119,7 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
     // clone: the TCP and the QUIC listener each serve the one router.
     let tcp_router = router.clone();
     let tcp_server = tokio::spawn(async move {
-        serve_bound(&server, tcp, security, tcp_router, async move {
+        serve_bound(&server, limit, tcp, security, tcp_router, async move {
             let _ = tcp_stopped.await;
         })
         .await

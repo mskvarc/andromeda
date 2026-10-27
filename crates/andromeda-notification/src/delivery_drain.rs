@@ -15,7 +15,7 @@ use crate::{
     held_events::HeldEvents,
     notification_invariant::NotificationInvariant,
 };
-use andromeda_configuration::schema::delivery::DeliveryConfig;
+use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
@@ -167,10 +167,7 @@ impl NotificationDeliveryDrain {
         let error_bound = error_bound(config).map_err(NotificationInvariant::from)?;
         let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
         let attempt_ceiling = attempt_ceiling(config).map_err(NotificationInvariant::from)?;
-        let batch_size = usize::try_from(config.batch_size)
-            .ok()
-            .filter(|size| *size > 0)
-            .ok_or(NotificationInvariant::BatchSizeNotPositive)?;
+        let batch_size = usize::try_from(config.queue.batch_size.get()).map_err(|_| NotificationInvariant::BatchSizeExceedsAddressWidth)?;
         Ok(NotificationDeliveryDrain {
             store,
             transport,
@@ -397,7 +394,7 @@ mod tests {
     };
     use andromeda_configuration::{
         human_duration::HumanDuration,
-        schema::delivery::{DeliveryConfig, DeliveryMode},
+        schema::notifications::delivery::{DeliveryConfig, DeliveryMode},
     };
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
@@ -414,6 +411,7 @@ mod tests {
     use std::{
         collections::{BTreeSet, VecDeque},
         fmt::Display,
+        num::NonZeroU32,
         sync::{
             Arc,
             Mutex,
@@ -671,22 +669,22 @@ mod tests {
     }
 
     fn config() -> DeliveryConfig {
-        DeliveryConfig {
+        sized(1, 4)
+    }
+
+    /// The durable delivery table with `batch` deliveries a pass and
+    /// `concurrent` in flight at once.
+    fn sized(batch: u32, concurrent: u32) -> DeliveryConfig {
+        let mut config = DeliveryConfig {
             mode: DeliveryMode::Durable,
             request_timeout: HumanDuration::from_secs(10),
-            max_attempts: 5,
-            base_backoff: HumanDuration::from_secs(5),
-            poll_interval: HumanDuration::from_secs(1),
-            poll_interval_max: HumanDuration::from_secs(30),
-            batch_size: 1,
-            concurrency: 4,
-            lease: HumanDuration::from_secs(30),
-            error_max_chars: 8,
-            cleanup_after: HumanDuration::from_secs(86_400),
-            cleanup_interval: HumanDuration::from_secs(300),
-            dead_letter_after: HumanDuration::from_secs(604_800),
-            orphan_event_after: HumanDuration::from_secs(86_400),
-        }
+            max_concurrent: NonZeroU32::new(concurrent).expect("a positive bound"),
+            max_error_length: NonZeroU32::new(8).expect("a positive bound"),
+            ..DeliveryConfig::default()
+        };
+        config.queue.batch_size = NonZeroU32::new(batch).expect("a positive batch");
+        config.queue.retry_interval = HumanDuration::from_secs(5);
+        config
     }
 
     fn entry() -> Result<DeliveryEntry, NotificationError> {
@@ -730,7 +728,7 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let transport = Arc::new(InFlightTransport::default());
-            let config = DeliveryConfig { batch_size: 10, ..config() };
+            let config = sized(10, 4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -917,7 +915,7 @@ mod tests {
                 diagnostic: "notification delivery 2 references invalid entity URI `not a uri`".to_owned(),
             });
             let store = Arc::new(RecordingStore::with_claims([unreadable, DeliveryClaim::Readable(Box::new(entry()?))]));
-            let config = DeliveryConfig { batch_size: 2, ..config() };
+            let config = sized(2, 4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -942,7 +940,7 @@ mod tests {
     fn a_delivery_that_can_never_succeed_does_not_hold_back_its_peers() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entries([entry_keyed(1)?, entry_keyed(2)?, entry_keyed(3)?]));
-            let config = DeliveryConfig { batch_size: 3, ..config() };
+            let config = sized(3, 4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(PoisonedTransport(DeliveryKey::from(2_i64))), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -982,7 +980,7 @@ mod tests {
         block_on(async {
             let entries = (1..=10_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig { batch_size: 10, ..config() };
+            let config = sized(10, 4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1001,11 +999,7 @@ mod tests {
         block_on(async {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig {
-                batch_size: 6,
-                concurrency: 2,
-                ..config()
-            };
+            let config = sized(6, 2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1029,11 +1023,7 @@ mod tests {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig {
-                batch_size: 5,
-                concurrency: 2,
-                ..config()
-            };
+            let config = sized(5, 2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1062,11 +1052,7 @@ mod tests {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig {
-                batch_size: 5,
-                concurrency: 2,
-                ..config()
-            };
+            let config = sized(5, 2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1083,11 +1069,7 @@ mod tests {
         block_on(async {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig {
-                batch_size: 3,
-                concurrency: 1,
-                ..config()
-            };
+            let config = sized(3, 1);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1104,11 +1086,7 @@ mod tests {
         block_on(async {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = DeliveryConfig {
-                batch_size: 10,
-                concurrency: 2,
-                ..config()
-            };
+            let config = sized(10, 2);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
@@ -1127,11 +1105,7 @@ mod tests {
         let store = Arc::new(RecordingStore::with_unrecordable_acknowledgements(
             (1..=4_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?,
         ));
-        let config = DeliveryConfig {
-            batch_size: 4,
-            concurrency: 2,
-            ..config()
-        };
+        let config = sized(4, 2);
         let outcome = block_on(async {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())

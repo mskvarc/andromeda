@@ -16,7 +16,7 @@ use crate::{
     },
     recording_ports::{ImmediateRetry, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
-use andromeda_configuration::schema::entity::EntityConfig;
+use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_retry::retry_delay::RetryDelay;
@@ -47,6 +47,6 @@ pub(crate) fn in_memory_service(store: &Arc<InMemoryStore>, writes: Arc<dyn Cont
             prepare_blocking_threshold: 1024,
             async_side_effect_threshold: None,
         },
-        payload_budget(&EntityConfig::default()),
+        payload_budget(&RequestLimitsConfig::default()),
     )
 }

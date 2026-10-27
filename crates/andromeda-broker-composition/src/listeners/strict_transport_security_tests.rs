@@ -1,7 +1,13 @@
 //! `Strict-Transport-Security` on the API reaches a client only over the TLS listener.
 
 use crate::listener_tls::{SharedTlsIdentity, listener_scheme};
-use andromeda_configuration::schema::{http::HttpStackConfig, listener_transport::ListenerTransport, server::ServerConfig, tls::TlsConfig};
+use andromeda_configuration::schema::{
+    http::HttpStackConfig,
+    listener_transport::ListenerTransport,
+    request_limits::RequestLimitsConfig,
+    server::ServerConfig,
+    tls::TlsConfig,
+};
 use andromeda_http_server::execution::serve_bound;
 use andromeda_http_stack::stack::HttpStack;
 use andromeda_server_tls::test_identity::{authority::TestAuthority, identity_files::IdentityFiles};
@@ -39,7 +45,7 @@ async fn policy_seen_over(stack: &HttpStack, transport: ListenerTransport, tls: 
 
     let (stop, stopped) = oneshot::channel::<()>();
     let listener = tokio::spawn(async move {
-        serve_bound(&server, tcp, security, router, async move {
+        serve_bound(&server, RequestLimitsConfig::default().max_header_section, tcp, security, router, async move {
             let _ = stopped.await;
         })
         .await
@@ -74,11 +80,11 @@ async fn strict_transport_security_reaches_a_client_over_tls_and_not_over_plaint
     let authority = TestAuthority::generate()?;
     let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
     let tls = TlsConfig {
-        certificate_path: files.certificate_path().to_path_buf(),
-        private_key_path: files.private_key_path().to_path_buf(),
+        certificate: Some(files.certificate_path().to_path_buf()),
+        private_key: Some(files.private_key_path().to_path_buf()),
         ..TlsConfig::default()
     };
-    let stack = HttpStack::new(HttpStackConfig::default())?;
+    let stack = HttpStack::new(HttpStackConfig::default(), RequestLimitsConfig::default())?;
     let trusted = Certificate::from_der(authority.certificate())?;
 
     let over_tls = policy_seen_over(&stack, ListenerTransport::Tls, &tls, Some(trusted)).await?;

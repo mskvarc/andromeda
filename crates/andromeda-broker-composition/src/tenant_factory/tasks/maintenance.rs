@@ -16,7 +16,7 @@ use andromeda_context_commit::{committer::ContextCommitter, context_change_event
 use andromeda_entity::{
     NotificationWriteConfig,
     change_sink::EntityChangeSink,
-    configured_policy::pending_side_effects_retry_schedule,
+    configured_policy::{side_effect_max_attempts, side_effect_retry_schedule},
     error::EntityError,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
     side_effect_notification::SideEffectNotificationRoute,
@@ -68,7 +68,7 @@ pub(super) fn register_entity_side_effects(
     wake: DrainWakeReceiver,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let entity_config = &config.entity;
+    let side_effects = &config.entity.side_effects;
     // A job may have been queued by a broker in the other delivery mode sharing
     // this tenant database, so the notifications it still owes are settled by
     // this broker's own mode.
@@ -88,28 +88,28 @@ pub(super) fn register_entity_side_effects(
         Arc::clone(writes), // clone: request handling and the drain share one committer.
         notifications,
         EntitySideEffectDrainConfig {
-            lease_seconds: i32::try_from(entity_config.pending_side_effects_lease.duration().as_secs()).unwrap_or(i32::MAX),
-            batch_size: i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX),
-            max_attempts: entity_config.pending_side_effects_max_attempts,
-            retry_schedule: pending_side_effects_retry_schedule(entity_config).map_err(AssemblyInvariant::SideEffectRetry)?,
+            lease_seconds: i32::try_from(side_effects.queue.lease_timeout.duration().as_secs()).unwrap_or(i32::MAX),
+            batch_size: i32::try_from(side_effects.queue.batch_size.get()).unwrap_or(i32::MAX),
+            max_attempts: side_effect_max_attempts(side_effects).map_err(AssemblyInvariant::SideEffectAttempts)?,
+            retry_schedule: side_effect_retry_schedule(side_effects).map_err(AssemblyInvariant::SideEffectRetry)?,
             lease_holder: LeaseHolder::mint(),
         },
     ));
     register_entity_side_effect_drain(
         supervisor,
         Arc::clone(&drain), // clone: the delivery and reap workers share one drain operation.
-        entity_config.pending_side_effects_poll.duration(),
-        entity_config.pending_side_effects_poll_max.duration(),
-        entity_config.pending_side_effects_lease.duration(),
+        side_effects.queue.poll_interval.duration(),
+        side_effects.queue.max_poll_interval.duration(),
+        side_effects.queue.lease_timeout.duration(),
         wake,
         pacer,
     )?;
     register_entity_side_effect_reap(
         supervisor,
         drain,
-        entity_config.pending_side_effects_cleanup_interval.duration(),
+        side_effects.retention.cleanup_interval.duration(),
         retention_duration(
-            entity_config.pending_side_effects_dead_letter_after.duration().as_secs(),
+            side_effects.retention.dead_letter_after.duration().as_secs(),
             RetentionSetting::SideEffectDeadLetter,
         )?,
     )?;
@@ -130,7 +130,7 @@ pub(super) fn register_entity_side_effects(
 /// Returns [`TenantAssemblyError`] when the configured rebuild cadence is
 /// rejected or when the supervisor refuses the registration.
 pub(super) fn register_spatial_workers(supervisor: &TaskSupervisor, config: &TenantFactoryConfig, storage: &TenantStorage) -> Result<(), TenantAssemblyError> {
-    let cadence = config.spatial.rebuild_interval.duration();
+    let cadence = config.entity.spatial_index.rebuild_interval.duration();
     match &storage.spatial {
         SpatialAcceleration::StoreVerified => Ok(()),
         SpatialAcceleration::CommitSynchronous(index) => {

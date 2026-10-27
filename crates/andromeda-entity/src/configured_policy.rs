@@ -1,23 +1,17 @@
-//! What entity execution takes from the `[entity]` section.
+//! What entity execution takes from the `[request_limits]` and
+//! `[entity.side_effects]` tables.
 
-use andromeda_configuration::schema::entity::EntityConfig;
+use andromeda_configuration::schema::{entity::side_effects::SideEffectsConfig, request_limits::RequestLimitsConfig};
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingLimit, payload_budget::EntityPayloadBudget};
-use andromeda_retry::{growth::Growth, retry_number::RetryNumber, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
-use std::num::NonZeroU32;
+use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use thiserror::Error;
-
-/// The retry from which a failed side-effect job's backoff stops doubling.
-///
-/// Fifteen doublings take the default two-second base past eighteen hours, so
-/// a job that keeps failing still comes due again within a day.
-pub const PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY: RetryNumber = RetryNumber::new(NonZeroU32::MIN.saturating_add(15));
 
 /// The configured attribute nesting admits attributes deeper than every stored
 /// value of one can be read back at.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-#[error("entity.max_attribute_nesting ({configured}) must not exceed {ceiling}, the deepest nesting every stored value reads back at")]
+#[error("request_limits.max_attribute_nesting ({configured}) must not exceed {ceiling}, the deepest nesting every stored value reads back at")]
 pub struct AttributeNestingAboveDecodable {
     /// The configured limit.
     pub configured: usize,
@@ -32,47 +26,70 @@ pub struct AttributeNestingAboveDecodable {
 ///
 /// Returns [`AttributeNestingAboveDecodable`] when it passes that depth; the
 /// configuration loader asks, so a broker never starts with such a limit.
-pub const fn check_attribute_nesting(config: &EntityConfig) -> Result<(), AttributeNestingAboveDecodable> {
+pub const fn check_attribute_nesting(limits: &RequestLimitsConfig) -> Result<(), AttributeNestingAboveDecodable> {
     let ceiling = AttributeNestingLimit::DECODABLE_CEILING;
-    if config.max_attribute_nesting.get() > ceiling.get() {
+    if limits.max_attribute_nesting.get() > ceiling.get() {
         return Err(AttributeNestingAboveDecodable {
-            configured: config.max_attribute_nesting.get(),
+            configured: limits.max_attribute_nesting.get(),
             ceiling: ceiling.get(),
         });
     }
     Ok(())
 }
 
-/// The schedule a failed side-effect job is retried on: doubling from
-/// `pending_side_effects_base_backoff` until
-/// [`PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY`].
+/// The configured side-effect attempt ceiling is above what a job counts.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("entity.side_effects.queue.max_attempts ({configured}) must not exceed {ceiling}, the most attempts a side-effect job counts")]
+pub struct SideEffectAttemptsAboveCeiling {
+    /// The configured ceiling.
+    pub configured: u32,
+    /// The most attempts a side-effect job counts.
+    pub ceiling: u16,
+}
+
+/// The attempts a side-effect job is given before it is dead-lettered.
 ///
 /// # Errors
 ///
-/// Returns the [`BackoffScheduleError`] of a zero base backoff; the
-/// configuration loader asks for the schedule, so a broker never starts
-/// with one.
-pub const fn pending_side_effects_retry_schedule(config: &EntityConfig) -> Result<BackoffSchedule, BackoffScheduleError> {
-    let first = config.pending_side_effects_base_backoff.duration();
-    let ceiling = Growth::Doubling.grow(first, PENDING_SIDE_EFFECTS_LAST_GROWING_RETRY);
-    BackoffSchedule::validated(first, ceiling, Growth::Doubling)
+/// Returns [`SideEffectAttemptsAboveCeiling`] when the configured ceiling is
+/// above what a job counts; the configuration loader asks, so a broker never
+/// starts with one.
+pub fn side_effect_max_attempts(config: &SideEffectsConfig) -> Result<u16, SideEffectAttemptsAboveCeiling> {
+    let configured = config.queue.max_attempts.get();
+    u16::try_from(configured).map_err(|_| SideEffectAttemptsAboveCeiling { configured, ceiling: u16::MAX })
+}
+
+/// The schedule a failed side-effect job is retried on: doubling from
+/// `retry_interval` up to `max_retry_interval`.
+///
+/// # Errors
+///
+/// Returns the [`BackoffScheduleError`] of a zero first delay or a ceiling
+/// below it; the configuration loader asks for the schedule, so a broker
+/// never starts with one.
+pub const fn side_effect_retry_schedule(config: &SideEffectsConfig) -> Result<BackoffSchedule, BackoffScheduleError> {
+    BackoffSchedule::validated(
+        config.queue.retry_interval.duration(),
+        config.queue.max_retry_interval.duration(),
+        Growth::Doubling,
+    )
 }
 
 /// The budget a written entity payload is admitted under.
 #[must_use]
-pub const fn payload_budget(config: &EntityConfig) -> EntityPayloadBudget {
+pub const fn payload_budget(limits: &RequestLimitsConfig) -> EntityPayloadBudget {
     EntityPayloadBudget {
-        json_values: JsonValueLimit::new(config.max_entity_json_values),
-        geometry_positions: GeometryPositionLimit::new(config.max_geometry_positions),
-        attribute_nesting: AttributeNestingLimit::new(config.max_attribute_nesting),
+        json_values: JsonValueLimit::new(limits.max_entity_json_values),
+        geometry_positions: GeometryPositionLimit::new(limits.max_geometry_positions),
+        attribute_nesting: AttributeNestingLimit::new(limits.max_attribute_nesting),
     }
 }
 
 /// The limits a geometry standing on its own is admitted under: the reference
 /// geometry of a query or a subscription, or the geometry of a registration.
 #[must_use]
-pub const fn geometry_census_limits(config: &EntityConfig) -> GeometryCensusLimits {
-    payload_budget(config).geometry_census_limits()
+pub const fn geometry_census_limits(limits: &RequestLimitsConfig) -> GeometryCensusLimits {
+    payload_budget(limits).geometry_census_limits()
 }
 
 #[cfg(test)]
@@ -81,41 +98,70 @@ pub const fn geometry_census_limits(config: &EntityConfig) -> GeometryCensusLimi
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::configured_policy::{AttributeNestingAboveDecodable, check_attribute_nesting, payload_budget, pending_side_effects_retry_schedule};
-    use andromeda_configuration::{human_duration::HumanDuration, schema::entity::EntityConfig};
+    use crate::configured_policy::{
+        AttributeNestingAboveDecodable,
+        SideEffectAttemptsAboveCeiling,
+        check_attribute_nesting,
+        payload_budget,
+        side_effect_max_attempts,
+        side_effect_retry_schedule,
+    };
+    use andromeda_configuration::{
+        human_duration::HumanDuration,
+        schema::{entity::side_effects::SideEffectsConfig, request_limits::RequestLimitsConfig},
+    };
     use andromeda_retry::schedule_error::BackoffScheduleError;
     use pretty_assertions::assert_eq;
+    use std::num::NonZeroU32;
 
     #[test]
     fn the_default_budgets_admit_one_million_values_and_positions() {
-        let budget = payload_budget(&EntityConfig::default());
+        let budget = payload_budget(&RequestLimitsConfig::default());
         assert_eq!(budget.json_values.get(), 1_000_000);
         assert_eq!(budget.geometry_positions.get(), 1_000_000);
     }
 
     /// An attribute nesting past the depth every stored value reads back at
-    /// would admit writes no read can decode; the limit defaults
-    /// to 32 and may be raised to that ceiling, not past it.
+    /// would admit writes no read can decode; the limit defaults to 32 and
+    /// may be raised to that ceiling, not past it.
     #[test]
     fn the_attribute_nesting_defaults_to_32_and_is_refused_past_the_decodable_ceiling() {
-        let rendered = toml::to_string(&EntityConfig::default()).expect("the defaults render");
-        assert_eq!(payload_budget(&EntityConfig::default()).attribute_nesting.get(), 32);
-        let at_ceiling: EntityConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 62")).expect("parses");
+        let rendered = toml::to_string(&RequestLimitsConfig::default()).expect("the defaults render");
+        assert_eq!(payload_budget(&RequestLimitsConfig::default()).attribute_nesting.get(), 32);
+        let at_ceiling: RequestLimitsConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 62")).expect("parses");
         assert_eq!(check_attribute_nesting(&at_ceiling), Ok(()));
-        let past_ceiling: EntityConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 63")).expect("parses");
+        let past_ceiling: RequestLimitsConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 63")).expect("parses");
         assert_eq!(
             check_attribute_nesting(&past_ceiling),
             Err(AttributeNestingAboveDecodable { configured: 63, ceiling: 62 })
         );
-        assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 0")).is_err());
+        assert!(toml::from_str::<RequestLimitsConfig>(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 0")).is_err());
     }
 
     #[test]
-    fn a_zero_side_effect_backoff_forms_no_retry_schedule() {
-        let config = EntityConfig {
-            pending_side_effects_base_backoff: HumanDuration::from_secs(0),
-            ..EntityConfig::default()
-        };
-        assert_eq!(pending_side_effects_retry_schedule(&config).map(drop), Err(BackoffScheduleError::ZeroFirst));
+    fn a_zero_side_effect_retry_interval_forms_no_retry_schedule() {
+        let mut config = SideEffectsConfig::default();
+        config.queue.retry_interval = HumanDuration::from_secs(0);
+        assert_eq!(side_effect_retry_schedule(&config).map(drop), Err(BackoffScheduleError::ZeroFirst));
+    }
+
+    #[test]
+    fn the_default_side_effect_retries_double_from_two_seconds_to_five_minutes() {
+        assert!(side_effect_retry_schedule(&SideEffectsConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn an_attempt_ceiling_past_what_a_job_counts_is_refused_and_the_largest_kept() {
+        let mut config = SideEffectsConfig::default();
+        config.queue.max_attempts = NonZeroU32::new(65_536).expect("a positive ceiling");
+        assert_eq!(
+            side_effect_max_attempts(&config),
+            Err(SideEffectAttemptsAboveCeiling {
+                configured: 65_536,
+                ceiling: u16::MAX,
+            })
+        );
+        config.queue.max_attempts = NonZeroU32::new(65_535).expect("a positive ceiling");
+        assert_eq!(side_effect_max_attempts(&config), Ok(u16::MAX));
     }
 }
