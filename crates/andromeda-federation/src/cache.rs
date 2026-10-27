@@ -9,7 +9,7 @@
 //! never selected at all.
 
 use crate::outcome::ForwardedResponse;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use chrono::{DateTime, Utc};
@@ -104,11 +104,11 @@ impl ForwardedGetCache {
             return None;
         }
         let mut response = entry.response.clone(); // clone: the cache keeps its copy for the next hit
-        response.warnings.push(NgsiLdWarning::ResponseIsStale(
+        response.warnings.push(NgsiLdWarning::new(
+            WarnCode::ResponseIsStale,
             CachedResponseReused {
                 registration: &key.registration,
-            }
-            .to_string(),
+            },
         ));
         Some(response)
     }
@@ -143,7 +143,7 @@ mod tests {
         outcome::ForwardedResponse,
         source_continuation::SourceContinuation,
     };
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::WarnCode;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use serde_json::json;
@@ -190,7 +190,7 @@ mod tests {
         cache.store(key.clone(), &response(r#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#), Duration::from_secs(10)); // clone: looked up below
         let hit = cache.lookup(&key).expect("hit");
         pretty_assertions::assert_eq!(&*hit.body, br#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#.as_slice());
-        assert!(matches!(hit.warnings.as_slice(), [NgsiLdWarning::ResponseIsStale(_)]));
+        assert!(matches!(hit.warnings.as_slice(), [warning] if warning.code() == WarnCode::ResponseIsStale));
     }
 
     #[test]

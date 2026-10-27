@@ -30,7 +30,10 @@ use andromeda_registration::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 /// A forwarding service choosing among `registrations`, holding no entity of
 /// its own and resolving only embedded contexts, never the network.
@@ -63,12 +66,22 @@ pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistra
 pub(crate) struct FixedRegistrationStore {
     /// The registrations every matching query answers.
     registrations: Vec<ContextSourceRegistration>,
+    /// How many forwarding outcomes were recorded on the registrations.
+    recorded_outcomes: AtomicUsize,
 }
 
 impl FixedRegistrationStore {
     /// A store holding `registrations`.
     pub(crate) const fn new(registrations: Vec<ContextSourceRegistration>) -> FixedRegistrationStore {
-        FixedRegistrationStore { registrations }
+        FixedRegistrationStore {
+            registrations,
+            recorded_outcomes: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many forwarding outcomes were recorded on the registrations.
+    pub(crate) fn recorded_outcomes(&self) -> usize {
+        self.recorded_outcomes.load(Ordering::SeqCst)
     }
 }
 
@@ -217,6 +230,7 @@ impl RegistrationStore for FixedRegistrationStore {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
+        self.recorded_outcomes.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(()) })
     }
 }

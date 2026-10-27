@@ -22,7 +22,7 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
 use std::slice::from_ref;
@@ -40,7 +40,10 @@ pub(crate) fn mode_admitted(registration: &ContextSourceRegistration, mode_filte
 /// contributes: nothing is forwarded, and clause 6.3.17 names the loop with a
 /// 199 warning.
 pub(crate) fn own_loop_warning() -> NgsiLdWarning {
-    NgsiLdWarning::MiscellaneousWarning("registration loop detected: the request's Via chain already names this context broker".to_string())
+    NgsiLdWarning::new(
+        WarnCode::MiscellaneousWarning,
+        "registration loop detected: the request's Via chain already names this context broker",
+    )
 }
 
 /// The outcome of a current-entity read whose request already looped back

@@ -21,7 +21,7 @@ use crate::{
     source_identity::{ReachedSource, SourceConfiguration},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -129,7 +129,7 @@ struct RangeFilteringNotApplied<'a> {
 
 /// The clause 6.3.17 warning a read evaluated by tag equality carries.
 fn fallback_warning(registration: &Identifier) -> NgsiLdWarning {
-    NgsiLdWarning::MiscellaneousWarning(RangeFilteringNotApplied { registration }.to_string())
+    NgsiLdWarning::new(WarnCode::MiscellaneousWarning, RangeFilteringNotApplied { registration })
 }
 
 #[cfg(test)]
@@ -143,7 +143,7 @@ mod tests {
         language_negotiation::{NegotiatedLanguageTargeting, negotiated},
         source_identity::{ReachedSource, SourceConfiguration},
     };
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::WarnCode;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
     use pretty_assertions::assert_eq;
@@ -202,7 +202,7 @@ mod tests {
         let outcome = negotiated(LanguageTargeting::LanguageRanges, LanguageTargeting::Specification, &reached, advertised).expect("negotiated");
         assert_eq!(outcome.targeting, LanguageTargeting::Specification);
         assert!(
-            matches!(&outcome.warning, Some(NgsiLdWarning::MiscellaneousWarning(text)) if text.contains("urn:ngsi-ld:ContextSourceRegistration:b")),
+            matches!(&outcome.warning, Some(warning) if warning.code() == WarnCode::MiscellaneousWarning && warning.text().as_str().contains("urn:ngsi-ld:ContextSourceRegistration:b")),
             "{outcome:?}"
         );
     }

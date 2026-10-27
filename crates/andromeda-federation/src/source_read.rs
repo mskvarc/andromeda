@@ -16,7 +16,11 @@ use crate::{
     source_read_warning::SourceReadWarning,
     transport::ForwardedRequest,
 };
-use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, warning::Warning};
+use andromeda_http_headers::{
+    ngsild_warning::{NgsiLdWarning, WarnCode},
+    warn_text::WarnText,
+    warning::Warning,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, registration::ContextSourceRegistration};
@@ -209,7 +213,7 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
     // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
     let mut warnings = Vec::new();
     if let Some(Warning { code: 110, text, .. }) = sent.warning {
-        warnings.push(NgsiLdWarning::ResponseIsStale(text));
+        warnings.push(NgsiLdWarning::new(WarnCode::ResponseIsStale, WarnText::from_quoted(&text)));
     }
     // Clause 6.3.17 applies along the whole chain: what the source could not
     // reach behind it is as missing from this response as from its own.
@@ -218,9 +222,7 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
     // not say it cannot be combined with the rest of the result, so the
     // client is told the source's part may be incomplete.
     if sent.status == reqwest::StatusCode::PARTIAL_CONTENT && sent.partial_range.is_none() {
-        warnings.push(NgsiLdWarning::MiscellaneousWarning(
-            SourceReadWarning::UnreadableContentRange { registration: registration_id }.to_string(),
-        ));
+        warnings.push(SourceReadWarning::UnreadableContentRange { registration: registration_id }.into_warning());
     }
 
     // The body is read by the answer's own reader, which says why a body that

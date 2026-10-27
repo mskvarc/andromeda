@@ -147,7 +147,9 @@ fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> Trans
     if error.is_timeout() {
         TransportFailure::TimedOut { after: timeout }
     } else {
-        TransportFailure::Undelivered(Arc::new(error))
+        // The URL is the registration's endpoint, which the warning names by
+        // its registration instead.
+        TransportFailure::Undelivered(Arc::new(error.without_url()))
     }
 }
 

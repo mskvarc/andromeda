@@ -6,7 +6,11 @@ use crate::{
     received_fixture::{instance_count, iri, version},
     registration_loops,
 };
-use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::ReceivedProtocol, via::Via};
+use andromeda_http_headers::{
+    ngsild_warning::{NgsiLdWarning, WarnCode},
+    received_protocol::ReceivedProtocol,
+    via::Via,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use serde_json::json;
@@ -62,25 +66,25 @@ fn write_result(mode: ForwardingMode, attributes: Vec<AttributeName>) -> Forward
 
 #[test]
 fn warning_header_format_miscellaneous() {
-    let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
+    let w = NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string());
     pretty_assertions::assert_eq!(w.to_string(), "199 - \"timeout\"");
 }
 
 #[test]
 fn warning_header_format_persistent() {
-    let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
+    let w = NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "403 Forbidden".to_string());
     pretty_assertions::assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
 }
 
 #[test]
 fn warning_header_format_response_is_stale_per_clause_6_3_17() {
-    let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
+    let w = NgsiLdWarning::new(WarnCode::ResponseIsStale, "cached data".to_string());
     pretty_assertions::assert_eq!(w.to_string(), "110 - \"cached data\"");
 }
 
 #[test]
 fn warning_header_format_revalidation_failed_per_clause_6_3_17() {
-    let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
+    let w = NgsiLdWarning::new(WarnCode::RevalidationFailed, "invalid JSON".to_string());
     pretty_assertions::assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
 }
 
@@ -92,8 +96,8 @@ fn collect_warnings_from_results() {
             mode: ForwardingMode::Inclusive,
             entities: Vec::new(),
             warnings: vec![
-                NgsiLdWarning::MiscellaneousWarning("timeout".to_string()),
-                NgsiLdWarning::RevalidationFailed("invalid JSON".to_string()),
+                NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string()),
+                NgsiLdWarning::new(WarnCode::RevalidationFailed, "invalid JSON".to_string()),
             ],
             linked_map: None,
         },
@@ -107,8 +111,8 @@ fn collect_warnings_from_results() {
     ];
     let warnings = collect_warnings(&results);
     pretty_assertions::assert_eq!(warnings.len(), 2);
-    assert!(matches!(warnings[0], NgsiLdWarning::MiscellaneousWarning(_)));
-    assert!(matches!(warnings[1], NgsiLdWarning::RevalidationFailed(_)));
+    pretty_assertions::assert_eq!(warnings[0].code(), WarnCode::MiscellaneousWarning);
+    pretty_assertions::assert_eq!(warnings[1].code(), WarnCode::RevalidationFailed);
 }
 
 #[test]
@@ -186,7 +190,7 @@ fn collect_discovery_warnings_aggregates() {
             registration_id: None,
             body: None,
             naming: ContextSpec::none(),
-            warnings: vec![NgsiLdWarning::MiscellaneousWarning("timeout".to_string())],
+            warnings: vec![NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string())],
         },
         ForwardedDiscoveryResult {
             registration_id: None,

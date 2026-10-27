@@ -4,12 +4,13 @@
 //! distributed operations (forwarding to context sources). An encoded header
 //! lists its warnings up to a byte budget and summarises the rest per code;
 //! the per-source record lives on each registration (`status`, `timesFailed`,
-//! `lastFailure`, clause 5.2.9).
+//! `lastFailure`, clause 5.2.9). Each value's text is bounded and quoted by
+//! [`WarnText`], whether this broker wrote it or relays it from a source.
 
-use crate::link::quoting::SplitAsciiUnquoted;
+use crate::{link::quoting::SplitAsciiUnquoted, warn_text::WarnText};
 use http::{HeaderName, HeaderValue};
 use indexmap::IndexMap;
-use std::{collections::HashSet, iter};
+use std::{collections::HashSet, fmt::Display, iter};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_WARNING: HeaderName = HeaderName::from_static("ngsild-warning");
@@ -23,33 +24,60 @@ const LISTED_WARNING_BYTES: usize = 2048;
 /// next value when a client or proxy folds the header into one line.
 const VALUE_SEPARATOR_BYTES: usize = 2;
 
-/// IANA warning codes for distributed operations (clause 6.3.17).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, strum::EnumDiscriminants)]
-#[strum_discriminants(name(WarnCode), derive(Hash), doc = "The IANA warn-code of an [`NgsiLdWarning`], without its text.")]
-pub enum NgsiLdWarning {
-    /// 110: Cached data reused; context source responded but stale data was served.
-    #[display("110 - \"{_0}\"")]
-    ResponseIsStale(String),
-    /// 111: Context source responded but payload was invalid or non-NGSI-LD.
-    #[display("111 - \"{_0}\"")]
-    RevalidationFailed(String),
-    /// 199: No response within timeout or registration loop detected.
-    #[display("199 - \"{_0}\"")]
-    MiscellaneousWarning(String),
-    /// 299: Error response from registration endpoint (e.g., 403).
-    #[display("299 - \"{_0}\"")]
-    MiscellaneousPersistentWarning(String),
+/// The IANA warn-codes of Table 6.3.17-1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumString)]
+pub enum WarnCode {
+    /// 110: cached data was reused instead of asking the registration endpoint.
+    #[strum(serialize = "110")]
+    ResponseIsStale,
+    /// 111: a response arrived in time, but its payload cannot be used.
+    #[strum(serialize = "111")]
+    RevalidationFailed,
+    /// 199: no response arrived in time, or a registration loop was detected.
+    #[strum(serialize = "199")]
+    MiscellaneousWarning,
+    /// 299: the registration endpoint answered with an error response.
+    #[strum(serialize = "299")]
+    MiscellaneousPersistentWarning,
+}
+
+/// One `NGSILD-Warning` value: a warn-code and its text, with `-` as the
+/// warn-agent.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[display("{code} - \"{}\"", text.quoted())]
+pub struct NgsiLdWarning {
+    /// What kind of abnormal behaviour the warning reports.
+    code: WarnCode,
+    /// What happened, in words.
+    text: WarnText,
 }
 
 impl NgsiLdWarning {
-    /// The warning with the given code and text.
-    const fn with_code(code: WarnCode, text: String) -> NgsiLdWarning {
-        match code {
-            WarnCode::ResponseIsStale => NgsiLdWarning::ResponseIsStale(text),
-            WarnCode::RevalidationFailed => NgsiLdWarning::RevalidationFailed(text),
-            WarnCode::MiscellaneousWarning => NgsiLdWarning::MiscellaneousWarning(text),
-            WarnCode::MiscellaneousPersistentWarning => NgsiLdWarning::MiscellaneousPersistentWarning(text),
+    /// The warning with `code`, reporting `text`.
+    #[must_use]
+    pub fn new(code: WarnCode, text: impl Display) -> NgsiLdWarning {
+        NgsiLdWarning {
+            code,
+            text: WarnText::new(text),
         }
+    }
+
+    /// The warn-code.
+    #[must_use]
+    pub const fn code(&self) -> WarnCode {
+        self.code
+    }
+
+    /// The warn-text.
+    #[must_use]
+    pub const fn text(&self) -> &WarnText {
+        &self.text
+    }
+
+    /// The warn-code and the warn-text, taken apart.
+    #[must_use]
+    pub fn into_parts(self) -> (WarnCode, WarnText) {
+        (self.code, self.text)
     }
 }
 
@@ -96,13 +124,9 @@ impl NgsiLdWarningHeader {
                     continue;
                 }
             }
-            *omitted.entry(WarnCode::from(&warning)).or_default() += 1;
+            *omitted.entry(warning.code).or_default() += 1;
         }
-        listed.extend(
-            omitted
-                .into_iter()
-                .map(|(code, count)| NgsiLdWarning::with_code(code, UnlistedWarnings { count }.to_string())),
-        );
+        listed.extend(omitted.into_iter().map(|(code, count)| NgsiLdWarning::new(code, UnlistedWarnings { count })));
         NgsiLdWarningHeader(listed)
     }
 
@@ -113,26 +137,20 @@ impl NgsiLdWarningHeader {
     }
 }
 
-/// Parse a single warning value like `199 - "timeout"` into an `NgsiLdWarning`.
+/// Parse a single warning value like `199 - "timeout"` into an `NgsiLdWarning`,
+/// its text bounded as any other warning's.
 fn parse_warning(s: &str) -> Option<NgsiLdWarning> {
-    let trimmed = s.trim();
-    let (code_str, rest) = trimmed.split_once(char::is_whitespace)?;
-    let code: u16 = code_str.parse().ok()?;
-
+    let (code, rest) = s.trim().split_once(char::is_whitespace)?;
+    let code = code.parse().ok()?;
     let start = rest.find('"')? + 1;
     let end = rest.rfind('"')?;
     if start >= end {
         return None;
     }
-    let text = rest[start..end].to_string();
-
-    match code {
-        110 => Some(NgsiLdWarning::ResponseIsStale(text)),
-        111 => Some(NgsiLdWarning::RevalidationFailed(text)),
-        199 => Some(NgsiLdWarning::MiscellaneousWarning(text)),
-        299 => Some(NgsiLdWarning::MiscellaneousPersistentWarning(text)),
-        _ => None,
-    }
+    Some(NgsiLdWarning {
+        code,
+        text: WarnText::from_quoted(&rest[start..end]),
+    })
 }
 
 impl headers::Header for NgsiLdWarningHeader {
@@ -179,12 +197,17 @@ impl headers::Header for NgsiLdWarningHeader {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use super::*;
+    use crate::{
+        ngsild_warning::{LISTED_WARNING_BYTES, NgsiLdWarning, NgsiLdWarningHeader, VALUE_SEPARATOR_BYTES, WarnCode},
+        warn_text::WARN_TEXT_BYTES,
+    };
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     #[test]
     fn encode_single_warning() {
-        let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::MiscellaneousWarning("msg".to_string())]);
+        let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "msg".to_string())]);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);
@@ -194,8 +217,8 @@ mod tests {
     #[test]
     fn encode_multiple_warnings() {
         let header = NgsiLdWarningHeader::new(vec![
-            NgsiLdWarning::ResponseIsStale("cached".to_string()),
-            NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string()),
+            NgsiLdWarning::new(WarnCode::ResponseIsStale, "cached".to_string()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "forbidden".to_string()),
         ]);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
@@ -212,8 +235,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             warnings,
             vec![
-                NgsiLdWarning::MiscellaneousWarning("first".to_string()),
-                NgsiLdWarning::MiscellaneousPersistentWarning("second".to_string())
+                NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "first".to_string()),
+                NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "second".to_string())
             ]
         );
     }
@@ -223,7 +246,7 @@ mod tests {
         let val = HeaderValue::from_str("110 - \"cached\"").expect("valid");
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::ResponseIsStale("cached".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::new(WarnCode::ResponseIsStale, "cached".to_string())]);
     }
 
     #[test]
@@ -231,7 +254,7 @@ mod tests {
         let val = HeaderValue::from_str("111 - \"bad\"").expect("valid");
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::RevalidationFailed("bad".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::new(WarnCode::RevalidationFailed, "bad".to_string())]);
     }
 
     #[test]
@@ -239,7 +262,10 @@ mod tests {
         let val = HeaderValue::from_str("199 - \"timeout\"").expect("valid");
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousWarning("timeout".to_string())]);
+        pretty_assertions::assert_eq!(
+            header.0.as_slice(),
+            &[NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string())]
+        );
     }
 
     #[test]
@@ -247,16 +273,19 @@ mod tests {
         let val = HeaderValue::from_str("299 - \"forbidden\"").expect("valid");
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string())]);
+        pretty_assertions::assert_eq!(
+            header.0.as_slice(),
+            &[NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "forbidden".to_string())]
+        );
     }
 
     #[test]
     fn roundtrip_all_variants() {
         let original = NgsiLdWarningHeader::new(vec![
-            NgsiLdWarning::ResponseIsStale("stale".to_string()),
-            NgsiLdWarning::RevalidationFailed("invalid".to_string()),
-            NgsiLdWarning::MiscellaneousWarning("timeout".to_string()),
-            NgsiLdWarning::MiscellaneousPersistentWarning("error".to_string()),
+            NgsiLdWarning::new(WarnCode::ResponseIsStale, "stale".to_string()),
+            NgsiLdWarning::new(WarnCode::RevalidationFailed, "invalid".to_string()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "error".to_string()),
         ]);
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
@@ -269,25 +298,25 @@ mod tests {
 
     #[test]
     fn warning_header_format_miscellaneous() {
-        let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
+        let w = NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string());
         pretty_assertions::assert_eq!(w.to_string(), "199 - \"timeout\"");
     }
 
     #[test]
     fn warning_header_format_persistent() {
-        let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
+        let w = NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "403 Forbidden".to_string());
         pretty_assertions::assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
     }
 
     #[test]
     fn warning_header_format_response_is_stale() {
-        let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
+        let w = NgsiLdWarning::new(WarnCode::ResponseIsStale, "cached data".to_string());
         pretty_assertions::assert_eq!(w.to_string(), "110 - \"cached data\"");
     }
 
     #[test]
     fn warning_header_format_revalidation_failed() {
-        let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
+        let w = NgsiLdWarning::new(WarnCode::RevalidationFailed, "invalid JSON".to_string());
         pretty_assertions::assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
     }
 
@@ -298,8 +327,11 @@ mod tests {
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode multiple");
         pretty_assertions::assert_eq!(header.0.len(), 2);
-        pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout".to_string()));
-        pretty_assertions::assert_eq!(header.0[1], NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string()));
+        pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_string()));
+        pretty_assertions::assert_eq!(
+            header.0[1],
+            NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "forbidden".to_string())
+        );
     }
 
     #[test]
@@ -309,7 +341,10 @@ mod tests {
         let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.len(), 1);
-        pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
+        pretty_assertions::assert_eq!(
+            header.0[0],
+            NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout, retry later".to_string())
+        );
     }
 
     #[test]
@@ -326,9 +361,10 @@ mod tests {
     }
 
     fn unreachable_source(index: usize) -> NgsiLdWarning {
-        NgsiLdWarning::MiscellaneousWarning(format!(
-            "context source urn:ngsi-ld:ContextSourceRegistration:{index} did not respond: connection refused"
-        ))
+        NgsiLdWarning::new(
+            WarnCode::MiscellaneousWarning,
+            format!("context source urn:ngsi-ld:ContextSourceRegistration:{index} did not respond: connection refused"),
+        )
     }
 
     fn encoded(header: &NgsiLdWarningHeader) -> Vec<String> {
@@ -344,9 +380,9 @@ mod tests {
     #[test]
     fn warnings_within_the_budget_are_all_listed_in_order() {
         let warnings = vec![
-            NgsiLdWarning::MiscellaneousWarning("context source s1 did not respond".to_owned()),
-            NgsiLdWarning::MiscellaneousPersistentWarning("context source s2 returned 403".to_owned()),
-            NgsiLdWarning::ResponseIsStale("context source s3 answered from cache".to_owned()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "context source s1 did not respond".to_owned()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "context source s2 returned 403".to_owned()),
+            NgsiLdWarning::new(WarnCode::ResponseIsStale, "context source s3 answered from cache".to_owned()),
         ];
         let header = NgsiLdWarningHeader::new(warnings.clone()); // clone: the expectation outlives the consumed input
         pretty_assertions::assert_eq!(header.into_warnings(), warnings);
@@ -355,9 +391,9 @@ mod tests {
     #[test]
     fn exact_duplicates_are_listed_once() {
         let header = NgsiLdWarningHeader::new(vec![
-            NgsiLdWarning::MiscellaneousWarning("a".to_owned()),
-            NgsiLdWarning::MiscellaneousPersistentWarning("b".to_owned()),
-            NgsiLdWarning::MiscellaneousWarning("a".to_owned()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "a".to_owned()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "b".to_owned()),
+            NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "a".to_owned()),
         ]);
         pretty_assertions::assert_eq!(encoded(&header), ["199 - \"a\"", "299 - \"b\""]);
     }
@@ -380,8 +416,8 @@ mod tests {
     fn each_code_with_omitted_warnings_gets_its_own_summary() {
         let text = |index: usize| format!("context source urn:ngsi-ld:ContextSourceRegistration:{index:04} failed its forwarded query");
         let warnings: Vec<NgsiLdWarning> = (0..100)
-            .map(|index| NgsiLdWarning::MiscellaneousWarning(text(index)))
-            .chain((100..200).map(|index| NgsiLdWarning::MiscellaneousPersistentWarning(text(index))))
+            .map(|index| NgsiLdWarning::new(WarnCode::MiscellaneousWarning, text(index)))
+            .chain((100..200).map(|index| NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, text(index))))
             .collect();
         let values = encoded(&NgsiLdWarningHeader::new(warnings));
         let [listed @ .., first, second] = values.as_slice() else {
@@ -401,30 +437,36 @@ mod tests {
     fn a_code_seen_only_after_the_budget_is_spent_still_appears() {
         let warnings: Vec<NgsiLdWarning> = (0..200)
             .map(unreachable_source)
-            .chain(iter::once(NgsiLdWarning::RevalidationFailed("context source s answered garbage".to_owned())))
+            .chain(iter::once(NgsiLdWarning::new(
+                WarnCode::RevalidationFailed,
+                "context source s answered garbage".to_owned(),
+            )))
             .collect();
         let values = encoded(&NgsiLdWarningHeader::new(warnings));
         assert!(values.iter().any(|value| value == "111 - \"1 further warnings with this code are not listed\""));
     }
 
     #[test]
-    fn a_first_warning_larger_than_the_budget_is_summarised_not_dropped() {
-        let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::MiscellaneousPersistentWarning("x".repeat(3000))]);
-        pretty_assertions::assert_eq!(encoded(&header), ["299 - \"1 further warnings with this code are not listed\""]);
+    fn a_warning_longer_than_the_budget_is_listed_cut_to_the_text_bound() {
+        let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "x".repeat(3000))]);
+        let [value] = encoded(&header).try_into().expect("one listed warning");
+        pretty_assertions::assert_eq!(value, format!("299 - \"{}...\"", "x".repeat(WARN_TEXT_BYTES - 3)));
     }
 
     #[test]
     fn summaries_decode_with_their_codes() {
         let warnings: Vec<NgsiLdWarning> = (0..100)
             .map(unreachable_source)
-            .chain((0..100).map(|index| NgsiLdWarning::MiscellaneousPersistentWarning(format!("context source {index} returned HTTP 500"))))
+            .chain((0..100).map(|index| NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, format!("context source {index} returned HTTP 500"))))
             .collect();
         let mut values = Vec::new();
         NgsiLdWarningHeader::new(warnings).encode(&mut values);
         let decoded = NgsiLdWarningHeader::decode(&mut values.iter()).expect("should decode").into_warnings();
-        let [.., NgsiLdWarning::MiscellaneousWarning(_), NgsiLdWarning::MiscellaneousPersistentWarning(_)] = decoded.as_slice() else {
-            panic!("expected a 199 then a 299 summary, got {decoded:?}");
-        };
+        let codes: Vec<WarnCode> = decoded.iter().map(NgsiLdWarning::code).collect();
+        assert!(
+            codes.ends_with(&[WarnCode::MiscellaneousWarning, WarnCode::MiscellaneousPersistentWarning]),
+            "expected a 199 then a 299 summary, got {decoded:?}"
+        );
     }
 
     #[test]
@@ -433,5 +475,40 @@ mod tests {
         let value = HeaderValue::from_str(&combined).expect("valid header value");
         let decoded = NgsiLdWarningHeader::decode(&mut iter::once(&value)).expect("should decode");
         pretty_assertions::assert_eq!(decoded.into_warnings().len(), 300);
+    }
+
+    /// Clause 6.3.17 relays a source's own warnings; one whose text runs past
+    /// the bound is relayed cut, not whole.
+    #[test]
+    fn a_relayed_warning_is_cut_to_the_text_bound() {
+        let relayed = HeaderValue::from_str(&format!("299 - \"{}\"", "x".repeat(147_000))).expect("valid header value");
+        let [warning] = NgsiLdWarningHeader::decode(&mut iter::once(&relayed))
+            .expect("should decode")
+            .into_warnings()
+            .try_into()
+            .expect("one warning");
+        pretty_assertions::assert_eq!(warning.code(), WarnCode::MiscellaneousPersistentWarning);
+        pretty_assertions::assert_eq!(warning.text().quoted().to_string().len(), WARN_TEXT_BYTES);
+        pretty_assertions::assert_eq!(warning.to_string().len(), WARN_TEXT_BYTES + "299 - \"\"".len());
+    }
+
+    #[test]
+    fn a_text_with_quotes_and_non_ascii_encodes_as_a_header_value_and_decodes_back() {
+        let warning = NgsiLdWarning::new(WarnCode::RevalidationFailed, "source in Zürich said \"no\", twice");
+        let values = encoded(&NgsiLdWarningHeader::new(vec![warning]));
+        pretty_assertions::assert_eq!(values, [r#"111 - "source in Z%C3%BCrich said \"no\", twice""#]);
+        let value = HeaderValue::from_str(&values[0]).expect("valid header value");
+        let decoded = NgsiLdWarningHeader::decode(&mut iter::once(&value)).expect("should decode").into_warnings();
+        pretty_assertions::assert_eq!(
+            decoded,
+            [NgsiLdWarning::new(WarnCode::RevalidationFailed, "source in Z%C3%BCrich said \"no\", twice")]
+        );
+    }
+
+    #[test]
+    fn an_unknown_warn_code_is_not_read() {
+        let value = HeaderValue::from_str("214 - \"transformed\", 199 - \"timeout\"").expect("valid header value");
+        let decoded = NgsiLdWarningHeader::decode(&mut iter::once(&value)).expect("should decode").into_warnings();
+        pretty_assertions::assert_eq!(decoded, [NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout")]);
     }
 }

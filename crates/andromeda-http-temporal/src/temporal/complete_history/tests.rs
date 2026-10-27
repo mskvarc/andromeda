@@ -3,7 +3,7 @@ use crate::{
     test_history::held_history,
 };
 use andromeda_federation::outcome::ForwardedTemporalEntities;
-use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::WarnCode};
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
@@ -217,7 +217,7 @@ async fn an_exclusive_bound_that_would_leave_nothing_is_taken_inclusively_with_a
     let warnings = completeness.trim(&mut page, TimeProp::Observed);
     assert_eq!(page[0].instance_count(), 2, "{:?}", page[0]);
     assert!(
-        matches!(warnings.as_slice(), [NgsiLdWarning::MiscellaneousWarning(text)] if text.contains("urn:ngsi-ld:ContextSourceRegistration:1")),
+        matches!(warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed && warning.text().as_str().contains("urn:ngsi-ld:ContextSourceRegistration:1")),
         "{warnings:?}"
     );
     let reported = completeness.range(&page, TimeProp::Observed).expect("a partial response");

@@ -5,7 +5,7 @@ use crate::{
     source_continuation::SourceContinuation,
     temporal_answer_reading::ReadTemporalEntity,
 };
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
@@ -142,7 +142,7 @@ async fn an_invalid_temporal_entity_is_refused_with_a_warning() {
     .await;
     assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
     assert!(
-        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+        matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
         "{:?}",
         answer.warnings
     );
@@ -167,7 +167,7 @@ async fn a_payload_that_is_not_json_is_a_warning() {
     let answer = answered("<html>", ContextSpec::core_only(), &ContextSpec::core_only()).await;
     assert_eq!(answer.entities.len(), 0);
     assert!(
-        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+        matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
         "{:?}",
         answer.warnings
     );
@@ -238,7 +238,7 @@ async fn an_evolution_invalid_under_its_aliasing_context_is_refused_with_a_warni
     let answer = answered(&body.to_string(), context(&aliasing_terms()), &ContextSpec::core_only()).await;
     assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
     assert!(
-        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+        matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
         "{:?}",
         answer.warnings
     );
@@ -250,7 +250,7 @@ async fn an_evolution_invalid_under_its_aliasing_context_is_refused_with_a_warni
 /// `111 Revalidation Failed` warning while its sibling is kept.
 mod shapes {
     use crate::answered_temporal::tests::{answered, ids};
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_jsonld::context_spec::ContextSpec;
     use serde_json::{Value, json};
 
@@ -289,7 +289,7 @@ mod shapes {
             Verdict::Refused => {
                 pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
                 assert!(
-                    matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+                    matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
                     "{:?}",
                     answer.warnings
                 );

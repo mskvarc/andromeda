@@ -259,7 +259,7 @@ mod tests {
         received_fixture::iri,
         source_continuation::SourceContinuation,
     };
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -372,7 +372,7 @@ mod tests {
         .await;
         pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
         assert!(
-            matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+            matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
             "{:?}",
             answer.warnings
         );
@@ -384,7 +384,7 @@ mod tests {
         let answer = answered("<html>", ContextSpec::core_only()).await;
         pretty_assertions::assert_eq!(answer.entities.len(), 0);
         assert!(
-            matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+            matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
             "{:?}",
             answer.warnings
         );
@@ -481,7 +481,7 @@ mod tests {
     /// sibling is kept.
     mod shapes {
         use crate::answer_reading::tests::{answered, ids};
-        use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+        use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
         use andromeda_json_literal::JsonLiteral;
         use andromeda_jsonld::context_spec::ContextSpec;
 
@@ -515,7 +515,7 @@ mod tests {
                 Verdict::Refused => {
                     pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
                     assert!(
-                        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+                        matches!(answer.warnings.as_slice(), [warning] if warning.code() == WarnCode::RevalidationFailed),
                         "{:?}",
                         answer.warnings
                     );

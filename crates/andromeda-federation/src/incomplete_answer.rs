@@ -1,7 +1,7 @@
 //! The clause 6.3.17 warning of a source whose paged answer the walk could not read to its end.
 
 use crate::source_continuation::UnfollowableNext;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use thiserror::Error;
 
@@ -25,6 +25,21 @@ pub(crate) enum IncompleteReason<'a> {
     Unfollowable(&'a UnfollowableNext),
 }
 
+impl IncompleteReason<'_> {
+    /// The Table 6.3.17-1 code of the reason: every one of them follows a
+    /// response that arrived in time, so a later page answered 404 is an error
+    /// response (299) and anything else is a response that cannot be used
+    /// (111).
+    const fn code(&self) -> WarnCode {
+        match self {
+            IncompleteReason::NextPageGone => WarnCode::MiscellaneousPersistentWarning,
+            IncompleteReason::HistoryCutShort | IncompleteReason::PointedBack | IncompleteReason::EmptyPageWithNext | IncompleteReason::Unfollowable(_) => {
+                WarnCode::RevalidationFailed
+            }
+        }
+    }
+}
+
 /// The walk of a source's answer stopped before its end.
 #[derive(Debug, Error)]
 #[error("context source {registration} {reason}; its answer is incomplete")]
@@ -38,7 +53,7 @@ struct IncompleteAnswer<'a> {
 /// The clause 6.3.17 warning of a source whose answer the walk could not read
 /// to its end, for the `reason` it stopped.
 pub(crate) fn incomplete_answer(registration: &Identifier, reason: IncompleteReason<'_>) -> NgsiLdWarning {
-    NgsiLdWarning::MiscellaneousWarning(IncompleteAnswer { registration, reason }.to_string())
+    NgsiLdWarning::new(reason.code(), IncompleteAnswer { registration, reason })
 }
 
 /// The clause 6.3.17 warning of the source `registration` names, whose history

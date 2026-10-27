@@ -21,7 +21,7 @@ use crate::{
     source_read::SourceRead,
     term_resolver::TermResolver,
 };
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
@@ -37,7 +37,7 @@ use tracing::warn;
 
 /// A source answered the creation of an `EntityMap` with a body that is none.
 #[derive(Debug, Error)]
-#[error("context source {registration} returned an invalid EntityMap: {error}")]
+#[error("context source {registration} returned an invalid EntityMap")]
 struct InvalidEntityMap<'a> {
     /// The registration that answered.
     registration: &'a Identifier,
@@ -180,12 +180,12 @@ impl FederationService {
                         Err(error) => {
                             warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
                             let mut warnings = response.warnings;
-                            warnings.push(NgsiLdWarning::RevalidationFailed(
+                            warnings.push(NgsiLdWarning::new(
+                                WarnCode::RevalidationFailed,
                                 InvalidEntityMap {
                                     registration: &registration.id,
                                     error,
-                                }
-                                .to_string(),
+                                },
                             ));
                             (None, warnings)
                         }

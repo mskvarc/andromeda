@@ -144,7 +144,7 @@ mod tests {
         error::FederationError,
         outcome::{ForwardReadOutcome, ForwardedTemporalEntities, MatchedSources},
     };
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
@@ -171,8 +171,8 @@ mod tests {
         let id = uri("urn:ngsi-ld:Building:1");
         let outcome = ForwardReadOutcome {
             results: vec![
-                answer(vec![NgsiLdWarning::MiscellaneousWarning("timeout".to_owned())]),
-                answer(vec![NgsiLdWarning::RevalidationFailed("not NGSI-LD".to_owned())]),
+                answer(vec![NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "timeout".to_owned())]),
+                answer(vec![NgsiLdWarning::new(WarnCode::RevalidationFailed, "not NGSI-LD".to_owned())]),
             ],
             sources: MatchedSources::default(),
         };

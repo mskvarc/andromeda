@@ -381,7 +381,10 @@ mod tests {
     };
     use andromeda_configuration::schema::federation::FederationConfig;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::{
+        ngsild_warning::{NgsiLdWarning, WarnCode},
+        warn_text::WARN_TEXT_BYTES,
+    };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_ngsi_ld_model::{
@@ -424,8 +427,13 @@ mod tests {
     }
 
     fn service(registration: ContextSourceRegistration) -> FederationService {
+        service_over(Arc::new(FixedRegistrationStore::new(vec![registration])))
+    }
+
+    /// A walking service choosing among what `store` holds.
+    fn service_over(store: Arc<FixedRegistrationStore>) -> FederationService {
         FederationService::new(
-            Arc::new(FixedRegistrationStore::new(vec![registration])),
+            store,
             Arc::new(NoLocalEntities),
             JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
             ContextSourcePseudonym::new("walking-broker").expect("a valid alias"),
@@ -546,6 +554,13 @@ mod tests {
         outcome.results.iter().flat_map(|answer| answer.warnings.iter()).collect()
     }
 
+    /// Whether `outcome` carries a warning with `code` whose text holds `text`.
+    fn warned(outcome: &ForwardReadOutcome<ForwardedEntities>, code: WarnCode, text: &str) -> bool {
+        warnings(outcome)
+            .iter()
+            .any(|warning| warning.code() == code && warning.text().as_str().contains(text))
+    }
+
     fn numbered(range: Range<usize>) -> Vec<String> {
         range.map(|number| format!("urn:ngsi-ld:Vehicle:{number:04}")).collect()
     }
@@ -609,11 +624,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..4));
         pretty_assertions::assert_eq!(received(&source).await.len(), 2);
-        assert!(
-            warnings(&outcome).iter().any(|warning| warning.to_string().contains("already answered")),
-            "{:?}",
-            warnings(&outcome)
-        );
+        assert!(warned(&outcome, WarnCode::RevalidationFailed, "already answered"), "{:?}", warnings(&outcome));
     }
 
     /// An empty page that still points onward makes no progress, so the walk
@@ -637,11 +648,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
         pretty_assertions::assert_eq!(received(&source).await.len(), 2);
-        assert!(
-            warnings(&outcome).iter().any(|warning| warning.to_string().contains("empty page")),
-            "{:?}",
-            warnings(&outcome)
-        );
+        assert!(warned(&outcome, WarnCode::RevalidationFailed, "empty page"), "{:?}", warnings(&outcome));
     }
 
     /// Clause 6.3.17: a page that fails keeps what the earlier pages gathered
@@ -665,10 +672,82 @@ mod tests {
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
         assert!(
-            warnings(&outcome).iter().any(|warning| warning.to_string().contains("HTTP 500")),
+            warned(&outcome, WarnCode::MiscellaneousPersistentWarning, "HTTP 500"),
             "{:?}",
             warnings(&outcome)
         );
+    }
+
+    /// Table 6.3.17-1: a later page answered 404 is an error response from a
+    /// source that pointed at it, so the walk ends with a 299 and keeps what
+    /// the earlier pages gathered. Only a 404 for the whole answer is the
+    /// normal empty answer of clause 6.3.17.
+    #[tokio::test]
+    async fn a_next_page_the_source_no_longer_finds_ends_the_walk_with_a_persistent_warning() {
+        let source = source().await;
+        answer_in_turn(
+            &source,
+            "GET",
+            QUERY_PATH,
+            [page(0, 2, Some("/ngsi-ld/v1/entities?type=Vehicle&offset=2")), failure(StatusCode::NOT_FOUND)],
+        )
+        .await;
+        let service = service(registration(&source, &["queryEntity"]));
+
+        let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
+        let [warning] = warnings(&outcome).try_into().expect("one warning");
+        pretty_assertions::assert_eq!(warning.code(), WarnCode::MiscellaneousPersistentWarning);
+        assert!(warning.text().as_str().contains("no longer found the next page"), "{warning}");
+    }
+
+    /// A request this broker cannot build never reaches the source: its
+    /// warning says so without blaming the source, and nothing is recorded on
+    /// the registration, whose Table 5.2.9-2 counters count requests sent.
+    #[tokio::test]
+    async fn a_request_that_cannot_be_prepared_is_reported_without_blaming_the_source_and_not_recorded() {
+        let source = source().await;
+        answer_in_turn(&source, "GET", QUERY_PATH, [page(0, 2, None)]).await;
+        let mut unresolvable = registration(&source, &["queryEntity"]);
+        unresolvable.access.context_source_info = serde_json::from_value(json!([
+            {"key": "jsonldContext", "value": "http://contexts.invalid/never-fetched.jsonld"}
+        ]))
+        .expect("valid context source info");
+        let store = Arc::new(FixedRegistrationStore::new(vec![unresolvable]));
+        let service = service_over(Arc::clone(&store));
+
+        let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(gathered(&outcome), Vec::<String>::new());
+        pretty_assertions::assert_eq!(received(&source).await.len(), 0);
+        pretty_assertions::assert_eq!(store.recorded_outcomes(), 0);
+        let [warning] = warnings(&outcome).try_into().expect("one warning");
+        pretty_assertions::assert_eq!(warning.code(), WarnCode::MiscellaneousWarning);
+        assert!(warning.text().as_str().contains("could not be prepared and was not sent"), "{warning}");
+        assert!(!warning.text().as_str().contains("did not respond"), "{warning}");
+        assert!(!warning.text().as_str().contains("contexts.invalid"), "{warning}");
+    }
+
+    /// Clause 6.3.17 relays what a source reports about the sources behind it;
+    /// a relayed text past the bound arrives cut, so one source cannot grow the
+    /// response header without limit.
+    #[tokio::test]
+    async fn a_relayed_warning_is_cut_to_the_text_bound() {
+        let source = source().await;
+        let relayed = format!("299 - \"{}\"", "x".repeat(147_000));
+        answer_in_turn(&source, "GET", QUERY_PATH, [page(0, 1, None).insert_header("ngsild-warning", relayed.as_str())]).await;
+        let store = Arc::new(FixedRegistrationStore::new(vec![registration(&source, &["queryEntity"])]));
+        let service = service_over(Arc::clone(&store));
+
+        let outcome = walk(&service, QueryDelivery::Query, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..1));
+        pretty_assertions::assert_eq!(store.recorded_outcomes(), 1);
+        let [warning] = warnings(&outcome).try_into().expect("one warning");
+        pretty_assertions::assert_eq!(warning.code(), WarnCode::MiscellaneousPersistentWarning);
+        pretty_assertions::assert_eq!(warning.text().quoted().to_string().len(), WARN_TEXT_BYTES);
+        assert!(warning.text().as_str().ends_with("..."), "{warning}");
     }
 
     /// Clause 4.12: once the sources together gather more than the request's
@@ -731,8 +810,9 @@ mod tests {
 
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..2));
         pretty_assertions::assert_eq!(received(&source).await.len(), 1);
+        assert!(warned(&outcome, WarnCode::RevalidationFailed, "origin"), "{:?}", warnings(&outcome));
         assert!(
-            warnings(&outcome).iter().any(|warning| warning.to_string().contains("origin")),
+            !warnings(&outcome).iter().any(|warning| warning.text().as_str().contains("elsewhere.invalid")),
             "{:?}",
             warnings(&outcome)
         );
@@ -838,13 +918,11 @@ mod tests {
 
         let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
 
-        let warnings: Vec<String> = outcome
-            .results
-            .iter()
-            .flat_map(|answer| answer.warnings.iter().map(ToString::to_string))
-            .collect();
+        let warnings: Vec<&NgsiLdWarning> = outcome.results.iter().flat_map(|answer| answer.warnings.iter()).collect();
         assert!(
-            warnings.iter().any(|warning| warning.contains("without a readable Content-Range")),
+            warnings
+                .iter()
+                .any(|warning| warning.code() == WarnCode::RevalidationFailed && warning.text().as_str().contains("without a readable Content-Range")),
             "{warnings:?}"
         );
     }

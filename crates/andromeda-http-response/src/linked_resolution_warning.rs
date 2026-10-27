@@ -12,7 +12,7 @@
 //! no trace of which one it came from, so one mapping answers for both.
 
 use crate::linked_entity_unresolved::LinkedEntityUnresolved;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
 /// Append the warnings the unresolved Linked Entities call for (clause
@@ -24,13 +24,13 @@ pub fn with_linked_resolution_warnings(mut warnings: Vec<NgsiLdWarning>, failure
 
 /// The clause 6.3.17 warning one unresolved Linked Entity is reported as.
 fn linked_resolution_warning(failure: &LinkedResolutionFailure) -> NgsiLdWarning {
-    let detail = LinkedEntityUnresolved(failure).to_string();
-    match failure.kind {
-        LinkedResolutionFailureKind::StaleData => NgsiLdWarning::ResponseIsStale(detail),
-        LinkedResolutionFailureKind::UnusableResponse => NgsiLdWarning::RevalidationFailed(detail),
-        LinkedResolutionFailureKind::Unreachable => NgsiLdWarning::MiscellaneousWarning(detail),
-        LinkedResolutionFailureKind::Refused => NgsiLdWarning::MiscellaneousPersistentWarning(detail),
-    }
+    let code = match failure.kind {
+        LinkedResolutionFailureKind::StaleData => WarnCode::ResponseIsStale,
+        LinkedResolutionFailureKind::UnusableResponse => WarnCode::RevalidationFailed,
+        LinkedResolutionFailureKind::Unreachable => WarnCode::MiscellaneousWarning,
+        LinkedResolutionFailureKind::Refused => WarnCode::MiscellaneousPersistentWarning,
+    };
+    NgsiLdWarning::new(code, LinkedEntityUnresolved(failure))
 }
 
 #[cfg(test)]
@@ -40,7 +40,7 @@ fn linked_resolution_warning(failure: &LinkedResolutionFailure) -> NgsiLdWarning
 )]
 mod tests {
     use crate::linked_resolution_warning::with_linked_resolution_warnings;
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
@@ -60,21 +60,29 @@ mod tests {
         let expected = [
             (
                 LinkedResolutionFailureKind::StaleData,
-                NgsiLdWarning::ResponseIsStale("linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
+                NgsiLdWarning::new(
+                    WarnCode::ResponseIsStale,
+                    "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
+                ),
             ),
             (
                 LinkedResolutionFailureKind::UnusableResponse,
-                NgsiLdWarning::RevalidationFailed("linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned()),
+                NgsiLdWarning::new(
+                    WarnCode::RevalidationFailed,
+                    "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
+                ),
             ),
             (
                 LinkedResolutionFailureKind::Unreachable,
-                NgsiLdWarning::MiscellaneousWarning(
+                NgsiLdWarning::new(
+                    WarnCode::MiscellaneousWarning,
                     "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
                 ),
             ),
             (
                 LinkedResolutionFailureKind::Refused,
-                NgsiLdWarning::MiscellaneousPersistentWarning(
+                NgsiLdWarning::new(
+                    WarnCode::MiscellaneousPersistentWarning,
                     "linked entity urn:ngsi-ld:Building:1 could not be resolved: the context source did not respond".to_owned(),
                 ),
             ),
@@ -90,7 +98,7 @@ mod tests {
     /// happened.
     #[test]
     fn the_join_warnings_follow_the_forwarding_warnings() {
-        let existing = NgsiLdWarning::MiscellaneousWarning("Context source did not respond".to_owned());
+        let existing = NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "Context source did not respond".to_owned());
 
         let warnings = with_linked_resolution_warnings(vec![existing.clone()], &[failure(LinkedResolutionFailureKind::Refused)]); // clone: the expectation keeps its own copy
 

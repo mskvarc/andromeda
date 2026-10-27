@@ -23,7 +23,7 @@ use crate::temporal::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::split_entities::SplitEntities;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
@@ -122,7 +122,7 @@ async fn render_contributions(
     let warnings = rendering
         .warnings
         .into_iter()
-        .map(|warning| NgsiLdWarning::RevalidationFailed(warning.to_string()))
+        .map(|warning| NgsiLdWarning::new(WarnCode::RevalidationFailed, warning))
         .collect();
     Ok(Some((rendering.entities, warnings)))
 }

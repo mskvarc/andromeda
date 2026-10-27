@@ -41,12 +41,10 @@ pub(crate) enum UnfollowableNext {
         #[source]
         source: url::ParseError,
     },
-    /// The pointer leaves the origin of the registration's endpoint.
-    #[error("its next-page pointer `{target}` leaves the origin of the registered endpoint")]
-    ForeignOrigin {
-        /// The resolved pointer.
-        target: Box<Url>,
-    },
+    /// The pointer leaves the origin of the registration's endpoint. The
+    /// pointer is the source's own text and is not repeated.
+    #[error("its next-page pointer leaves the origin of the registered endpoint")]
+    ForeignOrigin,
 }
 
 impl SourceContinuation {
@@ -59,7 +57,7 @@ impl SourceContinuation {
         };
         match answered.join(next.as_str()) {
             Ok(resolved) if resolved.origin() == endpoint.origin() => SourceContinuation::Next(Box::new(resolved)),
-            Ok(resolved) => SourceContinuation::Unfollowable(UnfollowableNext::ForeignOrigin { target: Box::new(resolved) }),
+            Ok(_) => SourceContinuation::Unfollowable(UnfollowableNext::ForeignOrigin),
             Err(source) => SourceContinuation::Unfollowable(UnfollowableNext::Unresolvable { source }),
         }
     }
@@ -126,7 +124,7 @@ mod tests {
         ] {
             let continuation = SourceContinuation::of(Some(&reference(foreign)), &answered, &url("http://peer:1026"));
             assert!(
-                matches!(continuation, SourceContinuation::Unfollowable(UnfollowableNext::ForeignOrigin { .. })),
+                matches!(continuation, SourceContinuation::Unfollowable(UnfollowableNext::ForeignOrigin)),
                 "{foreign}: {continuation:?}"
             );
         }

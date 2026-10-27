@@ -106,7 +106,7 @@ impl IntoResponse for ProblemResponse {
 #[cfg(test)]
 mod tests {
     use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
         body::{Body, to_bytes},
@@ -166,7 +166,10 @@ mod tests {
     async fn a_problem_response_carries_its_distributed_warnings_as_headers() -> Result<(), serde_json::Error> {
         let response = ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing")
             .with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"))
-            .with_warnings(vec![NgsiLdWarning::MiscellaneousWarning("registration loop detected".to_string())]);
+            .with_warnings(vec![NgsiLdWarning::new(
+                WarnCode::MiscellaneousWarning,
+                "registration loop detected".to_string(),
+            )]);
         let (response, _) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         pretty_assertions::assert_eq!(

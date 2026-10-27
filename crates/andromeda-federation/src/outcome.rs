@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, tem
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
+use tracing::warn;
 
 /// Why no HTTP response was obtained from a context source.
 ///
@@ -120,20 +121,20 @@ impl ForwardGetOutcome {
     }
 
     /// The clause 6.3.17 warning a failed GET contributes, if any: a 404 is not
-    /// abnormal and contributes none.
+    /// abnormal and contributes none. A request this broker could not prepare
+    /// is reported without its cause, which is logged instead.
     pub(crate) fn warning(&self, registration: &Identifier) -> Option<NgsiLdWarning> {
-        match self {
-            ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => None,
-            ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(
-                SourceReadWarning::ErrorStatus { registration, status: *status }.to_string(),
-            )),
-            ForwardGetOutcome::Transport(failure) => Some(NgsiLdWarning::MiscellaneousWarning(
-                SourceReadWarning::Transport { registration, failure }.to_string(),
-            )),
-            ForwardGetOutcome::LoopDetected => Some(NgsiLdWarning::MiscellaneousWarning(
-                SourceReadWarning::LoopDetected { registration }.to_string(),
-            )),
-        }
+        let warning = match self {
+            ForwardGetOutcome::Success(_) | ForwardGetOutcome::NotFound(_) => return None,
+            ForwardGetOutcome::ErrorStatus(status) => SourceReadWarning::ErrorStatus { registration, status: *status },
+            ForwardGetOutcome::Transport(TransportFailure::Unprepared(error)) => {
+                warn!(%registration, %error, "the request forwarded to a context source could not be prepared");
+                SourceReadWarning::Unprepared { registration }
+            }
+            ForwardGetOutcome::Transport(failure) => SourceReadWarning::Transport { registration, failure },
+            ForwardGetOutcome::LoopDetected => SourceReadWarning::LoopDetected { registration },
+        };
+        Some(warning.into_warning())
     }
 }
 

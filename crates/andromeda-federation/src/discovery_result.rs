@@ -292,7 +292,7 @@ fn merge_attribute_info(held: &mut AttributeInfo, record: AttributeInfo) {
 )]
 mod tests {
     use crate::{discovery_result::Discovered, fixed_registration_store::offline_service, outcome::ForwardedDiscoveryResult};
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
@@ -382,10 +382,11 @@ mod tests {
         let local = json!({"id": "urn:ngsi-ld:EntityTypeList:1", "type": "EntityTypeList", "typeList": ["Vehicle"]});
         let (merged, warnings) = merged(local, vec![answer(&json!({"typeList": 5}), ContextSpec::core_only())], types).await;
         pretty_assertions::assert_eq!(merged["typeList"], json!(["Vehicle"]));
-        let [NgsiLdWarning::RevalidationFailed(detail)] = warnings.as_slice() else {
+        let [warning] = warnings.as_slice() else {
             panic!("one warning: {warnings:?}");
         };
-        assert!(detail.contains("urn:ngsi-ld:ContextSourceRegistration:1"), "{detail}");
+        pretty_assertions::assert_eq!(warning.code(), WarnCode::RevalidationFailed);
+        assert!(warning.text().as_str().contains("urn:ngsi-ld:ContextSourceRegistration:1"), "{warning}");
     }
 
     /// A type a source spells under its own context merges with the local
