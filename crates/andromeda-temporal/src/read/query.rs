@@ -24,10 +24,7 @@ use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Id
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
-    temporal::{
-        compiled::CompiledTemporalQuery,
-        contributed_entities::{ContributedEntities, ContributedRendering},
-    },
+    temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
@@ -57,8 +54,8 @@ impl TemporalService {
     /// `contributed` names the entities a Context Source contributed a part of
     /// to a split query (clause 5.7.4.4): they are exempt from the value, geo
     /// and scope filters here, and their parts are judged together by
-    /// [`TemporalService::settle_split_filters`]. One whose rendering is
-    /// [`ContributedRendering::Merged`] is selected but not rendered.
+    /// [`TemporalService::settle_split_filters`]. One the response renders
+    /// from its merged instances is selected but not rendered here.
     pub async fn query(
         &self,
         target: &ContextTarget,
@@ -76,7 +73,6 @@ impl TemporalService {
             let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
             compiled.contributed = contributed;
             let compiled = compiled;
-            let contributed_reading = ContributedReading::of(&compiled);
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -90,7 +86,10 @@ impl TemporalService {
                 total: total_count,
             } = self.reader.query_entity_ids(&scope, &compiled, &read_window, count).await?;
             let (entity_ids, reach) = window.settle(entity_ids);
-            let entity_ids: Vec<Identifier> = entity_ids.into_iter().filter(|entity_id| contributed_reading.renders(entity_id)).collect();
+            let entity_ids: Vec<Identifier> = entity_ids
+                .into_iter()
+                .filter(|entity_id| compiled.contributed.renders_locally(entity_id))
+                .collect();
 
             // One batch read of the temporal catalogue, which owns the entity types
             // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
@@ -102,10 +101,10 @@ impl TemporalService {
             let compactor = EntityCompactor::new(&compactor);
             let mut warnings = Vec::new();
             let rendered = if compiled.representation.format.is_aggregated() {
-                self.render_aggregated_pages(&scope, entity_ids, &contributed_reading, &entity_types_map, &compactor, &mut warnings)
+                self.render_aggregated_pages(&scope, entity_ids, &compiled, &entity_types_map, &compactor, &mut warnings)
                     .await?
             } else {
-                self.render_instance_pages(&scope, entity_ids, &contributed_reading, &entity_types_map, &mut warnings)
+                self.render_instance_pages(&scope, entity_ids, &compiled, &entity_types_map, &mut warnings)
                     .await?
             };
 
@@ -175,23 +174,23 @@ impl TemporalService {
         &self,
         scope: &TemporalReadScope<'_>,
         entity_ids: Vec<Identifier>,
-        reading: &ContributedReading<'_>,
+        compiled: &CompiledTemporalQuery,
         entity_types_map: &HashMap<Identifier, Vec<EntityTypeName>>,
         compactor: &EntityCompactor<'_>,
         warnings: &mut Vec<TemporalQueryWarning>,
     ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
         let mut pages = Vec::with_capacity(entity_ids.len());
         for entity_id in entity_ids {
-            match self.read_aggregation_page(scope, &entity_id, reading.query_for(&entity_id)).await {
+            match self.read_aggregation_page(scope, &entity_id, compiled).await {
                 Ok(page) => pages.push(page),
                 Err(error) => {
                     settle_entity(entity_id, Err(error), warnings)?;
                 }
             }
         }
-        let cut = settle_aggregation_pages(reading.compiled, &mut pages);
+        let cut = settle_aggregation_pages(compiled, &mut pages);
         let rendering = AggregationRendering {
-            compiled: reading.compiled,
+            compiled,
             names: compactor.names().await?,
             max_groups: self.limits.aggregation_grouping_max_groups,
             cut,
@@ -222,73 +221,29 @@ impl TemporalService {
         &self,
         scope: &TemporalReadScope<'_>,
         entity_ids: Vec<Identifier>,
-        reading: &ContributedReading<'_>,
+        compiled: &CompiledTemporalQuery,
         entity_types_map: &HashMap<Identifier, Vec<EntityTypeName>>,
         warnings: &mut Vec<TemporalQueryWarning>,
     ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
         let mut pages = Vec::with_capacity(entity_ids.len());
         for entity_id in entity_ids {
-            match self.read_history_page(scope, &entity_id, reading.query_for(&entity_id)).await {
+            match self.read_history_page(scope, &entity_id, compiled).await {
                 Ok(page) => pages.push(page),
                 Err(error) => {
                     settle_entity(entity_id, Err(error), warnings)?;
                 }
             }
         }
-        let cut = self.common_page_cut(reading.compiled, &pages)?;
+        let cut = self.common_page_cut(compiled, &pages)?;
         let mut rendered = Vec::with_capacity(pages.len());
         for page in pages {
             let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
             // clone: a render failure names the entity the page was consumed for.
             let entity_id = page.entity_id.clone();
-            let outcome = render_history_page(page, entity_types, reading.compiled, cut);
+            let outcome = render_history_page(page, entity_types, compiled, cut);
             rendered.extend(settle_entity(entity_id, outcome, warnings)?);
         }
         Ok(rendered)
-    }
-}
-
-/// How stage two reads an entity a Context Source contributed a part of.
-struct ContributedReading<'q> {
-    /// The query every other entity is read with.
-    compiled: &'q CompiledTemporalQuery,
-    /// The query a contributed entity is read with: the scope query cleared,
-    /// when the query carries one and some entity was contributed.
-    scope_unbounded: Option<CompiledTemporalQuery>,
-}
-
-impl<'q> ContributedReading<'q> {
-    /// The readings of `compiled`.
-    ///
-    /// Annex C clause C.5.16 admits an instance only while the scope query
-    /// held, and the Scope events of a contributed entity may be held by a
-    /// source, so the local events alone cannot bound its instances: they are
-    /// read unbounded by scope, and the gathered entity is judged on its
-    /// gathered Scope instead (clause 5.7.4.4).
-    fn of(compiled: &'q CompiledTemporalQuery) -> ContributedReading<'q> {
-        let scope_unbounded = (!compiled.contributed.is_empty() && compiled.entities.scope_q.is_some()).then(|| {
-            let mut unbounded = compiled.clone(); // clone: the contributed entities read a variant of the query the others read
-            unbounded.entities.scope_q = None;
-            unbounded
-        });
-        ContributedReading { compiled, scope_unbounded }
-    }
-
-    /// The query `entity_id` is read with in stage two.
-    fn query_for(&self, entity_id: &Identifier) -> &CompiledTemporalQuery {
-        match &self.scope_unbounded {
-            Some(unbounded) if self.compiled.contributed.contains(entity_id) => unbounded,
-            Some(_) | None => self.compiled,
-        }
-    }
-
-    /// Whether the local read renders `entity_id`: every entity, except a
-    /// contributed one rendered from its merged instances instead.
-    fn renders(&self, entity_id: &Identifier) -> bool {
-        match self.compiled.contributed.rendering() {
-            ContributedRendering::Local => true,
-            ContributedRendering::Merged => !self.compiled.contributed.contains(entity_id),
-        }
     }
 }
 

@@ -5,8 +5,7 @@
 //! all is not selected (`ProjectedMembers`). What the temporal representation of
 //! an Entity carries is decided by the steps of clause 5.7.4.4 that precede the
 //! projection: the window and the `attrs` of step S1 and the `datasetId` of step
-//! S8, together with the clause 4.18 validity a `scopeQ` bounds the instances
-//! by. So the Attribute half of the criterion asks whether any instance stage 2
+//! S8. So the Attribute half of the criterion asks whether any instance stage 2
 //! would represent belongs to an Attribute the projection keeps, reusing the
 //! very filter stage 2 reads its rows with; and the `scope` half, when the
 //! projection keeps `scope`, whether any scope event stage 2 would represent
@@ -60,7 +59,7 @@ fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuer
     probe
         .expr(int_literal(1))
         .from(attribute_rows(branch, &of_selected_entity(), Ah))
-        .cond_where(represented_instances(branch, &of_selected_entity(), compiled, names))
+        .cond_where(represented_instances(compiled, names))
         .cond_where(kept_names);
     probe.take()
 }

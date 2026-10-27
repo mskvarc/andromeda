@@ -63,10 +63,14 @@ impl ContributedEntities {
         &self.ids
     }
 
-    /// How the local read renders a contributed entity.
+    /// Whether the local read renders the entity `id`: every entity, except a
+    /// contributed one rendered from its merged instances instead.
     #[must_use]
-    pub const fn rendering(&self) -> ContributedRendering {
-        self.rendering
+    pub fn renders_locally(&self, id: &Identifier) -> bool {
+        match self.rendering {
+            ContributedRendering::Local => true,
+            ContributedRendering::Merged => !self.contains(id),
+        }
     }
 }
 
@@ -88,7 +92,13 @@ mod tests {
         let contributed = ContributedEntities::default();
         assert!(contributed.is_empty());
         assert!(!contributed.contains(&id("urn:ngsi-ld:Vehicle:1")));
-        pretty_assertions::assert_eq!(contributed.rendering(), ContributedRendering::Local);
+        assert!(contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:1")));
+    }
+
+    #[test]
+    fn a_locally_rendered_contribution_is_rendered_by_the_local_read() {
+        let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1")], ContributedRendering::Local);
+        assert!(contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:1")));
     }
 
     #[test]
@@ -101,6 +111,7 @@ mod tests {
         assert!(contributed.contains(&id("urn:ngsi-ld:Vehicle:2")));
         assert!(!contributed.contains(&id("urn:ngsi-ld:Vehicle:3")));
         pretty_assertions::assert_eq!(contributed.as_slice(), &[id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")]);
-        pretty_assertions::assert_eq!(contributed.rendering(), ContributedRendering::Merged);
+        assert!(!contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:1")));
+        assert!(contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:3")));
     }
 }

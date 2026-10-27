@@ -42,12 +42,10 @@ impl TemporalService {
     /// Render each of `parts`' entities with the aggregates of its local
     /// instances and the instances the sources answered for it.
     ///
-    /// The scope query does not bound the instances here: the Scope events of
-    /// a contributed entity may be held by a source, and the filters were
-    /// decided over its gathered parts already (Annex C clause C.5.16, clause
-    /// 5.7.4.4). Nor does a page: the aggregate is over every part together,
-    /// so each entity is aggregated over its whole window, or the `lastN` it
-    /// asks for, and the response's common bound is applied to the merge.
+    /// A page does not bound the instances here: the aggregate is over every
+    /// part together, so each entity is aggregated over its whole window, or
+    /// the `lastN` it asks for, and the response's common bound is applied to
+    /// the merge.
     ///
     /// The request's terms and `q` target languages are read as `reading`
     /// says.
@@ -67,7 +65,6 @@ impl TemporalService {
     ) -> Result<MergedRendering, TemporalError> {
         let QueryReading { context, language_targeting } = reading;
         let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
-        compiled.entities.scope_q = None;
         compiled.instances.page = compiled.instances.page.unpaged();
         let compiled = compiled;
         let entity_ids: Vec<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the catalogue read takes the identifiers by value

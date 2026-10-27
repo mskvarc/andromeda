@@ -26,7 +26,6 @@ use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
     dictionary::query_names::QueryNames,
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
-    scope_intervals::held_at,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, postgis::st_as_ewkb};
@@ -44,7 +43,7 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
     // among the same represented instances, so none can reach a row the others
     // cannot.
     let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
-    let condition = represented_instances(branch, &of, compiled, names);
+    let condition = represented_instances(compiled, names);
     match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
@@ -53,9 +52,9 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
     }
 }
 
-/// The Attribute instances the temporal representation of the entity `of`
-/// names carries, over the rows of [`base_history_source`]: stage 2 reads
-/// them, and stage 1 asks whether a projection leaves an entity any of them.
+/// The Attribute instances the temporal representation of an entity carries,
+/// over the rows of [`base_history_source`]: stage 2 reads them, and stage 1
+/// asks whether a projection leaves an entity any of them.
 ///
 /// Clause 5.2.21: an instance is placed on the requested axis by the column that
 /// holds it, and an instance that holds no instant there is represented by no
@@ -67,7 +66,7 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
 /// `deletedAt` exists only on a row that records a deletion, so asking for that
 /// axis asks for those rows and no others; the deletion is recognised by the
 /// axis itself rather than by a sentinel value.
-pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
+pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
     let axis = axis_column(compiled.window.timeproperty);
     let mut condition = Condition::all().add(Expr::col((Ah, axis)).is_not_null());
 
@@ -98,18 +97,10 @@ pub(crate) fn represented_instances(branch: &HistoryBranch, of: &HistoryOf, comp
         &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
     ));
 
-    // Annex C, clause C.5.16 closes with "Vehicle A8311 only entered the Scope
-    // within the request interval. Thus in the latter case only Property values
-    // are included that have been observed after the Scope has become valid."
-    // A Scope query therefore bounds the instances as well as selecting the
-    // Entity: an instance is admitted only while the query held at the instant
-    // the instance is positioned on, which clause 4.18 answers from the scope
-    // event in force there. The query is judged over the Entity's scope
-    // intervals once, so an instance costs a lookup among them.
-    if let Some(scope_q) = &compiled.entities.scope_q {
-        condition = condition.add(held_at(scope_q, of, compiled.window.timeproperty, Expr::col((Ah, axis)), branch));
-    }
-
+    // A Scope query selects Entities only (clauses 4.19 and 5.7.4.4 step S4):
+    // the last step of clause 5.7.4.4 keeps the instances that meet "the
+    // temporal, query and geoquery restrictions", so a selected Entity keeps
+    // every in-window instance whatever Scope held when it was observed.
     condition
 }
 
@@ -459,30 +450,22 @@ mod tests {
         assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "{sql}");
     }
 
-    /// Annex C clause C.5.16 bounds the instances by the Scope in force at each
-    /// of them, which the statement reads as the Entity's scope intervals,
-    /// judged once for the Entity it names, rather than as a probe per
-    /// instance. The recorded events are read once; the other reads of
-    /// `scope_history` judge a queued Scope assertion, two axes each read for
-    /// the head and for its state.
+    /// Clause 5.7.4.4 keeps the instances that meet the temporal, query and
+    /// geoquery restrictions, so a Scope query, which stage 1 applies to
+    /// select the Entity, leaves the instances of the Entity whole on every
+    /// axis.
     #[test]
-    fn a_temporal_scope_q_reads_the_scope_intervals_once_per_entity() {
-        let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
-        let sql = sql_of(&compiled);
-        assert_eq!(sql.matches(r#"FROM "scope_history" AS "rsh""#).count(), 1, "{sql}");
-        assert_eq!(sql.matches(r#"FROM "scope_history" AS "pj""#).count(), 4, "{sql}");
-        assert!(!sql.contains("sh_next"), "{sql}");
-        assert!(
-            sql.contains(
-                r#""scope_intervals"."starts" <= "ah"."observed_at" AND ("scope_intervals"."ends" IS NULL OR "ah"."observed_at" < "scope_intervals"."ends")"#
-            ),
-            "{sql}"
-        );
-        assert!(
-            !sql.contains(r#""re"."id" = "ah"."entity_id""#),
-            "the intervals do not follow the instance: {sql}"
-        );
+    fn a_temporal_scope_q_leaves_the_instances_of_a_selected_entity_whole() {
+        for axis in [TimeProp::Observed, TimeProp::Modified] {
+            let mut scoped = minimal_compiled();
+            scoped.window.timeproperty = axis;
+            scoped.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+            let mut unscoped = minimal_compiled();
+            unscoped.window.timeproperty = axis;
+            let sql = sql_of(&scoped);
+            assert_eq!(sql, sql_of(&unscoped), "{axis}");
+            assert!(!sql.contains("scope_history"), "{axis}: {sql}");
+        }
     }
 
     /// Clause 5.7.3: the evolution of one entity on the live branch is its

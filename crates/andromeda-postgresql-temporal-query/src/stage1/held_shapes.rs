@@ -4,11 +4,10 @@
 //! Clause 5.7.4.4 refuses an aggregated representation when a requested
 //! Attribute of the selected Entities is not eligible for a requested method,
 //! and the representation aggregates only the instances inside the temporal
-//! window on its axis, of the datasets `datasetId` names (step S8) and, under a
-//! Scope query, those it held at (annex C clause C.5.16). The statement looks
-//! for each combination among exactly those instances, through the predicate
-//! the aggregation statement reads them with, and stops at the first instance
-//! carrying it.
+//! window on its axis and of the datasets `datasetId` names (step S8). The
+//! statement looks for each combination among exactly those instances, through
+//! the predicate the aggregation statement reads them with, and stops at the
+//! first instance carrying it.
 //!
 //! A query looks among the Entities stage 1 selects, unpaginated, so a page
 //! never answers what another page of the same request refuses. The selection
@@ -166,7 +165,7 @@ fn carrying_instance(
     instance.expr(int_literal(1));
     instance
         .from(attribute_rows(branch, of, Ah))
-        .cond_where(represented_instances(branch, of, compiled, names))
+        .cond_where(represented_instances(compiled, names))
         .and_where(Expr::col((Ah, HistoryGrain::AttributeNameKey)).eq(combination.attribute.get()))
         .and_where(Expr::col((Ah, AttributeHistory::AttributeKind)).eq(combination.kind.code()))
         .and_where(carries_a_value(Ah))

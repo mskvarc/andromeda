@@ -17,8 +17,8 @@
 //!
 //! Scope history is not dropped by age. Clause 4.18 keeps a Scope valid "from
 //! the time it has been set until the time it has been explicitly removed", so
-//! the event that set the Scope in force at the cutoff is part of the meaning
-//! of every attribute instance kept after it, however old the event is. The
+//! the event that set the Scope in force at the cutoff decides which Entities
+//! a `scopeQ` selects over any window after it, however old the event is. The
 //! sweep deletes only the events superseded at or before the cutoff on both
 //! the `recorded_at` and the `observedAt` axis, which keeps per Entity the
 //! state in force at the cutoff on each; `createdAt` and `modifiedAt` order
@@ -287,10 +287,10 @@ fn superseded_scope_events(cutoff: DateTime<Utc>) -> DeleteStatement {
 /// Delete the Scope events of a temporal entity no stream is left of, once
 /// every one of them was recorded before `cutoff`.
 ///
-/// A Scope only qualifies the attribute instances observed under it (annex C
-/// clause C.5.16), so with the Entity's attribute history gone its Scope
-/// history qualifies nothing; an Entity whose Scope changed after the cutoff
-/// keeps it until that change is behind the horizon as well.
+/// A temporal query selects an Entity only by its attribute instances in the
+/// window (clause 5.7.4.4 step S1), so with the Entity's attribute history
+/// gone its Scope history selects nothing; an Entity whose Scope changed
+/// after the cutoff keeps it until that change is behind the horizon as well.
 fn streamless_scope_events(cutoff: DateTime<Utc>) -> DeleteStatement {
     let stream = Query::select()
         .expr(Expr::val(1))
@@ -391,10 +391,11 @@ mod tests {
         assert!(!sql.contains("observed_at"), "{sql}");
     }
 
-    /// Clause 4.18: the Scope in force at the cutoff qualifies every instance
-    /// kept after it, so an event goes only when a later one of its Entity
-    /// falls at or before the cutoff on the write clock and on `observedAt`
-    /// alike; the newest event at or before the cutoff on either axis stays.
+    /// Clause 4.18: the Scope in force at the cutoff decides every `scopeQ`
+    /// over a window after it, so an event goes only when a later one of its
+    /// Entity falls at or before the cutoff on the write clock and on
+    /// `observedAt` alike; the newest event at or before the cutoff on either
+    /// axis stays.
     #[test]
     fn retention_keeps_the_scope_state_in_force_at_the_cutoff_on_every_axis() {
         let cutoff = now().expect("a fixed instant");
@@ -415,9 +416,9 @@ mod tests {
         assert!(!sql.contains("drop_chunks"), "{sql}");
     }
 
-    /// Annex C clause C.5.16: a Scope qualifies the instances observed under
-    /// it, so an Entity left with no stream loses its Scope events once all
-    /// of them are behind the cutoff.
+    /// Clause 5.7.4.4 step S1: an Entity with no attribute instance is
+    /// selected by no temporal query, so an Entity left with no stream loses
+    /// its Scope events once all of them are behind the cutoff.
     #[test]
     fn an_entity_whose_streams_are_all_gone_loses_its_scope_rows_too() {
         let cutoff = now().expect("a fixed instant");
