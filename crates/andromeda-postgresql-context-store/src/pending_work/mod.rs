@@ -97,73 +97,81 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
             .await
             .map_err(|error| Self::classify(&error, database))?;
 
-        let earliest = self.earliest_over(&pool, database).await;
+        let earliest = Self::earliest_over(&pool, database).await;
         pool.close().await;
         earliest
     }
 }
 
 impl PostgresPendingWorkProbe {
-    /// Classify a read that named a relation the database does not hold: an
-    /// unmigrated schema when the schema contract finds the database behind
-    /// this broker's, a genuine fault otherwise.
+    /// Read the earliest obligation over the transient pool once the schema
+    /// contract shows the database migrated, classifying a failure the way the
+    /// wake loop needs it.
     ///
-    /// A database a provisioning has created and not yet migrated holds none of
-    /// the relations the probe reads, so it fails here. A schema-state read
-    /// that fails as well leaves the probe's own failure to report.
-    async fn classify_undefined_relation(pool: &sqlx::PgPool, error: &sqlx::Error, database: &TenantDatabaseName) -> PendingWorkError {
-        match tenant_schema_state(pool).await {
-            Ok(TenantSchemaState::NeedsMigration) => PendingWorkError::Unmigrated {
-                database: database.clone(), // clone: the error outlives this borrow
-            },
-            Ok(TenantSchemaState::Current) | Err(_) => Self::classify(error, database),
-        }
+    /// The schema state is read first because a provisioning commits the
+    /// tenant's row before it migrates the database: until the migrator stamps
+    /// the contract, the relations the obligation read names are missing or
+    /// still being created, and the read would fail or wait on the migration's
+    /// locks.
+    async fn earliest_over(pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+        let state = tenant_schema_state(pool).await.map_err(|error| Self::classify_store_error(error, database))?;
+        readable(state, database)?;
+        earliest_obligation(pool)
+            .await
+            .map(|due| due.map_or(PendingWork::None, PendingWork::DueAt))
+            .map_err(|error| Self::classify_store_error(error, database))
     }
 
-    /// Read the earliest obligation over the transient pool, classifying a
-    /// failure the way the wake loop needs it.
-    async fn earliest_over(&self, pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        match earliest_obligation(pool).await {
-            Ok(due) => Ok(due.map_or(PendingWork::None, PendingWork::DueAt)),
-            Err(ContextStoreError::Saturated) => Err(PendingWorkError::Saturated {
+    /// Classify a store failure the probe hit as saturation, a gone database,
+    /// or a genuine fault.
+    fn classify_store_error(error: ContextStoreError, database: &TenantDatabaseName) -> PendingWorkError {
+        match error {
+            ContextStoreError::Saturated => PendingWorkError::Saturated {
                 database: database.clone(), // clone: the error outlives this borrow
-            }),
-            Err(ContextStoreError::Database(error)) if SqlState::of(&error) == Some(SqlState::UndefinedTable) => {
-                Err(Self::classify_undefined_relation(pool, &error, database).await)
-            }
-            Err(ContextStoreError::Database(error)) => Err(Self::classify(&error, database)),
-            Err(
-                error @ (ContextStoreError::SchemaContract(_)
-                | ContextStoreError::UniqueViolation(_)
-                | ContextStoreError::InvalidRegex(_)
-                | ContextStoreError::Encoding(_)
-                | ContextStoreError::Collation(_)
-                | ContextStoreError::CopyField(_)
-                | ContextStoreError::Render(_)
-                | ContextStoreError::NameLookup(_)
-                | ContextStoreError::EntityTypes(_)
-                | ContextStoreError::ContextMapper(_)
-                | ContextStoreError::Migration(_)
-                | ContextStoreError::BranchVersion(_)
-                | ContextStoreError::StatementBuild(_)
-                | ContextStoreError::ChangeEventRecord(_)
-                | ContextStoreError::StateRecord(_)
-                | ContextStoreError::OrdinalOutOfRange(_)
-                | ContextStoreError::StoredRegistration(_)
-                | ContextStoreError::StoredSubscription(_)
-                | ContextStoreError::StoredSnapshot(_)
-                | ContextStoreError::UnencodableSnapshot(_)
-                | ContextStoreError::StoredEntity(_)
-                | ContextStoreError::StoredEntityMap(_)
-                | ContextStoreError::StoredTenantStatus(_)
-                | ContextStoreError::CatalogueIdentityGeneration(_)
-                | ContextStoreError::Invariant(_)
-                | ContextStoreError::DatabaseUrlUnnamed),
-            ) => Err(PendingWorkError::ProbeFailed {
+            },
+            ContextStoreError::Database(error) => Self::classify(&error, database),
+            error @ (ContextStoreError::SchemaContract(_)
+            | ContextStoreError::UniqueViolation(_)
+            | ContextStoreError::InvalidRegex(_)
+            | ContextStoreError::Encoding(_)
+            | ContextStoreError::Collation(_)
+            | ContextStoreError::CopyField(_)
+            | ContextStoreError::Render(_)
+            | ContextStoreError::NameLookup(_)
+            | ContextStoreError::EntityTypes(_)
+            | ContextStoreError::ContextMapper(_)
+            | ContextStoreError::Migration(_)
+            | ContextStoreError::BranchVersion(_)
+            | ContextStoreError::StatementBuild(_)
+            | ContextStoreError::ChangeEventRecord(_)
+            | ContextStoreError::StateRecord(_)
+            | ContextStoreError::OrdinalOutOfRange(_)
+            | ContextStoreError::StoredRegistration(_)
+            | ContextStoreError::StoredSubscription(_)
+            | ContextStoreError::StoredSnapshot(_)
+            | ContextStoreError::UnencodableSnapshot(_)
+            | ContextStoreError::StoredEntity(_)
+            | ContextStoreError::StoredEntityMap(_)
+            | ContextStoreError::StoredTenantStatus(_)
+            | ContextStoreError::CatalogueIdentityGeneration(_)
+            | ContextStoreError::Invariant(_)
+            | ContextStoreError::DatabaseUrlUnnamed) => PendingWorkError::ProbeFailed {
                 database: database.clone(), // clone: the error outlives this borrow
                 cause: persistence_failure(&error),
-            }),
+            },
         }
+    }
+}
+
+/// Whether the probe may read obligations from a database whose schema is in
+/// `state`: only a schema at this broker's contract holds the relations it
+/// reads.
+fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(), PendingWorkError> {
+    match state {
+        TenantSchemaState::Current => Ok(()),
+        TenantSchemaState::NeedsMigration => Err(PendingWorkError::Unmigrated {
+            database: database.clone(), // clone: the error outlives this borrow
+        }),
     }
 }
 
@@ -237,7 +245,11 @@ fn interval_probe_select() -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, is_undefined_database};
+    use crate::{
+        error::ContextStoreError,
+        pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, is_undefined_database, readable},
+        tenant_migration::TenantSchemaState,
+    };
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
     use chrono::{Duration, Utc};
@@ -270,6 +282,36 @@ mod tests {
         ));
         assert!(matches!(
             PostgresPendingWorkProbe::classify(&SqlxError::RowNotFound, &database),
+            PendingWorkError::ProbeFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn a_tenant_whose_migrations_are_running_is_not_read_for_obligations() {
+        let database = TenantDatabaseName::from("andromeda_tenant_migrating".to_string());
+        assert!(matches!(
+            readable(TenantSchemaState::NeedsMigration, &database),
+            Err(PendingWorkError::Unmigrated { .. })
+        ));
+        assert!(readable(TenantSchemaState::Current, &database).is_ok());
+    }
+
+    #[test]
+    fn a_schema_state_read_failure_is_classified_like_the_obligation_read() {
+        let database = TenantDatabaseName::from("andromeda_tenant_acme".to_string());
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify_store_error(ContextStoreError::Saturated, &database),
+            PendingWorkError::Saturated { .. }
+        ));
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify_store_error(
+                ContextStoreError::Database(FakeDatabaseError::new("no database", "3D000").into_sqlx()),
+                &database
+            ),
+            PendingWorkError::DatabaseGone { .. }
+        ));
+        assert!(matches!(
+            PostgresPendingWorkProbe::classify_store_error(ContextStoreError::DatabaseUrlUnnamed, &database),
             PendingWorkError::ProbeFailed { .. }
         ));
     }
