@@ -1,6 +1,6 @@
 //! Why the configuration could not be made ready for the broker.
 
-use crate::config::section_admission::SectionAdmissionError;
+use crate::configuration::section_admission::SectionAdmissionError;
 use andromeda_configuration::{load::LoadError, redact::RenderError};
 use thiserror::Error;
 

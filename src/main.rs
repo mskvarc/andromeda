@@ -4,13 +4,13 @@
 
 mod cli;
 
-use crate::cli::{Cli, Command, ConfigCommand, OutputFormat};
-use andromeda_broker_composition::config::commands::{
+use crate::cli::{Cli, Command, ConfigurationCommand, OutputFormat};
+use andromeda_broker_composition::configuration::commands::{
     ConfigurationLoadOutcome,
     ConfigurationOutputFormat,
-    generate_default_reported,
     generate_descriptor_reported,
     generate_schema_reported,
+    generate_template_reported,
     load_reported,
     print_effective_reported,
     validate_reported,
@@ -34,30 +34,30 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let config_file = cli.config_file;
+    let configuration_file = cli.configuration_file;
     let outcome = match cli.command {
         None => {
             let overrides = ListenerOverrides {
                 host: cli.host,
                 port: cli.port,
             };
-            match load_reported(config_file, overrides) {
+            match load_reported(configuration_file, overrides) {
                 ConfigurationLoadOutcome::Ready(config) => andromeda_broker_composition::run(*config).await,
                 ConfigurationLoadOutcome::Failed(outcome) => outcome,
             }
         }
-        Some(Command::Config(config_args)) => match config_args.command {
-            ConfigCommand::Validate => validate_reported(config_file),
-            ConfigCommand::Show(show_args) => {
+        Some(Command::Configuration(configuration_args)) => match configuration_args.command {
+            ConfigurationCommand::Validate => validate_reported(configuration_file),
+            ConfigurationCommand::Show(show_args) => {
                 let format = match show_args.format {
                     OutputFormat::Json => ConfigurationOutputFormat::Json,
                     OutputFormat::Toml => ConfigurationOutputFormat::Toml,
                 };
-                print_effective_reported(config_file, format)
+                print_effective_reported(configuration_file, format)
             }
-            ConfigCommand::Generate(generate_args) => generate_default_reported(generate_args.output),
-            ConfigCommand::Schema(output_args) => generate_schema_reported(output_args.output),
-            ConfigCommand::Describe(output_args) => generate_descriptor_reported(output_args.output),
+            ConfigurationCommand::Generate(output_args) => generate_template_reported(output_args.output),
+            ConfigurationCommand::Schema(output_args) => generate_schema_reported(output_args.output),
+            ConfigurationCommand::Describe(output_args) => generate_descriptor_reported(output_args.output),
         },
     };
     ExitCode::from(outcome)

@@ -1,5 +1,5 @@
 //! What the configuration tells about itself: the JSON Schema of the file,
-//! the commented template `config generate` writes, and the descriptor a
+//! the commented template `configuration generate` writes, and the descriptor a
 //! documentation tool renders.
 //!
 //! All three read the operator description every table, key and choice

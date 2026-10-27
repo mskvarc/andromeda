@@ -5,7 +5,7 @@ column_width = 200
 indent_string = "    "
 
 # Every Andromeda configuration file is validated against the schema
-# `andromeda config schema` writes.
+# `andromeda configuration schema` writes.
 [[rule]]
 include = ["**/andromeda.toml"]
 

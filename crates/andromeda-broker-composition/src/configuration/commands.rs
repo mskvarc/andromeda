@@ -2,12 +2,12 @@
 //! admit its sections, and report the outcome to the operator.
 
 use crate::{
-    config::{error::ConfigurationError, section_admission::admit_sections},
+    configuration::{error::ConfigurationError, section_admission::admit_sections},
     outcome::ProcessExitOutcome,
 };
 use andromeda_configuration::{
     broker_config::BrokerConfig,
-    load::{ListenerOverrides, load, resolve_config_file},
+    load::{ListenerOverrides, load, resolve_configuration_file},
     redact::{redacted_json, redacted_toml},
     reference::{ReferenceError, descriptor::configuration_descriptor_text, json_schema::configuration_schema_text, template::configuration_template},
 };
@@ -37,17 +37,17 @@ pub enum ConfigurationLoadOutcome {
 ///
 /// Returns [`ConfigurationError::Load`] when the configuration does not load
 /// and [`ConfigurationError::Admission`] when a domain refuses a section value.
-pub(crate) fn load_admitted(config_file: Option<PathBuf>, overrides: ListenerOverrides) -> Result<(Option<PathBuf>, BrokerConfig), ConfigurationError> {
-    let config_file = resolve_config_file(config_file)?;
-    let config = load(config_file.as_deref(), overrides)?;
+pub(crate) fn load_admitted(configuration_file: Option<PathBuf>, overrides: ListenerOverrides) -> Result<(Option<PathBuf>, BrokerConfig), ConfigurationError> {
+    let configuration_file = resolve_configuration_file(configuration_file)?;
+    let config = load(configuration_file.as_deref(), overrides)?;
     admit_sections(&config)?;
-    Ok((config_file, config))
+    Ok((configuration_file, config))
 }
 
 /// Load the configuration for broker execution, reporting a failure.
 #[must_use]
-pub fn load_reported(config_file: Option<PathBuf>, overrides: ListenerOverrides) -> ConfigurationLoadOutcome {
-    match load_admitted(config_file, overrides) {
+pub fn load_reported(configuration_file: Option<PathBuf>, overrides: ListenerOverrides) -> ConfigurationLoadOutcome {
+    match load_admitted(configuration_file, overrides) {
         Ok((_, config)) => ConfigurationLoadOutcome::Ready(Box::new(config)),
         Err(error) => {
             eprintln!("{error}");
@@ -58,8 +58,8 @@ pub fn load_reported(config_file: Option<PathBuf>, overrides: ListenerOverrides)
 
 /// Validate the configuration and report the result.
 #[must_use]
-pub fn validate_reported(config_file: Option<PathBuf>) -> ProcessExitOutcome {
-    match load_admitted(config_file, ListenerOverrides::default()) {
+pub fn validate_reported(configuration_file: Option<PathBuf>) -> ProcessExitOutcome {
+    match load_admitted(configuration_file, ListenerOverrides::default()) {
         Ok((Some(path), _)) => {
             println!("Configuration valid: {}", path.display());
             ProcessExitOutcome::Success
@@ -77,8 +77,8 @@ pub fn validate_reported(config_file: Option<PathBuf>) -> ProcessExitOutcome {
 
 /// Print the effective redacted configuration, reporting a failure.
 #[must_use]
-pub fn print_effective_reported(config_file: Option<PathBuf>, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
-    let rendered = load_admitted(config_file, ListenerOverrides::default()).and_then(|(_, config)| {
+pub fn print_effective_reported(configuration_file: Option<PathBuf>, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
+    let rendered = load_admitted(configuration_file, ListenerOverrides::default()).and_then(|(_, config)| {
         Ok(match format {
             ConfigurationOutputFormat::Json => redacted_json(&config)?,
             ConfigurationOutputFormat::Toml => redacted_toml(&config)?,
@@ -104,7 +104,7 @@ pub fn print_effective_reported(config_file: Option<PathBuf>, format: Configurat
 /// default; a key that is not set by default is shown commented out, at an
 /// example value.
 #[must_use]
-pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
+pub fn generate_template_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
     emit_reported(configuration_template(), output, "configuration template")
 }
 

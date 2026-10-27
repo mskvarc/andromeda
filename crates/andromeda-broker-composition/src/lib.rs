@@ -6,7 +6,7 @@ mod blocking_executor;
 mod broker;
 mod cached_context_invalidation;
 mod component_report;
-pub mod config;
+pub mod configuration;
 mod context_hit_flush;
 mod enforcement;
 mod event;

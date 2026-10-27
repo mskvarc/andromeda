@@ -15,7 +15,7 @@ x-broker-base: &broker-base
   depends_on:
     postgres:
       condition: service_healthy
-  command: ["--config", "/etc/andromeda/andromeda.toml"]
+  command: ["--configuration", "/etc/andromeda/andromeda.toml"]
   volumes:
     - *test-contexts-mount
     - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro

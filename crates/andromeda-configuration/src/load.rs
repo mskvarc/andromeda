@@ -27,10 +27,10 @@ use std::{
 use thiserror::Error;
 
 /// Application subdirectory holding Andromeda's files under a base directory.
-const CONFIG_SUBDIR: &str = "andromeda";
+const CONFIGURATION_SUBDIRECTORY: &str = "andromeda";
 
 /// Basename of the broker configuration file within the configuration directory.
-const CONFIG_FILE_NAME: &str = "andromeda.toml";
+const CONFIGURATION_FILE_NAME: &str = "andromeda.toml";
 
 /// The prefix every environment variable the configuration reads carries.
 pub(crate) const ENVIRONMENT_PREFIX: &str = "ANDROMEDA__";
@@ -53,7 +53,7 @@ pub struct ListenerOverrides {
 pub enum LoadError {
     /// An explicitly requested configuration file does not exist.
     ///
-    /// A `--config` path names a file the operator expects to be read, so a
+    /// A `--configuration` path names a file the operator expects to be read, so a
     /// missing one is a hard error; the default configuration file, by
     /// contrast, is loaded only when present.
     #[error("configuration file not found: {0}")]
@@ -79,24 +79,24 @@ pub enum LoadError {
 /// determined, in which case the broker runs from defaults and environment
 /// alone.
 #[must_use]
-pub fn default_config_file() -> Option<PathBuf> {
+pub fn default_configuration_file() -> Option<PathBuf> {
     let strategy = choose_base_strategy().ok()?;
-    Some(strategy.config_dir().join(CONFIG_SUBDIR).join(CONFIG_FILE_NAME))
+    Some(strategy.config_dir().join(CONFIGURATION_SUBDIRECTORY).join(CONFIGURATION_FILE_NAME))
 }
 
 /// Which configuration file, if any, contributes a file layer.
 ///
-/// An explicit `--config` path is honored verbatim and must exist. Without one,
+/// An explicit `--configuration` path is honored verbatim and must exist. Without one,
 /// the default file is used only when it is present.
 ///
 /// # Errors
 ///
 /// Returns [`LoadError::MissingFile`] for an explicit path that does not exist.
-pub fn resolve_config_file(explicit: Option<PathBuf>) -> Result<Option<PathBuf>, LoadError> {
+pub fn resolve_configuration_file(explicit: Option<PathBuf>) -> Result<Option<PathBuf>, LoadError> {
     match explicit {
         Some(path) if path.exists() => Ok(Some(path)),
         Some(path) => Err(LoadError::MissingFile(path)),
-        None => Ok(default_config_file().filter(|path| path.exists())),
+        None => Ok(default_configuration_file().filter(|path| path.exists())),
     }
 }
 
@@ -109,9 +109,9 @@ pub fn resolve_config_file(explicit: Option<PathBuf>) -> Result<Option<PathBuf>,
 ///
 /// Returns [`LoadError::Layers`] when the layers do not read into the
 /// configuration, and [`LoadError::Invalid`] when a check refuses it.
-pub fn load(config_file: Option<&Path>, overrides: ListenerOverrides) -> Result<BrokerConfig, LoadError> {
+pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> Result<BrokerConfig, LoadError> {
     let mut figment = Figment::from(Serialized::defaults(BrokerConfig::default()));
-    if let Some(path) = config_file {
+    if let Some(path) = configuration_file {
         figment = figment.merge(Toml::file(path));
     }
     figment = figment.merge(Env::prefixed(ENVIRONMENT_PREFIX).split("__").parser(environment_scalar));
@@ -124,8 +124,8 @@ pub fn load(config_file: Option<&Path>, overrides: ListenerOverrides) -> Result<
     let mut config: BrokerConfig = figment.extract().map_err(|error| LoadError::Layers(Box::new(error)))?;
     // Relative preload paths resolve against the configuration file's
     // directory; with no file they resolve against the working directory.
-    let config_dir = config_file.and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    config.jsonld.resolve_preload_paths(&config_dir);
+    let configuration_directory = configuration_file.and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    config.jsonld.resolve_preload_paths(&configuration_directory);
     validate(&config)?;
     Ok(config)
 }

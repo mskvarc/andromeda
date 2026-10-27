@@ -4,7 +4,7 @@ mod key_tree;
 
 use crate::{
     broker_config::BrokerConfig,
-    load::{ListenerOverrides, LoadError, PRECEDENCE, default_config_file, load, resolve_config_file},
+    load::{ListenerOverrides, LoadError, PRECEDENCE, default_configuration_file, load, resolve_configuration_file},
     redact::{redacted_json, redacted_toml},
     reference::template::configuration_template,
     schema::{
@@ -334,22 +334,22 @@ fn default_precedence_summary_matches_contract() {
 }
 
 #[test]
-fn an_explicit_missing_config_file_is_rejected() {
+fn an_explicit_missing_configuration_file_is_rejected() {
     let path = PathBuf::from("/nonexistent-andromeda-explicit-check.toml");
-    let resolved = resolve_config_file(Some(path.clone()));
+    let resolved = resolve_configuration_file(Some(path.clone()));
     assert!(matches!(&resolved, Err(LoadError::MissingFile(missing)) if *missing == path), "{resolved:?}");
 }
 
 #[test]
-fn an_absent_default_config_file_is_not_an_error() {
-    assert!(resolve_config_file(None).is_ok());
+fn an_absent_default_configuration_file_is_not_an_error() {
+    assert!(resolve_configuration_file(None).is_ok());
 }
 
 #[test]
-fn the_default_config_file_lives_under_the_application_subdir() {
+fn the_default_configuration_file_lives_under_the_application_subdir() {
     // Skipped where no home directory is available (some CI containers), in
     // which case the broker runs from defaults and environment alone.
-    if let Some(path) = default_config_file() {
+    if let Some(path) = default_configuration_file() {
         assert!(path.ends_with("andromeda/andromeda.toml"), "{}", path.display());
     }
 }

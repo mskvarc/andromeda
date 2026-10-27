@@ -2,7 +2,7 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::section_admission::{database_defaults, expected_deployment},
+    configuration::section_admission::{database_defaults, expected_deployment},
     extension_routing::{accept_language_reading, tenant_management_mode},
     listeners,
     logging,

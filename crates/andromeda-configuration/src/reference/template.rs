@@ -1,4 +1,4 @@
-//! The commented configuration `config generate` writes.
+//! The commented configuration `configuration generate` writes.
 
 use crate::reference::{
     ReferenceError,

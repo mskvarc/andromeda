@@ -5,7 +5,7 @@
 //! broker has, which is exactly what `andromeda-tenancy` must not see.
 
 use crate::{
-    config::section_admission::database_defaults,
+    configuration::section_admission::database_defaults,
     tenant_factory::{
         background_pacer::{BackgroundPacer, TenantObligations},
         commit_consequence::RuntimeCommitConsequencePublisher,

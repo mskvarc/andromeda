@@ -16,7 +16,7 @@ x-broker-base: &broker-base
       condition: service_healthy
   # The ETSI test-suite contexts are served from the repository: forge outages
   # would otherwise make every run depend on an external host.
-  command: ["--config", "/etc/andromeda/andromeda.toml"]
+  command: ["--configuration", "/etc/andromeda/andromeda.toml"]
   volumes:
     - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
     - ../preloaded-contexts.toml:/etc/andromeda/andromeda.toml:ro

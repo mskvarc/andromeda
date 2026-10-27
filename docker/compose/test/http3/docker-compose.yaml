@@ -32,7 +32,7 @@ services:
       - "1056:1056/udp"
     # The ETSI test-suite contexts are served from the repository: forge outages
     # would otherwise make every run depend on an external host.
-    command: ["--config", "/etc/andromeda/andromeda.toml"]
+    command: ["--configuration", "/etc/andromeda/andromeda.toml"]
     volumes:
       - ./certs:/etc/andromeda/certs:ro
       - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro

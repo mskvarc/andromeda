@@ -1,6 +1,6 @@
 //! Table admission: a value a domain refuses fails loading.
 
-use crate::config::{
+use crate::configuration::{
     commands::load_admitted,
     error::ConfigurationError,
     section_admission::{SectionAdmissionError, admit_sections},

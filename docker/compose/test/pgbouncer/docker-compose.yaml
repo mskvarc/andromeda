@@ -96,7 +96,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: ["--config", "/etc/andromeda/andromeda.toml"]
+    command: ["--configuration", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
@@ -124,7 +124,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: ["--config", "/etc/andromeda/andromeda.toml"]
+    command: ["--configuration", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
@@ -152,7 +152,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: ["--config", "/etc/andromeda/andromeda.toml"]
+    command: ["--configuration", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *pooled-env]
@@ -183,7 +183,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["--config", "/etc/andromeda/andromeda.toml"]
+    command: ["--configuration", "/etc/andromeda/andromeda.toml"]
     volumes: *test-contexts-volumes
     environment:
       <<: *broker-env
