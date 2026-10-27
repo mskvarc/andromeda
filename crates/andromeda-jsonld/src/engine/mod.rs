@@ -18,6 +18,7 @@ pub mod expanded_text;
 pub mod expansion_context;
 pub(crate) mod member_order;
 pub mod options;
+pub mod prefixed_name;
 /// Engines for unit tests that resolve exactly the documents a test preloads.
 #[cfg(test)]
 #[expect(

@@ -208,7 +208,9 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::NullBesideData { .. }
             | EntityRefusal::NullInState { .. }
             | EntityRefusal::OutputOnlyMember { .. }
-            | EntityRefusal::ReservedAttributeName { .. }) => EntityError::Validation(EntityValidationReason::Refused(Box::new(refused))),
+            | EntityRefusal::ReservedAttributeName { .. }
+            | EntityRefusal::PrefixedAttributeName { .. }
+            | EntityRefusal::PrefixedEntityType { .. }) => EntityError::Validation(EntityValidationReason::Refused(Box::new(refused))),
         }
     }
 }

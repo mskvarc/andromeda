@@ -214,7 +214,9 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::NullBesideData { .. }
             | EntityRefusal::NullInState { .. }
             | EntityRefusal::OutputOnlyMember { .. }
-            | EntityRefusal::ReservedAttributeName { .. }) => TemporalError::Validation(TemporalValidationReason::Representation(refused)),
+            | EntityRefusal::ReservedAttributeName { .. }
+            | EntityRefusal::PrefixedAttributeName { .. }
+            | EntityRefusal::PrefixedEntityType { .. }) => TemporalError::Validation(TemporalValidationReason::Representation(refused)),
         }
     }
 }

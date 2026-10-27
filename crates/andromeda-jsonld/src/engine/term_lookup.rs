@@ -131,7 +131,12 @@ impl PreparedTermContext {
     }
 
     /// The processed context, processing it on first use.
-    async fn expansion(&self, engine: &JsonLdEngine) -> Result<&Arc<ExpansionContext>, JsonLdError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of a context that does not resolve or does not
+    /// process.
+    pub async fn expansion(&self, engine: &JsonLdEngine) -> Result<&Arc<ExpansionContext>, JsonLdError> {
         self.expansion.get_or_try_init(|| engine.expansion_context(&self.spec)).await
     }
 

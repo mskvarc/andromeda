@@ -28,6 +28,7 @@ pub mod entity_expansion;
 pub mod error;
 mod expanded_tree;
 pub mod normalization;
+pub mod prefixed_names;
 pub mod processor_decoding;
 mod processor_request;
 pub mod received_state;
@@ -91,6 +92,12 @@ mod nesting_stack_tests;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod null_sentinel_tests;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod prefixed_name_tests;
 #[cfg(test)]
 #[expect(
     clippy::expect_used,

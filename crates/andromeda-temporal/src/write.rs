@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, prefixed_names::path_attribute};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, written_temporal_entity::WrittenTemporalEntity};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
@@ -155,6 +155,13 @@ impl TemporalService {
     }
 
     /// Resolve a compact attribute name while retaining compatibility with already-expanded names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Validation`] for a name `context` reads as a
+    /// prefixed name that breaks the clause 4.6.2 grammar after its colon, or
+    /// whose expansion is no attribute name, and the failure of a context that
+    /// does not resolve or of a store read.
     pub(crate) async fn resolve_attr_iri_for_entity(
         &self,
         target: &ContextTarget,
@@ -163,6 +170,7 @@ impl TemporalService {
         context: &ContextSpec,
     ) -> Result<AttributeName, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
+        path_attribute(prepared_context.expansion(&self.engine).await?, attr_id)?;
         let expanded_attr = self
             .engine
             .expand_term(attr_id.as_str(), &prepared_context)

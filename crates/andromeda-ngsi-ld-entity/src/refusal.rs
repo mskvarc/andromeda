@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     datatype::recognised::DatatypeError,
+    entity_type_name::EntityTypeName,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
     unit_code_resolution::UnitCodeRefusal,
@@ -285,6 +286,20 @@ pub enum EntityRefusal {
     ReservedAttributeName {
         /// The reserved name, by its expanded IRI.
         attribute: AttributeName,
+    },
+    /// An attribute name the request's context reads as a compact IRI breaks
+    /// the clause 4.6.2 grammar after its colon.
+    #[error("'{attribute}' is not an attribute name: the part after the prefix must start with a letter and hold only letters, digits and '_'")]
+    PrefixedAttributeName {
+        /// The name, as the request wrote it.
+        attribute: AttributeName,
+    },
+    /// An entity type the request's context reads as a compact IRI breaks the
+    /// clause 4.6.2 grammar after its colon.
+    #[error("'{entity_type}' is not an entity type name: the part after the prefix must start with a letter and hold only letters, digits and '_'")]
+    PrefixedEntityType {
+        /// The type, as the request wrote it.
+        entity_type: EntityTypeName,
     },
 }
 

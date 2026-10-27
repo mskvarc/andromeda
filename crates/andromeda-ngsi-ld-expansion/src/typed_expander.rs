@@ -12,6 +12,7 @@ use crate::{
     decline::Decline,
     expanded_tree::{ExpandedItem, ExpandedNode},
     normalization::Normalization,
+    prefixed_names,
     term_scope::TermScope,
     typed_expansion::TypedExpansion,
     typed_walk::{entity_node, instance::expanded, patch_node},
@@ -47,9 +48,11 @@ impl<'c> TypedExpander<'c> {
     ///
     /// # Errors
     ///
-    /// Returns the [`EntityRefusal`] of an expanded document that is not a
-    /// write.
+    /// Returns the [`EntityRefusal`] of a prefixed name that breaks the clause
+    /// 4.6.2 grammar after its colon, and of an expanded document that is not
+    /// a write.
     pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+        prefixed_names::entity(self.context, entity)?;
         self.document(|scope| entity_node(scope, entity, normalization), entity_document)
     }
 
@@ -64,6 +67,7 @@ impl<'c> TypedExpander<'c> {
         patch: &EntityPatch<M>,
         normalization: Normalization,
     ) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+        prefixed_names::patch(self.context, patch)?;
         self.document(|scope| patch_node(scope, patch, normalization), entity_document)
     }
 
@@ -74,7 +78,8 @@ impl<'c> TypedExpander<'c> {
     ///
     /// # Errors
     ///
-    /// As [`TypedExpander::entity`].
+    /// Returns the [`EntityRefusal`] of an expanded document that is not a
+    /// write.
     pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, EntityRefusal> {
         self.document(
             |scope| entity_node(scope, entity, Normalization::Entity),
@@ -89,8 +94,11 @@ impl<'c> TypedExpander<'c> {
     ///
     /// # Errors
     ///
-    /// Returns the [`EntityRefusal`] of a fragment that is not one instance.
+    /// Returns the [`EntityRefusal`] of a prefixed name that breaks the clause
+    /// 4.6.2 grammar after its colon, and of a fragment that is not one
+    /// instance.
     pub fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<TypedExpansion<AttributeFragment>, EntityRefusal> {
+        prefixed_names::attribute(self.context, attribute, member)?;
         let walked = TermScope::root(self.context).and_then(|scope| expanded(member, &scope, attribute.as_str())?.ok_or(Decline::MalformedJsonLd));
         match walked {
             Ok((name, items)) => attribute_fragment(&name, items).map(TypedExpansion::Expanded),

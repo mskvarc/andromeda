@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_entity::{
     entity_state::EntityState,
     operation::{mutation_error::MutationError, selection::DatasetSelection},
 };
+use andromeda_ngsi_ld_expansion::prefixed_names::path_attribute;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::sync::Arc;
@@ -25,10 +26,12 @@ impl EntityService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when `attr_name` cannot be expanded
-    /// against `context`, and [`EntityError::Validation`] when its expansion
-    /// is not an attribute name.
+    /// against `context`, and [`EntityError::Validation`] when `context`
+    /// reads it as a prefixed name that breaks the clause 4.6.2 grammar after
+    /// its colon, or its expansion is not an attribute name.
     pub async fn expand_attribute_name(&self, attr_name: &AttributeName, context: &ContextSpec) -> Result<AttributeName, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
+        path_attribute(prepared_context.expansion(&self.engine).await?, attr_name)?;
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
         attribute_name_of(attr_iri.as_str())
     }

@@ -135,6 +135,15 @@ impl<T: Debug + PartialEq> BothWays<T> {
             (typed, processor) => panic!("expected both to refuse, got {typed:?} and {processor:?}"),
         }
     }
+
+    /// The refusal of the typed expander, which checks the written names
+    /// before either expansion path runs.
+    pub fn refused_before_expansion(self) -> String {
+        match self.typed {
+            Err(refusal) => refusal.to_string(),
+            Ok(typed) => panic!("expected the written names to be refused, got {typed:?}"),
+        }
+    }
 }
 
 /// A request body as the transport reads it: numbers canonicalised and the
