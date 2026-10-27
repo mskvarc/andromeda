@@ -20,6 +20,7 @@ use andromeda_context_commit::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use std::num::NonZeroU32;
 
 /// One side-effect job leased for execution.
 #[derive(Debug)]
@@ -84,7 +85,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     fn lease_batch<'life0, 'life1, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
-        batch_size: i32,
+        batch_size: NonZeroU32,
         lease_seconds: i32,
     ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, EntityError>>
     where

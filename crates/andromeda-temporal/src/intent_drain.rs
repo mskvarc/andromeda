@@ -175,7 +175,7 @@ impl TemporalIntentDrain {
     /// each of its intents in one of its own, in durable sequence order,
     /// releasing at the end the intents held back behind an earlier one.
     async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent], now: DateTime<Utc>) -> Result<ClaimedPass, TemporalError> {
-        let work_may_remain = claimed.len() == usize::try_from(self.batch_size.get()).unwrap_or(usize::MAX);
+        let work_may_remain = usize::try_from(self.batch_size.get()).is_ok_and(|batch_size| claimed.len() == batch_size);
         let mut pass = ClaimedPass {
             outcome: TemporalIntentDrainOutcome {
                 work_may_remain,

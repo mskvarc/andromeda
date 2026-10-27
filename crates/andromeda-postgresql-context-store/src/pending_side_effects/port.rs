@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, Query, SimpleExpr, UpdateStatement};
 use sqlx::postgres::PgRow;
+use std::num::NonZeroU32;
 use tracing::error;
 use uuid::Uuid;
 
@@ -40,10 +41,8 @@ const SIDE_EFFECT_RELEASE: StatementName = StatementName("pending-side-effect-re
 
 #[async_trait]
 impl SideEffectQueue for PendingSideEffectsRepository {
-    async fn lease_batch(&self, worker_id: &LeaseHolder, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, EntityError> {
-        // A negative batch size is an absent bound, not a narrower one, so it
-        // clamps to zero rather than wrapping into an enormous unsigned width.
-        let wanted = usize::try_from(batch_size).unwrap_or(0);
+    async fn lease_batch(&self, worker_id: &LeaseHolder, batch_size: NonZeroU32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, EntityError> {
+        let wanted = usize::try_from(batch_size.get()).map_err(|error| EntityError::from(PersistenceFailure::Unencodable.record(&error)))?;
         let mut leased = Vec::with_capacity(wanted);
         // An unreadable row the claim took is retired rather than returned, so
         // the claim is repeated for the places it left: a short result then

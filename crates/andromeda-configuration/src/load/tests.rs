@@ -510,3 +510,26 @@ fn a_source_id_that_is_not_an_iri_is_refused_at_load() {
         .to_string();
     assert!(message.contains("source_id is not an IRI"), "{message}");
 }
+
+macro_rules! zero_batch_size_is_refused_with_its_path {
+    ($($name:ident: $table:literal,)+) => {
+        $(
+            #[test]
+            #[serial]
+            fn $name() {
+                let error = load_file(concat!("[", $table, "]\nbatch_size = 0\n")).expect_err("a zero batch size must fail loading");
+                assert!(matches!(error, LoadError::Layers(_)), "{error:?}");
+                let message = error.to_string();
+                assert!(message.contains(concat!($table, ".batch_size")), "{message}");
+                assert!(message.contains("nonzero"), "{message}");
+            }
+        )+
+    };
+}
+
+zero_batch_size_is_refused_with_its_path! {
+    a_zero_expiry_batch_size_is_refused: "expiry",
+    a_zero_side_effect_batch_size_is_refused: "entity.side_effects.queue",
+    a_zero_temporal_history_batch_size_is_refused: "temporal.history.queue",
+    a_zero_notification_delivery_batch_size_is_refused: "notifications.delivery.queue",
+}

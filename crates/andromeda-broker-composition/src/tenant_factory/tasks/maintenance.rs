@@ -89,7 +89,7 @@ pub(super) fn register_entity_side_effects(
         notifications,
         EntitySideEffectDrainConfig {
             lease_seconds: i32::try_from(side_effects.queue.lease_timeout.duration().as_secs()).unwrap_or(i32::MAX),
-            batch_size: i32::try_from(side_effects.queue.batch_size.get()).unwrap_or(i32::MAX),
+            batch_size: side_effects.queue.batch_size,
             max_attempts: side_effect_max_attempts(side_effects).map_err(AssemblyInvariant::SideEffectAttempts)?,
             retry_schedule: side_effect_retry_schedule(side_effects).map_err(AssemblyInvariant::SideEffectRetry)?,
             lease_holder: LeaseHolder::mint(),

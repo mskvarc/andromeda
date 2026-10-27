@@ -66,7 +66,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_retry::{retry_number::RetryNumber, schedule::BackoffSchedule};
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
+use std::{num::NonZeroU32, sync::Arc};
 
 /// Policy-owned retry and lease configuration for durable side effects.
 #[derive(Debug)]
@@ -78,7 +78,7 @@ pub struct EntitySideEffectDrainConfig {
     /// since the replay locks the job for as long as it runs.
     pub lease_seconds: i32,
     /// Maximum jobs one bounded pass claims, one after another.
-    pub batch_size: i32,
+    pub batch_size: NonZeroU32,
     /// Attempts permitted before dead-lettering, counting attempts that ended
     /// without settling or releasing the job.
     pub max_attempts: u16,
@@ -165,10 +165,10 @@ impl EntitySideEffectDrain {
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<EntitySideEffectDrainOutcome, EntityError> {
         let clock = LeasePassClock::starting_at(now);
         let mut completed = 0;
-        for _ in 0..self.config.batch_size {
+        for _ in 0..self.config.batch_size.get() {
             let claimed = self
                 .queue
-                .lease_batch(&self.config.lease_holder, 1, self.config.lease_seconds)
+                .lease_batch(&self.config.lease_holder, NonZeroU32::MIN, self.config.lease_seconds)
                 .await?
                 .into_iter()
                 .next();
@@ -410,6 +410,7 @@ mod tests {
     use serde_json::json;
     use std::{
         collections::VecDeque,
+        num::NonZeroU32,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -503,7 +504,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingQueue {
         leased: Mutex<VecDeque<LeasedSideEffect>>,
-        claim_widths: Mutex<Vec<i32>>,
+        claim_widths: Mutex<Vec<u32>>,
         retried: Mutex<Vec<(SideEffectJobId, DateTime<Utc>)>>,
         dead: Mutex<Vec<(SideEffectJobId, String, DeadLetterAttempt)>>,
     }
@@ -529,7 +530,7 @@ mod tests {
         fn lease_batch<'life0, 'life1, 'async_trait>(
             &'life0 self,
             _worker_id: &'life1 LeaseHolder,
-            batch_size: i32,
+            batch_size: NonZeroU32,
             _lease_seconds: i32,
         ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, EntityError>>
         where
@@ -538,9 +539,9 @@ mod tests {
             Self: 'async_trait,
         {
             Box::pin(async move {
-                self.claim_widths.lock().expect("the test lock is not poisoned").push(batch_size);
+                self.claim_widths.lock().expect("the test lock is not poisoned").push(batch_size.get());
                 let mut leased = self.leased.lock().expect("the test lock is not poisoned");
-                let width = usize::try_from(batch_size).expect("a non-negative claim width");
+                let width = usize::try_from(batch_size.get()).expect("a claim width within the address width");
                 let taken = width.min(leased.len());
                 Ok(leased.drain(..taken).collect())
             })
@@ -615,7 +616,7 @@ mod tests {
     fn drain_config() -> EntitySideEffectDrainConfig {
         EntitySideEffectDrainConfig {
             lease_seconds: 30,
-            batch_size: 1,
+            batch_size: NonZeroU32::MIN,
             max_attempts: 3,
             retry_schedule: BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling),
             lease_holder: lease_holder(),
@@ -793,7 +794,7 @@ mod tests {
             Arc::new(FixedCommitter::new(CommitDisposition::Applied)),
             SideEffectNotificationRoute::Live(Arc::new(RecordingSink::default())),
             EntitySideEffectDrainConfig {
-                batch_size: 2,
+                batch_size: NonZeroU32::new(2).expect("a positive batch"),
                 ..drain_config()
             },
         );
@@ -815,7 +816,7 @@ mod tests {
             Arc::new(FixedCommitter::new(CommitDisposition::Applied)),
             SideEffectNotificationRoute::Live(Arc::new(RecordingSink::default())),
             EntitySideEffectDrainConfig {
-                batch_size: 5,
+                batch_size: NonZeroU32::new(5).expect("a positive batch"),
                 ..drain_config()
             },
         );

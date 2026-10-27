@@ -34,6 +34,7 @@ use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::claimab
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
+use std::num::NonZeroU32;
 
 /// The statement name the delivery claim is observed under.
 const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
@@ -62,25 +63,28 @@ pub async fn claim_due(
     dictionaries: ClaimDictionaries<'_>,
     worker_id: LeaseHolder,
     lease: LeaseTerm,
-    batch_size: i32,
+    batch_size: NonZeroU32,
     held: &HeldEvents,
 ) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut results = Vec::new();
-    let mut remaining = batch_size;
     for target in drainable_targets(pool).await? {
-        if remaining <= 0 {
+        let Some(remaining) = unclaimed(batch_size, results.len()) else {
             break;
-        }
+        };
         match claim_branch(pool, dictionaries, &target, worker_id, lease, remaining, held).await {
-            Ok(claimed) => {
-                remaining -= i32::try_from(claimed.len()).unwrap_or(remaining);
-                results.extend(claimed);
-            }
+            Ok(claimed) => results.extend(claimed),
             Err(error) if is_reaped_branch(&error) => {}
             Err(error) => return Err(error),
         }
     }
     Ok(results)
+}
+
+/// The part of `batch_size` the `claimed` deliveries leave, or `None` once
+/// they fill it.
+fn unclaimed(batch_size: NonZeroU32, claimed: usize) -> Option<NonZeroU32> {
+    let claimed = u32::try_from(claimed).ok()?;
+    NonZeroU32::new(batch_size.get().saturating_sub(claimed))
 }
 
 /// Claim and read back up to `batch_size` due deliveries from one branch,
@@ -91,7 +95,7 @@ async fn claim_branch(
     target: &ContextTarget,
     worker_id: LeaseHolder,
     lease: LeaseTerm,
-    batch_size: i32,
+    batch_size: NonZeroU32,
     held: &HeldEvents,
 ) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
     let mut tx = pool.begin().await?;
@@ -171,7 +175,7 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// The attempt ceiling is not part of the predicate: a delivery that has run
 /// out of attempts is stamped `exhausted_at` by the worker that made the last
 /// attempt, so the queue never needs to know the configured maximum.
-fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i32, lease_seconds: f64) -> UpdateStatement {
+fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: NonZeroU32, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
         .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
@@ -180,9 +184,7 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: i
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
         .order_by_expr(delivery_claimable_at(), Order::Asc)
         .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
-        // A negative batch size is an absent bound, not a narrower one, so it
-        // clamps to zero rather than wrapping into an enormous unsigned width.
-        .limit(u64::try_from(batch_size).unwrap_or(0))
+        .limit(u64::from(batch_size.get()))
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 
@@ -225,11 +227,26 @@ struct DeliverySubscription;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::notification_delivery::claim::{claim_statement, snapshot_record_lock_statement};
+    use crate::notification_delivery::claim::{claim_statement, snapshot_record_lock_statement, unclaimed};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use sea_query::PostgresQueryBuilder;
+    use std::num::NonZeroU32;
     use uuid::Uuid;
+
+    /// The batch every claim statement under test is built with.
+    const BATCH_SIZE: NonZeroU32 = NonZeroU32::MIN.saturating_add(9);
+
+    #[test]
+    fn a_branch_claims_what_the_earlier_branches_left_of_the_batch() {
+        pretty_assertions::assert_eq!(unclaimed(BATCH_SIZE, 0), Some(BATCH_SIZE));
+        pretty_assertions::assert_eq!(unclaimed(BATCH_SIZE, 7), NonZeroU32::new(3));
+    }
+
+    #[test]
+    fn a_filled_batch_leaves_no_branch_to_claim() {
+        pretty_assertions::assert_eq!(unclaimed(BATCH_SIZE, 10), None);
+    }
 
     /// The claim orders itself against a reaping drop through the Snapshot's
     /// control record, so the lock must be the one that conflicts with the
@@ -250,20 +267,20 @@ mod tests {
 
     #[test]
     fn the_claim_updates_deliveries_alone() {
-        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"UPDATE "notification_deliveries" SET"#), "{sql}");
         assert!(!sql.contains("notification_events"), "the claim must not touch the events table: {sql}");
     }
 
     #[test]
     fn a_snapshot_branch_claim_qualifies_the_deliveries_table() {
-        let sql = claim_statement(&snapshot(), LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&snapshot(), LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "snap_5"."notification_deliveries""#), "{sql}");
     }
 
     #[test]
     fn the_candidate_predicate_matches_the_partial_claim_index() {
-        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
         assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
         assert!(
@@ -276,7 +293,7 @@ mod tests {
 
     #[test]
     fn the_candidates_are_ordered_by_the_claimable_instant_then_identifier() {
-        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"ORDER BY GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) ASC, "delivery_key" ASC LIMIT 10"#),
             "{sql}"
@@ -285,20 +302,20 @@ mod tests {
 
     #[test]
     fn a_row_another_worker_holds_is_skipped_rather_than_waited_on() {
-        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
     }
 
     #[test]
     fn the_claim_takes_a_lease_alongside_the_claim_triple() {
-        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""claimed_at" = CURRENT_TIMESTAMP"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
         assert!(sql.contains("make_interval(secs =>"), "{sql}");
     }
 
     fn claim_sql(target: &ContextTarget) -> String {
-        claim_statement(target, LeaseHolder::from(Uuid::nil()), 10, 30.0).to_string(PostgresQueryBuilder)
+        claim_statement(target, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder)
     }
 
     /// The claim returns the rows it leased with their subscriptions, so no

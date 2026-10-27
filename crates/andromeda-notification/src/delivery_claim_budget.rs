@@ -1,5 +1,7 @@
 //! How many more deliveries one delivery pass may claim.
 
+use std::num::NonZeroUsize;
+
 /// Whether the queue may still hold due deliveries for this pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum QueueSupply {
@@ -23,29 +25,29 @@ pub(crate) struct ClaimBudget {
 
 impl ClaimBudget {
     /// The budget of a pass that may claim up to `batch_size` deliveries.
-    pub(crate) const fn new(batch_size: usize) -> ClaimBudget {
+    pub(crate) const fn new(batch_size: NonZeroUsize) -> ClaimBudget {
         ClaimBudget {
-            unclaimed: batch_size,
+            unclaimed: batch_size.get(),
             claimed: 0,
             supply: QueueSupply::MayHoldMore,
         }
     }
 
     /// Reserve up to `wanted` deliveries for one claim, returning how many it
-    /// may ask for.
-    pub(crate) fn reserve(&mut self, wanted: usize) -> usize {
-        let width = wanted.min(self.unclaimed);
-        self.unclaimed -= width;
-        width
+    /// may ask for, or `None` once the batch is spent.
+    pub(crate) fn reserve(&mut self, wanted: usize) -> Option<NonZeroUsize> {
+        let width = NonZeroUsize::new(wanted.min(self.unclaimed))?;
+        self.unclaimed -= width.get();
+        Some(width)
     }
 
     /// Record that a claim asked for `asked` deliveries and got `got`.
     ///
     /// A claim that came back short found the queue out of due deliveries, so
     /// no further claim of this pass would find any either.
-    pub(crate) const fn record(&mut self, asked: usize, got: usize) {
+    pub(crate) const fn record(&mut self, asked: NonZeroUsize, got: usize) {
         self.claimed += got;
-        if got < asked {
+        if got < asked.get() {
             self.supply = QueueSupply::Drained;
         }
     }
@@ -71,13 +73,19 @@ impl ClaimBudget {
 #[cfg(test)]
 mod tests {
     use crate::delivery_claim_budget::ClaimBudget;
+    use std::num::NonZeroUsize;
+
+    /// A width of `count` deliveries, `count` being positive.
+    const fn width(count: usize) -> NonZeroUsize {
+        NonZeroUsize::MIN.saturating_add(count.saturating_sub(1))
+    }
 
     #[test]
     fn a_reservation_never_exceeds_what_the_batch_has_left() {
-        let mut budget = ClaimBudget::new(5);
-        pretty_assertions::assert_eq!(budget.reserve(4), 4);
-        pretty_assertions::assert_eq!(budget.reserve(4), 1);
-        pretty_assertions::assert_eq!(budget.reserve(4), 0);
+        let mut budget = ClaimBudget::new(width(5));
+        pretty_assertions::assert_eq!(budget.reserve(4), Some(width(4)));
+        pretty_assertions::assert_eq!(budget.reserve(4), Some(width(1)));
+        pretty_assertions::assert_eq!(budget.reserve(4), None);
         assert!(!budget.can_claim_more(), "the batch is spent");
     }
 
@@ -85,9 +93,9 @@ mod tests {
     /// another pass may find work.
     #[test]
     fn a_batch_spent_on_filled_claims_leaves_work_that_may_remain() {
-        let mut budget = ClaimBudget::new(2);
-        let asked = budget.reserve(2);
-        budget.record(asked, 2);
+        let mut budget = ClaimBudget::new(width(2));
+        pretty_assertions::assert_eq!(budget.reserve(2), Some(width(2)));
+        budget.record(width(2), 2);
         pretty_assertions::assert_eq!(budget.claimed(), 2);
         assert!(!budget.can_claim_more());
         assert!(budget.work_may_remain());
@@ -97,9 +105,9 @@ mod tests {
     /// more and reports that no work remains.
     #[test]
     fn a_short_claim_drains_the_supply() {
-        let mut budget = ClaimBudget::new(10);
-        let asked = budget.reserve(4);
-        budget.record(asked, 3);
+        let mut budget = ClaimBudget::new(width(10));
+        pretty_assertions::assert_eq!(budget.reserve(4), Some(width(4)));
+        budget.record(width(4), 3);
         pretty_assertions::assert_eq!(budget.claimed(), 3);
         assert!(!budget.can_claim_more(), "the queue ran out");
         assert!(!budget.work_may_remain());

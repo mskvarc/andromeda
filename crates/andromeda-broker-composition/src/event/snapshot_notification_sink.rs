@@ -20,7 +20,7 @@ use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, stream};
-use std::sync::Arc;
+use std::{num::NonZeroU32, sync::Arc};
 
 /// Delivers snapshot status notifications through the configured transport dispatcher.
 pub struct DeliverySnapshotNotificationSink {
@@ -36,7 +36,7 @@ pub struct SnapshotStatusDeliveryDrain {
     max_attempts: i32,
     /// The wait before a failed status notification is due again.
     retry_schedule: BackoffSchedule,
-    batch_size: i32,
+    batch_size: NonZeroU32,
     concurrency: usize,
     error_bound: DeliveryErrorBound,
     delivered_retention: Duration,
@@ -60,7 +60,7 @@ impl SnapshotStatusDeliveryDrain {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule
             })?,
-            batch_size: i32::try_from(config.queue.batch_size.get()).unwrap_or(i32::MAX),
+            batch_size: config.queue.batch_size,
             concurrency: usize::try_from(config.max_concurrent.get()).unwrap_or(usize::MAX),
             error_bound: error_bound(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
@@ -97,7 +97,7 @@ impl SnapshotStatusDeliveryDrain {
     /// A pass that claimed a full batch may have more waiting, which is what
     /// lets the drain driver run another pass immediately rather than sleep.
     #[must_use]
-    pub const fn batch_size(&self) -> i32 {
+    pub const fn batch_size(&self) -> NonZeroU32 {
         self.batch_size
     }
 

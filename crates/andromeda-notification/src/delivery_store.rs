@@ -30,6 +30,7 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use std::num::NonZeroU32;
 
 /// Leasing, completing and reaping notification deliveries.
 pub trait DeliveryStore: Send + Sync + 'static {
@@ -61,7 +62,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
         lease: LeaseTerm,
-        batch_size: i32,
+        batch_size: NonZeroU32,
         held: &'life2 HeldEvents,
     ) -> BoxFuture<'async_trait, Result<Vec<DeliveryClaim>, NotificationError>>
     where

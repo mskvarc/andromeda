@@ -24,7 +24,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
-use std::sync::Arc;
+use std::{num::NonZeroU32, sync::Arc};
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
@@ -62,7 +62,7 @@ impl DeliveryStore for NotificationDeliveryQueue {
         &self,
         worker_id: &LeaseHolder,
         lease: LeaseTerm,
-        batch_size: i32,
+        batch_size: NonZeroU32,
         held: &HeldEvents,
     ) -> Result<Vec<DeliveryClaim>, NotificationError> {
         let dictionaries = ClaimDictionaries {

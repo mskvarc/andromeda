@@ -242,7 +242,7 @@ fn register_snapshot_status_delivery(
                         tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
                     }
                     // A full batch may leave more waiting, so drain again immediately.
-                    if i32::try_from(delivered).is_ok_and(|claimed| claimed >= drain.batch_size()) {
+                    if usize::try_from(drain.batch_size().get()).is_ok_and(|batch_size| delivered >= batch_size) {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
                         Ok(DrainPassOutcome::Idle)

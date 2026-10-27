@@ -254,6 +254,7 @@ mod tests {
     use chrono::{DateTime, Utc};
     use futures::future::BoxFuture;
     use std::{
+        num::NonZeroU32,
         sync::{
             Arc,
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -294,7 +295,7 @@ mod tests {
             &self,
             _worker_id: &LeaseHolder,
             _lease: LeaseTerm,
-            _batch_size: i32,
+            _batch_size: NonZeroU32,
             _held: &HeldEvents,
         ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             Ok(Vec::new())

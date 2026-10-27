@@ -21,7 +21,10 @@ use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
-use std::sync::Arc;
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    sync::Arc,
+};
 use tracing::{debug, error, warn};
 
 /// Outcome of one bounded notification delivery pass.
@@ -110,7 +113,7 @@ pub struct NotificationDeliveryDrain {
     error_bound: DeliveryErrorBound,
     concurrency: DeliveryConcurrency,
     /// Deliveries one pass sends at most.
-    batch_size: usize,
+    batch_size: NonZeroUsize,
     attempt_ceiling: DeliveryAttemptCeiling,
     /// The wait before a failed delivery is due again.
     retry_schedule: BackoffSchedule,
@@ -121,7 +124,7 @@ enum SlotEvent {
     /// A claim that asked for `asked` deliveries came back.
     Claimed {
         /// Deliveries the claim asked for.
-        asked: usize,
+        asked: NonZeroUsize,
         /// What the claim leased, or why it could not.
         claims: Result<Vec<DeliveryClaim>, NotificationError>,
     },
@@ -167,7 +170,7 @@ impl NotificationDeliveryDrain {
         let error_bound = error_bound(config).map_err(NotificationInvariant::from)?;
         let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
         let attempt_ceiling = attempt_ceiling(config).map_err(NotificationInvariant::from)?;
-        let batch_size = usize::try_from(config.queue.batch_size.get()).map_err(|_| NotificationInvariant::BatchSizeExceedsAddressWidth)?;
+        let batch_size = NonZeroUsize::try_from(config.queue.batch_size).map_err(|_| NotificationInvariant::BatchSizeExceedsAddressWidth)?;
         Ok(NotificationDeliveryDrain {
             store,
             transport,
@@ -228,8 +231,9 @@ impl NotificationDeliveryDrain {
         let mut lease_lost = 0_usize;
         let mut failure: Option<NotificationError> = None;
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
-        let opening = budget.reserve(self.concurrency.get());
-        slots.push(self.claim(opening, &clock, &held).boxed());
+        if let Some(opening) = budget.reserve(self.concurrency.get()) {
+            slots.push(self.claim(opening, &clock, &held).boxed());
+        }
         while let Some(event) = slots.next().await {
             match event {
                 SlotEvent::Claimed { asked, claims: Ok(claims) } => {
@@ -248,8 +252,10 @@ impl NotificationDeliveryDrain {
                         }
                     }
                     // The acknowledged delivery freed its slot.
-                    if failure.is_none() && budget.can_claim_more() {
-                        let refill = budget.reserve(1);
+                    if failure.is_none()
+                        && budget.can_claim_more()
+                        && let Some(refill) = budget.reserve(1)
+                    {
                         slots.push(self.claim(refill, &clock, &held).boxed());
                     }
                 }
@@ -267,8 +273,8 @@ impl NotificationDeliveryDrain {
 
     /// Claim up to `width` deliveries under a lease that starts now, reusing
     /// the events the pass's in-flight deliveries hold.
-    async fn claim(&self, width: usize, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
-        let claims = match i32::try_from(width) {
+    async fn claim(&self, width: NonZeroUsize, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
+        let claims = match NonZeroU32::try_from(width) {
             Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width, held).await,
             Err(error) => Err(NotificationInvariant::ClaimWidth(error).into()),
         };
@@ -436,7 +442,7 @@ mod tests {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum StoreCall {
         /// A claim of at most this many deliveries.
-        Claim(i32),
+        Claim(u32),
         /// An acknowledgement of this delivery, whatever its outcome.
         Acknowledge(DeliveryKey),
     }
@@ -537,7 +543,7 @@ mod tests {
             self.calls.lock().expect("the call record lock is not poisoned").iter().copied().collect()
         }
 
-        fn claim_widths(&self) -> Vec<i32> {
+        fn claim_widths(&self) -> Vec<u32> {
             self.recorded_calls()
                 .into_iter()
                 .filter_map(|call| match call {
@@ -559,15 +565,18 @@ mod tests {
             &self,
             _worker_id: &LeaseHolder,
             lease: LeaseTerm,
-            batch_size: i32,
+            batch_size: NonZeroU32,
             held: &HeldEvents,
         ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             if self.claim_state == ClaimState::Refused {
                 return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
             }
             self.claimed_with.lock().expect("the test lock is not poisoned").push(lease);
-            self.calls.lock().expect("the test lock is not poisoned").push(StoreCall::Claim(batch_size));
-            let width = usize::try_from(batch_size).expect("a non-negative claim width");
+            self.calls
+                .lock()
+                .expect("the test lock is not poisoned")
+                .push(StoreCall::Claim(batch_size.get()));
+            let width = usize::try_from(batch_size.get()).expect("a claim width within the address width");
             let mut entries = self.entries.lock().expect("the test lock is not poisoned");
             let taken = width.min(entries.len());
             Ok(entries.drain(..taken).map(|claim| self.hand_over(claim, held)).collect())
@@ -1003,10 +1012,10 @@ mod tests {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
                 .execute(Utc::now())
                 .await?;
-            let mut outstanding = 0_i32;
+            let mut outstanding = 0_i64;
             for call in store.recorded_calls() {
                 outstanding += match call {
-                    StoreCall::Claim(width) => width,
+                    StoreCall::Claim(width) => i64::from(width),
                     StoreCall::Acknowledge(_) => -1,
                 };
                 assert!(outstanding <= 2, "{outstanding} deliveries were claimed but unacknowledged at once");

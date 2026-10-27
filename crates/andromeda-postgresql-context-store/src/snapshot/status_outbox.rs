@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query};
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
+use std::num::NonZeroU32;
 use url::Url;
 use uuid::Uuid;
 
@@ -66,7 +67,7 @@ impl SnapshotStatusOutbox {
     /// Returns [`SnapshotError::persistence`] when the claim, the projection of
     /// the claimed rows or the commit fails, and when a claimed row does not map
     /// back to a delivery because its endpoint or Snapshot URI no longer parses.
-    pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: i32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
+    pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
         let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         let claimable = || {
             claimable_at(
@@ -82,9 +83,7 @@ impl SnapshotStatusOutbox {
             .and_where(claimable().lte(Expr::current_timestamp()))
             .order_by_expr(claimable(), Order::Asc)
             .order_by(SnapshotNotificationOutbox::Id, Order::Asc)
-            // A batch of at most zero rows would spin the worker, so the floor is
-            // one row rather than the caller's number.
-            .limit(Ord::max(u64::try_from(limit).unwrap_or(1), 1))
+            .limit(u64::from(limit.get()))
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .to_owned();
         let claim = Query::update()
