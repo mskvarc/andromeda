@@ -292,4 +292,36 @@ mod tests {
         sub.compiled_csf = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\"").expect("a valid test fixture"));
         assert!(notified_of_change(&sub, &registration(&json!({}))));
     }
+
+    /// Clause 4.9 with Table 5.2.9-1: each defined member is read under the
+    /// name the core context expands it to, `expiresAt` as a `DateTime`, and a
+    /// Table 5.2.9-2 delivery statistic is no target.
+    #[test]
+    fn the_context_source_filter_reads_each_defined_member_and_no_delivery_statistic() {
+        let declared = registration(&json!({
+            "registrationName": "vehicles",
+            "description": "vehicle telemetry source",
+            "management": {"timeout": 3000},
+            "operations": ["retrieveEntity", "updateEntity"],
+            "expiresAt": "2030-12-31T23:59:59Z",
+            "timesSent": 3
+        }));
+        for (csf, selected) in [
+            ("\"https://uri.etsi.org/ngsi-ld/registrationName\"==\"vehicles\"", true),
+            ("\"https://uri.etsi.org/ngsi-ld/registrationName\"==\"buildings\"", false),
+            ("\"http://purl.org/dc/terms/description\"~=\"telemetry\"", true),
+            ("\"https://uri.etsi.org/ngsi-ld/management\"[timeout]==3000", true),
+            ("\"https://uri.etsi.org/ngsi-ld/management\"[timeout]>3000", false),
+            ("\"https://uri.etsi.org/ngsi-ld/operations\"==\"updateEntity\"", true),
+            ("\"https://uri.etsi.org/ngsi-ld/operations\"==\"deleteEntity\"", false),
+            ("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z", true),
+            ("\"https://uri.etsi.org/ngsi-ld/expiresAt\"<2030-01-01T00:00:00Z", false),
+            ("\"https://uri.etsi.org/ngsi-ld/status\"", false),
+            ("\"https://uri.etsi.org/ngsi-ld/timesSent\"==3", false),
+        ] {
+            let mut sub = subscription();
+            sub.compiled_csf = Some(parser::parse(csf).expect("a valid test fixture"));
+            pretty_assertions::assert_eq!(notified_of_change(&sub, &declared), selected, "{csf}");
+        }
+    }
 }

@@ -4,7 +4,9 @@
 //! Clause 4.9 makes the filter target "a Context Source Property member of the
 //! `CSourceRegistration`, see Table 5.2.9-1", so the document holds every Table
 //! 5.2.9-1 member a registration declares, with the value a retrieval carries
-//! for it and keyed by the IRI the core `@context` expands its name to, then the
+//! for it (`expiresAt` declared as the `DateTime` Table 5.2.9-1 types it, so a
+//! time operand compares with it) and keyed by the IRI the core `@context`
+//! expands its name to, then the
 //! Context Source Properties the registrant added, under their expanded names.
 //! `id` and `type` expand to JSON-LD keywords, which no filter names, and the
 //! Table 5.2.9-2 health members and the system timestamps are not Context
@@ -37,7 +39,10 @@ use andromeda_ngsi_ld_lexicon::{
     time::instant_serde,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::{
+    compact::properties as compact_properties,
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use iri_rs::Iri;
@@ -71,9 +76,9 @@ const TABLE_MEMBERS: [(&str, Iri<&str>); 19] = [
 /// The members of one registration the document is built from, borrowed from a
 /// stored registration or from the values a write is about to store.
 ///
-/// Each member serializes under its Table 5.2.9-1 name exactly as the
-/// registration does, so the document a write stores and the one a read builds
-/// hold the same values.
+/// Each member serializes under its Table 5.2.9-1 name as the registration
+/// does, `expiresAt` declared as a `DateTime`, so the document a write stores
+/// and the one a read builds hold the same values.
 #[derive(Debug, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextSourcePropertyMembers<'a> {
@@ -94,8 +99,9 @@ pub struct ContextSourcePropertyMembers<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<&'a [DatasetSelector]>,
     /// `expiresAt`.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "instant_serde::optional::serialize")]
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(setter(transform = |instant: Option<DateTime<Utc>>| instant.map(DeclaredDateTime::new)))]
+    pub expires_at: Option<DeclaredDateTime>,
     /// `location`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<&'a Geometry>,
@@ -153,6 +159,36 @@ impl ContextSourcePropertyMembers<'_> {
             .chain(self.added.iter().map(|(name, value)| (name.as_str(), value.piece())))
             .collect();
         Ok(ContextSourcePropertyDocument(admitted(&document)?))
+    }
+}
+
+/// An instant as a value object declaring the clause 4.6.3 `DateTime` it is
+/// (annex C.6), the only spelling clause 4.9 compares a `dateTime` operand
+/// with.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DeclaredDateTime {
+    /// The `DateTime` datatype IRI.
+    #[serde(rename = "@type")]
+    datatype: &'static str,
+    /// The instant.
+    #[serde(rename = "@value", with = "instant_serde::required")]
+    value: DateTime<Utc>,
+}
+
+impl DeclaredDateTime {
+    /// `value` declared as a `DateTime`.
+    #[must_use]
+    pub fn new(value: DateTime<Utc>) -> DeclaredDateTime {
+        DeclaredDateTime {
+            datatype: expanded_classes::DATE_TIME.as_str(),
+            value,
+        }
+    }
+
+    /// The instant declared.
+    #[must_use]
+    pub const fn instant(self) -> DateTime<Utc> {
+        self.value
     }
 }
 
@@ -292,9 +328,13 @@ mod tests {
         let keys: BTreeSet<&str> = document.as_object().expect("an object").keys().map(String::as_str).collect();
         let expected: BTreeSet<&str> = TABLE_MEMBERS.iter().map(|(_, iri)| iri.as_str()).chain(["https://example.org/tier"]).collect();
         pretty_assertions::assert_eq!(keys, expected);
-        for (name, iri) in TABLE_MEMBERS {
+        for (name, iri) in TABLE_MEMBERS.iter().filter(|(name, _)| *name != "expiresAt") {
             pretty_assertions::assert_eq!(literal(&document[iri.as_str()]), literal(&written[name]), "{name}");
         }
+        pretty_assertions::assert_eq!(
+            document["https://uri.etsi.org/ngsi-ld/expiresAt"],
+            json!({"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2030-12-31T23:59:59Z"})
+        );
         pretty_assertions::assert_eq!(document["https://uri.etsi.org/ngsi-ld/mode"], json!("exclusive"));
         pretty_assertions::assert_eq!(document["http://purl.org/dc/terms/description"], json!("vehicle telemetry source"));
         pretty_assertions::assert_eq!(document["https://example.org/tier"], json!({"type": "Property", "value": "gold"}));
@@ -356,5 +396,72 @@ mod tests {
         assert!(holds("\"https://example.org/tier\"==\"gold\"", &registration));
         assert!(!holds("\"https://example.org/tier\"==\"silver\"", &registration));
         assert!(!holds("\"https://uri.etsi.org/ngsi-ld/status\"", &registration));
+    }
+
+    /// Clause 4.9 with Table 5.2.9-1: a filter reads `registrationName` as the
+    /// String it is.
+    #[test]
+    fn a_filter_reads_the_registration_name() {
+        let registration = fully_populated();
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/registrationName\"==\"vehicles\"", &registration));
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/registrationName\"~=\"^veh\"", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/registrationName\"==\"buildings\"", &registration));
+    }
+
+    /// The core context expands `description` to its Dublin Core IRI, which is
+    /// the name a filter reads it under.
+    #[test]
+    fn a_filter_reads_the_description_under_its_dublin_core_name() {
+        let registration = fully_populated();
+        assert!(holds("\"http://purl.org/dc/terms/description\"==\"vehicle telemetry source\"", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/description\"", &registration));
+    }
+
+    /// Table 5.2.9-1 types `management` as a structured value, whose members a
+    /// compound path reads.
+    #[test]
+    fn a_filter_reads_a_member_of_the_management_object() {
+        let registration = fully_populated();
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/management\"[timeout]==3000", &registration));
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/management\"[localOnly]==false", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/management\"[timeout]>5000", &registration));
+    }
+
+    /// Table 5.2.9-1 types `expiresAt` as a `DateTime`, which clause 4.9
+    /// compares in temporal order with a `dateTime` operand and never with a
+    /// String.
+    #[test]
+    fn a_filter_compares_expires_at_as_a_date_time() {
+        let registration = fully_populated();
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z", &registration));
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"==2030-12-31T23:59:59Z", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"<2030-01-01T00:00:00Z", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"==\"2030-12-31T23:59:59Z\"", &registration));
+    }
+
+    /// Clause 4.9 compares an array by membership, so `operations` holds the
+    /// operation a filter names when it lists it.
+    #[test]
+    fn a_filter_reads_one_of_the_operations() {
+        let registration = fully_populated();
+        assert!(holds("\"https://uri.etsi.org/ngsi-ld/operations\"==\"updateEntity\"", &registration));
+        assert!(!holds("\"https://uri.etsi.org/ngsi-ld/operations\"==\"deleteEntity\"", &registration));
+    }
+
+    /// The Table 5.2.9-2 members report delivery, so no filter naming one
+    /// holds, in either polarity.
+    #[test]
+    fn a_filter_naming_a_delivery_statistic_holds_for_nothing() {
+        let registration = fully_populated();
+        for name in [
+            "https://uri.etsi.org/ngsi-ld/status",
+            "https://uri.etsi.org/ngsi-ld/timesSent",
+            "https://uri.etsi.org/ngsi-ld/timesFailed",
+            "https://uri.etsi.org/ngsi-ld/lastSuccess",
+            "https://uri.etsi.org/ngsi-ld/lastFailure",
+        ] {
+            assert!(!holds(&format!("\"{name}\""), &registration), "{name}");
+            assert!(!holds(&format!("\"{name}\"!=\"x\""), &registration), "{name}");
+        }
     }
 }

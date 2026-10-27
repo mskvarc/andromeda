@@ -6,19 +6,31 @@
 //! entity: each is held under its expanded name as the registration spells it,
 //! a normalized `{"type": "Property", "value": ...}` node, a bare JSON value,
 //! or an array of either, every element of which is one value of the property,
-//! and the value is raw JSON whose keys a compound path addresses verbatim.
+//! and the value is raw JSON whose keys a compound path addresses verbatim. A
+//! value object whose `@type` declares a clause 4.6.3 time value, by the core
+//! context's term or by its IRI, is that time value (annex C.6), the one
+//! reading a time operand compares with.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    time::value::{TimeValue, TimeValueForm},
+};
 use andromeda_ngsi_ld_query::{
     filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
         instance_metadata::InstanceMetadata,
-        value_item::ValueItem,
+        value_item::{LiteralValue, ValueItem},
     },
 };
-use std::{borrow::Cow, iter::empty};
+use andromeda_ngsi_ld_vocabulary::{compact::classes as compact_classes, keyword};
+use std::{
+    borrow::Cow,
+    iter::{empty, once},
+};
 
 /// The members of a registration a `csf` filter reads: a JSON object keyed by
 /// expanded name.
@@ -56,18 +68,43 @@ const VALUE_KEYS: [&str; 3] = ["@value", "@id", "value"];
 
 impl<'a> PropertyValue<'a> {
     /// The value the node holds: under its value key, or the node itself when
-    /// it is a bare JSON value; nothing for an object without a value.
-    fn held(self) -> Option<JsonPiece<'a>> {
+    /// it carries none, as a bare JSON value or a structured member such as
+    /// `management` does.
+    fn held(self) -> JsonPiece<'a> {
         match self.0.kind() {
-            JsonKind::Object => VALUE_KEYS.into_iter().find_map(|key| self.0.member(key)),
-            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String | JsonKind::Array => Some(self.0),
+            JsonKind::Object => VALUE_KEYS.into_iter().find_map(|key| self.0.member(key)).unwrap_or(self.0),
+            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String | JsonKind::Array => self.0,
         }
+    }
+
+    /// The one value the node holds as the `q` evaluator reads it: a declared
+    /// time value, written as the node or as its normalized `value`, or the
+    /// raw JSON it holds.
+    fn item(self) -> ValueItem<'a, NoStructuredValue> {
+        let held = self.held();
+        declared_time(self.0)
+            .or_else(|| declared_time(held))
+            .map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time)))
     }
 
     /// The first value of the member `name` of the node.
     fn member(self, name: &str) -> Option<PropertyValue<'a>> {
         member_values(self.0.member(name)?).into_iter().next()
     }
+}
+
+/// The time value a value object declares by its `@type`, `None` for any
+/// other JSON and for a literal its declared form does not admit.
+fn declared_time(node: JsonPiece<'_>) -> Option<TimeValue> {
+    let datatype = node.member(keyword::TYPE)?.as_str()?;
+    let form = [
+        (TimeValueForm::DateTime, compact_classes::DATE_TIME),
+        (TimeValueForm::Date, compact_classes::DATE),
+        (TimeValueForm::Time, compact_classes::TIME),
+    ]
+    .into_iter()
+    .find_map(|(form, term)| (datatype == term || datatype == form.iri().as_str()).then_some(form))?;
+    form.parse(&node.member(keyword::VALUE)?.as_str()?).ok()
 }
 
 /// Each value a member holds: every element of an array, or the member itself.
@@ -116,7 +153,7 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     }
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
-        self.held().map(ValueItem::Json).into_iter()
+        once(self.item())
     }
 
     /// Clause 5.2.9 Context Source Properties are Properties, never a
@@ -130,7 +167,7 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
-        self.member(member.iri().as_str())?.held()?.as_str()
+        self.member(member.iri().as_str())?.held().as_str()
     }
 }
 

@@ -366,6 +366,17 @@ mod tests {
         );
     }
 
+    /// Table 5.2.9-1 types `expiresAt` as a `DateTime`, which the stored
+    /// document declares, so a `dateTime` operand reads its `@value` beside
+    /// its `@type` (clause 4.9).
+    #[test]
+    fn a_date_time_operand_reads_the_declared_value_and_datatype() {
+        let sql = render("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z");
+        assert!(sql.contains("->> ('@value')"), "{sql}");
+        assert!(sql.contains("->> ('@type')"), "{sql}");
+        assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
+    }
+
     /// The same rule for `!=` over a range and over a value list.
     #[test]
     fn a_negated_csr_comparison_requires_the_property_to_be_present() {

@@ -23,7 +23,10 @@ use andromeda_ngsi_ld_lexicon::{
     non_empty_text::NonEmptyText,
     tenant::TenantName,
 };
-use andromeda_ngsi_ld_model::registration::{context_source_property_document::ContextSourcePropertyMembers, operation::CsrOperation};
+use andromeda_ngsi_ld_model::registration::{
+    context_source_property_document::{ContextSourcePropertyMembers, DeclaredDateTime},
+    operation::CsrOperation,
+};
 use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::csr::Csr;
@@ -167,7 +170,7 @@ pub(super) fn registration_columns<'a>(
         observation_space_repaired,
         operation_space,
         operation_space_repaired,
-        (Csr::ExpiresAt, Expr::val(members.expires_at)),
+        (Csr::ExpiresAt, Expr::val(members.expires_at.map(DeclaredDateTime::instant))),
         (Csr::Endpoint, Expr::val(members.endpoint.as_str())),
         (Csr::Accept, Expr::val(fields.accept.map(ToString::to_string))),
         (Csr::Mode, Expr::val(mode_code(members.mode))),
