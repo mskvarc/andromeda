@@ -1,8 +1,13 @@
-//! `Strict-Transport-Security` on the API reaches a client only over the TLS listener.
+//! `Strict-Transport-Security` on the API reaches a client only over the TLS
+//! listener, and only when an operator turns it on.
 
 use crate::listener_tls::{SharedTlsIdentity, listener_scheme};
 use andromeda_configuration::schema::{
-    http::HttpStackConfig,
+    feature_mode::FeatureMode,
+    http::{
+        HttpStackConfig,
+        security_headers::{SecurityHeadersConfig, strict_transport_security::StrictTransportSecurityConfig},
+    },
     listener_transport::ListenerTransport,
     request_limits::RequestLimitsConfig,
     server::ServerConfig,
@@ -76,7 +81,7 @@ async fn policy_seen_over(stack: &HttpStack, transport: ListenerTransport, tls: 
 }
 
 #[tokio::test]
-async fn strict_transport_security_reaches_a_client_over_tls_and_not_over_plaintext() -> TestResult {
+async fn a_turned_on_strict_transport_security_reaches_a_client_over_tls_only() -> TestResult {
     let authority = TestAuthority::generate()?;
     let files = IdentityFiles::write(&authority.issue_server_identity()?)?;
     let tls = TlsConfig {
@@ -84,13 +89,26 @@ async fn strict_transport_security_reaches_a_client_over_tls_and_not_over_plaint
         private_key: Some(files.private_key_path().to_path_buf()),
         ..TlsConfig::default()
     };
-    let stack = HttpStack::new(HttpStackConfig::default(), RequestLimitsConfig::default())?;
+    let config = HttpStackConfig {
+        security_headers: SecurityHeadersConfig {
+            strict_transport_security: StrictTransportSecurityConfig {
+                mode: FeatureMode::Enabled,
+                ..StrictTransportSecurityConfig::default()
+            },
+            ..SecurityHeadersConfig::default()
+        },
+        ..HttpStackConfig::default()
+    };
+    let stack = HttpStack::new(config, RequestLimitsConfig::default())?;
+    let default_stack = HttpStack::new(HttpStackConfig::default(), RequestLimitsConfig::default())?;
     let trusted = Certificate::from_der(authority.certificate())?;
 
-    let over_tls = policy_seen_over(&stack, ListenerTransport::Tls, &tls, Some(trusted)).await?;
+    let over_tls = policy_seen_over(&stack, ListenerTransport::Tls, &tls, Some(trusted.clone())).await?; // clone: each client trusts its own copy of the authority
     let over_plaintext = policy_seen_over(&stack, ListenerTransport::Plaintext, &tls, None).await?;
+    let by_default_over_tls = policy_seen_over(&default_stack, ListenerTransport::Tls, &tls, Some(trusted)).await?;
 
-    assert_eq!(over_tls.as_deref(), Some("max-age=15552000; includeSubDomains"));
+    assert_eq!(over_tls.as_deref(), Some("max-age=15552000"));
     assert_eq!(over_plaintext, None);
+    assert_eq!(by_default_over_tls, None);
     Ok(())
 }

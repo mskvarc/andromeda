@@ -93,7 +93,7 @@ mod tests {
                     mode: CorsMode::Permissive,
                     ..CorsConfig::default()
                 },
-                security_headers: SecurityHeadersConfig { mode: FeatureMode::Enabled },
+                security_headers: SecurityHeadersConfig::default(),
                 csrf: CsrfConfig {
                     mode: FeatureMode::Disabled,
                     trusted_origins: Vec::new(),

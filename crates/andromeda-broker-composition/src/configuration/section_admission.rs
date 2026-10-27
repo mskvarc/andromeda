@@ -16,7 +16,10 @@ use andromeda_entity::configured_policy::{
     side_effect_retry_schedule,
 };
 use andromeda_federation::cooldown_policy::cooldown_schedule;
-use andromeda_http_stack::cors_tokens::{CorsTokenError, check_cors_tokens};
+use andromeda_http_stack::{
+    cors_tokens::{CorsTokenError, check_cors_tokens},
+    stack::helmet_layer::{SecurityHeadersError, check_security_headers},
+};
 use andromeda_json_literal::{JsonLiteral, configured_extras::ConfiguredExtrasError};
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
@@ -35,6 +38,9 @@ pub enum SectionAdmissionError {
     /// A CORS method or header name is not one the HTTP layer reads.
     #[error("invalid configuration: {0}")]
     HttpCors(#[from] CorsTokenError),
+    /// A security response field holds a value no field can carry.
+    #[error("invalid configuration: {0}")]
+    HttpSecurityHeaders(#[from] SecurityHeadersError),
     /// The temporal history queue's retry delays do not bound a retry
     /// schedule: the first is zero or the ceiling is below it.
     #[error("invalid configuration: temporal.history.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
@@ -78,6 +84,7 @@ pub enum SectionAdmissionError {
 /// Returns the [`SectionAdmissionError`] of the first value its domain refuses.
 pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError> {
     check_cors_tokens(&config.http.cors)?;
+    check_security_headers(&config.http.security_headers)?;
     intent_retry_schedule(&config.temporal.history).map_err(SectionAdmissionError::TemporalIntentRetry)?;
     check_attribute_nesting(&config.request_limits)?;
     side_effect_retry_schedule(&config.entity.side_effects).map_err(SectionAdmissionError::EntitySideEffectRetry)?;

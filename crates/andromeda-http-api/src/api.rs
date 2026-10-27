@@ -342,7 +342,10 @@ mod tests {
                 mode: FeatureMode::Disabled,
                 ..ServerTimingConfig::default()
             },
-            security_headers: SecurityHeadersConfig { mode: FeatureMode::Disabled },
+            security_headers: SecurityHeadersConfig {
+                mode: FeatureMode::Disabled,
+                ..SecurityHeadersConfig::default()
+            },
             csrf: CsrfConfig {
                 mode: FeatureMode::Disabled,
                 trusted_origins: Vec::new(),

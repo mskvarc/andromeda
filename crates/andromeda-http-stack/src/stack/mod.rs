@@ -5,7 +5,7 @@ mod cors_layer;
 pub mod csrf_layer;
 mod decompression_layer;
 mod encoded_entity_tag;
-mod helmet_layer;
+pub mod helmet_layer;
 mod metric_layer;
 mod request_deadline;
 mod server_timing;
@@ -19,11 +19,11 @@ use crate::{
         csrf_layer::{CsrfLayerError, build_csrf_layer},
         decompression_layer::{build_decompression_layer, record_received_content_length},
         encoded_entity_tag::EncodedEntityTags,
-        helmet_layer::build_helmet_layer,
+        helmet_layer::{SecurityHeadersError, build_helmet_layer},
         metric_layer::http_metric_layer,
         request_deadline::{RequestDeadline, answer_within_deadline},
         server_timing::apply_server_timing,
-        strict_transport_security_layer::set_strict_transport_security,
+        strict_transport_security_layer::{set_strict_transport_security, strict_transport_security},
     },
 };
 use andromeda_configuration::schema::{
@@ -44,8 +44,8 @@ use axum::{
     middleware,
     response::Response,
 };
-use axum_helmet::{HelmetError, HelmetLayer};
-use headers::{Header, HeaderMapExt};
+use axum_helmet::HelmetLayer;
+use headers::{Header, HeaderMapExt, StrictTransportSecurity};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tower::{Layer, ServiceBuilder};
@@ -69,9 +69,9 @@ pub enum HttpStackBuildError {
     /// The blocking-decode threshold does not fit the platform address width.
     #[error(transparent)]
     BodyDecoding(#[from] BodyDecodingConfigError),
-    /// The security-header layer could not be rendered.
-    #[error("failed to build the security-header layer: {0}")]
-    Helmet(#[from] HelmetError),
+    /// A configured security field cannot be rendered.
+    #[error(transparent)]
+    SecurityHeaders(#[from] SecurityHeadersError),
     /// A CSRF trusted origin could not be admitted.
     #[error(transparent)]
     Csrf(#[from] CsrfLayerError),
@@ -104,6 +104,9 @@ pub struct HttpStack {
     server_timing: ServerTimingConfig,
     /// The prebuilt security-header layer, absent when disabled.
     helmet: Option<HelmetLayer>,
+    /// The `Strict-Transport-Security` policy sent over TLS, absent when
+    /// disabled.
+    strict_transport_security: Option<StrictTransportSecurity>,
     /// The prebuilt CORS layer, absent when disabled.
     cors: Option<CorsLayer>,
     /// The prebuilt response-compression layer, absent when disabled.
@@ -135,7 +138,8 @@ impl HttpStack {
             forwarded_headers: config.forwarded_headers,
             link_field: config.link_field,
             request_deadline: RequestDeadline::new(limits.timeout.duration()),
-            helmet: build_helmet_layer(config.security_headers)?,
+            helmet: build_helmet_layer(&config.security_headers)?,
+            strict_transport_security: strict_transport_security(&config.security_headers),
             cors: build_cors_layer(&config.cors)?,
             compression: build_compression_layer(&config.compression),
             encoded_entity_tags: EncodedEntityTags::new(config.compression.algorithms),
@@ -163,7 +167,10 @@ impl HttpStack {
             .layer(Extension(self.request_json_value_limit))
             .layer(Extension(self.blocking_decode.clone())); // clone: every request shares the stack's decode permits
         if let Some(helmet) = &self.helmet {
-            router = router.layer(helmet.clone()).layer(middleware::from_fn(set_strict_transport_security));
+            router = router.layer(helmet.clone());
+        }
+        if let Some(policy) = &self.strict_transport_security {
+            router = router.layer(middleware::from_fn_with_state(policy.clone(), set_strict_transport_security)); // clone: the middleware owns its copy of the policy
         }
         // Applied to the assembled response, so the `@context` link and the
         // pagination links each handler writes are laid out once, whichever
@@ -359,7 +366,10 @@ mod tests {
                 mode: FeatureMode::Disabled,
                 phases: ServerTimingPhase::Total.into(),
             },
-            security_headers: SecurityHeadersConfig { mode: FeatureMode::Disabled },
+            security_headers: SecurityHeadersConfig {
+                mode: FeatureMode::Disabled,
+                ..SecurityHeadersConfig::default()
+            },
             csrf: CsrfConfig {
                 mode: FeatureMode::Disabled,
                 trusted_origins: Vec::new(),
@@ -615,7 +625,7 @@ mod tests {
     async fn helmet_layer_is_installed_on_the_api_subtree() -> Result<(), Box<dyn Error>> {
         let stack = HttpStack::new(
             HttpStackConfig {
-                security_headers: SecurityHeadersConfig { mode: FeatureMode::Enabled },
+                security_headers: SecurityHeadersConfig::default(),
                 ..disabled_config()
             },
             test_limits(),

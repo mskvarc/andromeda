@@ -137,6 +137,18 @@ fn a_cors_method_that_is_not_a_method_token_is_refused_at_load() {
     );
 }
 
+/// RFC 9110 section 5.5: a field value holds no line break, so a policy
+/// holding one is refused while loading.
+#[test]
+#[serial]
+fn a_content_security_policy_with_a_line_break_is_refused_at_load() {
+    let result = admitted("[http.security_headers.content_security_policy]\npolicy = \"default-src 'self'\\nscript-src 'none'\"\n");
+    assert!(
+        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::HttpSecurityHeaders(_)))),
+        "{result:?}"
+    );
+}
+
 /// RFC 9110 clause 7.6.3: the alias is one `received-by` token, so one
 /// holding a space is refused while loading.
 #[test]

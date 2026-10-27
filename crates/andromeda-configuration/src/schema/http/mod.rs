@@ -78,7 +78,7 @@ pub struct HttpStackConfig {
     #[schemars(description = "Whether responses carry a `Server-Timing` header, and what it reports.")]
     pub server_timing: ServerTimingConfig,
     /// The security response fields.
-    #[schemars(description = "Whether API responses carry a fixed set of security headers.")]
+    #[schemars(description = "The security headers API responses carry, each set or turned off on its own.")]
     pub security_headers: SecurityHeadersConfig,
     /// Cross-Site Request Forgery protection.
     #[schemars(description = "Cross-Site Request Forgery protection for browser clients.")]
