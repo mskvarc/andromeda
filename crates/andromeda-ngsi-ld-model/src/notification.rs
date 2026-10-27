@@ -96,12 +96,12 @@ pub struct SysAttrsSnapshot {
 ///
 /// Written once, to the bytes the endpoint receives: the entities in `data`
 /// are already written in the shape the endpoint's media type asks for, and
-/// `@context` is present exactly when clause 6.3.8 puts the context in the
-/// body.
+/// `@context` is present exactly when the body is a JSON-LD document (clause
+/// 6.3.6). A `FeatureCollection` in `data` carries its own (clause 4.5.16.3).
 #[derive(Debug, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification<'a> {
-    /// The `@context` the body carries, when clause 6.3.8 places it there.
+    /// The `@context` of an `application/ld+json` body.
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
     #[builder(default = None)]
     pub context: Option<&'a JsonLiteral>,

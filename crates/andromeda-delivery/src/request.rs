@@ -147,12 +147,26 @@ impl<'a> NotificationDelivery<'a> {
         }
     }
 
+    /// The `@context` the Notification itself carries, beside `id`, `type`,
+    /// `notifiedAt`, `subscriptionId` and `data`.
+    ///
+    /// Only an `application/ld+json` notification has one: clause 6.3.6 makes
+    /// that body a JSON-LD document. An `application/geo+json` notification
+    /// keeps its body context in the `FeatureCollection` of `data` (Table
+    /// 5.3.1-1 and clause 4.5.16.3), so its envelope carries none.
+    fn envelope_context(&self) -> Option<&'a JsonLiteral> {
+        match self.content_type() {
+            ResponseMediaType::JsonLd => self.body_context(),
+            ResponseMediaType::Json | ResponseMediaType::GeoJson => None,
+        }
+    }
+
     /// The clause 5.3.1 Notification carrying `data`, written for this
     /// delivery, and everything a transport reads to send it.
     ///
-    /// The Notification carries the body's `@context` when clause 6.3.8 puts it
-    /// there; `data` was written for the same delivery, so it carries it
-    /// wherever its shape asks.
+    /// `data` was written for the same delivery, so it carries the body's
+    /// `@context` wherever its shape asks; the envelope carries it only as
+    /// [`envelope_context`](Self::envelope_context) says.
     ///
     /// # Errors
     ///
@@ -161,7 +175,7 @@ impl<'a> NotificationDelivery<'a> {
     pub fn notification(&self, data: NotificationData) -> Result<DeliveryRequest, NotificationWriteError> {
         let id = Identifier::from(NotificationId::mint()?);
         let notification = Notification::builder()
-            .context(self.body_context())
+            .context(self.envelope_context())
             .id(&id)
             .subscription_id(self.subscription_id)
             .notified_at(Utc::now())
@@ -373,6 +387,11 @@ mod tests {
     /// The notification of an endpoint accepting `accept`, written around
     /// `data_text`, a `data` member the sender wrote once.
     fn enveloped(accept: &str, data_text: &str) -> DeliveryRequest {
+        enveloped_with(accept, None, data_text)
+    }
+
+    /// [`enveloped`] for an endpoint whose `receiverInfo` is `receiver_info`.
+    fn enveloped_with(accept: &str, receiver_info: Option<&[KeyValuePair]>, data_text: &str) -> DeliveryRequest {
         let endpoint = endpoint();
         let subscription = subscription();
         let accept = media(accept);
@@ -381,6 +400,7 @@ mod tests {
         NotificationDelivery::builder()
             .endpoint_uri(&endpoint)
             .accept(Some(&accept))
+            .receiver_info(receiver_info)
             .context(&context)
             .subscription_id(&subscription)
             .build()
@@ -421,6 +441,37 @@ mod tests {
         .expect("a JSON body");
         assert!(plain.get("@context").is_none(), "{plain}");
         assert!(plain["data"][0].get("@context").is_none(), "{plain}");
+    }
+
+    /// The top-level member names of a written notification, sorted.
+    fn members(request: &DeliveryRequest) -> Vec<String> {
+        let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("a JSON body");
+        let mut names: Vec<String> = written.as_object().expect("a JSON object").keys().map(ToOwned::to_owned).collect();
+        names.sort();
+        names
+    }
+
+    /// Table 5.3.1-1 and clause 4.5.16.3: a `geo+json` notification carries
+    /// its context once, in the `FeatureCollection` of `data`, so the envelope
+    /// holds exactly the members the table lists.
+    #[test]
+    fn a_geo_json_notification_carries_its_context_only_in_the_feature_collection() {
+        let data = r#"{"type":"FeatureCollection","features":[],"@context":["https://example.com/ctx.jsonld"]}"#;
+        let request = enveloped("application/geo+json", data);
+        pretty_assertions::assert_eq!(members(&request), ["data", "id", "notifiedAt", "subscriptionId", "type"]);
+        let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("a JSON body");
+        pretty_assertions::assert_eq!(written["data"]["@context"], json!(["https://example.com/ctx.jsonld"]));
+        assert!(request.context_link().is_none());
+    }
+
+    /// Clause 6.3.8: with `Prefer: body=json` the `Link` header carries the
+    /// context, so the envelope carries none either.
+    #[test]
+    fn a_geo_json_notification_preferring_json_carries_no_envelope_context() {
+        let pairs = prefer_json();
+        let request = enveloped_with("application/geo+json", Some(&pairs), r#"{"type":"FeatureCollection","features":[]}"#);
+        pretty_assertions::assert_eq!(members(&request), ["data", "id", "notifiedAt", "subscriptionId", "type"]);
+        assert!(request.context_link().is_some());
     }
 
     /// The written notification reaches the request as it was written.
