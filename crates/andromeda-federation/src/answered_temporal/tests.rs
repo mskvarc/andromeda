@@ -3,6 +3,7 @@ use crate::{
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedResponse, ForwardedTemporalEntities, MatchedSources},
     received_temporal_answer::ReceivedTemporalAnswer,
     source_continuation::SourceContinuation,
+    temporal_answer_reading::ReadTemporalEntity,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_json_literal::JsonLiteral;
@@ -42,11 +43,15 @@ async fn answered(body: &str, naming: ContextSpec, client: &ContextSpec) -> Forw
         partial_range: None,
     });
     let page = crate::FederationService::received_temporal_answer(&registration, outcome);
-    let received: ForwardReadOutcome<ReceivedTemporalAnswer> = ForwardReadOutcome {
-        results: page.answer.into_iter().collect(),
+    let service = offline_service(Vec::new());
+    let results = match page.answer {
+        Some(answer) => vec![service.read_temporal_answer(answer).await],
+        None => Vec::new(),
+    };
+    let received: ForwardReadOutcome<ReceivedTemporalAnswer<ReadTemporalEntity>> = ForwardReadOutcome {
+        results,
         sources: MatchedSources::default(),
     };
-    let service = offline_service(Vec::new());
     service
         .answered_temporal(received, client, TimeProp::Observed)
         .await
@@ -161,6 +166,77 @@ async fn a_temporal_entity_with_an_unusable_unit_code_is_refused() {
 async fn a_payload_that_is_not_json_is_a_warning() {
     let answer = answered("<html>", ContextSpec::core_only(), &ContextSpec::core_only()).await;
     assert_eq!(answer.entities.len(), 0);
+    assert!(
+        matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
+        "{:?}",
+        answer.warnings
+    );
+}
+
+/// The source context of the evolutions below: `kind` for `@type`, `vals`
+/// for `ngsi-ld:hasValues`.
+fn aliasing_terms() -> Value {
+    json!({"kind": "@type", "vals": "https://uri.etsi.org/ngsi-ld/hasValues"})
+}
+
+/// Clauses 4.4 and 5.5.4: an evolution carrying its own aliasing `@context`
+/// and written in the simplified temporal representation reads as the Property
+/// it is, with no warning.
+#[tokio::test]
+async fn an_evolution_under_its_own_aliasing_context_reads_its_instances() {
+    let body = json!([{
+        "@context": aliasing_terms(),
+        "id": "urn:ngsi-ld:Vehicle:1",
+        "kind": "Vehicle",
+        "speed": {"kind": "Property", "vals": [[20, "2026-01-01T00:00:00Z"], [21, "2026-01-01T01:00:00Z"]]}
+    }]);
+    let answer = answered(&body.to_string(), ContextSpec::core_only(), &ContextSpec::core_only()).await;
+    assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1"]);
+    assert_eq!(speed_instances(&answer.entities[0]), 2);
+    assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new());
+}
+
+/// An evolution naming no `@context` is read under the aliases of the
+/// forwarding context the answer is spelled in.
+#[tokio::test]
+async fn an_evolution_without_a_context_reads_under_the_forwarding_aliases() {
+    let body = json!([{
+        "id": "urn:ngsi-ld:Vehicle:1",
+        "kind": "Vehicle",
+        "speed": {"kind": "Property", "vals": [[20, "2026-01-01T00:00:00Z"]]}
+    }]);
+    let answer = answered(&body.to_string(), context(&aliasing_terms()), &ContextSpec::core_only()).await;
+    assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1"]);
+    assert_eq!(speed_instances(&answer.entities[0]), 1);
+    assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new());
+}
+
+/// JSON-LD 1.1 section 4.6: a `@set` alias of `@type` writes each type as an
+/// array of one, which reads as the type it holds.
+#[tokio::test]
+async fn an_evolution_under_a_set_container_reads_its_instances() {
+    let body = json!([{
+        "id": "urn:ngsi-ld:Vehicle:1",
+        "kind": ["Vehicle"],
+        "speed": [{"kind": ["Property"], "value": 20, "observedAt": "2026-01-01T00:00:00Z"}]
+    }]);
+    let naming = context(&json!({"kind": {"@id": "@type", "@container": "@set"}}));
+    let answer = answered(&body.to_string(), naming, &ContextSpec::core_only()).await;
+    assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:1"]);
+    assert_eq!(speed_instances(&answer.entities[0]), 1);
+    assert_eq!(answer.warnings, Vec::<NgsiLdWarning>::new());
+}
+
+/// An evolution invalid under the context it was written in is still left out
+/// with a clause 6.3.17 warning, its sibling kept.
+#[tokio::test]
+async fn an_evolution_invalid_under_its_aliasing_context_is_refused_with_a_warning() {
+    let body = json!([
+        {"id": "urn:ngsi-ld:Vehicle:1", "kind": "Vehicle", "speed": [{"kind": "Property", "observedAt": "2026-01-01T00:00:00Z"}]},
+        {"id": "urn:ngsi-ld:Vehicle:2", "kind": "Vehicle", "speed": [{"kind": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00Z"}]}
+    ]);
+    let answer = answered(&body.to_string(), context(&aliasing_terms()), &ContextSpec::core_only()).await;
+    assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:2"]);
     assert!(
         matches!(answer.warnings.as_slice(), [NgsiLdWarning::RevalidationFailed(_)]),
         "{:?}",

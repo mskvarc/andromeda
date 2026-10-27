@@ -16,7 +16,7 @@ use crate::{
 use andromeda_json_literal::processor_json::read_processor_json;
 use andromeda_jsonld::{container_terms::container_terms, core_term_aliases::core_term_aliases, engine::compaction_context::CompactionContext};
 use andromeda_ngsi_ld_representation::{
-    compact_node::{aliased_node::AliasedNode, contained_node::ContainedNode},
+    compact_node::{aliased_node::AliasedNode, contained_node::ContainedNode, context_reading::ContextReading},
     container_terms::ContainerTerms,
     core_term_aliases::CoreTermAliases,
 };
@@ -90,7 +90,7 @@ impl TermContext {
     /// it: without the containers of the context's terms, each member under
     /// the core term its name stands for.
     pub(crate) const fn read<N>(&self, node: N) -> AliasedNode<'_, ContainedNode<'_, N>> {
-        AliasedNode::new(ContainedNode::new(node, &self.containers), &self.aliases)
+        ContextReading::new(&self.aliases, &self.containers).read(node)
     }
 
     /// The active context.

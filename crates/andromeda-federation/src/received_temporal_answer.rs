@@ -1,35 +1,34 @@
-//! A source answers in compact JSON-LD spelled in the forwarding context of the request. Each page is decoded element by element straight from its text, an element the model cannot hold becoming a clause 6.3.17 warning instead of failing the page. Once every page is in, each entity is expanded under the context it was written in, so the histories of every holder merge by expanded name.
+//! A source answers in compact JSON-LD spelled in the forwarding context of the request. Each page is decoded element by element straight from its text, an element whose text a request's would be refused for becoming a clause 6.3.17 warning instead of failing the page. Each element is held as written until the context it was written in was processed, then read as a Temporal Evolution under it.
 
 use crate::{
     FederationService,
     outcome::{ForwardGetOutcome, ForwardedResponse},
     source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
+    temporal_answer_reading::ReadTemporalEntity,
 };
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    received::ReceivedElement,
+    received::{ContextualEntity, ReceivedElement, ReceivedEntities},
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
-    temporal::{
-        received_temporal::{ContextualTemporalEntity, ReceivedTemporalEntities},
-        temporal_body::TemporalBody,
-    },
+    temporal::temporal_body::TemporalBody,
 };
 use tracing::warn;
 
-/// One source's answer of Temporal Evolutions, decoded but not yet read into
-/// the model.
-pub(crate) struct ReceivedTemporalAnswer {
+/// One source's answer of Temporal Evolutions: each entity held as written
+/// (`E` is [`ContextualEntity`]) while the answer is walked, then read under
+/// the context it was written in (`E` is [`ReadTemporalEntity`]).
+pub(crate) struct ReceivedTemporalAnswer<E> {
     /// `None` for the entry that carries only the clause 6.3.17 loop warning.
     pub(crate) registration_id: Option<Identifier>,
     /// The registration's forwarding mode.
     pub(crate) mode: ForwardingMode,
     /// The context the answer is spelled in.
     pub(crate) naming: Box<ContextSpec>,
-    /// The entities the source answered with, as it wrote them.
-    pub(crate) entities: Vec<ContextualTemporalEntity>,
+    /// The entities the source answered with.
+    pub(crate) entities: Vec<E>,
     /// The clause 6.3.17 warnings of the attempt.
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// The `EntityMap` the source used for the request (clause 5.5.14).
@@ -40,10 +39,10 @@ pub(crate) struct ReceivedTemporalAnswer {
     pub(crate) partial_ranges: Vec<NgsiLdContentRange>,
 }
 
-impl ReceivedTemporalAnswer {
+impl ReceivedTemporalAnswer<ReadTemporalEntity> {
     /// How many attribute instances the answer carries.
     pub(crate) fn instance_count(&self) -> usize {
-        self.entities.iter().map(|contextual| body_instance_count(&contextual.body)).sum()
+        self.entities.iter().map(|read| body_instance_count(&read.body)).sum()
     }
 }
 
@@ -58,14 +57,14 @@ pub(crate) fn body_instance_count(body: &TemporalBody) -> usize {
 
 /// A Query Temporal Evolution of Entities answer walks page by page as the
 /// temporal entities each page carried.
-impl WalkedAnswer for ReceivedTemporalAnswer {
-    type Element = ContextualTemporalEntity;
+impl WalkedAnswer for ReceivedTemporalAnswer<ContextualEntity> {
+    type Element = ContextualEntity;
 
-    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedTemporalAnswer> {
+    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedTemporalAnswer<ContextualEntity>> {
         FederationService::received_temporal_answer(registration, outcome)
     }
 
-    fn elements(&mut self) -> &mut Vec<ContextualTemporalEntity> {
+    fn elements(&mut self) -> &mut Vec<ContextualEntity> {
         &mut self.entities
     }
 
@@ -73,11 +72,11 @@ impl WalkedAnswer for ReceivedTemporalAnswer {
         &mut self.warnings
     }
 
-    fn identifier(element: &ContextualTemporalEntity) -> Option<Identifier> {
-        Some(element.body.id().clone()) // clone: the walk remembers the identifier after the entity moves into the answer
+    fn identifier(element: &ContextualEntity) -> Option<Identifier> {
+        element.id.clone() // clone: the walk remembers the identifier after the entity moves into the answer
     }
 
-    fn absorb(&mut self, page: ReceivedTemporalAnswer) {
+    fn absorb(&mut self, page: ReceivedTemporalAnswer<ContextualEntity>) {
         self.warnings.extend(page.warnings);
         self.partial_ranges.extend(page.partial_ranges);
     }
@@ -88,8 +87,11 @@ impl FederationService {
     /// abnormal outcome. A 404 contributes nothing. A query answers with an
     /// array and a retrieval with one object, but either is read from either:
     /// a retrieval continuing a clause 4.5.23 flat join answers with an array.
-    /// An entity the model cannot hold is dropped with a warning of its own.
-    pub(crate) fn received_temporal_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedTemporalAnswer> {
+    /// An element whose text is refused is dropped with a warning of its own.
+    pub(crate) fn received_temporal_answer(
+        registration: &ContextSourceRegistration,
+        outcome: ForwardGetOutcome,
+    ) -> ReadPage<ReceivedTemporalAnswer<ContextualEntity>> {
         let answered = |naming, entities, warnings, linked_map, partial_range: Option<NgsiLdContentRange>| {
             Some(ReceivedTemporalAnswer {
                 registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
@@ -109,8 +111,8 @@ impl FederationService {
                 entity_map,
                 partial_range,
                 ..
-            }) => match ReceivedTemporalEntities::from_slice(&body) {
-                Ok(ReceivedTemporalEntities(elements)) => {
+            }) => match ReceivedEntities::from_slice(&body) {
+                Ok(ReceivedEntities(elements)) => {
                     let sent = elements.len();
                     let mut entities = Vec::with_capacity(sent);
                     for element in elements {

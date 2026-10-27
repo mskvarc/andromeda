@@ -31,8 +31,6 @@ pub mod evolution_instance;
 pub mod observation_metadata;
 /// Why a simplified temporal attribute is refused.
 pub mod plural_member_refusal;
-/// The Temporal Evolutions a context source answered with.
-pub mod received_temporal;
 /// Unfolding the simplified temporal representation while a body is read.
 mod simplified_unfold;
 /// The structured value of one observation and the JSON a history row stores it as.

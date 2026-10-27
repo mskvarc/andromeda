@@ -158,6 +158,8 @@ pub mod split_entities;
 pub mod subscription;
 /// Temporal query and retrieve execution.
 pub mod temporal;
+/// Reading each Temporal Evolution a source answered under the context it was written in.
+mod temporal_answer_reading;
 /// Reading a source's temporal history to the end of its clause 6.3.10 pages.
 mod temporal_history_walk;
 /// Temporal response merging.

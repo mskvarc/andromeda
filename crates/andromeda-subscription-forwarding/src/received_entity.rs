@@ -68,7 +68,7 @@ pub(crate) async fn read_notified(
 ) -> Result<ReceivedDocument, ReceivedEntityRefusal> {
     match &contextual.context {
         None => {
-            let entity = contextual.entity(inbound.context().aliases()).map_err(ReceivedEntityRefusal::Undecodable)?;
+            let entity = contextual.entity(inbound.context().reading()).map_err(ReceivedEntityRefusal::Undecodable)?;
             Ok(inbound.notified(&entity).await?)
         }
         Some(own) => {
@@ -76,7 +76,7 @@ pub(crate) async fn read_notified(
             let expansion = EntityExpansion::prepare(engine, &ContextSpec::from_body(own.clone()))
                 .await
                 .map_err(ReceivedEntityRefusal::OwnContext)?;
-            let entity = contextual.entity(expansion.context().aliases()).map_err(ReceivedEntityRefusal::Undecodable)?;
+            let entity = contextual.entity(expansion.context().reading()).map_err(ReceivedEntityRefusal::Undecodable)?;
             Ok(expansion.notified(&entity).await?)
         }
     }

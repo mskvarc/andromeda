@@ -46,7 +46,8 @@
 //! compact document applies it, a request body and a compacted entity alike:
 //! [`aliased_deserializer`] applies it to a body decoded straight from its
 //! text. [`container_terms`] is its companion for the shape compaction gives a
-//! member written under a term with a container of the context's own.
+//! member written under a term with a container of the context's own, and
+//! [`compact_node::context_reading`] reads a node through both.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by

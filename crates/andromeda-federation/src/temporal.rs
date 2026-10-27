@@ -19,7 +19,7 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
+use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::forwarding_mode::ForwardingMode};
 use std::slice::from_ref;
 
 /// The outcome of a temporal read whose request already looped back onto this
@@ -129,15 +129,22 @@ impl FederationService {
             entity_map,
         };
         let answers = match paging {
-            SourcePaging::Walk(budget) => self.fan_out_walk::<ReceivedTemporalAnswer>(targets, conditions, budget).await?,
+            SourcePaging::Walk(budget) => {
+                let walked = self
+                    .fan_out_walk::<ReceivedTemporalAnswer<ContextualEntity>>(targets, conditions, budget)
+                    .await?;
+                self.read_temporal_answers(walked).await
+            }
             SourcePaging::WalkHistory(budget) => self.fan_out_history_walk(targets, conditions, budget).await?,
             SourcePaging::Page(_) => {
-                self.fan_out_read(
-                    targets,
-                    |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
-                    conditions,
-                )
-                .await
+                let received = self
+                    .fan_out_read(
+                        targets,
+                        |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
+                        conditions,
+                    )
+                    .await;
+                self.read_temporal_answers(received).await
             }
         };
         Ok(self
@@ -218,7 +225,7 @@ impl FederationService {
             return Ok(ForwardReadOutcome::empty());
         }
         let matched = targets.len();
-        let answers = self
+        let received = self
             .fan_out_read(
                 targets,
                 |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
@@ -230,6 +237,7 @@ impl FederationService {
                 },
             )
             .await;
+        let answers = self.read_temporal_answers(received).await;
         Ok(self
             .answered_temporal(read_outcome(answers, matched), context, client_query.timeproperty())
             .await)

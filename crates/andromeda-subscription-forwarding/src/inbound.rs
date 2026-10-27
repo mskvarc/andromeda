@@ -215,7 +215,7 @@ fn notification_data(data: JsonPiece<'_>) -> Result<InboundData, InboundError> {
 mod tests {
     use crate::inbound::{Inbound, InboundData, InboundError};
     use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, received::ReceivedElement};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 
     const ENVELOPE: &str = r#""id":"urn:ngsi-ld:Notification:1","subscriptionId":"urn:ngsi-ld:Subscription:1","notifiedAt":"2024-06-15T12:30:00Z""#;
     const VEHICLE: &str = r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":1.10}}"#;
@@ -265,7 +265,7 @@ mod tests {
             .0
             .iter()
             .map(|element| match element {
-                ReceivedElement::Read(contextual) => contextual.entity(CoreTermAliases::keyword_spellings()).is_ok(),
+                ReceivedElement::Read(contextual) => contextual.entity(ContextReading::keyword_spellings()).is_ok(),
                 ReceivedElement::Refused(_) => false,
             })
             .collect();
@@ -344,7 +344,7 @@ mod tests {
         let [ReceivedElement::Read(contextual)] = entities.0.as_slice() else {
             panic!("one entity");
         };
-        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let entity = contextual.entity(ContextReading::keyword_spellings()).expect("the entity reads");
         let written = serde_json::to_string(&entity).expect("writes");
         assert!(written.contains("1.1"), "{written}");
     }

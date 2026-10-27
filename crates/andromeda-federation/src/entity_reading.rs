@@ -25,6 +25,10 @@ pub(crate) enum TemporalEntityReading {
     /// The entity's own `@context` does not resolve or process.
     #[error("its own @context cannot be processed: {0}")]
     OwnContext(#[source] ExpansionError),
+    /// The entity, read under the context it was written in, is no Temporal
+    /// Evolution the model can hold.
+    #[error(transparent)]
+    Undecodable(Box<ElementRefusal>),
     /// The entity does not read into the model.
     #[error(transparent)]
     Refused(ExpansionError),

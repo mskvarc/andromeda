@@ -14,6 +14,7 @@
 
 pub mod aliased_node;
 pub mod contained_node;
+pub mod context_reading;
 mod piece_node;
 pub mod produced_node;
 

@@ -9,13 +9,18 @@
 //! warning.
 //!
 //! A peer spells an entity under a context too, and may name a core term by a
-//! term of it (clause 5.5.7, JSON-LD 1.1 API section 6.2.2), so an entity is
-//! held as written and read into the model only once the context it was
-//! written in was processed, through the aliases of that context.
+//! term of it and shape a member by the container of its term (clause 5.5.7,
+//! JSON-LD 1.1 API section 6.2.2), so an entity is held as written and read
+//! into the model only once the context it was written in was processed:
+//! through the aliases of that context and without its containers, as the
+//! current state of an entity or as a Temporal Evolution (clauses 5.7.3.4 and
+//! 5.7.4.4). The `id` is read on receipt under the clause 4.4 keyword
+//! spellings every context reads.
 
 use crate::{
     entity::Entity,
     node_refusal::{NodeReadError, RefusedNode},
+    temporal::temporal_body::TemporalBody,
 };
 use andromeda_json_literal::{
     JsonLiteral,
@@ -24,13 +29,11 @@ use andromeda_json_literal::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
-use andromeda_ngsi_ld_representation::{
-    compact_node::{CompactNode, aliased_node::AliasedNode},
-    core_term_aliases::CoreTermAliases,
-};
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, context_reading::ContextReading};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::value::RawValue;
+use std::convert::Infallible;
 use thiserror::Error;
 
 /// One element of a received array, decoded on its own.
@@ -103,22 +106,38 @@ pub struct ContextualEntity {
 }
 
 impl ContextualEntity {
-    /// The entity, each member read as the core term `aliases` say it stands
-    /// for, its `@context` member not among its members.
+    /// The entity, read as `reading` reads a node written under its context,
+    /// its `@context` member not among its members.
     ///
     /// # Errors
     ///
     /// Returns the [`ElementRefusal`] of an entity the model cannot hold,
     /// naming the element and the `id` it names, located in the entity.
-    pub fn entity(&self, aliases: &CoreTermAliases) -> Result<Entity, Box<ElementRefusal>> {
-        match Entity::from_node(AliasedNode::new(JsonPiece::new(&self.written), aliases)) {
-            Ok(entity) => Ok(entity),
-            Err(NodeReadError::Refused(refusal)) => Err(Box::new(ElementRefusal {
+    pub fn entity(&self, reading: ContextReading<'_>) -> Result<Entity, Box<ElementRefusal>> {
+        Entity::from_node(reading.read(JsonPiece::new(&self.written))).map_err(|error| self.refusal(error))
+    }
+
+    /// The Temporal Evolution, the instances of its attributes or the
+    /// aggregates over them, read as `reading` reads a node written under its
+    /// context, its `@context` member not among its members.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ElementRefusal`] of an evolution the model cannot hold,
+    /// naming the element and the `id` it names, located in the evolution.
+    pub fn temporal(&self, reading: ContextReading<'_>) -> Result<TemporalBody, Box<ElementRefusal>> {
+        TemporalBody::from_node(reading.read(JsonPiece::new(&self.written))).map_err(|error| self.refusal(error))
+    }
+
+    /// The refusal of the element as what `error` says it could not be read as.
+    fn refusal(&self, error: NodeReadError<Infallible>) -> Box<ElementRefusal> {
+        match error {
+            NodeReadError::Refused(refusal) => Box::new(ElementRefusal {
                 index: self.index,
                 id: self.id.clone(), // clone: the refusal outlives the entity it names
                 reason: ElementRefusalReason::Refused(refusal),
-            })),
-            Err(NodeReadError::Unreadable(never)) => match never {},
+            }),
+            NodeReadError::Unreadable(never) => match never {},
         }
     }
 }
@@ -230,7 +249,8 @@ fn contextual_entity(index: usize, element: JsonPiece<'_>) -> ReceivedElement<Co
 /// The `id` an element names as `id` or `@id` (clause 4.4), when it names a
 /// readable one.
 pub(crate) fn named_id(element: JsonPiece<'_>) -> Option<Identifier> {
-    AliasedNode::new(element, CoreTermAliases::keyword_spellings())
+    ContextReading::keyword_spellings()
+        .read(element)
         .member(keyword::ID_ALIAS)
         .and_then(CompactNode::text)
         .and_then(|id| id.parse().ok())
@@ -243,8 +263,15 @@ pub(crate) fn named_id(element: JsonPiece<'_>) -> Option<Identifier> {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::received::{ContextualEntity, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, ReceivedEntities};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use crate::{
+        received::{ContextualEntity, ElementRefusalReason, ReceivedDocumentError, ReceivedElement, ReceivedEntities},
+        temporal::temporal_body::TemporalBody,
+    };
+    use andromeda_ngsi_ld_representation::{
+        compact_node::context_reading::ContextReading,
+        container_terms::{ContainerTerms, TermContainer},
+        core_term_aliases::CoreTermAliases,
+    };
 
     fn read(text: &str) -> Vec<ReceivedElement<ContextualEntity>> {
         ReceivedEntities::from_slice(text.as_bytes()).expect("a document of entities").0
@@ -257,7 +284,7 @@ mod tests {
             .iter()
             .map(|element| match element {
                 ReceivedElement::Read(contextual) => contextual
-                    .entity(CoreTermAliases::keyword_spellings())
+                    .entity(ContextReading::keyword_spellings())
                     .map(|entity| entity.id.to_string())
                     .map_err(|refusal| refusal.to_string()),
                 ReceivedElement::Refused(refusal) => Err(refusal.to_string()),
@@ -304,7 +331,7 @@ mod tests {
             panic!("one entity is held: {elements:?}");
         };
         pretty_assertions::assert_eq!(contextual.id.as_ref().map(ToString::to_string), Some("urn:ngsi-ld:Vehicle:9".to_owned()));
-        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let entity = contextual.entity(ContextReading::keyword_spellings()).expect("the entity reads");
         assert!(entity.attrs.contains_key("speed"), "{entity:?}");
     }
 
@@ -320,7 +347,7 @@ mod tests {
             panic!("one entity is read: {elements:?}");
         };
         pretty_assertions::assert_eq!(contextual.context.as_ref().map(ToString::to_string), Some(r#""https://x/c.jsonld""#.to_owned()));
-        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let entity = contextual.entity(ContextReading::keyword_spellings()).expect("the entity reads");
         assert!(entity.attrs.is_empty(), "@context is no attribute");
     }
 
@@ -369,9 +396,125 @@ mod tests {
         let [ReceivedElement::Read(contextual)] = elements.as_slice() else {
             panic!("one entity is read");
         };
-        let entity = contextual.entity(CoreTermAliases::keyword_spellings()).expect("the entity reads");
+        let entity = contextual.entity(ContextReading::keyword_spellings()).expect("the entity reads");
         let written = serde_json::to_string(&entity).expect("the entity writes");
         assert!(written.contains("1.1"), "{written}");
+    }
+
+    /// The one element of `text`, held as written.
+    fn held(text: &str) -> ContextualEntity {
+        let mut elements = read(text);
+        let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
+            panic!("one element is held: {elements:?}");
+        };
+        contextual
+    }
+
+    /// The evolution of `text`, read under the keyword spellings, or the text
+    /// of its refusal.
+    fn evolution(text: &str) -> Result<TemporalBody, String> {
+        held(text).temporal(ContextReading::keyword_spellings()).map_err(|refusal| refusal.to_string())
+    }
+
+    /// How many instances `body` holds.
+    fn instances(body: &TemporalBody) -> usize {
+        match body {
+            TemporalBody::Evolution(entity) => entity.attribute_members().map(|(_, attribute)| attribute.instances().len()).sum(),
+            TemporalBody::Aggregated(_) => panic!("an evolution, not aggregates: {body:?}"),
+        }
+    }
+
+    /// The aliases a source context defining `kind` for `@type` and `vals` for
+    /// `ngsi-ld:hasValues` gives.
+    fn source_aliases() -> CoreTermAliases {
+        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the source's table extends the shared one
+        aliases.alias("kind", "type");
+        aliases.alias("vals", "values");
+        aliases
+    }
+
+    const EVOLUTION: &str = r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":[{"type":"Property","value":50,"observedAt":"2020-01-01T00:00:00Z","instanceId":"urn:ngsi-ld:i:1"}]}"#;
+
+    #[test]
+    fn a_temporal_evolution_reads_its_instances() {
+        let body = evolution(EVOLUTION).expect("the evolution reads");
+        pretty_assertions::assert_eq!(instances(&body), 1);
+    }
+
+    /// Clause 4.5.1: an evolution without `type` is refused, naming it.
+    #[test]
+    fn an_evolution_without_type_is_refused() {
+        let refusal = evolution(r#"{"id":"urn:a","speed":[{"type":"Property","value":1}]}"#).expect_err("no type");
+        assert!(refusal.contains("type"), "{refusal}");
+    }
+
+    /// An instance naming no value member of its family is refused rather than
+    /// read as a Property with a null value.
+    #[test]
+    fn an_instance_without_a_family_member_is_refused() {
+        let refusal = evolution(r#"{"id":"urn:a","type":"T","speed":[{"type":"Property","observedAt":"2020-01-01T00:00:00Z"}]}"#).expect_err("no value");
+        assert!(refusal.contains("speed"), "{refusal}");
+    }
+
+    /// A peer answering an aggregated query answers with aggregates.
+    #[test]
+    fn an_aggregated_answer_is_read_as_aggregates() {
+        let body = evolution(r#"{"id":"urn:a","type":"T","w":{"type":"Property","avg":[[1.5,"2026-01-01T00:00:00Z","2026-01-01T01:00:00Z"]]}}"#)
+            .expect("aggregates read");
+        assert!(matches!(body, TemporalBody::Aggregated(_)), "{body:?}");
+    }
+
+    /// Clauses 4.4 and 5.5.4: an instance whose `type` is spelled by an alias
+    /// of `@type` the source context defines reads as the Property it is.
+    #[test]
+    fn an_evolution_under_an_alias_of_type_reads_its_instances() {
+        let aliases = source_aliases();
+        let containers = ContainerTerms::none();
+        let contextual =
+            held(r#"{"id":"urn:ngsi-ld:Vehicle:1","kind":"Vehicle","speed":[{"kind":"Property","value":20,"observedAt":"2026-01-01T00:00:00Z"}]}"#);
+        let body = contextual.temporal(ContextReading::new(&aliases, &containers)).expect("the evolution reads");
+        pretty_assertions::assert_eq!(instances(&body), 1);
+        assert!(
+            contextual.temporal(ContextReading::keyword_spellings()).is_err(),
+            "kind is no type without the source context"
+        );
+    }
+
+    /// Clause 4.5.9: the simplified temporal representation written with an
+    /// alias of the `values` plural reads as the instances it lists.
+    #[test]
+    fn an_evolution_under_an_alias_of_a_temporal_plural_reads_its_instances() {
+        let aliases = source_aliases();
+        let containers = ContainerTerms::none();
+        let contextual = held(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"kind":"Property","vals":[[20,"2026-01-01T00:00:00Z"],[21,"2026-01-01T01:00:00Z"]]}}"#,
+        );
+        let body = contextual.temporal(ContextReading::new(&aliases, &containers)).expect("the evolution reads");
+        pretty_assertions::assert_eq!(instances(&body), 2);
+    }
+
+    /// JSON-LD 1.1 section 4.6: a `@set` alias of `@type` writes the type as an
+    /// array of one, which reads as the type it holds.
+    #[test]
+    fn an_evolution_under_a_set_container_reads_its_instances() {
+        let aliases = source_aliases();
+        let mut containers = ContainerTerms::none();
+        containers.contain("kind", TermContainer::Set);
+        let contextual =
+            held(r#"{"id":"urn:ngsi-ld:Vehicle:1","kind":["Vehicle"],"speed":[{"kind":["Property"],"value":20,"observedAt":"2026-01-01T00:00:00Z"}]}"#);
+        let body = contextual.temporal(ContextReading::new(&aliases, &containers)).expect("the evolution reads");
+        pretty_assertions::assert_eq!(instances(&body), 1);
+    }
+
+    /// A Core API answer reads through the containers of its context too.
+    #[test]
+    fn an_entity_under_a_set_container_reads_its_attribute() {
+        let aliases = source_aliases();
+        let mut containers = ContainerTerms::none();
+        containers.contain("kind", TermContainer::Set);
+        let contextual = held(r#"{"id":"urn:ngsi-ld:Vehicle:1","kind":["Vehicle"],"speed":{"kind":["Property"],"value":20}}"#);
+        let entity = contextual.entity(ContextReading::new(&aliases, &containers)).expect("the entity reads");
+        assert!(entity.attrs.contains_key("speed"), "{entity:?}");
     }
 
     #[test]

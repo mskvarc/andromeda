@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::{
-    compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode, contained_node::ContainedNode},
+    compact_node::{CompactNode, NodeShape, context_reading::ContextReading},
     sys_attrs::SysAttrsInclusion,
 };
 use chrono::{DateTime, Utc};
@@ -52,7 +52,7 @@ pub(crate) async fn processor_entity(
     let processed = compactor.processed_context().await.map_err(|error| error.to_string())?;
     let aliases = core_term_aliases(processed.active_context());
     let containers = container_terms(processed.active_context());
-    let mut entity = <Entity>::from_node(AliasedNode::new(ContainedNode::new(object, &containers), &aliases)).map_err(|error| error.to_string())?;
+    let mut entity = <Entity>::from_node(ContextReading::new(&aliases, &containers).read(object)).map_err(|error| error.to_string())?;
     if let Some(id) = id_override {
         entity.id = id.parse().map_err(|error: IdentifierParseError| error.to_string())?;
     }

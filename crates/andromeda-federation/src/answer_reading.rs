@@ -207,14 +207,14 @@ impl FederationService {
     async fn received_state(&self, expansion: &EntityExpansion<'_>, mut contextual: ContextualEntity) -> Result<ReceivedState, EntityReading> {
         match contextual.context.take() {
             None => {
-                let entity = contextual.entity(expansion.context().aliases()).map_err(EntityReading::Undecodable)?;
+                let entity = contextual.entity(expansion.context().reading()).map_err(EntityReading::Undecodable)?;
                 expansion.received(entity).await.map_err(EntityReading::Refused)
             }
             Some(own) => {
                 let own = EntityExpansion::prepare(&self.engine, &ContextSpec::from_body(own))
                     .await
                     .map_err(EntityReading::OwnContext)?;
-                let entity = contextual.entity(own.context().aliases()).map_err(EntityReading::Undecodable)?;
+                let entity = contextual.entity(own.context().reading()).map_err(EntityReading::Undecodable)?;
                 own.received(entity).await.map_err(EntityReading::Refused)
             }
         }

@@ -7,11 +7,12 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::{
-    received::ReceivedElement,
+    received::{ReceivedElement, ReceivedEntities},
     registration::forwarding_mode::ForwardingMode,
-    temporal::{received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_history::TemporalHistory},
+    temporal::{temporal_body::TemporalBody, temporal_history::TemporalHistory},
 };
 use andromeda_ngsi_ld_query::temporal::window::{TemporalWindow, TimeInterval};
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -23,11 +24,11 @@ async fn history(document: Value) -> TemporalHistory {
     let context = ContextSpec::from_body(
         JsonLiteral::admit(&json!({"speed": "https://example.com/speed", "fuel": "https://example.com/fuel"}).to_string()).expect("an admissible literal"),
     );
-    let ReceivedTemporalEntities(mut elements) = ReceivedTemporalEntities::from_slice(document.to_string().as_bytes()).expect("an answer");
+    let ReceivedEntities(mut elements) = ReceivedEntities::from_slice(document.to_string().as_bytes()).expect("an answer");
     let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
         panic!("the answer is a temporal entity: {document}");
     };
-    let TemporalBody::Evolution(entity) = contextual.body else {
+    let TemporalBody::Evolution(entity) = contextual.temporal(ContextReading::keyword_spellings()).expect("the answer reads") else {
         panic!("the answer is a Temporal Evolution");
     };
     let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");

@@ -7,14 +7,13 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_type::AttributeType, temporal_format::TemporalFormat, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::{
-    received::ReceivedElement,
+    received::{ReceivedElement, ReceivedEntities},
     temporal::{
         AggregationAverage,
         StreamExtent,
         TemporalAggregationRow,
         TemporalValue,
         aggregated_entity::{AggregateValue, AggregatedValues},
-        received_temporal::ReceivedTemporalEntities,
         temporal_body::TemporalBody,
         temporal_document::TemporalDocument,
         temporal_history::TemporalHistory,
@@ -22,6 +21,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -42,11 +42,11 @@ async fn answered(value: i64) -> TemporalDocument {
         "type": "Thing",
         "speed": [{"type": "Property", "value": value, "observedAt": "2024-01-01T00:30:00Z"}]
     });
-    let ReceivedTemporalEntities(mut elements) = ReceivedTemporalEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
+    let ReceivedEntities(mut elements) = ReceivedEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
     let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
         panic!("the answer is a temporal entity");
     };
-    let TemporalBody::Evolution(entity) = contextual.body else {
+    let TemporalBody::Evolution(entity) = contextual.temporal(ContextReading::keyword_spellings()).expect("the answer reads") else {
         panic!("the answer is a Temporal Evolution");
     };
     let expansion = EntityExpansion::prepare(&engine, &context()).await.expect("the context resolves");

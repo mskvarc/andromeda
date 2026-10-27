@@ -14,6 +14,7 @@ use crate::{
         instance_member::ReadError,
     },
     node_refusal::NodeRefusal,
+    temporal::simplified_unfold::instances_of,
 };
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
@@ -80,27 +81,19 @@ impl TemporalAttribute {
     }
 
     /// The attribute a compact node written under `name` is: one instance
-    /// object, or an array of them. An empty array holds no instance and names
-    /// no family, so it is no attribute (`None`): a peer's page cut leaves
-    /// nothing to merge or to write.
+    /// object, or an array of them, each object in the clause 4.5.9
+    /// simplified representation unfolded into the instances its pairs stand
+    /// for. An empty array holds no instance and names no family, so it is no
+    /// attribute (`None`): a peer's page cut leaves nothing to merge or to
+    /// write.
     ///
     /// # Errors
     ///
-    /// Returns the refusal of the first element that is no instance of any
-    /// family, located at the element, and the node's
-    /// [`CompactNode::Unreadable`].
+    /// Returns the refusal of the first element that is neither an instance of
+    /// any family nor a simplified attribute object, located at the element,
+    /// and the node's [`CompactNode::Unreadable`].
     pub fn from_node<'n, N: CompactNode<'n>>(name: &str, node: N) -> Result<Option<TemporalAttribute>, ReadError<'n, N>> {
-        let instances = match node.shape() {
-            NodeShape::Array(items) => items
-                .into_iter()
-                .enumerate()
-                .map(|(index, item)| Attribute::from_node(name, item).map_err(|error| error.within_element(index)))
-                .collect::<Result<Vec<_>, _>>()?,
-            NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
-                vec![Attribute::from_node(name, node)?]
-            }
-        };
-        Ok(TemporalAttribute::observed(instances))
+        Ok(TemporalAttribute::observed(instances_of(name, node)?))
     }
 
     /// The reified Scope history (clause 4.5.6) a compact object holds as its

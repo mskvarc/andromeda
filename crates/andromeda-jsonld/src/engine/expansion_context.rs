@@ -20,6 +20,7 @@
 #[cfg(test)]
 use crate::engine::processor::count_document_expansion;
 use crate::{
+    container_terms::container_terms,
     context_graph::check_context_graph,
     context_spec::ContextSpec,
     core_term_aliases::core_term_aliases,
@@ -28,7 +29,7 @@ use crate::{
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::{compact_node::context_reading::ContextReading, container_terms::ContainerTerms, core_term_aliases::CoreTermAliases};
 use iri_rs::IriBuf;
 use jsonld::{
     Context as ActiveContext,
@@ -74,6 +75,9 @@ pub struct ExpansionContext {
     /// The terms [`ExpansionContext::active`] defines for core terms, which a
     /// compact document written under it is read through.
     aliases: Arc<CoreTermAliases>,
+    /// The terms of [`ExpansionContext::active`] whose container reshapes
+    /// what is compacted under them.
+    containers: ContainerTerms,
 }
 
 impl ExpansionContext {
@@ -88,6 +92,13 @@ impl ExpansionContext {
     #[must_use]
     pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
         &self.aliases
+    }
+
+    /// How a document compacted under the context is read: without the
+    /// containers of its terms, through its aliases.
+    #[must_use]
+    pub fn reading(&self) -> ContextReading<'_> {
+        ContextReading::new(&self.aliases, &self.containers)
     }
 
     /// The active context JSON-LD 1.1 expansion switches to for an object
@@ -162,10 +173,12 @@ impl ExpansionContext {
             .into_processed();
         let property_scoped = property_scoped_contexts(&active, loader).await;
         let aliases = Arc::new(core_term_aliases(&active));
+        let containers = container_terms(&active);
         Ok(ExpansionContext {
             active,
             property_scoped,
             aliases,
+            containers,
         })
     }
 }

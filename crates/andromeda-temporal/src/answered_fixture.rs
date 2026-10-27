@@ -5,9 +5,10 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_model::{
-    received::ReceivedElement,
-    temporal::{received_temporal::ReceivedTemporalEntities, temporal_body::TemporalBody, temporal_document::TemporalDocument},
+    received::{ReceivedElement, ReceivedEntities},
+    temporal::{temporal_body::TemporalBody, temporal_document::TemporalDocument},
 };
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use serde_json::{Value, json};
 
 /// The context every answer is written in: each term is
@@ -33,11 +34,11 @@ pub(crate) async fn answered(answer: &Value) -> TemporalDocument {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
     let context = context();
     let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
-    let ReceivedTemporalEntities(mut elements) = ReceivedTemporalEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
+    let ReceivedEntities(mut elements) = ReceivedEntities::from_slice(answer.to_string().as_bytes()).expect("an answer");
     let Some(ReceivedElement::Read(contextual)) = elements.pop() else {
         panic!("the answer is a temporal entity");
     };
-    let TemporalBody::Evolution(entity) = contextual.body else {
+    let TemporalBody::Evolution(entity) = contextual.temporal(ContextReading::keyword_spellings()).expect("the answer reads") else {
         panic!("the answer is a Temporal Evolution");
     };
     expansion.temporal(entity).await.expect("the answer expands")

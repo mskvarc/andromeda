@@ -84,6 +84,14 @@ mod tests {
         pretty_assertions::assert_eq!(aliases.core_name(Cow::Borrowed("v")), "value");
     }
 
+    /// Clause 4.5.9: a term for `ngsi-ld:hasValues` aliases the `values`
+    /// plural of the simplified temporal representation.
+    #[tokio::test]
+    async fn a_context_term_for_has_values_aliases_values() {
+        let aliases = aliases_of(&json!({"vals": "https://uri.etsi.org/ngsi-ld/hasValues"})).await;
+        pretty_assertions::assert_eq!(aliases.core_name(Cow::Borrowed("vals")), "values");
+    }
+
     /// A context aliasing no core term still reads the clause 4.4 keyword
     /// spellings.
     #[tokio::test]

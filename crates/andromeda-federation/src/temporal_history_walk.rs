@@ -19,13 +19,14 @@ use crate::{
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     received_temporal_answer::ReceivedTemporalAnswer,
     request::HistoryBudget,
+    temporal_answer_reading::ReadTemporalEntity,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, rendering::instant_text},
     time_rel::TimeRel,
 };
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
@@ -49,7 +50,7 @@ impl FederationService {
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         conditions: ForwardedGetConditions<'_>,
         budget: HistoryBudget<'_>,
-    ) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer>>, QueryForwardingError> {
+    ) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer<ReadTemporalEntity>>>, QueryForwardingError> {
         stream::iter(targets)
             .map(|(registration, first)| async move { self.walk_history(&registration, first, conditions, budget).await })
             .buffer_unordered(self.csr_concurrency)
@@ -60,21 +61,23 @@ impl FederationService {
     }
 
     /// Walk one target's answer, then resume it past every partial answer
-    /// until the window is exhausted.
+    /// until the window is exhausted. Each walk is read under the contexts its
+    /// evolutions were written in before its instances are counted.
     async fn walk_history(
         &self,
         registration: &ContextSourceRegistration,
         first: ForwardedRead,
         conditions: ForwardedGetConditions<'_>,
         budget: HistoryBudget<'_>,
-    ) -> Result<SourceAnswer<ReceivedTemporalAnswer>, QueryForwardingError> {
+    ) -> Result<SourceAnswer<ReceivedTemporalAnswer<ReadTemporalEntity>>, QueryForwardingError> {
         let first_url = match &first {
             ForwardedRead::Get(Ok(url)) => Some(url.clone()), // clone: every resumed request rewrites the first request's window
             ForwardedRead::Get(Err(_)) | ForwardedRead::PostQuery { .. } => None,
         };
-        let mut answer = self
-            .walk_source::<ReceivedTemporalAnswer>(registration, first, conditions, budget.entities)
+        let walked = self
+            .walk_source::<ReceivedTemporalAnswer<ContextualEntity>>(registration, first, conditions, budget.entities)
             .await?;
+        let mut answer = self.read_source_answer(walked).await;
         let Some(gathered) = answer.entry.as_mut() else {
             return Ok(answer);
         };
@@ -95,11 +98,12 @@ impl FederationService {
             // entity budget a second time.
             let resumed_budget = EntityBudget::new(budget.entities.maximum());
             let page = self
-                .walk_source::<ReceivedTemporalAnswer>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
+                .walk_source::<ReceivedTemporalAnswer<ContextualEntity>>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
                 .await?;
             let Some(page) = page.entry else {
                 break;
             };
+            let page = self.read_temporal_answer(page).await;
             // The pages of one entity are put together once they are read into
             // the model, each instance once; what is charged is what the page
             // carried, the instances at the instant two pages meet included.
