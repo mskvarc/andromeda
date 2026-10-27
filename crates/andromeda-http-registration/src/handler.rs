@@ -14,6 +14,7 @@ use andromeda_http_extraction::{
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
+    resource_location::{ResourceCollection, ResourceLocator},
     response_context_request::ResponseContextRequest,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
@@ -21,7 +22,6 @@ use andromeda_http_extraction::{
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
-    headers::with_location,
     internal_failure_summary::InternalFailureSummary,
     pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,
@@ -54,6 +54,7 @@ pub(crate) async fn create(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
+    locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<RegistrationBody>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.registrations.engine(), context)
@@ -61,10 +62,7 @@ pub(crate) async fn create(
         .with_registration_instance(&uri)?;
     let body = body.admitted(&context).await?;
     let identifier = state.registrations.create(body, &context).await.with_registration_instance(&uri)?;
-    Ok(with_location(
-        StatusCode::CREATED.into_response(),
-        format!("/ngsi-ld/v1/csourceRegistrations/{identifier}"),
-    ))
+    Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::ContextSourceRegistrations, &identifier))
 }
 
 pub(crate) async fn get(

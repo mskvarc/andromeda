@@ -30,17 +30,19 @@ use crate::{
     },
     written_evolution_admission::admit_written_evolution,
 };
-use andromeda_http_extraction::context_target;
-use andromeda_http_response::headers::with_location;
+use andromeda_http_extraction::{
+    context_target,
+    resource_location::{ResourceCollection, ResourceLocator},
+};
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_temporal::temporal_validation_reason::TemporalValidationReason;
 
 /// The response a local create-or-update answers with: 201 with the new
 /// evolution's location, or 204 (clause 5.6.11.5).
-fn success_response(result: &Result<CreateOrUpdateResult, TemporalError>) -> Response {
+fn success_response(locator: &ResourceLocator, result: &Result<CreateOrUpdateResult, TemporalError>) -> Response {
     match result {
-        Ok(CreateOrUpdateResult::Created(id)) => with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/temporal/entities/{id}")),
+        Ok(CreateOrUpdateResult::Created(id)) => locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::TemporalEntities, id),
         Ok(CreateOrUpdateResult::Updated) | Err(_) => StatusCode::NO_CONTENT.into_response(),
     }
 }
@@ -57,6 +59,7 @@ pub async fn create_or_update(
     OriginalUri(uri): OriginalUri,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
+    locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<WrittenTemporalEntity>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
@@ -70,7 +73,7 @@ pub async fn create_or_update(
 
     if params.local.unwrap_or(false) {
         let result = service.create_or_update(&target, payload, &context).await;
-        let success = success_response(&result);
+        let success = success_response(&locator, &result);
         result.with_instance(&uri)?;
         return Ok(success);
     }
@@ -123,7 +126,7 @@ pub async fn create_or_update(
         .with_instance(&uri)?;
     let (local, success) = if forwarded.is_empty() || payload.has_attributes() {
         let result = service.create_or_update(&target, payload, &context).await;
-        let success = success_response(&result);
+        let success = success_response(&locator, &result);
         (LocalOutcome::processed(result, classify_temporal_error), success)
     } else {
         (LocalOutcome::NothingRemained, StatusCode::NO_CONTENT.into_response())

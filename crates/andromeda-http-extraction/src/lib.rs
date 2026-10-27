@@ -46,6 +46,7 @@ pub mod request_envelope;
 pub mod request_json_value_limit;
 pub mod request_links;
 pub mod request_payload;
+pub mod resource_location;
 pub mod response_context_request;
 pub mod scoped_response;
 pub mod snapshot;

@@ -14,8 +14,8 @@ use iri_rs::IriBuf;
 
 /// Options for applying common NGSI-LD headers to a response.
 pub struct CommonHeadersOptions<'a> {
-    /// `Location` header value for created resources.
-    pub location: Option<&'a str>,
+    /// `Location` header of a created resource.
+    pub location: Option<&'a Location>,
     /// NGSILD-EntityMap header URI for entity map scoping (clause 5.7.3.4).
     pub entity_map_uri: Option<&'a Identifier>,
     /// NGSILD-Snapshot header URN for snapshot-scoped responses (clause 6.3.22).
@@ -31,8 +31,8 @@ pub struct CommonHeadersOptions<'a> {
 /// it is taken by value, since the response it is written onto is the last
 /// thing that reads it.
 pub fn apply_common_headers(headers: &mut HeaderMap, context_link: Option<IriBuf>, options: &CommonHeadersOptions<'_>) {
-    if let Some(loc) = options.location.and_then(Location::new) {
-        headers.typed_insert(loc);
+    if let Some(location) = options.location {
+        headers.typed_insert(location.clone()); // clone: the typed header map owns the value it encodes
     }
 
     if let Some(id) = options.entity_map_uri {
@@ -52,11 +52,10 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_link: Option<IriBuf
     }
 }
 
-/// Attach a validated `Location` header to an existing response.
-pub fn with_location(mut response: Response, location: impl AsRef<str>) -> Response {
-    if let Some(location) = Location::new(location) {
-        response.headers_mut().typed_insert(location);
-    }
+/// Attach a `Location` header to an existing response.
+#[must_use]
+pub fn with_location(mut response: Response, location: Location) -> Response {
+    response.headers_mut().typed_insert(location);
     response
 }
 
@@ -81,6 +80,7 @@ pub fn with_entity_map(mut response: Response, identifier: &Identifier) -> Respo
 )]
 mod tests {
     use crate::headers::{with_entity_map, with_location};
+    use andromeda_http_headers::location::Location;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use axum::{
         http::StatusCode,
@@ -112,7 +112,8 @@ mod tests {
     #[test]
     fn a_location_and_an_entity_map_location_do_not_displace_each_other() {
         let identifier: Identifier = "urn:ngsi-ld:EntityMap:used".parse().expect("valid URI");
-        let response = with_entity_map(with_location(no_content(), "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"), &identifier);
+        let location = Location::new("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1").expect("a valid location");
+        let response = with_entity_map(with_location(no_content(), location), &identifier);
         pretty_assertions::assert_eq!(header_text(&response, "location"), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
         pretty_assertions::assert_eq!(header_text(&response, "ngsild-entitymap"), Some("urn:ngsi-ld:EntityMap:used"));
     }

@@ -5,7 +5,7 @@ use crate::{
     rendered_response::RenderedResponse,
     version_negotiation::apply_version_negotiation,
 };
-use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_http_headers::{location::Location, ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -31,7 +31,7 @@ pub struct NgsiLdResponse {
     /// Pre-rendered NGSI-LD response body and media type.
     rendered: RenderedResponse,
     /// Optional resource location advertised by the response.
-    location: Option<String>,
+    location: Option<Location>,
     /// Optional entity-map URI advertised by the response.
     entity_map_uri: Option<Identifier>,
     /// Optional pagination range advertised by the response.
@@ -65,7 +65,7 @@ impl NgsiLdResponse {
 
     /// Set the Location header.
     #[must_use]
-    pub fn with_location(mut self, location: String) -> Self {
+    pub fn with_location(mut self, location: Location) -> Self {
         self.location = Some(location);
         self
     }
@@ -110,7 +110,7 @@ impl IntoResponse for NgsiLdResponse {
             &mut headers,
             head.context_link,
             &CommonHeadersOptions {
-                location: self.location.as_deref(),
+                location: self.location.as_ref(),
                 entity_map_uri: self.entity_map_uri.as_ref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),
                 warnings: &self.warnings,

@@ -15,7 +15,6 @@
 use andromeda_context_registry::hosted_context_locator::HostedContextLocator;
 use andromeda_http_extraction::api_root::ApiRoot;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
-use iri_rs::{InvalidIri, IriRefBuf};
 use url::Url;
 
 /// The path segments the clause 6.30 resource sits under, below the `apiRoot`.
@@ -69,24 +68,13 @@ pub fn hosted_context_url(api_root: &Url, identifier: &JsonLdContextId) -> Url {
     url
 }
 
-/// `/ngsi-ld/v1/jsonldContexts/<identifier>`, the relative path the
-/// `Location` of Add @context names (clause 6.29.3.1).
-///
-/// # Errors
-///
-/// Returns the rejected text when the path is not an IRI reference, which a
-/// path of fixed segments and a URN identifier never is.
-pub fn hosted_context_path(identifier: &JsonLdContextId) -> Result<IriRefBuf, InvalidIri<String>> {
-    IriRefBuf::new(format!("/{}/{identifier}", CONTEXTS_PATH.join("/")))
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::hosted_context_url::{HostedContextUrls, hosted_context_path, hosted_context_url};
+    use crate::hosted_context_url::{HostedContextUrls, hosted_context_url};
     use andromeda_context_registry::hosted_context_locator::HostedContextLocator;
     use andromeda_http_extraction::api_root::ApiRoot;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
@@ -153,16 +141,6 @@ mod tests {
         pretty_assertions::assert_eq!(
             HostedContextUrls::of_request(&api_root).map(|urls| String::from(urls.serving_url(&identifier()))),
             Some(format!("https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/{ID}"))
-        );
-    }
-
-    /// Clause 6.29.3.1: the `Location` is the local path, whatever the
-    /// `apiRoot`.
-    #[test]
-    fn the_location_path_is_relative_and_names_the_identifier() {
-        pretty_assertions::assert_eq!(
-            hosted_context_path(&identifier()).map(|path| path.as_str().to_owned()).ok(),
-            Some(format!("/ngsi-ld/v1/jsonldContexts/{ID}"))
         );
     }
 }

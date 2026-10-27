@@ -9,7 +9,12 @@ use andromeda_federation::{
     request::TriggeringRequest,
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
-use andromeda_http_extraction::{accept::AcceptFormatNoGeo, api_root::ApiRoot, prefer::PreferHeader};
+use andromeda_http_extraction::{
+    accept::AcceptFormatNoGeo,
+    api_root::ApiRoot,
+    prefer::PreferHeader,
+    resource_location::{ResourceCollection, ResourceLocator},
+};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
     declined_representation::single_source_declined,
@@ -49,8 +54,6 @@ pub(crate) struct MapCreation<'a> {
     pub(crate) forwarded_query: String,
     /// Whether the request asked for local scope (clause 5.5.13).
     pub(crate) local: bool,
-    /// The resource the map is created under, for `Location`.
-    pub(crate) resource: &'static str,
 }
 
 /// How a created map is rendered.
@@ -64,7 +67,8 @@ pub(crate) struct CreationRendering<'a> {
     pub(crate) prefer: PreferHeader,
     /// The request URI problem responses name.
     pub(crate) uri: &'a HttpUri,
-    /// The `apiRoot` a wrapper the response `Link` names is served under.
+    /// The `apiRoot` a wrapper the response `Link` names is served under, and
+    /// the created map's `Location` sits below.
     pub(crate) api_root: &'a ApiRoot,
 }
 
@@ -113,7 +117,7 @@ pub(crate) async fn create_map(
         }
     }
     state.entity_maps.store(&map).await.with_entity_map_instance(rendering.uri)?;
-    render_created(&map, creation.resource, rendering, state, warnings).await
+    render_created(&map, creation.kind, rendering, state, warnings).await
 }
 
 /// Render a created map: 201 with `Location` and `NGSILD-EntityMap`, or 203
@@ -121,21 +125,27 @@ pub(crate) async fn create_map(
 /// (Table 6.34.3.1-1).
 async fn render_created(
     map: &EntityMap,
-    resource: &str,
+    kind: EntityMapQueryKind,
     rendering: &CreationRendering<'_>,
     state: &EntityMapRouteServices,
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<Response, ProblemResponse> {
-    let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
+    let collection = match kind {
+        EntityMapQueryKind::Entities => ResourceCollection::EntityMaps,
+        EntityMapQueryKind::TemporalEntities => ResourceCollection::TemporalEntityMaps,
+    };
     let body = EntityMapBody::new(map, rendering.prefer.requested_version);
     let renderer = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)
         .start_rendering_normalized(rendering.accept.media_type(), rendering.prefer.rendering_preferences())
         .await
         .with_entity_map_instance(rendering.uri)?;
     let written = RenderedResponse::resource(renderer.with_body(&body)).with_entity_map_instance(rendering.uri)?;
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, written)
-        .with_location(location)
+    let response = NgsiLdResponse::new(StatusCode::CREATED, written)
         .with_entity_map_uri(map.id.clone()) // clone: the header owns the identifier beside the body
-        .with_warnings(warnings)
-        .into_response())
+        .with_warnings(warnings);
+    Ok(match ResourceLocator::from(rendering.api_root).location(collection, &map.id) {
+        Some(location) => response.with_location(location),
+        None => response,
+    }
+    .into_response())
 }

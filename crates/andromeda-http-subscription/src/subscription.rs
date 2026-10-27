@@ -15,11 +15,12 @@ use andromeda_http_extraction::{
     pagination_policy::RequestPagination,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    resource_location::{ResourceCollection, ResourceLocator},
     typed_path::TypedPath,
     via::IncomingVia,
 };
 use andromeda_http_headers::via::Via;
-use andromeda_http_response::{headers::with_location, problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
+use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
@@ -41,6 +42,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
     IncomingVia(incoming_via): IncomingVia,
+    locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
@@ -63,7 +65,7 @@ pub async fn create(
         .await
         .with_subscription_instance(&uri)?;
 
-    Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/subscriptions/{id}")))
+    Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Subscriptions, &id))
 }
 
 /// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.

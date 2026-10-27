@@ -1,12 +1,6 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
-use crate::{
-    error::ContextRegistryResultExt,
-    hosted_context_url::hosted_context_path,
-    inadmissible_body::InadmissibleBody,
-    served_document::served_response,
-    state::ContextRegistryTenantState,
-};
+use crate::{error::ContextRegistryResultExt, inadmissible_body::InadmissibleBody, served_document::served_response, state::ContextRegistryTenantState};
 use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
@@ -15,13 +9,12 @@ use andromeda_http_extraction::{
     pagination_policy::RequestPagination,
     query::ValidatedQuery,
     request_payload::RequestPayload,
+    resource_location::{ResourceCollection, ResourceLocator},
     tenant_state::ExistingTenantState,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
-    headers::with_location,
-    internal_failure_summary::InternalFailureSummary,
     pagination::{PageOutcome, append_page_links},
     parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
@@ -57,8 +50,8 @@ use serde_json::value::RawValue;
 /// tenant resolves.
 ///
 /// The entry's `url` member is the absolute URL it is served under, built on
-/// the request's `apiRoot`; the `Location` stays the local relative path clause
-/// 6.29.3.1 prescribes. The operation defines no query parameter, so any is the
+/// the request's `apiRoot`; the `Location` is the local relative path clause
+/// 6.29.3.1 prescribes, below the configured `apiRoot`'s prefix. The operation defines no query parameter, so any is the
 /// clause 6.3.20 `InvalidRequest`, read before the tenant is resolved.
 pub(crate) async fn create(
     _body_length: DeclaredBodyLength,
@@ -66,6 +59,7 @@ pub(crate) async fn create(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
+    locator: ResourceLocator,
     // Counted within the JSON value limit as it is read, so a payload of too
     // many values costs its bytes and nothing more.
     RequestPayload(body): RequestPayload,
@@ -82,9 +76,7 @@ pub(crate) async fn create(
         ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, "the request names no authority to serve the @context under").with_instance(uri.clone())
     })?;
     let identifier = state.hosting.contexts().create(&payload, &urls).await.with_context_registry_instance(&uri)?;
-    let location =
-        hosted_context_path(&identifier).map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING).with_instance(uri))?;
-    Ok(with_location(StatusCode::CREATED.into_response(), location))
+    Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::JsonldContexts, &identifier))
 }
 
 /// List the stored `@context`s (clause 5.13.3).

@@ -8,13 +8,13 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     jsonld::JsonLd,
     query::ValidatedQuery,
+    resource_location::{ResourceCollection, ResourceLocator},
     snapshot_purge::SnapshotPurgeQ,
     tenant_state,
     typed_path::TypedPath,
 };
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
-    headers::with_location,
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
     render::{RenderingPreferences, start_rendering_core},
@@ -47,6 +47,7 @@ pub async fn create(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
+    locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<SnapshotInput>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_snapshot_instance(&uri)?;
@@ -54,9 +55,7 @@ pub async fn create(
     let snapshot = state.snapshots.create(input, context).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 
-    let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
-
-    Ok(with_location(StatusCode::CREATED.into_response(), location))
+    Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Snapshots, &snapshot.id))
 }
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
@@ -160,6 +159,7 @@ pub async fn clone(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Identifier>,
+    locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {
     // A clone names no term a context could define -- its queries keep the
@@ -169,6 +169,5 @@ pub async fn clone(
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 
-    let location = format!("/ngsi-ld/v1/snapshots/{}", cloned.id);
-    Ok(with_location(StatusCode::CREATED.into_response(), location))
+    Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Snapshots, &cloned.id))
 }
