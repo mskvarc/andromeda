@@ -24,7 +24,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 #[must_use]
 pub fn ceiling_for_cooldown(now: DateTime<Utc>, cooldown: Option<PositiveMilliseconds>) -> Option<DateTime<Utc>> {
     let cooldown = cooldown?;
-    Some(window_ceiling(now, TimeDelta::try_milliseconds(i64::from(cooldown.get()))))
+    Some(window_ceiling(now, TimeDelta::try_milliseconds(i64::from(cooldown))))
 }
 
 #[cfg(test)]
@@ -35,7 +35,7 @@ pub fn ceiling_for_cooldown(now: DateTime<Utc>, cooldown: Option<PositiveMillise
 mod tests {
     use crate::cooldown::ceiling_for_cooldown;
     use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
     use pretty_assertions::assert_eq;
 
     fn milliseconds(value: i64) -> PositiveMilliseconds {
@@ -53,6 +53,15 @@ mod tests {
     fn the_ceiling_is_the_cooldown_subtracted_from_the_current_instant() -> Result<(), &'static str> {
         let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
         assert_eq!(ceiling_for_cooldown(now, Some(milliseconds(1_500))), Some(now - Duration::milliseconds(1_500)));
+        Ok(())
+    }
+
+    /// A window reaching past the earliest representable instant holds back a
+    /// notification after any recorded failure.
+    #[test]
+    fn a_cooldown_beyond_the_calendar_suppresses_after_any_failure() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        assert_eq!(ceiling_for_cooldown(now, Some(milliseconds(i64::MAX))), Some(DateTime::<Utc>::MIN_UTC));
         Ok(())
     }
 

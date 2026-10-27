@@ -11,7 +11,7 @@ use std::time::Duration;
 /// override runs one way: `system` is the broker's own bound, so a subscriber
 /// may shorten the wait but never lengthen it. Without that ceiling any
 /// subscription could hold a delivery worker for the whole range
-/// [`PositiveMilliseconds`] admits, which reaches beyond forty-nine days.
+/// [`PositiveMilliseconds`] admits, which reaches millions of years.
 ///
 /// An endpoint that named no timeout runs under the system bound alone.
 ///
@@ -58,11 +58,11 @@ mod tests {
         pretty_assertions::assert_eq!(delivery_deadline(Some(milliseconds(60_000)), system), system);
     }
 
-    /// The widest value the member admits is about forty-nine days, which is
+    /// The widest value the member admits is millions of years, which is
     /// exactly the hold on a delivery worker the ceiling exists to prevent.
     #[test]
     fn the_widest_endpoint_timeout_is_still_held_to_the_system_bound() {
         let system = Duration::from_secs(10);
-        pretty_assertions::assert_eq!(delivery_deadline(Some(milliseconds(i64::from(u32::MAX))), system), system);
+        pretty_assertions::assert_eq!(delivery_deadline(Some(milliseconds(i64::MAX)), system), system);
     }
 }

@@ -535,6 +535,16 @@ mod tests {
     }
 
     #[test]
+    fn a_cooldown_and_timeout_above_the_32_bit_range_read_back_unchanged() {
+        let beyond = i64::from(u32::MAX) + 1;
+        let read = management_of(management(None, Some(beyond), None, Some(i64::MAX)))
+            .expect("the members read back")
+            .expect("management is declared");
+        assert_eq!(read.cooldown.map(i64::from), Some(beyond));
+        assert_eq!(read.timeout.map(i64::from), Some(i64::MAX));
+    }
+
+    #[test]
     fn a_non_positive_cooldown_is_refused() {
         assert!(matches!(
             management_of(management(None, Some(0), None, None)),
