@@ -8,17 +8,20 @@
 //! 5.2.14.2-1 (`timesSent`, `lastNotification`, ...) are accepted and ignored
 //! as clause 5.8.2.4 requires: the broker supplies them on every read. Table
 //! 5.2.14.1-1 defines the member in full, so any other member is refused, as in
-//! the Subscription that holds it.
+//! the Subscription that holds it. Table 5.2.14.1-1 forbids an empty
+//! `attributes`, `pick` or `omit`, so each is refused rather than read as
+//! naming nothing.
 
 use crate::{
     ignored_member,
+    query::non_empty_member,
     subscription::{Endpoint, NotificationParams},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
-use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_with::{As, DisplayFromStr, de::DeserializeAsWrap};
 use std::num::NonZeroU32;
 use thiserror::Error;
 use typed_builder::TypedBuilder;
@@ -32,13 +35,12 @@ pub enum NotificationRequestError {
 }
 
 /// A Subscription's notification parameters as a request writes them.
-#[serde_as]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[builder(field_defaults(default = Default::default()))]
 pub struct NotificationRequest {
-    /// Attributes to include in notifications (empty means all).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Attributes to include in notifications; absent means all.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub attributes: Option<Vec<AttributeName>>,
     /// Representation format for notification payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,13 +56,21 @@ pub struct NotificationRequest {
     pub show_changes: Option<bool>,
     /// The clause 4.21 projection keeping only the members it names, one list
     /// per projection-language string the client wrote.
-    #[serde_as(as = "Option<Vec<DisplayFromStr>>")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_projection_lists",
+        serialize_with = "As::<Option<Vec<DisplayFromStr>>>::serialize"
+    )]
     pub pick: Option<Vec<ProjectionList>>,
     /// The clause 4.21 projection removing the members it names, written as
     /// `pick` is.
-    #[serde_as(as = "Option<Vec<DisplayFromStr>>")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_projection_lists",
+        serialize_with = "As::<Option<Vec<DisplayFromStr>>>::serialize"
+    )]
     pub omit: Option<Vec<ProjectionList>>,
     /// Join mode for linked entity retrieval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +110,23 @@ pub struct NotificationRequest {
     #[serde(default, skip_serializing, deserialize_with = "ignored_member::deserialize")]
     #[builder(setter(skip))]
     pub modified_at: (),
+}
+
+/// Deserialize a `pick` or `omit` member, a non-empty array of clause 4.21
+/// projection-language strings, into one list per string.
+///
+/// # Errors
+///
+/// Returns the deserializer's own error when the member is not an array of
+/// projection strings, and a custom error when the array is empty.
+fn deserialize_projection_lists<'de, D>(deserializer: D) -> Result<Option<Vec<ProjectionList>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(
+        non_empty_member::deserialize_array::<D, DeserializeAsWrap<ProjectionList, DisplayFromStr>>(deserializer)?
+            .map(|lists| lists.into_iter().map(DeserializeAsWrap::into_inner).collect()),
+    )
 }
 
 impl TryFrom<NotificationRequest> for NotificationParams {
@@ -238,6 +265,30 @@ mod tests {
                 && params.last_success.is_none()
                 && params.last_failure.is_none()
         );
+    }
+
+    /// Table 5.2.14.1-1: "Empty array (0 length) is not allowed" for
+    /// `attributes`, `pick` and `omit`.
+    #[test]
+    fn an_empty_attributes_pick_or_omit_is_refused() {
+        for member in ["attributes", "pick", "omit"] {
+            let wire = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, member: []});
+            let error = serde_json::from_value::<NotificationRequest>(wire).expect_err("an empty array is refused");
+            assert!(error.to_string().contains("an empty array is not allowed"), "{member}: got {error}");
+        }
+    }
+
+    #[test]
+    fn a_non_empty_attributes_pick_or_omit_is_accepted() {
+        for member in ["attributes", "pick", "omit"] {
+            let notification = request(json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, member: ["name"]}));
+            let listed = notification
+                .attributes
+                .map(|names| names.len())
+                .or(notification.pick.map(|lists| lists.len()))
+                .or(notification.omit.map(|lists| lists.len()));
+            pretty_assertions::assert_eq!(listed, Some(1), "{member}");
+        }
     }
 
     #[test]

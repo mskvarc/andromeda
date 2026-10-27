@@ -1,10 +1,12 @@
-//! Serde support for `Query` members that Table 5.2.23-1 forbids from being empty.
+//! Serde support for members a data type table forbids from being empty: the
+//! `Query` members of Table 5.2.23-1 and the notification members of Table
+//! 5.2.14.1-1.
 
 use andromeda_ngsi_ld_query::ordering::parameters::{OrderingBody, OrderingParameters};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use thiserror::Error;
 
-/// A `Query` member that Table 5.2.23-1 requires to be non-empty and is not.
+/// A member that its data type table requires to be non-empty and is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum NonEmptyMemberError {
     /// An array member held no element.
@@ -16,8 +18,8 @@ pub enum NonEmptyMemberError {
 }
 
 /// Deserialize an optional array that, when present, must hold at least one
-/// element ("Empty array (0 length) is not allowed", Table 5.2.23-1; a
-/// violation is `BadRequestData` under clause 5.5.4).
+/// element ("Empty array (0 length) is not allowed", Tables 5.2.14.1-1 and
+/// 5.2.23-1; a violation is `BadRequestData` under clause 5.5.4).
 ///
 /// # Errors
 ///

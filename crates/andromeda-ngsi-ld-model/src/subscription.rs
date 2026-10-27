@@ -121,7 +121,7 @@ pub struct Endpoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationParams {
-    /// Attributes to include in notifications (empty means all).
+    /// Attributes to include in notifications; absent means all.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<AttributeName>>,
     /// Representation format for notification payloads.

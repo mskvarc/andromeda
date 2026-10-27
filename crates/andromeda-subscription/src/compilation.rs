@@ -165,8 +165,8 @@ pub fn notification_projection(notification: &NotificationParams, sub_id: &str) 
 /// (Table 5.2.14.1-1), into the expanded IRIs it lists.
 ///
 /// The stored names were expanded through the subscription's `@context` when
-/// the resource was written (clause 5.5.7). An empty result lists nothing,
-/// which narrows nothing, as an empty `pick` does.
+/// the resource was written (clause 5.5.7). An absent member compiles to an
+/// empty list, which narrows nothing.
 #[must_use]
 pub fn notification_attributes(notification: &NotificationParams, sub_id: &str) -> Vec<IriBuf> {
     notification
