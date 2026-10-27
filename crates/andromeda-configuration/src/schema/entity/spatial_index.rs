@@ -4,16 +4,7 @@
 use crate::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid spatial-index configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum SpatialIndexConfigError {
-    /// Rebuild cadence was configured as zero.
-    #[error("entity.spatial_index.rebuild_interval must be greater than zero")]
-    ZeroRebuildInterval,
-}
 
 /// How the resident spatial index is kept consistent with the store whose
 /// geo queries it accelerates.
@@ -79,42 +70,15 @@ impl Default for SpatialIndexConfig {
     }
 }
 
-impl SpatialIndexConfig {
-    /// Validate the spatial-index configuration.
-    ///
-    /// # Errors
-    ///
-    /// Reports [`SpatialIndexConfigError::ZeroRebuildInterval`] when the rebuild
-    /// cadence is configured as zero.
-    pub const fn validate(&self) -> Result<(), SpatialIndexConfigError> {
-        if self.rebuild_interval.is_zero() {
-            return Err(SpatialIndexConfigError::ZeroRebuildInterval);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::entity::spatial_index::{SpatialConsistency, SpatialIndexConfig, SpatialIndexConfigError},
-    };
+    use crate::schema::entity::spatial_index::{SpatialConsistency, SpatialIndexConfig};
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
-
-    #[test]
-    fn a_zero_rebuild_interval_is_rejected_by_the_owner() {
-        let config = SpatialIndexConfig {
-            consistency: SpatialConsistency::CommitSynchronous,
-            rebuild_interval: HumanDuration::from_secs(0),
-        };
-        assert_eq!(config.validate(), Err(SpatialIndexConfigError::ZeroRebuildInterval));
-    }
 
     /// The default must be exact whether or not another broker process writes
     /// the same database, which only `watermark` and `store-verified` are, and

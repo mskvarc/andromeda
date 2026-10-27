@@ -3,25 +3,10 @@
 
 pub mod delivery;
 
-use crate::{
-    human_duration::HumanDuration,
-    schema::notifications::delivery::{DeliveryConfig, DeliveryConfigError},
-};
+use crate::{human_duration::HumanDuration, schema::notifications::delivery::DeliveryConfig};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid notification configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum NotificationsConfigError {
-    /// The delivery tables are unusable.
-    #[error(transparent)]
-    Delivery(#[from] DeliveryConfigError),
-    /// The periodic drain would poll without pause.
-    #[error("notifications.periodic.max_poll_interval must be greater than zero")]
-    ZeroPeriodicPollInterval,
-}
 
 /// How live delivery evaluates committed entity changes.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,47 +77,15 @@ pub struct NotificationsConfig {
     pub periodic: PeriodicConfig,
 }
 
-impl NotificationsConfig {
-    /// Validate the delivery tables and the periodic drain.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`NotificationsConfigError`] of the first value refused.
-    pub const fn validate(&self) -> Result<(), NotificationsConfigError> {
-        if let Err(error) = self.delivery.validate() {
-            return Err(NotificationsConfigError::Delivery(error));
-        }
-        if self.periodic.max_poll_interval.is_zero() {
-            return Err(NotificationsConfigError::ZeroPeriodicPollInterval);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::notifications::{NotificationsConfig, NotificationsConfigError, PeriodicConfig},
-    };
+    use crate::schema::notifications::NotificationsConfig;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn the_defaults_are_valid() {
+    fn the_default_evaluation_buffers_8192_changes_and_evaluates_32_at_once() {
         let config = NotificationsConfig::default();
-        assert_eq!(config.validate(), Ok(()));
         assert_eq!(config.evaluation.max_queued_changes.get(), 8192);
         assert_eq!(config.evaluation.max_concurrent_changes.get(), 32);
-    }
-
-    #[test]
-    fn a_zero_periodic_poll_ceiling_is_refused() {
-        let config = NotificationsConfig {
-            periodic: PeriodicConfig {
-                max_poll_interval: HumanDuration::from_secs(0),
-            },
-            ..NotificationsConfig::default()
-        };
-        assert_eq!(config.validate(), Err(NotificationsConfigError::ZeroPeriodicPollInterval));
     }
 }

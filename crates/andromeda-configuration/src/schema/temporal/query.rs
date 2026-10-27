@@ -1,7 +1,6 @@
 //! The `[temporal.query]` table: how much of a Temporal Evolution one read
 //! returns.
 
-use crate::schema::temporal::error::TemporalConfigError;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 use toml_comment::TomlComment;
@@ -84,41 +83,13 @@ impl Default for TemporalQueryConfig {
     }
 }
 
-impl TemporalQueryConfig {
-    /// Validate the page sizes against each other and their ceilings.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`TemporalConfigError`] naming the first bound broken.
-    pub const fn validate(&self) -> Result<(), TemporalConfigError> {
-        if self.default_last_n == 0 {
-            Err(TemporalConfigError::ZeroDefaultLastN)
-        } else if self.max_last_n < self.default_last_n {
-            Err(TemporalConfigError::MaxLastNBelowDefault)
-        } else if self.max_last_n > MAX_LAST_N_CEILING {
-            Err(TemporalConfigError::MaxLastNAboveCeiling)
-        } else if self.max_edge_group < self.max_last_n {
-            Err(TemporalConfigError::MaxEdgeGroupBelowMaxLastN)
-        } else if self.max_edge_group > MAX_EDGE_GROUP_CEILING {
-            Err(TemporalConfigError::MaxEdgeGroupAboveCeiling)
-        } else if self.max_aggregation_instances.get() > MAX_AGGREGATION_INSTANCES_CEILING {
-            Err(TemporalConfigError::MaxAggregationInstancesAboveCeiling)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::temporal::{
-        error::TemporalConfigError,
-        query::{MAX_AGGREGATION_INSTANCES_CEILING, MAX_EDGE_GROUP_CEILING, MAX_LAST_N_CEILING, TemporalQueryConfig},
-    };
+    use crate::schema::temporal::query::TemporalQueryConfig;
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU64;
 
@@ -127,81 +98,10 @@ mod tests {
     }
 
     #[test]
-    fn the_defaults_are_valid_and_documented() {
+    fn the_defaults_are_documented() {
         let config = TemporalQueryConfig::default();
-        assert_eq!(config.validate(), Ok(()));
         assert_eq!(config.max_edge_group, 100_000);
         assert_eq!(config.max_aggregation_instances, bound(1_000_000));
-    }
-
-    #[test]
-    fn a_zero_default_page_is_rejected() {
-        let config = TemporalQueryConfig {
-            default_last_n: 0,
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroDefaultLastN));
-    }
-
-    /// The default page is one a client could ask for, so the maximum may not
-    /// sit below it.
-    #[test]
-    fn a_maximum_below_the_default_page_is_rejected_and_an_equal_one_accepted() {
-        let mut config = TemporalQueryConfig {
-            default_last_n: 100,
-            max_last_n: 99,
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TemporalConfigError::MaxLastNBelowDefault));
-        config.max_last_n = 100;
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn a_maximum_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
-        let mut config = TemporalQueryConfig {
-            max_last_n: MAX_LAST_N_CEILING,
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Ok(()));
-        config.max_last_n = MAX_LAST_N_CEILING + 1;
-        assert_eq!(config.validate(), Err(TemporalConfigError::MaxLastNAboveCeiling));
-    }
-
-    /// A backward page may hold the maximum instances at one instant, so the
-    /// bound may equal the maximum and not fall below it.
-    #[test]
-    fn an_edge_group_bound_below_the_maximum_is_rejected() {
-        let mut config = TemporalQueryConfig {
-            max_last_n: 1000,
-            max_edge_group: 999,
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Err(TemporalConfigError::MaxEdgeGroupBelowMaxLastN));
-        config.max_edge_group = 1000;
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn an_edge_group_bound_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
-        let mut config = TemporalQueryConfig {
-            max_edge_group: MAX_EDGE_GROUP_CEILING,
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Ok(()));
-        config.max_edge_group = MAX_EDGE_GROUP_CEILING + 1;
-        assert_eq!(config.validate(), Err(TemporalConfigError::MaxEdgeGroupAboveCeiling));
-    }
-
-    #[test]
-    fn an_aggregation_bound_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
-        let mut config = TemporalQueryConfig {
-            max_aggregation_instances: bound(MAX_AGGREGATION_INSTANCES_CEILING),
-            ..TemporalQueryConfig::default()
-        };
-        assert_eq!(config.validate(), Ok(()));
-        config.max_aggregation_instances = bound(MAX_AGGREGATION_INSTANCES_CEILING + 1);
-        assert_eq!(config.validate(), Err(TemporalConfigError::MaxAggregationInstancesAboveCeiling));
     }
 
     /// A page always holds a whole period, so a bound of no instances

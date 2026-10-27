@@ -4,34 +4,7 @@
 use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid Snapshot configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum SnapshotConfigError {
-    /// The default lifetime must be positive.
-    #[error("snapshot.default_lifetime must be greater than zero")]
-    ZeroDefaultLifetime,
-    /// The maximum lifetime must be positive.
-    #[error("snapshot.max_lifetime must be greater than zero")]
-    ZeroMaxLifetime,
-    /// The default lifetime cannot exceed the maximum.
-    #[error("snapshot.default_lifetime must not exceed snapshot.max_lifetime")]
-    DefaultLifetimeExceedsMax,
-    /// Scoped operations need a positive bounded wait.
-    #[error("snapshot.preparation.scoped_operation_timeout must be greater than zero")]
-    ZeroScopedOperationTimeout,
-    /// Preparation claims need a positive lease.
-    #[error("snapshot.preparation.lease_timeout must be greater than zero")]
-    ZeroLeaseTimeout,
-    /// The recovery sweep would run without pause.
-    #[error("snapshot.preparation.recovery_interval must be greater than zero")]
-    ZeroRecoveryInterval,
-    /// A storage quota of no bytes would refuse every Snapshot.
-    #[error("snapshot.quota.max_storage_per_tenant must be at least 1 byte")]
-    ZeroStorageQuota,
-}
 
 /// How many Snapshots one tenant may keep. Each key left out is no limit.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -113,106 +86,15 @@ impl Default for SnapshotConfig {
     }
 }
 
-impl SnapshotConfig {
-    /// Validate the lifetimes, the preparation durations and the storage
-    /// quota.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`SnapshotConfigError`] naming the first value refused.
-    pub fn validate(&self) -> Result<(), SnapshotConfigError> {
-        if self.default_lifetime.is_zero() {
-            Err(SnapshotConfigError::ZeroDefaultLifetime)
-        } else if self.max_lifetime.is_zero() {
-            Err(SnapshotConfigError::ZeroMaxLifetime)
-        } else if self.default_lifetime.duration() > self.max_lifetime.duration() {
-            Err(SnapshotConfigError::DefaultLifetimeExceedsMax)
-        } else if self.preparation.scoped_operation_timeout.is_zero() {
-            Err(SnapshotConfigError::ZeroScopedOperationTimeout)
-        } else if self.preparation.lease_timeout.is_zero() {
-            Err(SnapshotConfigError::ZeroLeaseTimeout)
-        } else if self.preparation.recovery_interval.is_zero() {
-            Err(SnapshotConfigError::ZeroRecoveryInterval)
-        } else if self.quota.max_storage_per_tenant == Some(HumanByteSize::b(0)) {
-            Err(SnapshotConfigError::ZeroStorageQuota)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_byte_size::HumanByteSize,
-        human_duration::HumanDuration,
-        schema::snapshot::{PreparationConfig, SnapshotConfig, SnapshotConfigError, SnapshotQuotaConfig},
-    };
+    use crate::schema::snapshot::{SnapshotConfig, SnapshotQuotaConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn the_defaults_are_valid_and_set_no_quota() {
+    fn the_defaults_set_no_quota() {
         let config = SnapshotConfig::default();
-        assert_eq!(config.validate(), Ok(()));
         assert_eq!(config.quota, SnapshotQuotaConfig::default());
         assert_eq!(config.quota.max_per_tenant, None);
-    }
-
-    #[test]
-    fn a_default_lifetime_above_the_maximum_is_refused_and_an_equal_one_accepted() {
-        let mut config = SnapshotConfig {
-            default_lifetime: HumanDuration::from_secs(61),
-            max_lifetime: HumanDuration::from_secs(60),
-            ..SnapshotConfig::default()
-        };
-        assert_eq!(config.validate(), Err(SnapshotConfigError::DefaultLifetimeExceedsMax));
-        config.default_lifetime = HumanDuration::from_secs(60);
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn zero_preparation_durations_are_refused() {
-        let zero = HumanDuration::from_secs(0);
-        for (preparation, error) in [
-            (
-                PreparationConfig {
-                    scoped_operation_timeout: zero,
-                    ..PreparationConfig::default()
-                },
-                SnapshotConfigError::ZeroScopedOperationTimeout,
-            ),
-            (
-                PreparationConfig {
-                    lease_timeout: zero,
-                    ..PreparationConfig::default()
-                },
-                SnapshotConfigError::ZeroLeaseTimeout,
-            ),
-            (
-                PreparationConfig {
-                    recovery_interval: zero,
-                    ..PreparationConfig::default()
-                },
-                SnapshotConfigError::ZeroRecoveryInterval,
-            ),
-        ] {
-            let config = SnapshotConfig {
-                preparation,
-                ..SnapshotConfig::default()
-            };
-            assert_eq!(config.validate(), Err(error));
-        }
-    }
-
-    #[test]
-    fn a_zero_storage_quota_is_refused() {
-        let config = SnapshotConfig {
-            quota: SnapshotQuotaConfig {
-                max_storage_per_tenant: Some(HumanByteSize::b(0)),
-                ..SnapshotQuotaConfig::default()
-            },
-            ..SnapshotConfig::default()
-        };
-        assert_eq!(config.validate(), Err(SnapshotConfigError::ZeroStorageQuota));
     }
 }

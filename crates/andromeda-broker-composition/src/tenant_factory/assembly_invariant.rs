@@ -4,7 +4,7 @@
 //! Every variant carries the refusal of the part that was being constructed, so
 //! an operator reads which part refused and why, not a flattened sentence.
 
-use andromeda_configuration::schema::temporal::error::TemporalConfigError;
+use andromeda_configuration::schema::temporal::storage::StorageDaysError;
 use andromeda_delivery::error::TransportError;
 use andromeda_entity::{configured_policy::SideEffectAttemptsAboveCeiling, error::EntityError};
 use andromeda_federation::error::FederationError;
@@ -71,7 +71,7 @@ pub(super) enum AssemblyInvariant {
     SideEffectAttempts(#[source] SideEffectAttemptsAboveCeiling),
     /// The temporal storage policy the configuration names is not valid.
     #[error("the temporal storage policy is not valid: {0}")]
-    StoragePolicy(#[from] TemporalConfigError),
+    StoragePolicy(#[from] StorageDaysError),
     /// The temporal retention horizon is not one the sweep accepts.
     #[error("the temporal retention horizon is not valid: {0}")]
     RetentionHorizon(#[from] TemporalRetentionHorizonInvalid),

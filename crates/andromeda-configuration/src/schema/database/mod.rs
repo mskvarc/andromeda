@@ -8,34 +8,14 @@ pub mod write_reserve;
 
 use crate::{
     human_duration::HumanDuration,
-    schema::database::{
-        maintenance::MaintenanceConfig,
-        name_cache::{NameCacheConfig, NameCacheConfigError},
-        pooler::PoolerConfig,
-        write_reserve::WriteReserve,
-    },
+    schema::database::{maintenance::MaintenanceConfig, name_cache::NameCacheConfig, pooler::PoolerConfig, write_reserve::WriteReserve},
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
-use thiserror::Error;
 use toml_comment::TomlComment;
 use url::Url;
 use url_macro::url;
-
-/// Invalid PostgreSQL pool configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum DatabaseConfigError {
-    /// The pool requires at least one connection.
-    #[error("database.max_connections must be at least 1")]
-    ZeroMaxConnections,
-    /// The connection acquire deadline requires a positive duration.
-    #[error("database.acquire_timeout must be greater than zero")]
-    ZeroAcquireTimeout,
-    /// The name dictionary cache budget or idle timeout is unusable.
-    #[error(transparent)]
-    NameCache(#[from] NameCacheConfigError),
-}
 
 /// Postgres `synchronous_commit` durability, applied to each tenant database and
 /// the platform database with `ALTER DATABASE ... SET` rather than per connection.
@@ -124,28 +104,6 @@ impl Default for DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    /// Validate the pool limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DatabaseConfigError::ZeroMaxConnections`] when the pool is
-    /// configured without a single connection,
-    /// [`DatabaseConfigError::ZeroAcquireTimeout`] when the connection acquire
-    /// deadline is zero, and [`DatabaseConfigError::NameCache`] when the name
-    /// dictionary cache has no capacity or a zero idle timeout.
-    pub const fn validate(&self) -> Result<(), DatabaseConfigError> {
-        if self.max_connections == 0 {
-            return Err(DatabaseConfigError::ZeroMaxConnections);
-        }
-        if self.acquire_timeout.is_zero() {
-            return Err(DatabaseConfigError::ZeroAcquireTimeout);
-        }
-        match self.name_cache.validate() {
-            Ok(()) => Ok(()),
-            Err(error) => Err(DatabaseConfigError::NameCache(error)),
-        }
-    }
-
     /// The request-path connection acquire deadline as a [`Duration`].
     #[must_use]
     pub const fn acquire_timeout(&self) -> Duration {
@@ -199,17 +157,7 @@ impl DatabaseConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        human_byte_size::HumanByteSize,
-        human_duration::HumanDuration,
-        schema::database::{
-            DatabaseConfig,
-            DatabaseConfigError,
-            SynchronousCommit,
-            name_cache::{NameCacheConfig, NameCacheConfigError},
-            pooler::PoolerConfig,
-        },
-    };
+    use crate::schema::database::{DatabaseConfig, SynchronousCommit, pooler::PoolerConfig};
     use std::{num::NonZeroU32, str::FromStr, time::Duration};
 
     #[test]
@@ -262,26 +210,8 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_acquire_timeout_is_rejected() {
-        let config = DatabaseConfig {
-            acquire_timeout: HumanDuration::from_secs(0),
-            ..DatabaseConfig::default()
-        };
-        pretty_assertions::assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroAcquireTimeout));
+    fn the_default_acquire_timeout_is_five_seconds() {
         pretty_assertions::assert_eq!(DatabaseConfig::default().acquire_timeout(), Duration::from_secs(5));
-    }
-
-    #[test]
-    fn an_unusable_name_cache_budget_fails_database_validation() {
-        let config = DatabaseConfig {
-            name_cache: NameCacheConfig {
-                max_size_per_dictionary: HumanByteSize::b(0),
-                ..NameCacheConfig::default()
-            },
-            ..DatabaseConfig::default()
-        };
-        pretty_assertions::assert_eq!(config.validate(), Err(DatabaseConfigError::NameCache(NameCacheConfigError::ZeroCapacity)));
-        pretty_assertions::assert_eq!(DatabaseConfig::default().validate(), Ok(()));
     }
 
     #[test]

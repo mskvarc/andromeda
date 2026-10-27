@@ -7,24 +7,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid listener configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ServerConfigError {
-    /// TCP port zero is reserved for dynamic binding and is not accepted for broker execution.
-    #[error("server.port must be greater than 0")]
-    ZeroPort,
-    /// A zero timeout closes a connection at once after a response that
-    /// announced the close, which resets a client still sending before it has
-    /// read the response.
-    #[error("server.announced_close_timeout must be greater than 0")]
-    ZeroAnnouncedCloseTimeout,
-    /// A connection delaying its close must never outlive the shutdown drain.
-    #[error("server.announced_close_timeout must be shorter than server.graceful_drain_timeout")]
-    AnnouncedCloseNotBelowGracefulDrain,
-}
 
 /// The data-plane listener.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
@@ -66,75 +49,15 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {
-    /// Validate the externally visible listener configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ServerConfigError::ZeroPort`] when the configured port is zero, which is
-    /// reserved for dynamic binding and cannot be advertised as a broker listener,
-    /// [`ServerConfigError::ZeroAnnouncedCloseTimeout`] when the announced-close timeout is zero, and
-    /// [`ServerConfigError::AnnouncedCloseNotBelowGracefulDrain`] when it is not shorter than
-    /// the graceful drain.
-    pub const fn validate(&self) -> Result<(), ServerConfigError> {
-        if self.port == 0 {
-            Err(ServerConfigError::ZeroPort)
-        } else if self.announced_close_timeout.is_zero() {
-            Err(ServerConfigError::ZeroAnnouncedCloseTimeout)
-        } else if self.announced_close_timeout.duration().as_nanos() >= self.graceful_drain_timeout.duration().as_nanos() {
-            Err(ServerConfigError::AnnouncedCloseNotBelowGracefulDrain)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         human_duration::HumanDuration,
-        schema::{
-            listener_transport::ListenerTransport,
-            server::{ServerConfig, ServerConfigError},
-        },
+        schema::{listener_transport::ListenerTransport, server::ServerConfig},
     };
     use pretty_assertions::assert_eq;
     use serde::Deserialize;
     use std::{error::Error, str::FromStr};
-
-    #[test]
-    fn zero_listener_port_is_rejected() {
-        let config = ServerConfig {
-            port: 0,
-            ..ServerConfig::default()
-        };
-        assert_eq!(config.validate(), Err(ServerConfigError::ZeroPort));
-    }
-
-    #[test]
-    fn the_default_listener_configuration_is_valid() {
-        assert_eq!(ServerConfig::default().validate(), Ok(()));
-    }
-
-    #[test]
-    fn a_zero_announced_close_timeout_is_rejected() {
-        let config = ServerConfig {
-            announced_close_timeout: HumanDuration::from_secs(0),
-            ..ServerConfig::default()
-        };
-        assert_eq!(config.validate(), Err(ServerConfigError::ZeroAnnouncedCloseTimeout));
-    }
-
-    #[test]
-    fn an_announced_close_timeout_not_below_the_graceful_drain_is_rejected() {
-        for timeout in [HumanDuration::from_secs(30), HumanDuration::from_secs(31)] {
-            let config = ServerConfig {
-                announced_close_timeout: timeout,
-                ..ServerConfig::default()
-            };
-            assert_eq!(config.validate(), Err(ServerConfigError::AnnouncedCloseNotBelowGracefulDrain));
-        }
-    }
 
     #[test]
     fn the_announced_close_timeout_parses_human_readable() -> Result<(), Box<dyn Error>> {

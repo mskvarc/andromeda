@@ -16,6 +16,11 @@ use crate::{
         },
     },
     template::default_template,
+    validate::{
+        bound::{Bound, Quantity, Relation},
+        config_key::{ConfigKey, QueueKey, QueueName},
+        violation::ConfigurationViolation,
+    },
 };
 use serial_test::serial;
 use std::{
@@ -23,7 +28,7 @@ use std::{
     fs,
     net::IpAddr,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 /// Load with only the built-in defaults and the environment, so no file layer
@@ -48,6 +53,16 @@ fn load_file(contents: &str) -> Result<BrokerConfig, LoadError> {
     let result = load(Some(&path), ListenerOverrides::default());
     fs::remove_file(path).expect("temp config should be removed");
     result
+}
+
+/// The rules `contents` breaks as the configuration file: empty when it
+/// loads, `None` when it is refused before the rules run.
+fn violations_of(contents: &str) -> Option<Vec<ConfigurationViolation>> {
+    match load_file(contents) {
+        Ok(_) => Some(Vec::new()),
+        Err(LoadError::Invalid(invalid)) => Some(invalid.into_violations()),
+        Err(LoadError::MissingFile(_) | LoadError::Layers(_)) => None,
+    }
 }
 
 #[test]
@@ -187,39 +202,79 @@ fn maintenance_modes_and_profiles_load_from_the_database_table() {
 }
 
 /// The delivery lease must leave its margin over one attempt's request
-/// timeout: one second short of it refuses to load, the margin exactly
+/// timeout: a millisecond short of it refuses to load, the margin exactly
 /// loads.
 #[test]
 #[serial]
 fn a_delivery_lease_is_refused_below_its_margin_over_the_request_timeout_and_loads_at_it() {
-    let refused = load_file("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.delivery.queue]\nlease_timeout = \"14s\"\n");
-    let loaded = load_file("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.delivery.queue]\nlease_timeout = \"15s\"\n");
-    let error = refused.expect_err("a 14s lease over a 10s request timeout lacks the margin");
-    assert!(
-        error
-            .to_string()
-            .contains("notifications.delivery.queue.lease_timeout must exceed notifications.delivery.request_timeout by at least 5s"),
-        "{error}"
+    let refused = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.delivery.queue]\nlease_timeout = \"14999ms\"\n");
+    assert_eq!(
+        refused,
+        Some(vec![ConfigurationViolation::OutOfRange {
+            key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
+            value: Quantity::Duration(Duration::from_millis(14_999)),
+            relation: Relation::AtLeast,
+            bound: Bound::SettingPlusMargin {
+                key: ConfigKey::NotificationsDeliveryRequestTimeout,
+                value: Duration::from_secs(10),
+                margin: Duration::from_secs(5),
+            },
+        }])
     );
-    loaded.expect("a 15s lease over a 10s request timeout carries the margin");
+    let loaded = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.delivery.queue]\nlease_timeout = \"15s\"\n");
+    assert_eq!(loaded, Some(Vec::new()));
 }
 
 /// The side-effect lease must leave its margin over the connection acquire
-/// deadline: one second short of it refuses to load, the margin exactly
+/// deadline: a millisecond short of it refuses to load, the margin exactly
 /// loads.
 #[test]
 #[serial]
 fn a_side_effect_lease_is_refused_below_its_margin_over_the_acquire_timeout_and_loads_at_it() {
-    let refused = load_file("[database]\nacquire_timeout = \"5s\"\n[entity.side_effects.queue]\nlease_timeout = \"9s\"\n");
-    let loaded = load_file("[database]\nacquire_timeout = \"5s\"\n[entity.side_effects.queue]\nlease_timeout = \"10s\"\n");
-    let error = refused.expect_err("a 9s side-effect lease over a 5s acquire timeout lacks the margin");
-    assert!(
-        error
-            .to_string()
-            .contains("entity.side_effects.queue.lease_timeout (9s) must exceed database.acquire_timeout (5s) by at least 5s"),
-        "{error}"
+    let refused = violations_of("[database]\nacquire_timeout = \"5s\"\n[entity.side_effects.queue]\nlease_timeout = \"9999ms\"\n");
+    assert_eq!(
+        refused,
+        Some(vec![ConfigurationViolation::OutOfRange {
+            key: ConfigKey::Queue(QueueName::EntitySideEffects, QueueKey::LeaseTimeout),
+            value: Quantity::Duration(Duration::from_millis(9_999)),
+            relation: Relation::AtLeast,
+            bound: Bound::SettingPlusMargin {
+                key: ConfigKey::DatabaseAcquireTimeout,
+                value: Duration::from_secs(5),
+                margin: Duration::from_secs(5),
+            },
+        }])
     );
-    loaded.expect("a 10s side-effect lease over a 5s acquire timeout carries the margin");
+    let loaded = violations_of("[database]\nacquire_timeout = \"5s\"\n[entity.side_effects.queue]\nlease_timeout = \"10s\"\n");
+    assert_eq!(loaded, Some(Vec::new()));
+}
+
+/// A file breaking three rules in three tables is refused for all three, and
+/// the message lists each on its own line.
+#[test]
+#[serial]
+fn a_file_breaking_three_rules_is_refused_for_all_three() {
+    let contents = "[server]\nport = 0\n[expiry]\nsweep_interval = \"0s\"\n[temporal.query]\nmax_last_n = 5001\n";
+    assert_eq!(
+        violations_of(contents),
+        Some(vec![
+            ConfigurationViolation::Zero { key: ConfigKey::ServerPort },
+            ConfigurationViolation::Zero {
+                key: ConfigKey::ExpirySweepInterval
+            },
+            ConfigurationViolation::OutOfRange {
+                key: ConfigKey::TemporalQueryMaxLastN,
+                value: Quantity::Count(5_001),
+                relation: Relation::AtMost,
+                bound: Bound::Fixed(Quantity::Count(5_000)),
+            },
+        ])
+    );
+    let message = load_file(contents).map(|_| ()).map_err(|error| error.to_string());
+    assert_eq!(
+        message,
+        Err("invalid configuration:\n  server.port must be greater than zero\n  expiry.sweep_interval must be greater than zero\n  temporal.query.max_last_n (5001) must be at most 5000".to_owned())
+    );
 }
 
 /// The write reserve loads as a percentage below 100, defaults to a

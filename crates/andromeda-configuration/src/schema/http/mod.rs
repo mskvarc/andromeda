@@ -17,7 +17,7 @@ pub mod server_timing;
 use crate::schema::{
     forwarded_header_trust::ForwardedHeaderTrust,
     http::{
-        body_decoding::{BodyDecodingConfig, BodyDecodingConfigError},
+        body_decoding::BodyDecodingConfig,
         compression::CompressionConfig,
         cors::CorsConfig,
         csrf::CsrfConfig,
@@ -28,20 +28,7 @@ use crate::schema::{
     link_field_layout::LinkFieldLayout,
 };
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid inbound HTTP stack configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum HttpStackConfigError {
-    /// The blocking-pool decode threshold is unusable.
-    #[error(transparent)]
-    BodyDecoding(#[from] BodyDecodingConfigError),
-    /// The Fetch standard forbids `*` with credentials, and the CORS layer
-    /// panics on the combination, so it is rejected here.
-    #[error("http.cors: credentials = \"allowed\" cannot be combined with an `any` wildcard on origins, methods, headers or exposed headers")]
-    CorsPermissionWithWildcard,
-}
 
 /// How the inbound HTTP stack treats a request it accepts.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Default, PartialEq, Eq)]
@@ -84,35 +71,9 @@ pub struct HttpStackConfig {
     pub csrf: CsrfConfig,
 }
 
-impl HttpStackConfig {
-    /// Validate the edge features.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HttpStackConfigError::BodyDecoding`] when the decode
-    /// threshold does not fit the address width, and
-    /// [`HttpStackConfigError::CorsPermissionWithWildcard`] when the CORS
-    /// policy pairs credentials with an `any` wildcard.
-    pub fn validate(&self) -> Result<(), HttpStackConfigError> {
-        self.body_decoding.blocking_threshold_bytes()?;
-        if self.cors.has_credentialed_wildcard() {
-            return Err(HttpStackConfigError::CorsPermissionWithWildcard);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::schema::{
-        forwarded_header_trust::ForwardedHeaderTrust,
-        http::{
-            HttpStackConfig,
-            HttpStackConfigError,
-            cors::{CorsConfig, CorsMode, CorsPermission},
-        },
-        link_field_layout::LinkFieldLayout,
-    };
+    use crate::schema::{forwarded_header_trust::ForwardedHeaderTrust, http::HttpStackConfig, link_field_layout::LinkFieldLayout};
     use toml_comment::TomlComment;
 
     /// A broker that has not been told about a proxy must not believe one, so
@@ -129,19 +90,6 @@ mod tests {
     }
 
     #[test]
-    fn cors_credentials_with_wildcard_rejected() {
-        let config = HttpStackConfig {
-            cors: CorsConfig {
-                mode: CorsMode::Enabled,
-                credentials: CorsPermission::Allowed,
-                ..CorsConfig::default()
-            },
-            ..HttpStackConfig::default()
-        };
-        pretty_assertions::assert_eq!(config.validate(), Err(HttpStackConfigError::CorsPermissionWithWildcard));
-    }
-
-    #[test]
     fn default_toml_contains_every_nested_http_table() {
         let rendered = <HttpStackConfig as TomlComment>::default_toml();
         for table in [
@@ -155,10 +103,5 @@ mod tests {
         ] {
             assert!(rendered.contains(table), "missing {table} in:\n{rendered}");
         }
-    }
-
-    #[test]
-    fn valid_default_configuration_passes_validation() {
-        assert!(HttpStackConfig::default().validate().is_ok());
     }
 }

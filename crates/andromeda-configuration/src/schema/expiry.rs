@@ -4,16 +4,7 @@
 use crate::human_duration::HumanDuration;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid expiry configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ExpiryConfigError {
-    /// The sweep cadence was configured as zero.
-    #[error("expiry.sweep_interval must be greater than zero")]
-    ZeroSweepInterval,
-}
 
 /// How often expired resources are deleted, and how many entities one pass
 /// reads.
@@ -45,42 +36,15 @@ impl Default for ExpiryConfig {
     }
 }
 
-impl ExpiryConfig {
-    /// Validate the sweep cadence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ExpiryConfigError::ZeroSweepInterval`] for a zero cadence.
-    pub const fn validate(&self) -> Result<(), ExpiryConfigError> {
-        if self.sweep_interval.is_zero() {
-            return Err(ExpiryConfigError::ZeroSweepInterval);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::expiry::{ExpiryConfig, ExpiryConfigError},
-    };
+    use crate::{human_duration::HumanDuration, schema::expiry::ExpiryConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn the_default_sweeps_every_thirty_seconds_a_thousand_at_a_time() {
         let config = ExpiryConfig::default();
-        assert_eq!(config.validate(), Ok(()));
         assert_eq!(config.sweep_interval, HumanDuration::from_secs(30));
         assert_eq!(config.batch_size.get(), 1_000);
-    }
-
-    #[test]
-    fn a_zero_cadence_is_refused() {
-        let config = ExpiryConfig {
-            sweep_interval: HumanDuration::from_secs(0),
-            ..ExpiryConfig::default()
-        };
-        assert_eq!(config.validate(), Err(ExpiryConfigError::ZeroSweepInterval));
     }
 }

@@ -1,8 +1,13 @@
 //! The v1.0 key tree: every key loads at its path, no earlier spelling of it
 //! is read, and every `mode` refuses a value it does not define.
 
-use crate::load::tests::load_file;
+use crate::{
+    load::tests::{load_file, violations_of},
+    validate::violation::ConfigurationViolation,
+};
+use pretty_assertions::assert_eq;
 use serial_test::serial;
+use url_macro::url;
 
 /// Every key that moved, as the file spelling it once had, the key name a
 /// refusal must name, and the file spelling it has now.
@@ -679,16 +684,15 @@ fn every_mode_refuses_a_value_it_does_not_define() {
 #[test]
 #[serial]
 fn a_url_preloaded_twice_is_refused() {
-    let refused = load_file(
+    let refused = violations_of(
         "[[jsonld.preloaded_contexts]]\nurl = \"https://example.com/c.jsonld\"\npath = \"/a.jsonld\"\n\
          [[jsonld.preloaded_contexts]]\nurl = \"https://example.com/c.jsonld\"\npath = \"/b.jsonld\"\n",
     );
-    let message = refused.map(|_| ()).map_err(|error| error.to_string());
-    assert!(
-        message
-            .as_ref()
-            .is_err_and(|message| message.contains("jsonld.preloaded_contexts names one url twice")),
-        "{message:?}"
+    assert_eq!(
+        refused,
+        Some(vec![ConfigurationViolation::DuplicatePreloadedContext {
+            url: url!("https://example.com/c.jsonld")
+        }])
     );
 }
 

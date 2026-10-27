@@ -7,31 +7,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::num::{NonZeroU32, NonZeroUsize};
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// Invalid tenancy configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum TenancyConfigError {
-    /// The provisional-tenant lifetime was configured as zero.
-    #[error("tenancy.provisional_tenant_lifetime must be greater than zero")]
-    ZeroProvisionalTenantLifetime,
-    /// Runtime idle eviction was configured as zero.
-    #[error("tenancy.residency.idle_eviction_after must be greater than zero")]
-    ZeroIdleEvictionAfter,
-    /// The residency sweep cadence was configured as zero.
-    #[error("tenancy.residency.sweep_interval must be greater than zero")]
-    ZeroSweepInterval,
-    /// The dormant-tenant re-wake floor was configured as zero.
-    #[error("tenancy.residency.min_wake_interval must be greater than zero")]
-    ZeroMinWakeInterval,
-    /// The woken-runtime lifetime was configured as zero.
-    #[error("tenancy.residency.woken_lifetime must be greater than zero")]
-    ZeroWokenLifetime,
-    /// The cold-build admission deadline was configured as zero.
-    #[error("tenancy.build.admission_timeout must be greater than zero")]
-    ZeroAdmissionTimeout,
-}
 
 /// Where each named tenant's data lives.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
@@ -171,8 +147,9 @@ pub struct TenancyConfig {
     /// database holds information the tenant is answered as nonexistent
     /// (clause 5.5.10). A refused creating operation leaves such a tenant
     /// behind, and its database and row are removed once it has not been
-    /// provisioned for this long. Longer than the longest a creating request
-    /// can take, or a request still running could find its database gone.
+    /// provisioned for this long. Longer than `request_limits.timeout`, the
+    /// longest a creating request can take, or a request still running could
+    /// find its database gone.
     #[toml_comment(inline)]
     pub provisional_tenant_lifetime: HumanDuration,
     /// Where each named tenant's data lives.
@@ -196,30 +173,6 @@ impl Default for TenancyConfig {
 }
 
 impl TenancyConfig {
-    /// Validate the tenancy durations.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`TenancyConfigError`] naming the first duration configured
-    /// as zero.
-    pub const fn validate(&self) -> Result<(), TenancyConfigError> {
-        if self.provisional_tenant_lifetime.is_zero() {
-            Err(TenancyConfigError::ZeroProvisionalTenantLifetime)
-        } else if self.residency.idle_eviction_after.is_zero() {
-            Err(TenancyConfigError::ZeroIdleEvictionAfter)
-        } else if self.residency.sweep_interval.is_zero() {
-            Err(TenancyConfigError::ZeroSweepInterval)
-        } else if self.residency.min_wake_interval.is_zero() {
-            Err(TenancyConfigError::ZeroMinWakeInterval)
-        } else if self.residency.woken_lifetime.is_zero() {
-            Err(TenancyConfigError::ZeroWokenLifetime)
-        } else if self.build.admission_timeout.is_zero() {
-            Err(TenancyConfigError::ZeroAdmissionTimeout)
-        } else {
-            Ok(())
-        }
-    }
-
     /// Whether named tenants are served.
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
@@ -229,83 +182,11 @@ impl TenancyConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::tenancy::{ResidencyConfig, TenancyConfig, TenancyConfigError, TenantBuildConfig},
-    };
-    use pretty_assertions::assert_eq;
+    use crate::schema::tenancy::{TenancyConfig, TenantBuildConfig};
 
     #[test]
-    fn the_default_tenancy_is_valid() {
-        assert_eq!(TenancyConfig::default().validate(), Ok(()));
+    fn named_tenants_are_served_by_default() {
         assert!(TenancyConfig::default().is_enabled());
-    }
-
-    #[test]
-    fn every_zero_duration_is_refused_by_its_key() {
-        let zero = HumanDuration::from_secs(0);
-        let residency = ResidencyConfig::default();
-        for (config, error) in [
-            (
-                TenancyConfig {
-                    provisional_tenant_lifetime: zero,
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroProvisionalTenantLifetime,
-            ),
-            (
-                TenancyConfig {
-                    residency: ResidencyConfig {
-                        idle_eviction_after: zero,
-                        ..residency
-                    },
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroIdleEvictionAfter,
-            ),
-            (
-                TenancyConfig {
-                    residency: ResidencyConfig {
-                        sweep_interval: zero,
-                        ..residency
-                    },
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroSweepInterval,
-            ),
-            (
-                TenancyConfig {
-                    residency: ResidencyConfig {
-                        min_wake_interval: zero,
-                        ..residency
-                    },
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroMinWakeInterval,
-            ),
-            (
-                TenancyConfig {
-                    residency: ResidencyConfig {
-                        woken_lifetime: zero,
-                        ..residency
-                    },
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroWokenLifetime,
-            ),
-            (
-                TenancyConfig {
-                    build: TenantBuildConfig {
-                        admission_timeout: zero,
-                        ..TenantBuildConfig::default()
-                    },
-                    ..TenancyConfig::default()
-                },
-                TenancyConfigError::ZeroAdmissionTimeout,
-            ),
-        ] {
-            assert_eq!(config.validate(), Err(error));
-        }
     }
 
     #[test]

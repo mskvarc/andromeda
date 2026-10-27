@@ -3,16 +3,7 @@
 use crate::{human_duration::HumanDuration, schema::configured_lifetime::ConfiguredLifetime};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// An unusable `[jsonld.cache]` table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum JsonLdCacheConfigError {
-    /// Hit counters would be flushed without pause.
-    #[error("jsonld.cache.hit_flush_interval must be greater than zero")]
-    ZeroHitFlushInterval,
-}
 
 /// How long resolved contexts are kept in memory.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,31 +55,13 @@ impl Default for JsonLdCacheConfig {
     }
 }
 
-impl JsonLdCacheConfig {
-    /// Validate the flush cadence. The two lifetimes need no check:
-    /// [`ConfiguredLifetime`] cannot hold a zero or sub-second span.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonLdCacheConfigError::ZeroHitFlushInterval`].
-    pub const fn validate(&self) -> Result<(), JsonLdCacheConfigError> {
-        if self.hit_flush_interval.is_zero() {
-            return Err(JsonLdCacheConfigError::ZeroHitFlushInterval);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::jsonld::cache::{JsonLdCacheConfig, JsonLdCacheConfigError},
-    };
+    use crate::schema::jsonld::cache::JsonLdCacheConfig;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
@@ -103,7 +76,6 @@ mod tests {
     fn the_default_revalidates_a_hosted_context_every_minute() {
         let defaults = JsonLdCacheConfig::default();
         assert_eq!(defaults.hosted_revalidation_interval.as_duration(), Duration::from_secs(60));
-        assert_eq!(defaults.validate(), Ok(()));
     }
 
     #[test]
@@ -133,12 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_hit_flush_interval_and_a_zero_capacity_are_refused() {
-        let config = JsonLdCacheConfig {
-            hit_flush_interval: HumanDuration::from_secs(0),
-            ..JsonLdCacheConfig::default()
-        };
-        assert_eq!(config.validate(), Err(JsonLdCacheConfigError::ZeroHitFlushInterval));
+    fn a_zero_capacity_is_refused_as_it_is_read() {
         assert!(toml::from_str::<JsonLdCacheConfig>(&table("1h", "1m").replace("max_entries = 1024", "max_entries = 0")).is_err());
     }
 }

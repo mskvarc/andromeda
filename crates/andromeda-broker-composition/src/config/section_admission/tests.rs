@@ -5,7 +5,15 @@ use crate::config::{
     error::ConfigurationError,
     section_admission::{SectionAdmissionError, admit_sections},
 };
-use andromeda_configuration::{broker_config::BrokerConfig, load::ListenerOverrides};
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    load::{ListenerOverrides, LoadError},
+    validate::{
+        bound::{Bound, Quantity, Relation},
+        config_key::{ConfigKey, QueueKey, QueueName},
+        violation::ConfigurationViolation,
+    },
+};
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -13,7 +21,7 @@ use std::{
     env,
     fs,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 fn write_temp_config(contents: &str) -> PathBuf {
@@ -76,12 +84,16 @@ fn an_attribute_nesting_past_the_decodable_ceiling_is_refused_at_load() {
 #[serial]
 fn a_side_effect_retry_ceiling_below_its_first_step_is_refused_at_load() {
     let result = admitted("[entity.side_effects.queue]\nretry_interval = \"10s\"\nmax_retry_interval = \"5s\"\n");
-    let message = result.map(drop).map_err(|error| error.to_string());
+    let retry = |queue_key| ConfigKey::Queue(QueueName::EntitySideEffects, queue_key);
+    let expected = [ConfigurationViolation::OutOfRange {
+        key: retry(QueueKey::MaxRetryInterval),
+        value: Quantity::Duration(Duration::from_secs(5)),
+        relation: Relation::AtLeast,
+        bound: Bound::setting(retry(QueueKey::RetryInterval), Duration::from_secs(10)),
+    }];
     assert!(
-        message
-            .as_ref()
-            .is_err_and(|message| message.contains("entity.side_effects.queue.max_retry_interval must be at least retry_interval")),
-        "{message:?}"
+        matches!(&result, Err(ConfigurationError::Load(LoadError::Invalid(invalid))) if invalid.violations() == expected),
+        "{result:?}"
     );
 }
 

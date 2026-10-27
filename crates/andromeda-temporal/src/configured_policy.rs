@@ -2,10 +2,9 @@
 
 use crate::{instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
 use andromeda_configuration::schema::temporal::{
-    error::TemporalConfigError,
     history::TemporalHistoryConfig,
     query::TemporalQueryConfig,
-    storage::TemporalStorageConfig,
+    storage::{StorageDaysError, TemporalStorageConfig},
 };
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 
@@ -38,9 +37,9 @@ impl From<&TemporalQueryConfig> for TemporalInstanceLimits {
 }
 
 impl TryFrom<&TemporalStorageConfig> for TemporalStoragePolicy {
-    type Error = TemporalConfigError;
+    type Error = StorageDaysError;
 
-    fn try_from(config: &TemporalStorageConfig) -> Result<TemporalStoragePolicy, TemporalConfigError> {
+    fn try_from(config: &TemporalStorageConfig) -> Result<TemporalStoragePolicy, StorageDaysError> {
         Ok(TemporalStoragePolicy {
             chunk_interval_days: config.chunk_interval_days()?,
             columnstore_after_days: config.convert_after_days()?,

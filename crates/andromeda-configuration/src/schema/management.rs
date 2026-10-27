@@ -12,7 +12,6 @@ use crate::schema::listener_transport::ListenerTransport;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use strum::{Display, EnumString};
-use thiserror::Error;
 use toml_comment::TomlComment;
 
 /// Where, and whether, the broker serves its management endpoints.
@@ -30,28 +29,6 @@ pub enum ManagementMode {
     /// data plane by a bare middleware stack.
     #[default]
     SeparatePort,
-}
-
-/// Invalid management-plane configuration.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ManagementConfigError {
-    /// The separate management port was zero, which is reserved for dynamic
-    /// binding and cannot be advertised as a listener.
-    #[error("management.port must be greater than 0 when management.mode is \"separate-port\"")]
-    ZeroPort,
-    /// The separate management port was set to the data-plane port. A wildcard
-    /// host overlaps every host, so the two planes are compared on port alone.
-    #[error("management.port ({port}) must differ from server.port when management.mode is \"separate-port\"")]
-    PortCollision {
-        /// The port both planes were configured to bind.
-        port: u16,
-    },
-    /// Metrics were enabled while no management plane exists to serve them.
-    #[error(
-        "observability.metrics.mode is \"prometheus\" but management.mode is \"disabled\"; \
-         set management.mode to \"separate-port\" or \"shared-port\", or disable metrics"
-    )]
-    MetricsWithoutManagementPlane,
 }
 
 /// The management plane's topology and listener.
@@ -92,21 +69,6 @@ impl Default for ManagementConfig {
     }
 }
 
-impl ManagementConfig {
-    /// Validate the management-plane configuration in isolation.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ManagementConfigError::ZeroPort`] when a `separate-port` plane is
-    /// configured on port zero.
-    pub const fn validate(&self) -> Result<(), ManagementConfigError> {
-        match self.mode {
-            ManagementMode::SeparatePort if self.port == 0 => Err(ManagementConfigError::ZeroPort),
-            ManagementMode::SeparatePort | ManagementMode::SharedPort | ManagementMode::Disabled => Ok(()),
-        }
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -115,7 +77,7 @@ impl ManagementConfig {
 mod tests {
     use crate::schema::{
         listener_transport::ListenerTransport,
-        management::{ManagementConfig, ManagementConfigError, ManagementMode},
+        management::{ManagementConfig, ManagementMode},
     };
     use std::str::FromStr;
 
@@ -138,26 +100,5 @@ mod tests {
             assert_eq!(ManagementMode::from_str(token).expect("parses"), mode);
         }
         assert!(serde_json::from_str::<ManagementMode>("\"merged\"").is_err());
-    }
-
-    #[test]
-    fn separate_port_zero_is_rejected() {
-        let config = ManagementConfig {
-            port: 0,
-            ..ManagementConfig::default()
-        };
-        pretty_assertions::assert_eq!(config.validate(), Err(ManagementConfigError::ZeroPort));
-    }
-
-    #[test]
-    fn a_plane_without_its_own_listener_ignores_port_zero() {
-        for mode in [ManagementMode::Disabled, ManagementMode::SharedPort] {
-            let config = ManagementConfig {
-                mode,
-                port: 0,
-                ..ManagementConfig::default()
-            };
-            assert!(config.validate().is_ok());
-        }
     }
 }

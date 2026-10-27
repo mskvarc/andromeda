@@ -3,21 +3,7 @@
 
 use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration, schema::feature_mode::FeatureMode};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use thiserror::Error;
 use toml_comment::TomlComment;
-
-/// An unusable `[jsonld.fetch]` table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum JsonLdFetchConfigError {
-    /// `timeout` was below one second, which would abandon nearly every fetch
-    /// before a remote origin server could answer.
-    #[error("jsonld.fetch.timeout must be at least 1 second")]
-    TimeoutBelowOneSecond,
-    /// `max_size` was zero, which would refuse every context.
-    #[error("jsonld.fetch.max_size must be at least 1 byte")]
-    ZeroMaxSize,
-}
 
 /// Whether and how a remote `@context` is downloaded.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,22 +38,6 @@ impl Default for JsonLdFetchConfig {
 }
 
 impl JsonLdFetchConfig {
-    /// Validate the download limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonLdFetchConfigError::TimeoutBelowOneSecond`] or
-    /// [`JsonLdFetchConfigError::ZeroMaxSize`].
-    pub fn validate(&self) -> Result<(), JsonLdFetchConfigError> {
-        if self.timeout.duration() < Duration::from_secs(1) {
-            return Err(JsonLdFetchConfigError::TimeoutBelowOneSecond);
-        }
-        if self.max_size.as_u64() == 0 {
-            return Err(JsonLdFetchConfigError::ZeroMaxSize);
-        }
-        Ok(())
-    }
-
     /// Whether a remote context may be downloaded.
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
@@ -77,11 +47,7 @@ impl JsonLdFetchConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_byte_size::HumanByteSize,
-        human_duration::HumanDuration,
-        schema::jsonld::fetch::{JsonLdFetchConfig, JsonLdFetchConfigError},
-    };
+    use crate::{human_byte_size::HumanByteSize, schema::jsonld::fetch::JsonLdFetchConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -89,20 +55,5 @@ mod tests {
         let config = JsonLdFetchConfig::default();
         assert!(config.is_enabled());
         assert_eq!(config.max_size, HumanByteSize::mib(2));
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn a_sub_second_timeout_and_a_zero_size_are_refused() {
-        let slow = JsonLdFetchConfig {
-            timeout: HumanDuration::from_millis(500),
-            ..JsonLdFetchConfig::default()
-        };
-        assert_eq!(slow.validate(), Err(JsonLdFetchConfigError::TimeoutBelowOneSecond));
-        let empty = JsonLdFetchConfig {
-            max_size: HumanByteSize::b(0),
-            ..JsonLdFetchConfig::default()
-        };
-        assert_eq!(empty.validate(), Err(JsonLdFetchConfigError::ZeroMaxSize));
     }
 }

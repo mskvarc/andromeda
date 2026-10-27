@@ -7,7 +7,6 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     time::Duration,
 };
-use thiserror::Error;
 use toml_comment::TomlComment;
 
 /// The default of [`ForwardingConfig::max_query_entities`]: ten times the
@@ -29,17 +28,6 @@ pub enum SplitEntitiesDefault {
     Split,
     /// Every source holds complete entities: filters can be applied locally.
     Complete,
-}
-
-/// An unusable `[federation.forwarding]` table.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ForwardingConfigError {
-    /// A forwarded request needs a positive deadline.
-    #[error("federation.forwarding.request_timeout must be greater than zero")]
-    ZeroRequestTimeout,
-    /// Connecting to a source needs a positive deadline.
-    #[error("federation.forwarding.connect_timeout must be greater than zero")]
-    ZeroConnectTimeout,
 }
 
 /// How requests are forwarded to Context Sources.
@@ -91,22 +79,6 @@ impl Default for ForwardingConfig {
 }
 
 impl ForwardingConfig {
-    /// Validate the deadlines.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ForwardingConfigError::ZeroRequestTimeout`] or
-    /// [`ForwardingConfigError::ZeroConnectTimeout`] for a zero deadline.
-    pub const fn validate(&self) -> Result<(), ForwardingConfigError> {
-        if self.request_timeout.is_zero() {
-            return Err(ForwardingConfigError::ZeroRequestTimeout);
-        }
-        if self.connect_timeout.is_zero() {
-            return Err(ForwardingConfigError::ZeroConnectTimeout);
-        }
-        Ok(())
-    }
-
     /// The connection deadline.
     #[must_use]
     pub const fn connect_timeout(&self) -> Duration {
@@ -122,10 +94,7 @@ impl ForwardingConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        human_duration::HumanDuration,
-        schema::federation::forwarding::{ForwardingConfig, ForwardingConfigError},
-    };
+    use crate::schema::federation::forwarding::ForwardingConfig;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -133,20 +102,5 @@ mod tests {
         let config = ForwardingConfig::default();
         assert_eq!(config.max_query_entities.get(), 10_000);
         assert_eq!(config.max_query_instances.get(), 100_000);
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn zero_timeouts_are_rejected() {
-        let request = ForwardingConfig {
-            request_timeout: HumanDuration::from_millis(0),
-            ..ForwardingConfig::default()
-        };
-        assert_eq!(request.validate(), Err(ForwardingConfigError::ZeroRequestTimeout));
-        let connect = ForwardingConfig {
-            connect_timeout: HumanDuration::from_millis(0),
-            ..ForwardingConfig::default()
-        };
-        assert_eq!(connect.validate(), Err(ForwardingConfigError::ZeroConnectTimeout));
     }
 }

@@ -30,20 +30,6 @@ const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturatin
 /// every sub-attribute a write can store addressable by a query.
 pub const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
-/// Invalid request limits.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum RequestLimitsConfigError {
-    /// A request requires a positive timeout.
-    #[error("request_limits.timeout must be greater than zero")]
-    ZeroTimeout,
-    /// Request bodies require a positive size ceiling.
-    #[error("request_limits.max_body must be greater than zero")]
-    ZeroMaxBody,
-    /// A ceiling beyond the platform address width would admit every body.
-    #[error("request_limits.max_body does not fit the platform address width")]
-    MaxBodyExceedsAddressWidth,
-}
-
 /// What one request may cost the broker.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -102,26 +88,15 @@ impl Default for RequestLimitsConfig {
     }
 }
 
-impl RequestLimitsConfig {
-    /// Validate the limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RequestLimitsConfigError::ZeroTimeout`] or
-    /// [`RequestLimitsConfigError::ZeroMaxBody`] for a zero value, and
-    /// [`RequestLimitsConfigError::MaxBodyExceedsAddressWidth`] when the body
-    /// ceiling does not fit a `usize`.
-    pub fn validate(&self) -> Result<(), RequestLimitsConfigError> {
-        if self.timeout.is_zero() {
-            return Err(RequestLimitsConfigError::ZeroTimeout);
-        }
-        if self.max_body.as_u64() == 0 {
-            return Err(RequestLimitsConfigError::ZeroMaxBody);
-        }
-        self.max_body_bytes()?;
-        Ok(())
-    }
+/// The body ceiling does not fit the platform's address width.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum RequestLimitsConfigError {
+    /// A ceiling beyond the platform address width would admit every body.
+    #[error("request_limits.max_body does not fit the platform address width")]
+    MaxBodyExceedsAddressWidth,
+}
 
+impl RequestLimitsConfig {
     /// The body ceiling in bytes.
     ///
     /// # Errors
@@ -140,38 +115,18 @@ impl RequestLimitsConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        header_section_limit::HeaderSectionLimit,
-        human_byte_size::HumanByteSize,
-        human_duration::HumanDuration,
-        schema::request_limits::{RequestLimitsConfig, RequestLimitsConfigError},
-    };
+    use crate::{header_section_limit::HeaderSectionLimit, schema::request_limits::RequestLimitsConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn the_defaults_are_valid_and_documented() {
         let limits = RequestLimitsConfig::default();
-        assert_eq!(limits.validate(), Ok(()));
         assert_eq!(limits.max_body_bytes(), Ok(67_108_864));
         assert_eq!(limits.max_json_values.get(), 4_000_000);
         assert_eq!(limits.max_entity_json_values.get(), 1_000_000);
         assert_eq!(limits.max_geometry_positions.get(), 1_000_000);
         assert_eq!(limits.max_attribute_nesting.get(), 32);
         assert_eq!(limits.max_header_section, HeaderSectionLimit::MAXIMUM);
-    }
-
-    #[test]
-    fn a_zero_timeout_or_body_is_refused() {
-        let zero_timeout = RequestLimitsConfig {
-            timeout: HumanDuration::from_secs(0),
-            ..RequestLimitsConfig::default()
-        };
-        assert_eq!(zero_timeout.validate(), Err(RequestLimitsConfigError::ZeroTimeout));
-        let zero_body = RequestLimitsConfig {
-            max_body: HumanByteSize::b(0),
-            ..RequestLimitsConfig::default()
-        };
-        assert_eq!(zero_body.validate(), Err(RequestLimitsConfigError::ZeroMaxBody));
     }
 
     #[test]

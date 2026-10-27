@@ -3,33 +3,11 @@
 pub mod cache;
 pub mod fetch;
 
-use crate::schema::jsonld::{
-    cache::{JsonLdCacheConfig, JsonLdCacheConfigError},
-    fetch::{JsonLdFetchConfig, JsonLdFetchConfigError},
-};
+use crate::schema::jsonld::{cache::JsonLdCacheConfig, fetch::JsonLdFetchConfig};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
-use thiserror::Error;
+use std::path::{Path, PathBuf};
 use toml_comment::TomlComment;
 use url::Url;
-
-/// An unusable `[jsonld]` table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum JsonLdConfigError {
-    /// The download limits are unusable.
-    #[error(transparent)]
-    Fetch(#[from] JsonLdFetchConfigError),
-    /// The cache settings are unusable.
-    #[error(transparent)]
-    Cache(#[from] JsonLdCacheConfigError),
-    /// Two `[[jsonld.preloaded_contexts]]` entries name the same URL, so
-    /// which file serves it would be decided by their order.
-    #[error("jsonld.preloaded_contexts names one url twice")]
-    DuplicatePreloadedUrl,
-}
 
 /// One `@context` read from a file at startup instead of being downloaded.
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -56,24 +34,6 @@ pub struct JsonLdConfig {
 }
 
 impl JsonLdConfig {
-    /// Validate the download limits, the cache settings and the preloaded
-    /// contexts.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`JsonLdConfigError`] of the first unusable setting, and
-    /// [`JsonLdConfigError::DuplicatePreloadedUrl`] when two preloaded
-    /// contexts name one URL.
-    pub fn validate(&self) -> Result<(), JsonLdConfigError> {
-        self.fetch.validate()?;
-        self.cache.validate()?;
-        let mut urls = HashSet::with_capacity(self.preloaded_contexts.len());
-        if !self.preloaded_contexts.iter().all(|context| urls.insert(&context.url)) {
-            return Err(JsonLdConfigError::DuplicatePreloadedUrl);
-        }
-        Ok(())
-    }
-
     /// Resolve preloaded context paths against the directory the
     /// configuration file lives in.
     ///
@@ -95,7 +55,7 @@ impl JsonLdConfig {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::schema::jsonld::{JsonLdConfig, JsonLdConfigError, PreloadedContext};
+    use crate::schema::jsonld::{JsonLdConfig, PreloadedContext};
     use pretty_assertions::assert_eq;
     use std::path::{Path, PathBuf};
     use url::Url;
@@ -105,11 +65,6 @@ mod tests {
             url: Url::parse("https://example.com/context.jsonld").expect("valid context URL"),
             path: PathBuf::from(path),
         }
-    }
-
-    #[test]
-    fn the_default_configuration_is_valid() {
-        assert_eq!(JsonLdConfig::default().validate(), Ok(()));
     }
 
     #[test]
@@ -140,15 +95,5 @@ mod tests {
         ))
         .expect("an array of tables");
         assert_eq!(config.preloaded_contexts.len(), 2);
-        assert_eq!(config.validate(), Ok(()));
-    }
-
-    #[test]
-    fn a_url_preloaded_twice_is_refused() {
-        let config = JsonLdConfig {
-            preloaded_contexts: vec![preloaded("a.jsonld"), preloaded("b.jsonld")],
-            ..JsonLdConfig::default()
-        };
-        assert_eq!(config.validate(), Err(JsonLdConfigError::DuplicatePreloadedUrl));
     }
 }
