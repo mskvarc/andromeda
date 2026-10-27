@@ -3,8 +3,9 @@
 
 use crate::{
     aggregation_group_key_decode::decode_group_keys,
-    aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row},
+    aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row, projected_column},
     error::TemporalStoreError,
+    stored_aggregation_error::AggregationColumn,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
@@ -14,6 +15,7 @@ use andromeda_postgresql_temporal_query::{
     aggregation_grouping::promoted_facets,
 };
 use andromeda_temporal::error::TemporalError;
+use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 
 /// The aggregates the rows of `entity_id`'s aggregation statement compute,
@@ -57,4 +59,18 @@ pub(crate) fn decode_aggregation_rows(
     }
 
     Ok(rows)
+}
+
+/// The instant the periods of an aggregation statement were laid from, which
+/// every row of it reports; `None` when it laid no grid or read no period.
+///
+/// # Errors
+///
+/// Returns [`TemporalError`] when the reported origin does not read back as
+/// an instant.
+pub(crate) fn decode_period_origin(pg_rows: &[PgRow]) -> Result<Option<DateTime<Utc>>, TemporalError> {
+    match pg_rows.first() {
+        Some(pg_row) => projected_column(pg_row, AggregationColumn::PeriodOrigin.into()).map_err(TemporalError::from),
+        None => Ok(None),
+    }
 }

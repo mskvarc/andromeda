@@ -7,16 +7,21 @@
 //! whole response from, so every stream of every entity is cut at the same
 //! instant, as an instance page is: forwards at the earliest end of the last
 //! period any cut stream served, backwards at the latest start of the oldest
-//! one. Every stream of a response shares one period grid, anchored at the
-//! query's `timeAt`, so that instant is a period boundary of every stream and
-//! the cut never splits a period: a period is kept when it lies wholly on the
-//! kept side.
+//! one. Every stream of a response shares one period grid, laid from one
+//! origin, so that instant is a period boundary of every stream and the cut
+//! never splits a period: a period is kept when it lies wholly on the kept
+//! side.
+//!
+//! A forward page on a grid of whole months ends, where it can, on a boundary
+//! no month clamped the day of: a client continuing from `range-end` lays its
+//! periods from there, and only such a boundary lays the grid the response
+//! was laid on (clause 4.5.19 places no period otherwise).
 
 use crate::temporal::{history_row::TimeRange, page_cut::PageCut};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow};
 use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use std::collections::HashMap;
 
 /// One attribute stream: an attribute and the `datasetId` of its instances.
@@ -56,6 +61,30 @@ impl PageCut {
             PageDirection::Backward { .. } => edges.max(),
         }?;
         Some(PageCut { direction, boundary })
+    }
+
+    /// This forward cut on a grid of whole months laid from `origin`, moved
+    /// back to the latest end of a period of `rows` it keeps from which the
+    /// same grid is laid; unchanged when its own boundary lays it or no such
+    /// end lies within it, and backwards.
+    ///
+    /// Each boundary is `origin` moved by whole months with the day of month
+    /// clamped to the month's last, so one keeping `origin`'s day and time was
+    /// not clamped, and moving it by whole months meets every later boundary.
+    /// From a clamped one (29 February of a grid from 31 January) the months
+    /// fall on its own day instead.
+    #[must_use]
+    pub fn on_whole_month_grid<'a>(self, rows: impl IntoIterator<Item = &'a TemporalAggregationRow>, origin: DateTime<Utc>) -> PageCut {
+        let lays_the_grid = |boundary: DateTime<Utc>| boundary.day() == origin.day() && boundary.time() == origin.time();
+        match self.direction {
+            PageDirection::Forward if !lays_the_grid(self.boundary) => rows
+                .into_iter()
+                .filter_map(|row| row.bucket_end)
+                .filter(|end| *end < self.boundary && lays_the_grid(*end))
+                .max()
+                .map_or(self, |boundary| PageCut { boundary, ..self }),
+            PageDirection::Forward | PageDirection::Backward { .. } => self,
+        }
     }
 
     /// Whether an aggregated period stays in the response under this cut:
@@ -172,6 +201,92 @@ mod tests {
         let cut = PageCut::of_periods(&rows, direction).expect("both streams were cut");
         pretty_assertions::assert_eq!(cut.boundary, hour(25));
         assert!(rows.iter().filter(|row| cut.keeps_period(row)).all(|row| row.bucket_start >= Some(hour(25))));
+    }
+
+    fn day(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single().expect("valid instant")
+    }
+
+    /// The monthly periods of a `P1M` grid laid from 31 July 2020, as `speed`
+    /// served them, `count` of them.
+    fn months_from_the_31st(count: usize) -> Vec<TemporalAggregationRow> {
+        let boundaries = [
+            day(2020, 7, 31),
+            day(2020, 8, 31),
+            day(2020, 9, 30),
+            day(2020, 10, 31),
+            day(2020, 11, 30),
+            day(2020, 12, 31),
+            day(2021, 1, 31),
+            day(2021, 2, 28),
+            day(2021, 3, 31),
+        ];
+        boundaries
+            .windows(2)
+            .take(count)
+            .map(|bounds| TemporalAggregationRow {
+                bucket_start: Some(bounds[0]),
+                bucket_end: Some(bounds[1]),
+                ..period("speed", 0, StreamExtent::Cut)
+            })
+            .collect()
+    }
+
+    /// From 28 February the months would fall on the 28th, so the page ends
+    /// on 31 January, the latest boundary it holds that kept the 31st.
+    #[test]
+    fn a_forward_cut_on_a_clamped_month_end_moves_back_to_the_latest_unclamped_one() {
+        let rows = months_from_the_31st(7);
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: day(2021, 2, 28),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)).boundary, day(2021, 1, 31));
+    }
+
+    #[test]
+    fn a_forward_cut_on_an_unclamped_boundary_stays() {
+        let rows = months_from_the_31st(6);
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: day(2021, 1, 31),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
+    }
+
+    /// The one period the page holds ends on 30 September; no earlier end
+    /// lies within it, so the page keeps it.
+    #[test]
+    fn a_forward_cut_with_no_unclamped_boundary_within_it_stays() {
+        let rows: Vec<TemporalAggregationRow> = months_from_the_31st(2).into_iter().skip(1).collect();
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: day(2020, 9, 30),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
+    }
+
+    /// A grid laid from the 28th or earlier clamps no month.
+    #[test]
+    fn a_forward_cut_on_a_grid_from_the_28th_stays() {
+        let rows = months_from_the_31st(7);
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: day(2021, 2, 28),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 28)), cut);
+    }
+
+    #[test]
+    fn a_backward_cut_stays_on_its_boundary() {
+        let rows = months_from_the_31st(7);
+        let cut = PageCut {
+            direction: PageDirection::Backward {
+                requested: NonZeroU32::new(30).expect("a positive count"),
+            },
+            boundary: day(2020, 9, 30),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
     }
 
     /// A page no stream of which was cut is complete.

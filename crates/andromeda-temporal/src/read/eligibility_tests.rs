@@ -10,6 +10,7 @@ use crate::{
             RecordedAttributeShape,
             RecordedValueKind,
             ShapeHolders,
+            TemporalAggregationOutcome,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
             TemporalReaderCapabilities,
@@ -171,7 +172,7 @@ impl TemporalHistoryReader for ShapedReader {
         _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    ) -> Result<TemporalAggregationOutcome, TemporalError> {
         panic!("no Entity is selected to aggregate")
     }
 

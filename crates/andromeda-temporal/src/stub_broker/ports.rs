@@ -11,6 +11,7 @@ use crate::{
             HistoryVisibility,
             RecordedAttributeShape,
             ShapeHolders,
+            TemporalAggregationOutcome,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -157,7 +158,7 @@ impl TemporalHistoryReader for StubBroker {
         _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    ) -> Result<TemporalAggregationOutcome, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
     }
     async fn query_merged_entity_aggregation(

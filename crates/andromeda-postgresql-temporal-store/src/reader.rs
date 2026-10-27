@@ -1,7 +1,7 @@
 //! Stage 1 resolves entity ids, including the `q`-attribute dictionary lookup; stage 2 runs the per-entity history SQL builder and decodes each `PgRow` into a [`TemporalHistoryRow`].
 
 use crate::{
-    aggregation_rows_read::decode_aggregation_rows,
+    aggregation_rows_read::{decode_aggregation_rows, decode_period_origin},
     error::TemporalStoreError,
     history_branch::branch_of,
     history_row_decode::assembled_history,
@@ -37,6 +37,7 @@ use andromeda_temporal::{
             RecordedAttributeShape,
             RecordedValueKind,
             ShapeHolders,
+            TemporalAggregationOutcome,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -319,14 +320,17 @@ impl TemporalHistoryReader for TemporalRepository {
         scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    ) -> Result<TemporalAggregationOutcome, TemporalError> {
         let names = self.resolve_query_names(compiled).await?;
         let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled, &names);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::Aggregation, &stage2, StatementPlanning::Cached)
             .await?;
 
-        decode_aggregation_rows(&pg_rows, entity_id, compiled)
+        Ok(TemporalAggregationOutcome {
+            periods: decode_aggregation_rows(&pg_rows, entity_id, compiled)?,
+            origin: decode_period_origin(&pg_rows)?,
+        })
     }
 }
 

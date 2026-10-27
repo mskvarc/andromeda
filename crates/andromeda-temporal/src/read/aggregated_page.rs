@@ -6,7 +6,10 @@
 //! before any is rendered: the cut is the earliest period boundary any stream
 //! of any of them was cut at, and the whole-range period an absent
 //! `aggrPeriodDuration` asks for reads the same for every stream of the
-//! response (clause 4.5.19.1).
+//! response (clause 4.5.19.1). On a calendar grid the cut also carries the
+//! origin the periods were laid from, which the continuation keeps, and on a
+//! grid of whole months it ends where it can on a boundary a continuation
+//! from `range-end` lays the same grid from.
 
 use crate::{
     error::TemporalError,
@@ -22,8 +25,9 @@ use crate::{
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, name_compaction::NameCompaction};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_grid::PeriodGrid};
 use andromeda_ngsi_ld_render::temporal::{page_cut::PageCut, period_cut::period_time_range, whole_range::WholeRange};
+use chrono::{DateTime, Utc};
 
 /// One entity's aggregated periods as its page read them, before the
 /// response's common cut is applied.
@@ -33,16 +37,23 @@ pub(crate) struct EntityAggregationPage {
     pub(crate) entity_id: Identifier,
     /// The periods the page kept of every stream.
     pub(crate) rows: Vec<TemporalAggregationRow>,
+    /// The instant the periods were laid from, `None` when none was read.
+    origin: Option<DateTime<Utc>>,
     /// Whether the window selected any history for the entity, judged before
     /// the cut: an entity the cut emptied continues on the next page.
     presence: HistoryPresence,
 }
 
 impl EntityAggregationPage {
-    /// The periods `rows` the page of `entity_id` read.
-    pub(crate) const fn read(entity_id: Identifier, rows: Vec<TemporalAggregationRow>) -> EntityAggregationPage {
+    /// The periods `rows` the page of `entity_id` read, laid from `origin`.
+    pub(crate) const fn read(entity_id: Identifier, rows: Vec<TemporalAggregationRow>, origin: Option<DateTime<Utc>>) -> EntityAggregationPage {
         let presence = presence_of(rows.is_empty());
-        EntityAggregationPage { entity_id, rows, presence }
+        EntityAggregationPage {
+            entity_id,
+            rows,
+            origin,
+            presence,
+        }
     }
 
     /// Whether the window selected any history for the entity at all.
@@ -65,9 +76,9 @@ impl TemporalService {
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAggregationPage, TemporalError> {
-        let rows = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
+        let outcome = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
         // clone: the page owns the identifier it is rendered under.
-        Ok(EntityAggregationPage::read(entity_id.clone(), rows))
+        Ok(EntityAggregationPage::read(entity_id.clone(), outcome.periods, outcome.origin))
     }
 }
 
@@ -75,12 +86,22 @@ impl TemporalService {
 /// of them was cut at, and report the whole-range period every stream of the
 /// response shares; the cut, or `None` when the response is complete.
 pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: &mut [EntityAggregationPage]) -> Option<ResponseCut> {
+    let period = compiled.representation.aggr_period_duration;
+    // Every entity of a response lays its periods from one origin: the
+    // request's, or for a retrieval naming no instant its one entity's.
+    let calendar_origin = period
+        .filter(|period| period.grid() == PeriodGrid::Calendar)
+        .and(pages.iter().find_map(|page| page.origin));
     let cut = compiled
         .instances
         .page
         .direction()
         .and_then(|direction| PageCut::common(pages.iter().filter_map(|page| PageCut::of_periods(&page.rows, direction))))
-        .map(|cut| ResponseCut::of_periods(cut, pages));
+        .map(|cut| match (period, calendar_origin) {
+            (Some(period), Some(origin)) if period.is_whole_months() => cut.on_whole_month_grid(pages.iter().flat_map(|page| page.rows.iter()), origin),
+            (Some(_) | None, Some(_) | None) => cut,
+        })
+        .map(|cut| ResponseCut::of_periods(cut, pages, calendar_origin));
     if let Some(ResponseCut { cut, .. }) = cut {
         for page in pages.iter_mut() {
             page.rows.retain(|row| cut.keeps_period(row));
@@ -243,7 +264,78 @@ mod tests {
             entity_id: entity.parse().expect("a valid identifier"),
             presence: HistoryPresence::Present,
             rows,
+            origin: Some(at("2024-01-01T00:00:00Z")),
         }
+    }
+
+    /// The periods between consecutive `boundaries`, in a stream the page
+    /// was cut in.
+    fn between(boundaries: &[&str]) -> Vec<TemporalAggregationRow> {
+        boundaries
+            .windows(2)
+            .map(|bounds| period(at(bounds[0]), at(bounds[1]), StreamExtent::Cut))
+            .collect()
+    }
+
+    /// The `P1M` grid laid from 31 July 2020 up to 28 February 2021.
+    const MONTHS_FROM_THE_31ST: [&str; 8] = [
+        "2020-07-31T00:00:00Z",
+        "2020-08-31T00:00:00Z",
+        "2020-09-30T00:00:00Z",
+        "2020-10-31T00:00:00Z",
+        "2020-11-30T00:00:00Z",
+        "2020-12-31T00:00:00Z",
+        "2021-01-31T00:00:00Z",
+        "2021-02-28T00:00:00Z",
+    ];
+
+    /// A page of `P1M` from 31 July cut at 28 February ends on 31 January
+    /// instead, from which a continuation lays the same grid, and its
+    /// continuation keeps the origin.
+    #[test]
+    fn a_month_page_cut_on_a_clamped_boundary_ends_on_the_latest_unclamped_one() {
+        let origin = at("2020-07-31T00:00:00Z");
+        let compiled = aggregated("P1M", TimeInterval::After(origin));
+        let mut pages = [EntityAggregationPage::read(
+            "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier"),
+            between(&MONTHS_FROM_THE_31ST),
+            Some(origin),
+        )];
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
+        pretty_assertions::assert_eq!(cut.cut.boundary, at("2021-01-31T00:00:00Z"));
+        pretty_assertions::assert_eq!(pages[0].rows.len(), 6);
+        let next = cut.range(TimeInterval::After(origin), None).next.expect("a continuation");
+        pretty_assertions::assert_eq!(next.interval, TimeInterval::After(at("2021-01-31T00:00:00Z")));
+        pretty_assertions::assert_eq!(next.period_origin, Some(origin));
+    }
+
+    /// No boundary of `P1M1D` is the origin moved by whole months, so the
+    /// page ends where it was cut and its continuation keeps the origin.
+    #[test]
+    fn a_page_of_months_and_days_ends_where_it_was_cut_and_keeps_its_origin() {
+        let origin = at("2020-07-31T00:00:00Z");
+        let compiled = aggregated("P1M1D", TimeInterval::After(origin));
+        let rows = between(&["2020-07-31T00:00:00Z", "2020-09-01T00:00:00Z", "2020-10-01T00:00:00Z"]);
+        let mut pages = [EntityAggregationPage::read(
+            "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier"),
+            rows,
+            Some(origin),
+        )];
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
+        pretty_assertions::assert_eq!(cut.cut.boundary, at("2020-10-01T00:00:00Z"));
+        let next = cut.range(TimeInterval::After(origin), None).next.expect("a continuation");
+        pretty_assertions::assert_eq!(next.period_origin, Some(origin));
+    }
+
+    /// An exact grid laid from any of its boundaries is the same grid, so its
+    /// continuation names no origin.
+    #[test]
+    fn an_exact_page_continuation_names_no_origin() {
+        let compiled = aggregated("PT1H", TimeInterval::After(at("2024-01-01T00:00:00Z")));
+        let mut pages = [page("urn:ngsi-ld:Vehicle:1", hours(0, 19, StreamExtent::Cut))];
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
+        let next = cut.range(TimeInterval::After(at("2024-01-01T00:00:00Z")), None).next.expect("a continuation");
+        pretty_assertions::assert_eq!(next.period_origin, None);
     }
 
     /// Clause 6.3.10: one response, one `Content-Range`. Vehicle 1 was cut

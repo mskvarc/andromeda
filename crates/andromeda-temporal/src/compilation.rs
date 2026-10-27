@@ -217,6 +217,7 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
         // clone: the compiled representation owns its methods independently of the reusable request parameters.
         .aggr_methods(params.aggr_methods.clone().unwrap_or_default())
         .aggr_period_duration(params.aggr_period_duration)
+        .period_origin(params.aggr_period_origin)
         .grouping(grouping)
         .sys_attrs(params.sys_attrs())
         .build()

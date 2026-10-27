@@ -238,10 +238,15 @@ impl TemporalQueryParameters {
     /// # Errors
     ///
     /// Returns [`ParameterError::AggrMethodsRequired`] when an aggregated
-    /// format carries no methods, and
+    /// format carries no methods,
     /// [`ParameterError::AggregationWithoutAggregatedValues`] when
-    /// `aggrMethods` or `aggrPeriodDuration` meets any other format.
+    /// `aggrMethods` or `aggrPeriodDuration` meets any other format, and
+    /// [`ParameterError::AggrPeriodOriginWithoutPeriods`] when
+    /// `aggrPeriodOrigin` has no periods to lay.
     fn validate_aggregation(&self) -> Result<(), ParameterError> {
+        if self.aggr_period_origin.is_some() && self.aggr_period_duration.is_none() {
+            return Err(ParameterError::AggrPeriodOriginWithoutPeriods);
+        }
         match (
             self.parse_format()?.is_aggregated(),
             self.aggr_methods.is_some(),

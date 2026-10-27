@@ -59,6 +59,8 @@ pub enum AggregationColumn {
     BucketStart,
     /// The end of the period.
     BucketEnd,
+    /// The instant the periods were laid from.
+    PeriodOrigin,
 }
 
 /// An aggregation row that does not read back as the aggregate it computed.

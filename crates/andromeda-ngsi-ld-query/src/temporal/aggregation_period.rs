@@ -56,6 +56,14 @@ impl AggregationPeriod {
             PeriodGrid::Calendar
         }
     }
+
+    /// Whether the duration is a whole number of months and nothing else, so
+    /// every boundary of its grid is the origin moved by whole months.
+    #[must_use]
+    pub fn is_whole_months(&self) -> bool {
+        let months = self.0.years() * 12.0 + self.0.months();
+        self.0.days() == 0.0 && self.0.hours() == 0.0 && self.0.minutes() == 0.0 && self.0.seconds() == 0.0 && months.fract() == 0.0
+    }
 }
 
 /// Serialize and deserialize an optional [`AggregationPeriod`] as an ISO 8601
@@ -149,6 +157,22 @@ mod tests {
         for raw in ["P1M", "P1Y", "P1M1D", "P1MT2H", "P0.5M", "P2Y6M"] {
             let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
             assert_eq!(period.grid(), PeriodGrid::Calendar, "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_duration_of_years_and_months_alone_is_whole_months() {
+        for raw in ["P1M", "P1Y", "P2Y6M", "P0.5Y"] {
+            let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
+            assert!(period.is_whole_months(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_duration_with_a_fraction_of_a_month_or_a_day_or_time_part_is_not_whole_months() {
+        for raw in ["P0.5M", "P1M1D", "P1MT2H", "P1W", "PT1H"] {
+            let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
+            assert!(!period.is_whole_months(), "{raw}");
         }
     }
 

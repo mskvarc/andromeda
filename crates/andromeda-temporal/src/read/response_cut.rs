@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::temporal::{
     window::TimeInterval,
 };
 use andromeda_ngsi_ld_render::temporal::{history_row::TimeRange, page_cut::PageCut};
+use chrono::{DateTime, Utc};
 
 /// The cut every entity of a partial response is made at, with what it
 /// served.
@@ -44,8 +45,9 @@ impl ResponseCut {
     }
 
     /// The cut `cut` makes of the aggregated pages `pages`, read before the
-    /// cut drops the periods past it.
-    pub(crate) fn of_periods(cut: PageCut, pages: &[EntityAggregationPage]) -> ResponseCut {
+    /// cut drops the periods past it, on the calendar grid laid from `origin`
+    /// when there is one.
+    pub(crate) fn of_periods(cut: PageCut, pages: &[EntityAggregationPage], origin: Option<DateTime<Utc>>) -> ResponseCut {
         let counts: Option<Vec<u64>> = pages
             .iter()
             .filter(|page| !page.rows.is_empty())
@@ -53,7 +55,10 @@ impl ResponseCut {
             .collect();
         ResponseCut {
             cut,
-            edge: PageEdge::PeriodBoundary(cut.boundary),
+            edge: PageEdge::PeriodBoundary {
+                boundary: cut.boundary,
+                origin,
+            },
             fewest_served: counts.and_then(|counts| counts.into_iter().min()),
         }
     }
@@ -148,6 +153,7 @@ mod tests {
             Some(TemporalContinuation {
                 interval: TimeInterval::Before(minute(10)),
                 last_n: NonZeroU32::new(46),
+                period_origin: None,
             })
         );
     }
@@ -174,7 +180,7 @@ mod tests {
     }
 
     fn aggregation_page(entity: &str, rows: Vec<TemporalAggregationRow>) -> EntityAggregationPage {
-        EntityAggregationPage::read(entity.parse().expect("a valid identifier"), rows)
+        EntityAggregationPage::read(entity.parse().expect("a valid identifier"), rows, None)
     }
 
     /// The periods from 10:00 on are kept: `speed` aggregates 3 + 4
@@ -192,12 +198,13 @@ mod tests {
         )];
         assert!(matches!(pages[0].presence(), HistoryPresence::Present));
         let boundary = at("2020-01-01T10:00:00Z");
-        let range = ResponseCut::of_periods(backward_cut(boundary), &pages).range(TimeInterval::Unbounded, None);
+        let range = ResponseCut::of_periods(backward_cut(boundary), &pages, None).range(TimeInterval::Unbounded, None);
         assert_eq!(
             range.next,
             Some(TemporalContinuation {
                 interval: TimeInterval::Before(boundary),
                 last_n: NonZeroU32::new(48),
+                period_origin: None,
             })
         );
     }
@@ -207,7 +214,7 @@ mod tests {
     #[test]
     fn a_backward_period_cut_over_an_uncounted_period_has_no_continuation() {
         let pages = [aggregation_page("urn:ngsi-ld:Vehicle:1", vec![period("speed", 10, None)])];
-        let range = ResponseCut::of_periods(backward_cut(at("2020-01-01T10:00:00Z")), &pages).range(TimeInterval::Unbounded, None);
+        let range = ResponseCut::of_periods(backward_cut(at("2020-01-01T10:00:00Z")), &pages, None).range(TimeInterval::Unbounded, None);
         assert_eq!(range.next, None);
     }
 
@@ -219,7 +226,7 @@ mod tests {
             direction: PageDirection::Forward,
             boundary: at("2020-01-01T01:00:00Z"),
         };
-        let range = ResponseCut::of_periods(cut, &pages).range(TimeInterval::After(at("2020-01-01T00:00:00Z")), None);
+        let range = ResponseCut::of_periods(cut, &pages, None).range(TimeInterval::After(at("2020-01-01T00:00:00Z")), None);
         assert_eq!(range.next.map(|next| next.interval), Some(TimeInterval::After(at("2020-01-01T01:00:00Z"))));
     }
 }

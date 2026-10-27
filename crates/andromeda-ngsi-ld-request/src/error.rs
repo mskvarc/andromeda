@@ -160,6 +160,11 @@ pub enum ParameterError {
     /// Tables 6.18.3.2-1 and 6.19.3.1-1 apply them to (clause 6.3.20).
     #[error("aggrMethods and aggrPeriodDuration are only applicable if aggregatedValues is present in the format or options parameter")]
     AggregationWithoutAggregatedValues,
+    /// `aggrPeriodOrigin`, the origin a continuation of a calendar-grid
+    /// aggregation lays its periods from, was sent without a non-zero
+    /// `aggrPeriodDuration` to lay.
+    #[error("aggrPeriodOrigin is only applicable with a non-zero aggrPeriodDuration")]
+    AggrPeriodOriginWithoutPeriods,
     /// `joinLevel` was sent while `join` asked for no Linked Entity retrieval:
     /// it is "only applicable if join parameter is 'flat' or 'inline'"
     /// (Table 6.5.3.1-1, clause 6.3.20).

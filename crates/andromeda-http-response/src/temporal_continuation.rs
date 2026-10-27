@@ -2,16 +2,20 @@
 //!
 //! Clause 6.3.10 gives a partial temporal response a `Content-Range` but no
 //! request that resumes after it. The pointer is that request, spelled with
-//! the standard temporal parameters only: the window and `lastN` of the
-//! continuation replace the request's own, and every other parameter is kept,
+//! the standard temporal parameters, the window and `lastN` of the
+//! continuation replacing the request's own, and every other parameter kept,
 //! so a client following it asks the same question of the rest of the
-//! history. The `@context` and the `NGSILD-EntityMap` of the request travel
-//! in headers, which the client sends again.
+//! history. A continuation of a calendar-grid aggregation also names the
+//! origin its periods are laid from in Andromeda's `aggrPeriodOrigin`, since
+//! its window no longer opens there (clause 4.5.19). The `@context` and the
+//! `NGSILD-EntityMap` of the request travel in headers, which the client
+//! sends again.
 
 use crate::link_target::{append_typed_links, rebuilt_target};
 use andromeda_http_headers::{link::relation_type::RelationType, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_query::temporal::continuation::TemporalContinuation;
+use andromeda_ngsi_ld_request::query_parameter::QueryParameter;
 use axum::{http::Uri, response::Response};
 
 /// The query parameters a continuation replaces (clause 6.3.10 and Table
@@ -30,12 +34,20 @@ pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &Tempo
     let time_at = time_at.map(instant_text);
     let end_time_at = end_time_at.map(instant_text);
     let last_n = next.last_n.map(|last_n| last_n.to_string());
-    let set: Vec<(&str, &str)> = CONTINUATION_PARAMETERS
+    let period_origin = next.period_origin.map(instant_text);
+    let mut set: Vec<(&str, &str)> = CONTINUATION_PARAMETERS
         .into_iter()
         .zip([timerel.as_deref(), time_at.as_deref(), end_time_at.as_deref(), last_n.as_deref()])
         .filter_map(|(name, value)| value.map(|value| (name, value)))
         .collect();
-    let target = rebuilt_target(uri, &CONTINUATION_PARAMETERS, &set);
+    let mut replaced = CONTINUATION_PARAMETERS.to_vec();
+    // Any other continuation keeps the origin the request named, if it named one.
+    if let Some(origin) = period_origin.as_deref() {
+        let name = QueryParameter::AggrPeriodOrigin.into();
+        replaced.push(name);
+        set.push((name, origin));
+    }
+    let target = rebuilt_target(uri, &replaced, &set);
     append_typed_links(response, vec![(RelationType::Next, target)], media_type);
 }
 
@@ -66,7 +78,11 @@ mod tests {
     }
 
     fn forward(interval: TimeInterval) -> TemporalContinuation {
-        TemporalContinuation { interval, last_n: None }
+        TemporalContinuation {
+            interval,
+            last_n: None,
+            period_origin: None,
+        }
     }
 
     /// The decoded query parameters of the `rel="next"` target `response`
@@ -152,12 +168,52 @@ mod tests {
             &TemporalContinuation {
                 interval: TimeInterval::Before(at("2020-01-01T01:01:00Z")),
                 last_n: NonZeroU32::new(4000),
+                period_origin: None,
             },
             ResponseMediaType::Json,
         );
         pretty_assertions::assert_eq!(
             next_parameters(&response),
             owned(&[("timerel", "before"), ("timeAt", "2020-01-01T01:01:00Z"), ("lastN", "4000")])
+        );
+    }
+
+    /// A continuation of a calendar grid names the origin it keeps, replacing
+    /// the one the request named.
+    #[test]
+    fn a_calendar_continuation_names_its_period_origin() {
+        let response = continued(
+            "/t?timerel=after&timeAt=2020-01-31T00:00:00Z&aggrPeriodDuration=P1M&aggrPeriodOrigin=2019-12-31T00:00:00Z",
+            &TemporalContinuation {
+                interval: TimeInterval::After(at("2020-02-29T00:00:00Z")),
+                last_n: None,
+                period_origin: Some(at("2020-01-31T00:00:00Z")),
+            },
+            ResponseMediaType::Json,
+        );
+        pretty_assertions::assert_eq!(
+            next_parameters(&response),
+            owned(&[
+                ("aggrPeriodDuration", "P1M"),
+                ("timerel", "after"),
+                ("timeAt", "2020-02-29T00:00:00Z"),
+                ("aggrPeriodOrigin", "2020-01-31T00:00:00Z")
+            ])
+        );
+    }
+
+    /// A continuation naming no origin keeps the one the request named.
+    #[test]
+    fn a_continuation_naming_no_origin_keeps_the_requests() {
+        let response = continued(
+            "/t?timerel=after&timeAt=2020-02-29T00:00:00Z&aggrPeriodOrigin=2020-01-31T00:00:00Z",
+            &forward(TimeInterval::After(at("2020-03-01T00:00:00Z"))),
+            ResponseMediaType::Json,
+        );
+        assert!(
+            next_parameters(&response).contains(&("aggrPeriodOrigin".to_owned(), "2020-01-31T00:00:00Z".to_owned())),
+            "{:?}",
+            next_parameters(&response)
         );
     }
 

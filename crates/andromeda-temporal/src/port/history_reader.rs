@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -35,6 +36,17 @@ impl TemporalHistoryOutcome {
     pub fn into_rows(self) -> Vec<TemporalHistoryRow> {
         self.observations.into_iter().map(|observation| observation.row).collect()
     }
+}
+
+/// Result of one entity aggregation read.
+#[derive(Debug)]
+pub struct TemporalAggregationOutcome {
+    /// The periods read, each stream's in the order the representation lists
+    /// them.
+    pub periods: Vec<TemporalAggregationRow>,
+    /// The instant the periods were laid from (clause 4.5.19); `None` when the
+    /// whole range is one period or no period was read.
+    pub origin: Option<DateTime<Utc>>,
 }
 
 /// One stored observation and the idempotent append identity that produced it.
@@ -262,14 +274,15 @@ pub trait TemporalHistoryReader: Send + Sync {
         compiled: &CompiledTemporalQuery,
     ) -> Result<TemporalHistoryOutcome, TemporalError>;
 
-    /// Read neutral aggregation buckets for one entity.
+    /// Read neutral aggregation buckets for one entity, with the origin they
+    /// were laid from.
     #[must_use = "temporal aggregation reads must be awaited"]
     async fn query_entity_aggregation(
         &self,
         scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
+    ) -> Result<TemporalAggregationOutcome, TemporalError>;
 
     /// Read the aggregation buckets of one entity over its instances held in
     /// this view together with `answered`, the instances Context Sources

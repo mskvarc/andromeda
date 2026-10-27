@@ -82,6 +82,12 @@ struct BucketOrigin;
 #[iden = "origin"]
 struct Origin;
 
+/// Column `period_origin`: the instant the grid's periods are laid from,
+/// which a continuation of a calendar grid keeps.
+#[derive(Iden, Clone, Copy)]
+#[iden = "period_origin"]
+struct PeriodOrigin;
+
 /// Alias `page`: the aggregated periods of one stream.
 #[derive(Iden, Clone, Copy)]
 #[iden = "page"]
@@ -178,13 +184,13 @@ fn origin_subquery(branch: &HistoryBranch, of: &HistoryOf, axis: AttributeHistor
     origin.take()
 }
 
-/// The origin of the period grid: the reference instant of the query's
-/// window (clause 4.5.19) or, absent one, the earliest instant of the
-/// Entity's history on the axis, read once for the statement in the CTE the
-/// second element names, rather than from epoch.
+/// The origin of the period grid: the origin the request names, else the
+/// reference instant of the query's window (clause 4.5.19), else the
+/// earliest instant of the Entity's history on the axis, read once for the
+/// statement in the CTE the second element names, rather than from epoch.
 fn grid_origin(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> (SimpleExpr, Option<CommonTableExpression>) {
-    if let Some(reference) = compiled.window.interval.reference() {
-        return (Expr::val(*reference), None);
+    if let Some(origin) = compiled.representation.period_origin.as_ref().or(compiled.window.interval.reference()) {
+        return (Expr::val(*origin), None);
     }
     let origin = CommonTableExpression::new()
         .query(origin_subquery(branch, of, axis_column(compiled.window.timeproperty)))
@@ -313,7 +319,8 @@ fn grouped_page(
 ///
 /// `condition` admits the represented instances. Clause 4.5.7: a tombstone
 /// records a deletion and carries no value, so the rows that record one are
-/// outside every aggregate rather than counted.
+/// outside every aggregate rather than counted. On a grid every row also
+/// projects the origin its periods were laid from as [`PeriodOrigin`].
 #[must_use]
 pub fn build_aggregation_query(
     branch: &HistoryBranch,
@@ -322,12 +329,13 @@ pub fn build_aggregation_query(
     condition: &Condition,
     names: &QueryNames,
 ) -> SelectStatement {
-    let (grid, origin) = match compiled.representation.aggr_period_duration {
+    let (grid, origin, laid_from) = match compiled.representation.aggr_period_duration {
         Some(period) => {
             let (origin_expr, origin) = grid_origin(branch, of, compiled);
-            (Some(AggregationGrid::new(period, origin_expr)), origin)
+            // clone: the grid places every period from the origin the rows also report.
+            (Some(AggregationGrid::new(period, origin_expr.clone())), origin, Some(origin_expr))
         }
-        None => (None, None),
+        None => (None, None, None),
     };
     // clone: the edge places the page on every represented instance, the aggregates fold the valued ones.
     let aggregated = condition.clone().add(carries_a_value(Ah));
@@ -338,6 +346,9 @@ pub fn build_aggregation_query(
         .expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"))
         .expr_as(Expr::col((St, HistoryGrain::DatasetId)), HistoryGrain::DatasetId)
         .expr(Expr::col((Page, Asterisk)));
+    if let Some(laid_from) = laid_from {
+        select.expr_as(cast(laid_from, PostgresType::Timestamptz), PeriodOrigin);
+    }
     entity_streams(&mut select, branch, of);
     match read.edge {
         Some(edge) => {
@@ -515,7 +526,7 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         assert!(sql.starts_with("WITH \"bucket_origin\""), "{sql}");
         assert!(
-            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".*, FALSE AS "stream_continues" FROM"#),
+            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".*, (SELECT "bucket_origin"."origin" FROM "bucket_origin")::timestamptz AS "period_origin", FALSE AS "stream_continues" FROM"#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\"", "{sql}");
@@ -724,6 +735,36 @@ mod tests {
         );
         assert!(sql.contains(r#""bucket"."bucket_end" AS "bucket_end""#), "{sql}");
         pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"", "{sql}");
+    }
+
+    /// A continuation opening on 15 May keeps the grid laid from the origin it
+    /// names, and every row reports that origin.
+    #[test]
+    fn a_named_period_origin_lays_the_grid_in_place_of_the_reference_instant() {
+        let mut compiled = from_the_fifteenth("P1M");
+        compiled.window.interval = TimeInterval::After(instant("2026-05-15T00:00:00Z"));
+        compiled.representation.period_origin = Some(instant("2026-01-31T00:00:00Z"));
+        let sql = sql_of(&compiled);
+        assert!(
+            sql.contains("'P1M'::interval AS \"period\", '2026-01-31 00:00:00.000000 +00:00'::timestamptz AS \"origin\""),
+            "{sql}"
+        );
+        assert!(sql.contains("'2026-01-31 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
+    }
+
+    /// The origin the periods were laid from is reported beside them, read
+    /// from the history when the window names none.
+    #[test]
+    fn every_row_reports_the_origin_of_its_grid() {
+        let sql = sql_of(&from_the_fifteenth("PT1H"));
+        assert!(sql.contains("'2026-03-15 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
+        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
+        assert!(
+            sql.contains("(SELECT \"bucket_origin\".\"origin\" FROM \"bucket_origin\")::timestamptz AS \"period_origin\""),
+            "{sql}"
+        );
+        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], None));
+        assert!(!sql.contains("period_origin"), "{sql}");
     }
 
     /// A retrieval without `timeAt` anchors a calendar grid where it anchors an

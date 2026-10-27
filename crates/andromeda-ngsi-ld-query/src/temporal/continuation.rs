@@ -12,6 +12,14 @@
 //!
 //! An aggregated page ends on a period boundary, which the next period opens
 //! at (clause 4.5.19), so a forward continuation opens on the boundary itself.
+//! The periods are laid from the window's reference instant, and a calendar
+//! period's boundary is the origin moved by whole durations with the day of
+//! month clamped, so a grid laid from a later boundary can differ from the one
+//! laid from the origin: from 29 February, `P1M` falls on the 29th where the
+//! grid from 31 January falls on each month's last day. A forward continuation
+//! of a calendar grid therefore names the origin it keeps
+//! (`aggrPeriodOrigin`). An exact grid laid from any of its boundaries is the
+//! same grid.
 //!
 //! A backward page answers a `lastN` the broker's maximum narrowed, and the
 //! continuation asks for the rest of it: the client's `lastN` less the fewest
@@ -30,7 +38,13 @@ pub enum PageEdge {
     Instant(DateTime<Utc>),
     /// An aggregated page: the end of its last period forwards, or the start
     /// of its oldest period backwards.
-    PeriodBoundary(DateTime<Utc>),
+    PeriodBoundary {
+        /// The boundary the page ends on.
+        boundary: DateTime<Utc>,
+        /// The origin of the calendar grid the periods lie on; `None` on an
+        /// exact grid.
+        origin: Option<DateTime<Utc>>,
+    },
 }
 
 impl PageEdge {
@@ -38,7 +52,7 @@ impl PageEdge {
     #[must_use]
     pub const fn instant(self) -> DateTime<Utc> {
         match self {
-            PageEdge::Instant(instant) | PageEdge::PeriodBoundary(instant) => instant,
+            PageEdge::Instant(instant) | PageEdge::PeriodBoundary { boundary: instant, .. } => instant,
         }
     }
 
@@ -47,7 +61,15 @@ impl PageEdge {
     fn forward_opening(self) -> Option<DateTime<Utc>> {
         match self {
             PageEdge::Instant(instant) => instant.checked_add_signed(TimeDelta::microseconds(1)),
-            PageEdge::PeriodBoundary(boundary) => Some(boundary),
+            PageEdge::PeriodBoundary { boundary, .. } => Some(boundary),
+        }
+    }
+
+    /// The origin a forward continuation lays its periods from.
+    const fn calendar_origin(self) -> Option<DateTime<Utc>> {
+        match self {
+            PageEdge::Instant(_) => None,
+            PageEdge::PeriodBoundary { origin, .. } => origin,
         }
     }
 }
@@ -61,6 +83,9 @@ pub struct TemporalContinuation {
     /// The `lastN` the continuation asks for; `None` on a forward walk, which
     /// carries none.
     pub last_n: Option<NonZeroU32>,
+    /// The origin a forward continuation of a calendar grid lays its periods
+    /// from; `None` for any other continuation, which keeps the request's.
+    pub period_origin: Option<DateTime<Utc>>,
 }
 
 impl TemporalContinuation {
@@ -80,7 +105,11 @@ impl TemporalContinuation {
                     TimeInterval::Before(to) | TimeInterval::Between { to, .. } if opening < to => TimeInterval::Between { from: opening, to },
                     TimeInterval::Before(_) | TimeInterval::Between { .. } => return None,
                 };
-                Some(TemporalContinuation { interval, last_n: None })
+                Some(TemporalContinuation {
+                    interval,
+                    last_n: None,
+                    period_origin: edge.calendar_origin(),
+                })
             }
             PageDirection::Backward { requested } => {
                 let remaining = u64::from(requested.get()).checked_sub(fewest_served?)?;
@@ -94,6 +123,7 @@ impl TemporalContinuation {
                 Some(TemporalContinuation {
                     interval,
                     last_n: Some(last_n),
+                    period_origin: None,
                 })
             }
         }
@@ -152,6 +182,7 @@ mod tests {
             Some(TemporalContinuation {
                 interval: TimeInterval::After(at("2020-01-01T01:19:00.000001Z")),
                 last_n: None,
+                period_origin: None,
             })
         );
     }
@@ -209,10 +240,33 @@ mod tests {
         assert_eq!(
             forward(
                 TimeInterval::After(at("2020-01-01T00:00:00Z")),
-                PageEdge::PeriodBoundary(at("2020-01-01T19:00:00Z"))
+                PageEdge::PeriodBoundary {
+                    boundary: at("2020-01-01T19:00:00Z"),
+                    origin: None,
+                }
             )
             .map(|next| next.interval),
             Some(TimeInterval::After(at("2020-01-01T19:00:00Z")))
+        );
+    }
+
+    /// From 29 February a grid of `P1M` falls on the 29th, so the
+    /// continuation keeps the 31 January origin it was laid from.
+    #[test]
+    fn a_forward_calendar_page_continues_on_its_boundary_keeping_its_origin() {
+        assert_eq!(
+            forward(
+                TimeInterval::After(at("2020-01-31T00:00:00Z")),
+                PageEdge::PeriodBoundary {
+                    boundary: at("2020-02-29T00:00:00Z"),
+                    origin: Some(at("2020-01-31T00:00:00Z")),
+                }
+            ),
+            Some(TemporalContinuation {
+                interval: TimeInterval::After(at("2020-02-29T00:00:00Z")),
+                last_n: None,
+                period_origin: Some(at("2020-01-31T00:00:00Z")),
+            })
         );
     }
 
@@ -224,6 +278,7 @@ mod tests {
             Some(TemporalContinuation {
                 interval: TimeInterval::Before(at("2020-01-01T01:01:00Z")),
                 last_n: last_n(4000),
+                period_origin: None,
             })
         );
     }
@@ -242,6 +297,7 @@ mod tests {
                     to: at("2020-01-01T01:01:00Z"),
                 },
                 last_n: last_n(4000),
+                period_origin: None,
             })
         );
     }
@@ -256,6 +312,7 @@ mod tests {
                     to: at("2020-01-01T01:01:00Z"),
                 },
                 last_n: last_n(4000),
+                period_origin: None,
             })
         );
     }
@@ -267,6 +324,7 @@ mod tests {
             Some(TemporalContinuation {
                 interval: TimeInterval::Before(at("2020-01-01T01:01:00Z")),
                 last_n: last_n(4000),
+                period_origin: None,
             })
         );
     }
@@ -292,18 +350,23 @@ mod tests {
     }
 
     /// The oldest kept period starts on the boundary, which an exclusive
-    /// `before` leaves to the page already served.
+    /// `before` leaves to the page already served. A backward continuation
+    /// names no origin of its own, whatever grid the page lies on.
     #[test]
     fn a_backward_aggregated_page_continues_before_its_period_boundary() {
         assert_eq!(
             backward(
                 TimeInterval::Before(at("2020-01-02T00:00:00Z")),
-                PageEdge::PeriodBoundary(at("2020-01-01T10:00:00Z")),
+                PageEdge::PeriodBoundary {
+                    boundary: at("2020-01-01T10:00:00Z"),
+                    origin: Some(at("2020-01-02T00:00:00Z")),
+                },
                 Some(1000)
             ),
             Some(TemporalContinuation {
                 interval: TimeInterval::Before(at("2020-01-01T10:00:00Z")),
                 last_n: last_n(4000),
+                period_origin: None,
             })
         );
     }

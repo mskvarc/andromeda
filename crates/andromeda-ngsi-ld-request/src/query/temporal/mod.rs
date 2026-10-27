@@ -138,6 +138,11 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "aggrPeriodDuration")]
     #[serde(default, with = "optional")]
     pub aggr_period_duration: Option<AggregationPeriod>,
+    /// The instant the aggregation periods are laid from (`aggrPeriodOrigin`),
+    /// which only a retrieval's continuation carries: no query string of a
+    /// query names it, so serde skips it and the retrieval sets it.
+    #[serde(skip)]
+    pub aggr_period_origin: Option<DateTime<Utc>>,
     /// The grouping applied within each aggregation period (`aggrGroupBy`).
     ///
     /// Non-standard, from the temporal aggregation grouping extension. Carried
