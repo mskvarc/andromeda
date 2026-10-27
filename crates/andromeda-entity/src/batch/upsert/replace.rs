@@ -144,7 +144,6 @@ impl EntityService {
                     state: Arc::clone(&snapshot.state), // clone: Arc ref-count bump
                 },
                 write: None,
-                alongside: None,
             }),
         }
     }
@@ -159,6 +158,5 @@ fn built(write: ChunkWrite) -> Result<PlannedWrite<Replacement>, Box<(Identifier
             state: stored_state(&write)?,
         },
         write: Some(write),
-        alongside: None,
     })
 }

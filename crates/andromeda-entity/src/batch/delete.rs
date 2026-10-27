@@ -88,7 +88,6 @@ impl ChunkRewrite for DeleteRewrite<'_> {
                 plan,
             }),
             entry,
-            alongside: None,
         })
     }
 }

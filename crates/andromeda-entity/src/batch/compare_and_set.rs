@@ -145,18 +145,19 @@ async fn a_batch_update_superseded_by_another_writer_keeps_its_change() {
     assert_eq!(stored_terms(&contended, &id), terms(&["other", "seed", "u"]));
 }
 
-/// Clause 5.6.9.5: an append that adds nothing leaves the Entity out of S.
-/// Whether it added anything is decided by the state the landed attempt read,
-/// and the error is reported once, not once per attempt.
+/// Clause 5.6.9.4: an append that adds nothing puts the Entity in E and not
+/// in S. Whether it added anything is decided by the state the landed attempt
+/// read: `other` is missing on the first read, a concurrent writer adds it,
+/// and the retry finds it held, so the Entity is reported once, as a conflict.
 #[tokio::test]
-async fn a_no_overwrite_conflict_is_reported_once_however_many_attempts_ran() {
+async fn a_no_overwrite_append_another_writer_got_to_first_is_reported_once_as_a_conflict() {
     let (contended, id, _) = seeded().await;
     another_writer_adds_other(&contended, &id);
 
     let admitted = admitted_batch(
         &contended.service,
         BatchUpdate,
-        vec![request_building(&id, &property("seed"))],
+        vec![request_building(&id, &property("other"))],
         &ContextSpec::core_only(),
     )
     .await;
@@ -166,12 +167,16 @@ async fn a_no_overwrite_conflict_is_reported_once_however_many_attempts_ran() {
         .await
         .expect("the batch completes");
 
-    assert_eq!(contended.store.submitted_for(&id).len(), 2);
-    let conflicts: Vec<&EntityError> = result.errors.iter().filter(|(failed, _)| *failed == id).map(|(_, error)| error).collect();
+    assert!(result.success.is_empty(), "{:?}", result.success);
     assert!(
-        matches!(conflicts.as_slice(), [EntityError::Validation(EntityValidationReason::NoOverwriteConflict)]),
-        "{conflicts:?}"
+        matches!(
+            result.errors.as_slice(),
+            [(failed, EntityError::Validation(EntityValidationReason::NoOverwriteConflict))] if *failed == id
+        ),
+        "{:?}",
+        result.errors
     );
+    assert_eq!(stored_terms(&contended, &id), terms(&["other", "seed"]));
 }
 
 /// Upsert the Building `id` with `attributes` in update mode, inline.

@@ -43,11 +43,15 @@ pub(crate) fn building_id(name: &str) -> Identifier {
     format!("urn:ngsi-ld:Building:{name}").parse().expect("a valid identifier")
 }
 
-/// One expanded Property instance holding `value`.
+/// One expanded Property instance holding `value`, carrying the clause 4.8
+/// `createdAt` and `modifiedAt` every stored instance has.
 fn property_instance(value: i64) -> Value {
+    let stamp = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T10:00:00.000000Z"}]);
     json!({
         "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
+        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}],
+        "https://uri.etsi.org/ngsi-ld/createdAt": stamp,
+        "https://uri.etsi.org/ngsi-ld/modifiedAt": stamp
     })
 }
 

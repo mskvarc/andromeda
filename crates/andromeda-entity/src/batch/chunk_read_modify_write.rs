@@ -82,10 +82,6 @@ pub(super) struct PlannedWrite<E> {
     /// entity is then settled as a success without a write, so its
     /// `modifiedAt`, subscribers and history stay untouched.
     pub write: Option<ChunkWrite>,
-    /// A failure reported beside the write once it settles, such as an append
-    /// that added nothing. It describes this attempt only, so a refused
-    /// attempt's is dropped with it.
-    pub alongside: Option<EntityError>,
 }
 
 impl EntityService {
@@ -165,25 +161,15 @@ impl EntityService {
         for entry in pending {
             let snapshot = snapshots.remove(R::id(&entry));
             match rewrite.build(entry, snapshot.as_ref(), &reads, now) {
-                Ok(PlannedWrite {
-                    entry,
-                    write: Some(write),
-                    alongside,
-                }) => {
+                Ok(PlannedWrite { entry, write: Some(write) }) => {
                     let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.modified_at));
                     writes.push(GuardedWrite { write, precondition });
-                    built.push((entry, alongside));
+                    built.push(entry);
                 }
                 // The state this attempt read already is what the entry asks
                 // for, so a concurrent writer moving the entity on does not
                 // make the answer wrong: nothing is stored and nothing retried.
-                Ok(PlannedWrite { entry, write: None, alongside }) => {
-                    let id = R::id(&entry);
-                    settled.success.push(id.clone()); // clone: the report owns the identifier it names
-                    if let Some(alongside) = alongside {
-                        settled.errors.push((id.clone(), alongside)); // clone: the report owns the identifier it names
-                    }
-                }
+                Ok(PlannedWrite { entry, write: None }) => settled.success.push(R::id(&entry).clone()), // clone: the report owns the identifier it names
                 Err(failure) => settled.errors.push(*failure),
             }
         }
@@ -200,14 +186,6 @@ impl EntityService {
         settled.errors.extend(errors);
 
         let refused: HashSet<&Identifier> = retryable.iter().map(|(id, _)| id).collect();
-        let mut next = Vec::with_capacity(refused.len());
-        for (entry, alongside) in built {
-            if refused.contains(R::id(&entry)) {
-                next.push(entry);
-            } else if let Some(alongside) = alongside {
-                settled.errors.push((R::id(&entry).clone(), alongside)); // clone: the report owns the identifier it names
-            }
-        }
-        Ok(next)
+        Ok(built.into_iter().filter(|entry| refused.contains(R::id(entry))).collect())
     }
 }

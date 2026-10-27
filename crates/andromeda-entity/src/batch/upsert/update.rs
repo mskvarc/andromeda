@@ -68,7 +68,6 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(prepared),
                     write,
-                    alongside: None,
                 })
             }
             (UpsertFragment::Inserted { id, stored }, Some(snapshot)) => {
@@ -77,7 +76,6 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(Box::new(PreparedEntity { id, document })),
                     write,
-                    alongside: None,
                 })
             }
             // Clause 5.6.8.4 routes an absent Entity to "the behaviour defined
@@ -115,7 +113,6 @@ fn inserted(write: ChunkWrite) -> Result<PlannedWrite<UpsertFragment>, Box<(Iden
             stored: stored_state(&write)?,
         },
         write: Some(write),
-        alongside: None,
     })
 }
 

@@ -65,7 +65,7 @@ impl ChunkRewrite for MergeRewrite<'_> {
             UpdatedStates { previous, current: merged },
             now,
         )?;
-        Ok(PlannedWrite { entry, write, alongside: None })
+        Ok(PlannedWrite { entry, write })
     }
 }
 
