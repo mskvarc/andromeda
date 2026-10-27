@@ -4,7 +4,7 @@
 //! value is declared as.
 
 use crate::{
-    attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue},
+    attribute_value_datatype::{ARRAY_TYPE, NULL_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
 use andromeda_ngsi_ld_query::filter::{
@@ -24,9 +24,9 @@ use andromeda_postgresql_query::q_predicate::{
 };
 use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
 use andromeda_postgresql_seaquery::{
-    cast::{cast_compound, typed_null},
+    cast::{cast, cast_compound, typed_null},
     jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
-    literal::{int_literal, text_literal},
+    literal::{false_literal, int_literal, text_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     unnest::composite_field,
@@ -101,6 +101,7 @@ impl Holder {
             date_time: self.field(CurrentAttributes::ValueDateTime, SubAttribute::ValueDateTime),
             text: Func::coalesce(strings).into(),
             datatype: self.declared_datatype(),
+            json_null: stored_json_null(object.clone()), // clone: as above
             object: Func::coalesce([json_compound(object), geometry.into()]).into(),
         }
     }
@@ -133,6 +134,7 @@ impl Holder {
             text: typed_null(PostgresType::Text),
             datatype: typed_null(PostgresType::Text),
             object: typed_null(PostgresType::Jsonb),
+            json_null: false_literal(),
         }
     }
 
@@ -175,6 +177,7 @@ impl Holder {
             date_time: typed_null(PostgresType::Timestamptz),
             text: json_text(member.clone()), // clone: as above
             datatype: declared,
+            json_null: jsonb_typeof(member.clone()).eq(text_literal(NULL_TYPE)), // clone: as above
             object: json_compound(member),
         }
     }
@@ -223,6 +226,19 @@ fn json_compound(json: SimpleExpr) -> SimpleExpr {
             json,
         )
         .into()
+}
+
+/// Whether the stored `value_object` is the JSON literal `null`: a Property
+/// stores it expanded, `{"@value": null, "@type": "@json"}`, and a
+/// `JsonProperty` stores the literal itself.
+fn stored_json_null(object: SimpleExpr) -> SimpleExpr {
+    let expanded = jsonb_build_object([
+        text_literal(keyword::VALUE),
+        typed_null(PostgresType::Jsonb),
+        text_literal(keyword::TYPE),
+        text_literal(keyword::JSON),
+    ]);
+    object.is_in([expanded, cast(text_literal(NULL_TYPE), PostgresType::Jsonb)])
 }
 
 /// `json` as `ty` when its JSON type is `json_type`, `NULL` otherwise.

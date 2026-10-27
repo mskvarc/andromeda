@@ -49,8 +49,8 @@ pub(crate) const ARRAY_TYPE: &str = "array";
 /// The token for a boolean.
 const BOOLEAN_TYPE: &str = "boolean";
 
-/// The token for a JSON null.
-const NULL_TYPE: &str = "null";
+/// The token, and the `jsonb_typeof` name, for a JSON null.
+pub(crate) const NULL_TYPE: &str = "null";
 
 /// How many datatypes clause 4.23.2 ranks before "attribute does not exist".
 const DATATYPE_COUNT: usize = 9;
@@ -71,14 +71,17 @@ pub(crate) struct OrderedValue {
     pub(crate) datatype: SimpleExpr,
     /// A structured value: an object or an array.
     pub(crate) object: SimpleExpr,
+    /// Whether the value is the JSON literal `null`.
+    pub(crate) json_null: SimpleExpr,
 }
 
 /// The one token that names the value's clause-4.23.2 datatype, `NULL` for
 /// no value.
 ///
-/// An array (several values, a list, a `languageMap`, several objects) ranks
-/// as Array, and so does a structured value nesting a `@list`; any other
-/// structure is an Object.
+/// The JSON literal `null` ranks as Null, read before the structures because a
+/// Property stores it wrapped in an object. An array (several values, a list, a
+/// `languageMap`, several objects) ranks as Array, and so does a structured
+/// value nesting a `@list`; any other structure is an Object.
 pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
     let (time, date, date_time) = (TIME, DATE, DATE_TIME);
     // clone: sea-query owns every expression in its AST, so each reading takes
@@ -94,6 +97,7 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
         .case(declares(&value.datatype, date.as_str()), text_literal(date.as_str()))
         .case(declares(&value.datatype, time.as_str()), text_literal(time.as_str()))
         .case(value.text.clone().is_not_null(), text_literal(STRING_TYPE))
+        .case(value.json_null.clone(), text_literal(NULL_TYPE))
         .case(listed, text_literal(ARRAY_TYPE))
         .case(value.object.clone().is_not_null(), text_literal(OBJECT_TYPE))
         .into()
@@ -161,6 +165,7 @@ mod tests {
             text: column("s"),
             datatype: column("d"),
             object: column("o"),
+            json_null: column("j"),
         };
         Query::select().expr(datatype_token(&value)).to_owned().to_string(PostgresQueryBuilder)
     }
@@ -223,5 +228,18 @@ mod tests {
         let list_test = sql.find("? ('@list')").expect("the list keyword is tested");
         let structured_fallback = sql.find("\"o\" IS NOT NULL) THEN 'object'").expect("the structured-value reading is present");
         assert!(list_test < structured_fallback, "{sql}");
+    }
+
+    /// Clause 4.23.2 ranks Null after `DateTime`. A Property holds the JSON
+    /// literal `null` as an object, so the Null reading runs before the Array
+    /// and Object readings would claim it.
+    #[test]
+    fn a_json_null_ranks_as_null_ahead_of_the_array_and_object_readings() {
+        let sql = rendered_token();
+        let null_at = sql.find("\"j\") THEN 'null'").expect("the null reading is present");
+        let list_at = sql.find("? ('@list')").expect("the list keyword is tested");
+        let object_at = sql.find("\"o\" IS NOT NULL) THEN 'object'").expect("the structured-value reading is present");
+        assert!(null_at < list_at, "{sql}");
+        assert!(null_at < object_at, "{sql}");
     }
 }

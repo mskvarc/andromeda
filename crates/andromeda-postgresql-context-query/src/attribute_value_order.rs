@@ -322,6 +322,17 @@ mod tests {
         assert!(!sql.contains(r#"[*]."@value"'"#), "no compound-member reading: {sql}");
     }
 
+    /// A Property stores the JSON literal `null` expanded and a `JsonProperty`
+    /// stores it bare; both rank as clause 4.23.2 Null.
+    #[test]
+    fn an_attribute_value_reads_either_stored_json_null_as_null() {
+        let sql = lateral("\"https://example.com/speed\"");
+        assert!(
+            sql.contains(r#""ordered"."value_object" IN (jsonb_build_object('@value', NULL::jsonb, '@type', '@json'), 'null'::jsonb)) THEN 'null'"#),
+            "{sql}"
+        );
+    }
+
     #[test]
     fn an_unrecorded_attribute_reads_no_instance() {
         assert!(lateral("\"https://example.com/never\"").contains("FALSE"));
