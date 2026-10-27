@@ -1,10 +1,15 @@
 //! Query parameter types for JSON-LD context management endpoints.
 
-use crate::pagination::{
-    page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
-    parameters::PageParameters,
+use crate::{
+    pagination::{
+        page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
+        parameters::PageParameters,
+    },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
 };
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_query::defined_token::deserialize_optional_token;
 use serde::Deserialize;
 
 /// The page size of List @contexts: 100 when the request names no `limit`,
@@ -27,10 +32,13 @@ pub struct ListParams {
     #[serde(flatten)]
     pub page: PageParameters,
     /// The kind of context to list (`kind`).
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub kind: Option<ContextKind>,
     /// Whether the response uses the detailed representation (`details`).
     pub details: Option<bool>,
 }
+
+query_parameter_set!(ListParams { Kind, Details } + PageParameters);
 
 /// Query parameters for `GET /jsonldContexts/{contextId}` (Serve @context,
 /// clause 6.30.3.1).
@@ -45,6 +53,8 @@ pub struct ServeParams {
     pub details: Option<bool>,
 }
 
+query_parameter_set!(ServeParams { Details });
+
 /// Query parameters for `DELETE /jsonldContexts/{contextId}`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +62,8 @@ pub struct DeleteParams {
     /// Whether the context is refetched rather than served from cache (`reload`).
     pub reload: Option<bool>,
 }
+
+query_parameter_set!(DeleteParams { Reload });
 
 #[cfg(test)]
 #[expect(

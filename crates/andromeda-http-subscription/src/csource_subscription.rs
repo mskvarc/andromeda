@@ -12,6 +12,7 @@ use andromeda_http_extraction::{
     context::ContextUrl,
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
+    path_segment::SubscriptionId,
     prefer::PreferHeader,
     query::ValidatedQuery,
     resource_location::{ResourceCollection, ResourceLocator},
@@ -22,7 +23,7 @@ use andromeda_http_extraction::{
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
 use andromeda_ngsi_ld_render::subscription::SubscriptionView;
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams, sys_attrs_parameters::SysAttrsParams};
@@ -77,7 +78,7 @@ pub async fn get(
     api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
-    TypedPath(subscription_id): TypedPath<Identifier>,
+    TypedPath(SubscriptionId(subscription_id)): TypedPath<SubscriptionId>,
     ValidatedQuery(params): ValidatedQuery<SysAttrsParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
@@ -142,7 +143,7 @@ pub async fn update(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Identifier>,
+    TypedPath(SubscriptionId(subscription_id)): TypedPath<SubscriptionId>,
     JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
@@ -163,7 +164,7 @@ pub async fn delete(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(subscription_id): TypedPath<Identifier>,
+    TypedPath(SubscriptionId(subscription_id)): TypedPath<SubscriptionId>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.csource_subscriptions;
     service.delete(&state.live_target, &subscription_id).await.with_subscription_instance(&uri)?;

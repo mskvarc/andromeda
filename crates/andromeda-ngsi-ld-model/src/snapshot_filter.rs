@@ -13,7 +13,7 @@ use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError};
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_query::filter::token;
 use compact_str::CompactString;
-use std::str::FromStr;
+use std::{num::ParseIntError, str::FromStr};
 use strum::{Display as StrumDisplay, EnumString};
 use thiserror::Error;
 use url::Url;
@@ -109,11 +109,11 @@ pub enum SnapshotQParseError {
     #[error("q expression must not be empty")]
     Empty,
     /// A term carried no recognised comparison operator.
-    #[error("term missing comparison operator: {0}")]
-    MissingOperator(CompactString),
+    #[error("a term carries no comparison operator")]
+    MissingOperator,
     /// A term named a member the `Snapshot` resource does not have.
-    #[error("unknown snapshot field: {0}")]
-    UnknownField(CompactString),
+    #[error("a term names a member the Snapshot resource does not have or does not filter on")]
+    UnknownField,
     /// The operator is not defined for that member's type.
     #[error("operator '{op}' is not supported for field '{field}'")]
     OperatorNotSupported {
@@ -123,38 +123,37 @@ pub enum SnapshotQParseError {
         op: SnapshotOp,
     },
     /// The value did not parse as the member's type.
-    #[error("invalid value for field '{field}': {detail}")]
+    #[error("invalid value for field '{field}': {fault}")]
     InvalidValue {
         /// Member the term filters on.
         field: SnapshotField,
-        /// Underlying parse failure.
-        detail: CompactString,
+        /// Why the value is not one of the member's type.
+        #[source]
+        fault: SnapshotValueFault,
     },
     /// The expression used both `;` and `|`, which clause 4.9 does not define.
     #[error("q expression mixes ';' and '|' conjunctions; use one consistently")]
     MixedConjunctions,
 }
 
-// `#[from]` would need its own variant and would drop the field the parse was
-// attempted for; both conversions instead fold into `InvalidValue`, which
-// names that field so the client is told which term it got wrong.
-impl From<IdentifierParseError> for SnapshotQParseError {
-    fn from(err: IdentifierParseError) -> SnapshotQParseError {
-        SnapshotQParseError::InvalidValue {
-            field: SnapshotField::Id,
-            detail: CompactString::from(err.to_string()),
-        }
-    }
-}
-
-// See the note on the `Identifier` conversion above.
-impl From<SnapshotPriorityParseError> for SnapshotQParseError {
-    fn from(err: SnapshotPriorityParseError) -> SnapshotQParseError {
-        SnapshotQParseError::InvalidValue {
-            field: SnapshotField::SnapshotPriority,
-            detail: CompactString::from(err.to_string()),
-        }
-    }
+/// Why a term's value is not a value of the member it filters on.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SnapshotValueFault {
+    /// An `id` that is not an identifier.
+    #[error(transparent)]
+    Identifier(#[from] IdentifierParseError),
+    /// An empty `type`.
+    #[error("a type must not be empty")]
+    EmptyType,
+    /// An `endpoint` that is not an absolute URL.
+    #[error(transparent)]
+    Endpoint(#[from] url::ParseError),
+    /// A `snapshotPriority` that is not an integer.
+    #[error("a snapshotPriority is an integer")]
+    NotAnInteger(#[source] ParseIntError),
+    /// A `snapshotPriority` outside its range.
+    #[error(transparent)]
+    Priority(#[from] SnapshotPriorityParseError),
 }
 
 /// Parse a `q` expression into a typed [`SnapshotPurgeFilter`].
@@ -253,12 +252,12 @@ fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
     let (field_str, op, value_str) = ops
         .iter()
         .find_map(|(tok, op)| input.find(tok).map(|pos| (&input[..pos], *op, &input[pos + tok.len()..])))
-        .ok_or_else(|| SnapshotQParseError::MissingOperator(CompactString::from(input)))?;
+        .ok_or(SnapshotQParseError::MissingOperator)?;
 
     let field_str = field_str.trim();
     let value_str = value_str.trim();
 
-    let field = SnapshotField::from_str(field_str).map_err(|_| SnapshotQParseError::UnknownField(CompactString::from(field_str)))?;
+    let field = SnapshotField::from_str(field_str).map_err(|_unknown| SnapshotQParseError::UnknownField)?;
     let value = parse_value(field, op, value_str)?;
     Ok(SnapshotPurgeTerm { field, op, value })
 }
@@ -266,39 +265,20 @@ fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
 /// Parses a term's right-hand side into the value type its field carries, and
 /// rejects an operator the field does not admit.
 fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<SnapshotValue, SnapshotQParseError> {
-    let unquoted = strip_quotes(raw);
+    require_eq_or_neq(field, op)?;
+    typed_value(field, strip_quotes(raw)).map_err(|fault| SnapshotQParseError::InvalidValue { field, fault })
+}
+
+/// Reads a term's unquoted value as the type its field carries.
+fn typed_value(field: SnapshotField, unquoted: &str) -> Result<SnapshotValue, SnapshotValueFault> {
     match field {
-        SnapshotField::Id => {
-            require_eq_or_neq(field, op)?;
-            let id: Identifier = unquoted.parse()?;
-            Ok(SnapshotValue::Id(id))
-        }
-        SnapshotField::Type => {
-            require_eq_or_neq(field, op)?;
-            if unquoted.is_empty() {
-                return Err(SnapshotQParseError::InvalidValue {
-                    field,
-                    detail: CompactString::from("type must not be empty"),
-                });
-            }
-            Ok(SnapshotValue::Type(CompactString::from(unquoted)))
-        }
-        SnapshotField::Endpoint => {
-            require_eq_or_neq(field, op)?;
-            let url = Url::parse(unquoted).map_err(|e| SnapshotQParseError::InvalidValue {
-                field,
-                detail: CompactString::from(e.to_string()),
-            })?;
-            Ok(SnapshotValue::Endpoint(url))
-        }
+        SnapshotField::Id => Ok(SnapshotValue::Id(unquoted.parse::<Identifier>()?)),
+        SnapshotField::Type if unquoted.is_empty() => Err(SnapshotValueFault::EmptyType),
+        SnapshotField::Type => Ok(SnapshotValue::Type(CompactString::from(unquoted))),
+        SnapshotField::Endpoint => Ok(SnapshotValue::Endpoint(Url::parse(unquoted)?)),
         SnapshotField::SnapshotPriority => {
-            require_eq_or_neq(field, op)?;
-            let n: u8 = unquoted.parse::<u8>().map_err(|e| SnapshotQParseError::InvalidValue {
-                field,
-                detail: CompactString::from(e.to_string()),
-            })?;
-            let priority = SnapshotPriority::try_from(n)?;
-            Ok(SnapshotValue::Priority(priority))
+            let n = unquoted.parse::<u8>().map_err(SnapshotValueFault::NotAnInteger)?;
+            Ok(SnapshotValue::Priority(SnapshotPriority::try_from(n)?))
         }
     }
 }
@@ -402,14 +382,15 @@ mod tests {
     fn parse_q_rejects_unknown_field() {
         // Clause 6.3.2 BadRequestData: unknown member
         let err = parse_snapshot_q("bogusField==success").unwrap_err();
-        assert!(matches!(err, SnapshotQParseError::UnknownField(ref s) if s == "bogusField"));
+        pretty_assertions::assert_eq!(err, SnapshotQParseError::UnknownField);
+        assert!(!err.to_string().contains("bogusField"), "{err}");
     }
 
     #[test]
     fn parse_q_rejects_malformed() {
         // Clause 6.3.2 BadRequestData: missing operator
         let err = parse_snapshot_q("typeSnapshot").unwrap_err();
-        assert!(matches!(err, SnapshotQParseError::MissingOperator(_)));
+        pretty_assertions::assert_eq!(err, SnapshotQParseError::MissingOperator);
 
         let err = parse_snapshot_q("").unwrap_err();
         pretty_assertions::assert_eq!(err, SnapshotQParseError::Empty);

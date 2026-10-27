@@ -32,4 +32,5 @@ typed-builder = "0.23.2"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+serde_urlencoded = "0.7.1"
 tokio = { version = "1.54.1", features = ["full"] }

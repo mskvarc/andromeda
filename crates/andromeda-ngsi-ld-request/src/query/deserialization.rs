@@ -1,6 +1,10 @@
 //! Deserializers for structured query-string values.
 
-use crate::query::parameter_error::QueryParameterError;
+use crate::{
+    query::parameter_error::QueryParameterError,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
@@ -17,6 +21,13 @@ use std::num::{IntErrorKind, NonZeroU32};
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
 pub struct OptionalGeoQuery(pub Option<GeoQueryInput>);
+
+query_parameter_set!(OptionalGeoQuery {
+    Georel,
+    Geometry,
+    Coordinates,
+    Geoproperty
+});
 
 #[derive(Deserialize)]
 /// Wire members used to assemble one complete geo-query.

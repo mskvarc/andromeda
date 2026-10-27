@@ -1,14 +1,12 @@
 //! HTTP handling for temporal delete attribute (clause 5.6.13).
 
 use crate::temporal::{
-    AttributeName,
     ContextUrl,
     DeleteAttrParams,
     DeleteScope,
     ForwardProvisionRequest,
     ForwardingOperation,
     HeaderMap,
-    Identifier,
     IncomingVia,
     IntoResponse,
     LocalOutcome,
@@ -27,7 +25,10 @@ use crate::temporal::{
     local_temporal_outcome,
     provision_response,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{
+    context_target,
+    path_segment::{AttrId, EntityId},
+};
 
 pub async fn delete_attr(
     context_target::ExistingTargetedTenantState {
@@ -37,7 +38,7 @@ pub async fn delete_attr(
     }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
+    TypedPath((EntityId(id), AttrId(attr_id))): TypedPath<(EntityId, AttrId)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,

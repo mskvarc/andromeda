@@ -18,6 +18,7 @@ use andromeda_http_extraction::{
     entity_batch::BatchBody,
     entity_query::EntityQuery,
     jsonld::JsonLd,
+    path_segment::EntityId,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -33,6 +34,10 @@ use andromeda_http_response::{classified_report::ClassifiedReport, problem_respo
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_request::{
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
     Router,
@@ -58,6 +63,8 @@ struct DetailsOnly {
     #[serde(rename = "details")]
     _details: Option<bool>,
 }
+
+query_parameter_set!(DetailsOnly { Details });
 
 /// Tenant resolution that refuses every tenant.
 #[derive(Clone)]
@@ -123,7 +130,7 @@ async fn entity_body(_body: JsonLd<Entity>) -> StatusCode {
     StatusCode::OK
 }
 
-async fn entity_path(_id: TypedPath<Identifier>) -> StatusCode {
+async fn entity_path(_id: TypedPath<EntityId>) -> StatusCode {
     StatusCode::OK
 }
 

@@ -5,6 +5,8 @@ use crate::{
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
     pagination::parameters::OffsetPageParameters,
     query::entity::parameters::EntityQueryParameters,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -21,6 +23,8 @@ pub struct UpsertParams {
     pub local: Option<bool>,
 }
 
+query_parameter_set!(UpsertParams { Options, Local });
+
 /// Query parameters for `PATCH /entityOperations/update`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +34,8 @@ pub struct UpdateParams {
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
+
+query_parameter_set!(UpdateParams { Options, Local });
 
 impl UpsertParams {
     /// Whether an entity that already exists is replaced or updated.
@@ -86,6 +92,16 @@ pub struct PostQueryParams {
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
+
+query_parameter_set!(
+    PostQueryParams {
+        Count,
+        Options,
+        Format,
+        GeometryProperty,
+        Local
+    } + OffsetPageParameters
+);
 
 impl PostQueryParams {
     /// Set the URL parameters on the query the clause 5.2.23 body produced.

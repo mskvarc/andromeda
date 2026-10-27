@@ -2,6 +2,7 @@
 
 use crate::{
     comma_separated_list::{ListedItem, parse_listed},
+    defined_token::deserialize_optional_token,
     error::QueryError,
     ordering::{
         collation::IcuCollation,
@@ -80,7 +81,7 @@ struct OrderingQueryString {
     #[serde(default)]
     order_from: Option<QueryCoordinates>,
     /// `GeoJSON` geometry type, defaulting to Point when `orderFrom` is present.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     order_geometry: Option<GeometryType>,
     /// Ordering terms, comma-separated.
     #[serde(default, deserialize_with = "deserialize_listed_order_by")]

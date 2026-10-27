@@ -3,10 +3,8 @@
 use crate::{
     request_context_admission::admit_request_context,
     temporal::{
-        AttributeName,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         InstanceIdentity,
         IntoResponse,
         JsonLd,
@@ -30,7 +28,10 @@ use crate::{
     written_evolution_admission::admit_written_instance,
 };
 use andromeda_federation::forwarded_content::ForwardedContent;
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{
+    context_target,
+    path_segment::{AttrId, EntityId, InstanceId},
+};
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 
 pub async fn update_attr_instance(
@@ -43,7 +44,7 @@ pub async fn update_attr_instance(
         snapshot: _,
     }: TenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
+    TypedPath((EntityId(id), AttrId(attr_id), InstanceId(instance_id))): TypedPath<(EntityId, AttrId, InstanceId)>,
     JsonLd { body, context }: JsonLd<WrittenTemporalEntity>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the

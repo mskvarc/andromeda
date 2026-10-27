@@ -6,7 +6,7 @@
 //! which every binding of the operation calls. This seam owns only the decoding
 //! and the clause 6.3.20 classification of a failure to decode.
 
-use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -21,11 +21,9 @@ pub struct EntityQuery(pub EntityQueryParameters);
 
 /// Deserialize the entity query string, classifying a failure to decode it.
 fn resolve_entity_query(parts: &Parts) -> Result<EntityQuery, ExtractorRejection> {
-    let uri = addressed_uri(parts);
-    let query_str = parts.uri.query().unwrap_or("");
-    let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| QueryDecodeError(error).into_rejection(uri))?;
-
-    Ok(EntityQuery(params))
+    decode_query::<EntityQueryParameters>(parts.uri.query().unwrap_or(""))
+        .map(EntityQuery)
+        .map_err(|refusal| refusal.into_rejection(addressed_uri(parts)))
 }
 
 impl<S> FromRequestParts<S> for EntityQuery

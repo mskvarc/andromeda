@@ -6,7 +6,6 @@ use crate::{
     temporal::{
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         IntoResponse,
         JsonLd,
         LocalOnlyParams,
@@ -28,7 +27,7 @@ use crate::{
     },
     written_evolution_admission::admit_added_attributes,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 
@@ -42,7 +41,7 @@ pub async fn add_attrs(
         snapshot: _,
     }: TenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     JsonLd { body, context }: JsonLd<WrittenTemporalEntity>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the

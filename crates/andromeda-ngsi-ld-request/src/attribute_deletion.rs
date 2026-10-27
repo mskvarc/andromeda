@@ -1,6 +1,10 @@
 //! The parameters of the attribute-deletion endpoints.
 
-use crate::query::deserialization::deserialize_optional_dataset_selector;
+use crate::{
+    query::deserialization::deserialize_optional_dataset_selector,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, type_selection::grammar::TypeExprRaw};
 use serde::Deserialize;
 
@@ -47,6 +51,15 @@ attribute_deletion_params! {
     /// (clause 5.6.13, Table 6.21.3.1-1), which defines no `type` selector.
     DeleteAttrParams {}
 }
+
+query_parameter_set!(EntityAttributeDeletionParams {
+    DatasetId,
+    DeleteAll,
+    Local,
+    Type
+});
+
+query_parameter_set!(DeleteAttrParams { DatasetId, DeleteAll, Local });
 
 #[cfg(test)]
 #[expect(

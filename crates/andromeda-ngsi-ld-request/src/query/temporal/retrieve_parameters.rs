@@ -31,6 +31,8 @@ use crate::{
             deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
         },
     },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -46,6 +48,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
+    defined_token::deserialize_optional_token,
     projection::grammar::RawProjectionTerm,
     temporal::aggregation_period::{AggregationPeriod, optional},
 };
@@ -119,6 +122,7 @@ pub struct TemporalRetrieveParameters {
     pub entity_map_lifetime: Option<Iso8601Duration>,
     /// How linked entities reach the response (clause 4.5.23 `join`, the
     /// `temporal_linked_retrieval` extension).
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
@@ -129,6 +133,30 @@ pub struct TemporalRetrieveParameters {
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub contained_by: Option<Vec<Identifier>>,
 }
+
+query_parameter_set!(TemporalRetrieveParameters {
+    Timerel,
+    TimeAt,
+    EndTimeAt,
+    Timeproperty,
+    LastN,
+    Attrs,
+    Pick,
+    Omit,
+    DatasetId,
+    Lang,
+    AggrMethods,
+    AggrPeriodDuration,
+    AggrGroupBy,
+    Format,
+    Options,
+    Local,
+    EntityMap,
+    EntityMapLifetime,
+    Join,
+    JoinLevel,
+    ContainedBy
+});
 
 impl From<TemporalRetrieveParameters> for TemporalQueryParameters {
     /// The retrieval as the temporal query model reads it: the members the

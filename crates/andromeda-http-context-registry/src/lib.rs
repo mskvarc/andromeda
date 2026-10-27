@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+mod context_id_segment;
 pub mod error;
 mod handler;
 pub mod hosted_context_reference;

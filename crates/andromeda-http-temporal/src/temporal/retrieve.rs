@@ -31,7 +31,12 @@ use crate::{
 };
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
+use andromeda_http_extraction::{
+    admitted_temporal_query::AdmittedTemporalQuery,
+    context_target,
+    path_segment::EntityId,
+    response_context_request::ResponseContextRequest,
+};
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
@@ -55,7 +60,7 @@ pub async fn get(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<TemporalExtensionGate, TemporalRetrieveParameters>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;

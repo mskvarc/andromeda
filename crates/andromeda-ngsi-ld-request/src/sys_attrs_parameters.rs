@@ -11,6 +11,8 @@
 use crate::{
     error::ParameterError,
     options::SysAttrsOptions,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use serde::Deserialize;
@@ -22,6 +24,8 @@ pub struct SysAttrsParams {
     /// The system-attribute selection (clause 6.3.11 `options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
+
+query_parameter_set!(SysAttrsParams { Options });
 
 impl SysAttrsParams {
     /// The system-attribute selection the `options` parameter made.

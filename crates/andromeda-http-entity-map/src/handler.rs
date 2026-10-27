@@ -20,6 +20,7 @@ use andromeda_http_extraction::{
     entity_query::EntityQuery,
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
+    path_segment::EntityMapId,
     prefer::PreferHeader,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -62,7 +63,7 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
-    TypedPath(entity_map_id): TypedPath<Identifier>,
+    TypedPath(EntityMapId(entity_map_id)): TypedPath<EntityMapId>,
 ) -> Result<Response, ProblemResponse> {
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
@@ -82,7 +83,7 @@ pub async fn update(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(entity_map_id): TypedPath<Identifier>,
+    TypedPath(EntityMapId(entity_map_id)): TypedPath<EntityMapId>,
     // Clause 5.14.2.3 takes "A JSON-LD document"; the update names no term,
     // so its context is never resolved.
     JsonLd { body, context }: JsonLd<UpdateEntityMapBody>,
@@ -108,7 +109,7 @@ pub async fn delete(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(entity_map_id): TypedPath<Identifier>,
+    TypedPath(EntityMapId(entity_map_id)): TypedPath<EntityMapId>,
 ) -> Result<Response, ProblemResponse> {
     state.entity_maps.delete(&entity_map_id).await.with_entity_map_instance(&uri)?;
 

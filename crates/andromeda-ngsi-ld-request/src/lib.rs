@@ -41,6 +41,7 @@ pub mod options_token;
 pub mod pagination;
 pub mod query;
 pub mod query_narrowing;
+pub mod query_parameter;
 pub mod registration_retrieval;
 pub mod representation_format;
 pub mod representation_parameter;

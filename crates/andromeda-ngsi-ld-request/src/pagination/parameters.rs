@@ -1,9 +1,13 @@
 //! The `limit`, `offset` and `cursor` parameters every paged collection reads
 //! (clauses 5.5.9 and 6.3.10).
 
-use crate::pagination::{
-    cursor_request::{CursorRequest, CursorRequestError},
-    page_context::{PageContext, PageContextError},
+use crate::{
+    pagination::{
+        cursor_request::{CursorRequest, CursorRequestError},
+        page_context::{PageContext, PageContextError},
+    },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
 };
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use strum::Display;
@@ -30,6 +34,13 @@ pub struct PageParameters {
     pub context: Option<PageContext>,
 }
 
+query_parameter_set!(PageParameters {
+    Limit,
+    Offset,
+    Cursor,
+    PageContext
+});
+
 impl PageParameters {
     /// Whether the request named none of the pagination parameters.
     #[must_use]
@@ -51,6 +62,8 @@ pub struct OffsetPageParameters {
     /// How many elements to skip before the page (clause 5.5.9.2 `offset`).
     pub offset: Option<u32>,
 }
+
+query_parameter_set!(OffsetPageParameters { Limit, Offset });
 
 impl From<OffsetPageParameters> for PageParameters {
     fn from(page: OffsetPageParameters) -> PageParameters {
@@ -77,7 +90,7 @@ pub enum PageParameter {
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PageParameterError {
     /// A `limit` or `offset` that is not a non-negative integer.
-    #[error("invalid {parameter} value: not a non-negative integer")]
+    #[error("not a non-negative integer")]
     NotANumber {
         /// The parameter at fault.
         parameter: PageParameter,
@@ -214,12 +227,12 @@ mod tests {
         );
     }
 
-    /// A malformed number is bad data, not an undefined parameter.
+    /// A malformed number is bad data, not an undefined parameter. The query
+    /// decoder names the parameter, so the message states the rule alone and
+    /// does not quote the value.
     #[test]
     fn a_non_numeric_limit_is_refused() {
-        let message = rejection("limit=ten");
-        assert!(!message.contains("unknown field"), "{message}");
-        assert!(message.contains("limit"), "{message}");
+        pretty_assertions::assert_eq!(rejection("limit=ten"), "not a non-negative integer");
     }
 
     /// The flattened page claims only its own parameters, so a parameter the

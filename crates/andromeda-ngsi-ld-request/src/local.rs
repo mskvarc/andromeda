@@ -1,5 +1,9 @@
 //! The `local` parameter, for endpoints that accept nothing else.
 
+use crate::{
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use serde::Deserialize;
 
 /// Query parameters for endpoints that accept only `local`.
@@ -15,6 +19,8 @@ pub struct LocalOnlyParams {
     /// Whether the operation is confined to this broker.
     pub local: Option<bool>,
 }
+
+query_parameter_set!(LocalOnlyParams { Local });
 
 #[cfg(test)]
 #[expect(

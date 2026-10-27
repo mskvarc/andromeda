@@ -9,7 +9,6 @@ use crate::{
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         JsonLd,
         LocalOutcome,
         NgsiLdRequestEnvelope,
@@ -30,7 +29,7 @@ use crate::{
 };
 use andromeda_entity::{write_kind::AppendAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::Method;
@@ -42,7 +41,7 @@ pub(crate) async fn append_attrs(
         snapshot: _,
     }: EntityTenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
     JsonLd { body, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {

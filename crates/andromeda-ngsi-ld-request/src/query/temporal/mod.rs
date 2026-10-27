@@ -21,6 +21,8 @@ use crate::{
         entity_selector::EntitySelectorParams,
         temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
     },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -36,6 +38,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
+    defined_token::deserialize_optional_token,
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
@@ -165,6 +168,7 @@ pub struct TemporalQueryParameters {
 
     /// Whether the response carries the temporal evolution of the entities it
     /// links to, and how (clause 4.5.23 `join`, applied to the temporal API).
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     ///
@@ -220,6 +224,44 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub json_keys: Option<Vec<AttributeName>>,
 }
+
+query_parameter_set!(
+    TemporalQueryParameters {
+        Id,
+        Type,
+        IdPattern,
+        Attrs,
+        Q,
+        Timerel,
+        TimeAt,
+        EndTimeAt,
+        Timeproperty,
+        LastN,
+        Format,
+        Options,
+        AggrMethods,
+        AggrPeriodDuration,
+        AggrGroupBy,
+        Count,
+        Pick,
+        Omit,
+        Join,
+        JoinLevel,
+        ContainedBy,
+        DatasetId,
+        Lang,
+        Local,
+        EntityMap,
+        EntityMapLifetime,
+        SplitEntities,
+        ScopeQ,
+        Csf,
+        ExpandValues,
+        JsonKeys
+    } + OptionalGeoQuery
+        + PageParameters
+        + OrderingParameters
+);
 
 impl_shared_query_params!(TemporalQueryParameters {
     id: id,

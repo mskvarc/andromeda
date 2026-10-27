@@ -1,7 +1,13 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
-use crate::{error::ContextRegistryResultExt, inadmissible_body::InadmissibleBody, served_document::served_response, state::ContextRegistryTenantState};
-use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
+use crate::{
+    context_id_segment::ContextId,
+    error::ContextRegistryResultExt,
+    inadmissible_body::InadmissibleBody,
+    served_document::served_response,
+    state::ContextRegistryTenantState,
+};
+use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
@@ -11,6 +17,7 @@ use andromeda_http_extraction::{
     request_payload::RequestPayload,
     resource_location::{ResourceCollection, ResourceLocator},
     tenant_state::ExistingTenantState,
+    typed_path::TypedPath,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
@@ -33,7 +40,7 @@ use andromeda_ngsi_ld_request::{
 };
 use axum::{
     Json,
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -146,13 +153,12 @@ pub(crate) async fn get(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     request_headers: HeaderMap,
-    Path(context_id): Path<String>,
+    TypedPath(ContextId(requested)): TypedPath<ContextId>,
 ) -> Result<Response, ProblemResponse> {
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,
         Some(false) | None => ContextDetailLevel::Summary,
     };
-    let requested = ContextIdentifier::from(context_id.as_str());
     let served = state
         .hosting
         .contexts()
@@ -166,14 +172,13 @@ pub(crate) async fn get(
 pub(crate) async fn delete(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    Path(context_id): Path<String>,
+    TypedPath(ContextId(requested)): TypedPath<ContextId>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
 ) -> Result<Response, ProblemResponse> {
     let removal = match params.reload {
         Some(true) => ContextRemoval::Reload,
         Some(false) | None => ContextRemoval::Delete,
     };
-    let requested = ContextIdentifier::from(context_id.as_str());
     state
         .hosting
         .contexts()

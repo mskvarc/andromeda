@@ -31,6 +31,7 @@ pub mod count_policy;
 pub mod csr;
 pub mod cursor;
 pub mod dataset;
+pub mod defined_token;
 pub mod entity;
 pub mod entity_selection;
 pub mod error;

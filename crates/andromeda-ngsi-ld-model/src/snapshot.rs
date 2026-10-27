@@ -94,10 +94,10 @@ impl TryFrom<u8> for SnapshotPriority {
 }
 
 /// Parsing or validation errors for [`SnapshotPriority`].
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum SnapshotPriorityParseError {
     /// The value sits outside the `1..=10` range clause 5.2.41 allows.
-    #[error("snapshotPriority must be between 1 and 10, got {0}")]
+    #[error("snapshotPriority must be between 1 and 10")]
     OutOfRange(i64),
 }
 

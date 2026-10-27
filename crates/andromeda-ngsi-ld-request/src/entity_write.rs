@@ -1,5 +1,9 @@
 //! The parameters of the entity writes that name their target by `type`.
 
+use crate::{
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use serde::Deserialize;
 
@@ -18,6 +22,8 @@ pub struct EntityWriteParams {
     pub local: Option<bool>,
 }
 
+query_parameter_set!(EntityWriteParams { Type, Local });
+
 /// Query parameters for `PATCH /entities/{id}/attrs` (Update Attributes, Table
 /// 6.6.3.2-1).
 #[derive(Debug, Deserialize)]
@@ -29,6 +35,8 @@ pub struct UpdateAttributesParams {
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
+
+query_parameter_set!(UpdateAttributesParams { Type, Local });
 
 #[cfg(test)]
 #[expect(

@@ -1,33 +1,27 @@
 //! Generic validated query parameter extractor for NGSI-LD API handlers.
 //!
-//! Wraps [`serde_urlencoded`] deserialization with NGSI-LD error classification,
-//! mapping parse failures to the correct `InvalidRequest` or `BadRequestData`
-//! type (clause 6.3.20).
+//! Decodes the query string through [`decode_query`], whose refusal names the
+//! parameter at fault and carries its clause 6.3.20 error type.
 
-use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_ngsi_ld_request::query_parameter::QueryParameterSet;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::de::DeserializeOwned;
 use std::future::{Future, ready};
 
-/// Axum extractor that deserializes and validates query parameters.
-///
-/// Wraps the deserialized value of type `T` after parsing the URI query string
-/// with [`serde_urlencoded`]. Parse failures are classified by
-/// [`QueryDecodeError`].
+/// Axum extractor that decodes the query string into the operation's
+/// parameter set `T`.
 pub struct ValidatedQuery<T>(pub T);
 
-/// Deserialize the request's query string into `T`, classifying parse failures.
+/// Decode the request's query string into `T`.
 fn deserialize_query<T>(parts: &Parts) -> Result<ValidatedQuery<T>, ExtractorRejection>
 where
-    T: DeserializeOwned,
+    T: DeserializeOwned + QueryParameterSet,
 {
-    let uri = addressed_uri(parts);
-    let query_str = parts.uri.query().unwrap_or("");
-
-    serde_urlencoded::from_str::<T>(query_str)
+    decode_query(parts.uri.query().unwrap_or(""))
         .map(ValidatedQuery)
-        .map_err(|error| QueryDecodeError(error).into_rejection(uri))
+        .map_err(|refusal| refusal.into_rejection(addressed_uri(parts)))
 }
 
 impl<S, T> FromRequestParts<S> for ValidatedQuery<T>
@@ -35,7 +29,7 @@ where
     S: Send + Sync,
     // `Send` is what the trait asks of the returned future, which carries the
     // deserialized value; every axum handler needs it of an extractor anyway.
-    T: DeserializeOwned + Send,
+    T: DeserializeOwned + QueryParameterSet + Send,
 {
     type Rejection = ExtractorRejection;
 
@@ -56,6 +50,8 @@ mod tests {
     use andromeda_ngsi_ld_request::{
         options::EntityRepresentationOptions,
         query::deserialization::deserialize_optional_join_level,
+        query_parameter::{QueryParameter, QueryParameterSet},
+        query_parameter_set,
         representation_parameter::WrittenValue,
     };
     use axum::{extract::FromRequestParts, http::Request};
@@ -67,6 +63,8 @@ mod tests {
     struct TestParams {
         limit: Option<u32>,
     }
+
+    query_parameter_set!(TestParams { Limit });
 
     #[tokio::test]
     async fn valid_input_deserializes_correctly() {
@@ -110,6 +108,8 @@ mod tests {
             _join_level: Option<NonZeroU32>,
         }
 
+        query_parameter_set!(JoinParams { JoinLevel });
+
         for (query, invalid_request) in [
             ("joinLevel=abc", true),
             ("joinLevel=1.5", true),
@@ -141,6 +141,8 @@ mod tests {
             format: Option<WrittenValue<ResponseFormat>>,
             options: Option<WrittenValue<EntityRepresentationOptions>>,
         }
+
+        query_parameter_set!(RepresentationParams { Format, Options });
 
         let req = Request::builder()
             .uri("/test?format=invalidFormat&options=keyValues,invalid")

@@ -12,16 +12,20 @@
 //! pattern), which is what keeps a mistyped read-only parameter from being
 //! silently ignored.
 
-use crate::query::{
-    deserialization::{
-        OptionalGeoQuery,
-        deserialize_optional_attribute_names,
-        deserialize_optional_dataset_selectors,
-        deserialize_optional_filter_expr,
-        deserialize_optional_pattern,
-        deserialize_optional_uri_csv,
+use crate::{
+    query::{
+        deserialization::{
+            OptionalGeoQuery,
+            deserialize_optional_attribute_names,
+            deserialize_optional_dataset_selectors,
+            deserialize_optional_filter_expr,
+            deserialize_optional_pattern,
+            deserialize_optional_uri_csv,
+        },
+        temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel},
     },
-    temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel},
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
@@ -101,6 +105,26 @@ pub struct TemporalDeleteParameters {
     #[serde(rename = "dryRun")]
     pub dry_run: Option<bool>,
 }
+
+query_parameter_set!(
+    TemporalDeleteParameters {
+        Id,
+        Type,
+        IdPattern,
+        Q,
+        ScopeQ,
+        Csf,
+        Timerel,
+        TimeAt,
+        EndTimeAt,
+        Timeproperty,
+        Drop,
+        Keep,
+        DatasetId,
+        DeleteAll,
+        DryRun
+    } + OptionalGeoQuery
+);
 
 impl TemporalDeleteParameters {
     /// Whether the request asked for a dry run.

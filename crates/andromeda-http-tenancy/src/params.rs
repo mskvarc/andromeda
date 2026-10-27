@@ -1,8 +1,12 @@
 //! Query parameter types for the tenant-management reads.
 
-use andromeda_ngsi_ld_request::pagination::{
-    page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
-    parameters::PageParameters,
+use andromeda_ngsi_ld_request::{
+    pagination::{
+        page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
+        parameters::PageParameters,
+    },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
 };
 use serde::Deserialize;
 
@@ -28,6 +32,8 @@ pub struct TenantListParams {
     pub options: Option<String>,
 }
 
+query_parameter_set!(TenantListParams { Options } + PageParameters);
+
 /// Query parameters for `GET /ngsi-ld/v1/tenants/{tenantName}` (one tenant).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +41,8 @@ pub struct TenantIntrospectionParams {
     /// The `options` keywords (`sysAttrs`, `usage`).
     pub options: Option<String>,
 }
+
+query_parameter_set!(TenantIntrospectionParams { Options });
 
 #[cfg(test)]
 mod tests {

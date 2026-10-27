@@ -2,7 +2,6 @@
 
 use crate::{
     entity::{
-        AttributeName,
         ContextSpec,
         ContextUrl,
         DatasetSelection,
@@ -12,7 +11,6 @@ use crate::{
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         IncomingVia,
         IntoResponse,
         LocalOutcome,
@@ -31,7 +29,10 @@ use crate::{
 };
 use andromeda_entity::write_target::WriteTarget;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{
+    context_target,
+    path_segment::{AttrId, EntityId},
+};
 use axum::http::{HeaderMap, Method};
 use std::slice;
 
@@ -43,7 +44,7 @@ pub(crate) async fn delete_attr(
     }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
+    TypedPath((EntityId(id), AttrId(attr_id))): TypedPath<(EntityId, AttrId)>,
     ValidatedQuery(params): ValidatedQuery<EntityAttributeDeletionParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,

@@ -12,12 +12,12 @@ use andromeda_http_extraction::{
     api_root::ApiRoot,
     context::ContextUrl,
     context_target,
+    path_segment::EntityType,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::response::Response;
 
@@ -90,7 +90,7 @@ pub async fn get(
     envelope: NgsiLdRequestEnvelope,
     ContextUrl(context): ContextUrl,
     api_root: ApiRoot,
-    TypedPath(type_): TypedPath<EntityTypeName>,
+    TypedPath(EntityType(type_)): TypedPath<EntityType>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;

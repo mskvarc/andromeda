@@ -2,13 +2,11 @@
 
 use crate::{
     entity::{
-        AttributeName,
         AttributeWriteParams,
         EntityResultExt,
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         IntoResponse,
         JsonLd,
         LocalOutcome,
@@ -32,7 +30,10 @@ use andromeda_federation::{
     forwarded_content::{AttributeWrite, ForwardedContent},
     request::TriggeringRequest,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{
+    context_target,
+    path_segment::{AttrId, EntityId},
+};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::{instance::AttributeValue, written_attribute::WrittenAttribute};
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
@@ -46,7 +47,7 @@ pub(crate) async fn replace_attr(
         snapshot: _,
     }: EntityTenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
+    TypedPath((EntityId(id), AttrId(attr_id))): TypedPath<(EntityId, AttrId)>,
     ValidatedQuery(params): ValidatedQuery<AttributeWriteParams>,
     JsonLd { body, context }: JsonLd<WrittenAttribute>,
 ) -> Result<Response, ProblemResponse> {

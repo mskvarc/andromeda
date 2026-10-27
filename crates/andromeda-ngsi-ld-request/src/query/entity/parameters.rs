@@ -20,12 +20,15 @@ use crate::{
         },
         entity_selector::EntitySelectorParams,
     },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::WrittenValue,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
+    defined_token::deserialize_optional_token,
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
@@ -117,6 +120,7 @@ pub struct EntityQueryParameters {
     /// The representation the response uses (clause 4.5.1 `format`).
     pub format: Option<WrittenValue<ResponseFormat>>,
     /// How linked entities reach the response (clause 4.5.23 `join`).
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
@@ -144,6 +148,37 @@ pub struct EntityQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
     pub csf: Option<Expr>,
 }
+
+query_parameter_set!(
+    EntityQueryParameters {
+        Id,
+        Type,
+        IdPattern,
+        Attrs,
+        Q,
+        Count,
+        Options,
+        Local,
+        Pick,
+        Omit,
+        ScopeQ,
+        Lang,
+        DatasetId,
+        ExpandValues,
+        JsonKeys,
+        Format,
+        Join,
+        JoinLevel,
+        ContainedBy,
+        EntityMap,
+        EntityMapLifetime,
+        SplitEntities,
+        GeometryProperty,
+        Csf
+    } + OptionalGeoQuery
+        + PageParameters
+        + OrderingParameters
+);
 
 impl_shared_query_params!(EntityQueryParameters {
     id: id,

@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     query::temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams},
+    query_parameter::QueryParameterSet,
 };
 use axum::{
     extract::{FromRequest, FromRequestParts, Request},
@@ -79,7 +80,7 @@ impl<S, A, P> FromRequestParts<S> for AdmittedTemporalQuery<A, P>
 where
     S: Send + Sync,
     A: TemporalQueryAdmission,
-    P: DeserializeOwned + Send + Into<TemporalQueryParameters>,
+    P: DeserializeOwned + QueryParameterSet + Send + Into<TemporalQueryParameters>,
 {
     type Rejection = ExtractorRejection;
 
@@ -99,7 +100,7 @@ where
 
 /// The URL parameters a POST temporal binding carries beside its clause 5.2.23
 /// body.
-pub trait BodyBindingParameters: DeserializeOwned + Send {
+pub trait BodyBindingParameters: DeserializeOwned + QueryParameterSet + Send {
     /// Set the URL parameters on the query the body produced.
     fn apply_to(self, params: &mut TemporalQueryParameters);
 }
@@ -196,6 +197,7 @@ mod tests {
     use andromeda_ngsi_ld_request::{
         empty::EmptyParams,
         query::temporal::{TemporalQueryParameters, retrieve_parameters::TemporalRetrieveParameters},
+        query_parameter::QueryParameterSet,
     };
     use axum::{
         body::Body,
@@ -228,7 +230,7 @@ mod tests {
     /// when it admits it.
     async fn refusal_of_get<P>(uri: &str) -> Option<NgsiLdErrorType>
     where
-        P: DeserializeOwned + Send + Into<TemporalQueryParameters>,
+        P: DeserializeOwned + QueryParameterSet + Send + Into<TemporalQueryParameters>,
     {
         let request = Request::builder().uri(uri).extension(StandInGate).body(()).expect("a valid request");
         let (mut parts, ()) = request.into_parts();

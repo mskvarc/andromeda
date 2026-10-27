@@ -11,6 +11,7 @@ use andromeda_http_extraction::{
     context::ContextUrl,
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
+    path_segment::RegistrationId,
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
@@ -29,7 +30,6 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_render::registration::RegistrationRenderer;
 use andromeda_ngsi_ld_request::{
@@ -71,7 +71,7 @@ pub(crate) async fn get(
     api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
-    TypedPath(registration_id): TypedPath<Identifier>,
+    TypedPath(RegistrationId(registration_id)): TypedPath<RegistrationId>,
     ValidatedQuery(params): ValidatedQuery<RegistrationRetrieveParams>,
 ) -> Result<Response, ProblemResponse> {
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
@@ -194,7 +194,7 @@ pub(crate) async fn update(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(registration_id): TypedPath<Identifier>,
+    TypedPath(RegistrationId(registration_id)): TypedPath<RegistrationId>,
     JsonLd { body, context }: JsonLd<RegistrationBody>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.registrations.engine(), context)
@@ -215,7 +215,7 @@ pub(crate) async fn delete(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(registration_id): TypedPath<Identifier>,
+    TypedPath(RegistrationId(registration_id)): TypedPath<RegistrationId>,
 ) -> Result<Response, ProblemResponse> {
     state.registrations.delete(&registration_id).await.with_registration_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())

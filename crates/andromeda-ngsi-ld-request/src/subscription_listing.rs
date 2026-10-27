@@ -8,6 +8,8 @@ use crate::{
         page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds},
         parameters::PageParameters,
     },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use serde::Deserialize;
@@ -34,6 +36,8 @@ pub struct ListParams {
     /// Typed count and system-attribute response options (`options`).
     pub options: Option<WrittenValue<ListOptions>>,
 }
+
+query_parameter_set!(ListParams { Options } + PageParameters);
 
 impl ListParams {
     /// The count and system-attribute selection the `options` parameter made.

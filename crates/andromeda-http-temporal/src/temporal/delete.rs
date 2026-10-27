@@ -7,7 +7,6 @@ use crate::temporal::{
     ForwardedWriteResult,
     ForwardingOperation,
     HeaderMap,
-    Identifier,
     IncomingVia,
     IntoResponse,
     LocalOnlyParams,
@@ -26,7 +25,7 @@ use crate::temporal::{
     local_temporal_outcome,
     provision_response,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 
 /// Whether this broker removes the Temporal Evolution it holds once the
@@ -73,7 +72,7 @@ pub async fn delete(
     }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {

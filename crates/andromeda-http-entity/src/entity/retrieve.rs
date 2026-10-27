@@ -32,7 +32,7 @@ use crate::{
 use andromeda_entity::{error::EntityError, query::entity_versions::VersionRead};
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
-use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
+use andromeda_http_extraction::{context_target, path_segment::EntityId, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
@@ -100,7 +100,7 @@ pub(crate) async fn get(
     accept: AcceptFormat,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ProblemResponse> {

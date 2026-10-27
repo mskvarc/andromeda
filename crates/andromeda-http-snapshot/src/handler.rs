@@ -7,6 +7,7 @@ use crate::{
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     jsonld::JsonLd,
+    path_segment::SnapshotId,
     query::ValidatedQuery,
     resource_location::{ResourceCollection, ResourceLocator},
     snapshot_purge::SnapshotPurgeQ,
@@ -22,7 +23,6 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{snapshot::Snapshot, snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_request::empty::EmptyParams;
@@ -66,7 +66,7 @@ pub async fn get(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
-    TypedPath(snapshot_id): TypedPath<Identifier>,
+    TypedPath(SnapshotId(snapshot_id)): TypedPath<SnapshotId>,
 ) -> Result<Response, ProblemResponse> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
     snapshot_response(accept, &snapshot, &uri)
@@ -90,7 +90,7 @@ pub async fn update(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
-    TypedPath(snapshot_id): TypedPath<Identifier>,
+    TypedPath(SnapshotId(snapshot_id)): TypedPath<SnapshotId>,
     JsonLd { body, context }: JsonLd<SnapshotPatch>,
 ) -> Result<Response, ProblemResponse> {
     // A Snapshot patch names no term a context could define, but clause 5.5.7
@@ -107,7 +107,7 @@ pub async fn delete(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(snapshot_id): TypedPath<Identifier>,
+    TypedPath(SnapshotId(snapshot_id)): TypedPath<SnapshotId>,
 ) -> Result<Response, ProblemResponse> {
     state.snapshots.delete(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
@@ -158,7 +158,7 @@ pub async fn clone(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(snapshot_id): TypedPath<Identifier>,
+    TypedPath(SnapshotId(snapshot_id)): TypedPath<SnapshotId>,
     locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {

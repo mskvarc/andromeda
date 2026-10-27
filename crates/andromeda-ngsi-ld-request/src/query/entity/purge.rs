@@ -30,6 +30,8 @@ use crate::{
         entity::parameters::EntityQueryParameters,
     },
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
 };
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -98,6 +100,24 @@ pub struct PurgeEntitiesParameters {
     #[serde(rename = "deleteAll")]
     pub delete_all: Option<bool>,
 }
+
+query_parameter_set!(
+    PurgeEntitiesParameters {
+        Id,
+        Type,
+        IdPattern,
+        Attrs,
+        Q,
+        ScopeQ,
+        Csf,
+        GeometryProperty,
+        Local,
+        Drop,
+        Keep,
+        DatasetId,
+        DeleteAll
+    } + OptionalGeoQuery
+);
 
 /// A validated purge, split into the Query Entities selection clause 5.6.21.4
 /// runs and the members that say what the purge removes.

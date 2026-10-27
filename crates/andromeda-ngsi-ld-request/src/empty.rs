@@ -1,5 +1,6 @@
 //! The parameter set of an endpoint that accepts no query parameters.
 
+use crate::query_parameter::{QueryParameter, QueryParameterSet};
 use serde::Deserialize;
 
 /// Query parameters for endpoints that accept none.
@@ -11,6 +12,12 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyParams {}
+
+impl QueryParameterSet for EmptyParams {
+    fn defines(_parameter: QueryParameter) -> bool {
+        false
+    }
+}
 
 #[cfg(test)]
 mod tests {

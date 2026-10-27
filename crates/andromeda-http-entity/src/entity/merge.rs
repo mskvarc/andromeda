@@ -8,7 +8,6 @@ use crate::{
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         IntoResponse,
         JsonLd,
         LocalOutcome,
@@ -29,7 +28,7 @@ use crate::{
 };
 use andromeda_entity::{write_kind::MergeEntity, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
@@ -42,7 +41,7 @@ pub(crate) async fn merge(
         snapshot: _,
     }: EntityTenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     ValidatedQuery(params): ValidatedQuery<MergeParams>,
     JsonLd { body, context }: JsonLd<EntityPatch<MergeMember>>,
 ) -> Result<Response, ProblemResponse> {

@@ -18,6 +18,8 @@ use crate::{
         },
     },
     query_narrowing::{AdmittedNarrowings, NarrowingInputs, require_narrowing},
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -107,6 +109,28 @@ pub struct CsrQueryParameters {
     /// The deprecated representation selector, comma-separated (`options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
+
+query_parameter_set!(
+    CsrQueryParameters {
+        Id,
+        Type,
+        IdPattern,
+        Attrs,
+        Q,
+        Csf,
+        ScopeQ,
+        Pick,
+        Omit,
+        Lang,
+        GeometryProperty,
+        Timerel,
+        TimeAt,
+        EndTimeAt,
+        Timeproperty,
+        Options
+    } + OptionalGeoQuery
+        + PageParameters
+);
 
 impl_shared_query_params!(CsrQueryParameters {
     id: id,

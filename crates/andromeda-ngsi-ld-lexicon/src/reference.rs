@@ -12,13 +12,13 @@ use thiserror::Error;
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum NgsiLdReferenceError {
     /// The value was empty.
-    #[error("NGSI-LD reference must not be empty")]
+    #[error("a name must not be empty")]
     Empty,
     /// The value is longer than a name may be.
     #[error(transparent)]
     TooLong(#[from] IdentifierTooLong),
     /// The reference did not match any supported NGSI-LD compacted or expanded form.
-    #[error("invalid NGSI-LD reference")]
+    #[error("a name must be a term, a compact IRI or an absolute IRI")]
     Invalid,
 }
 

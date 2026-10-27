@@ -6,10 +6,14 @@
 //! (clause 6.3.2), and any other parameter `400 InvalidRequest` (clause
 //! 6.3.20).
 
-use crate::{addressed_uri::addressed_uri, query_decode_error::QueryDecodeError};
+use crate::{addressed_uri::addressed_uri, query_decoding::decode_query, query_refusal::QueryRefusal};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError, parse_snapshot_q};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_request::{
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
 use std::future::{Future, ready};
@@ -20,7 +24,7 @@ use thiserror::Error;
 enum SnapshotPurgeRefusal {
     /// The query string does not decode into parameters.
     #[error(transparent)]
-    Query(#[from] QueryDecodeError),
+    Query(#[from] QueryRefusal),
     /// Clause 5.16.7: the operation requires a `q` parameter and the request
     /// carries none.
     #[error("a delete of the snapshots requires a 'q' query parameter")]
@@ -54,6 +58,8 @@ struct RawPurgeQuery {
     q: Option<String>,
 }
 
+query_parameter_set!(RawPurgeQuery { Q });
+
 /// Read the mandatory `q` expression off the request, rejecting a missing or
 /// malformed value as `BadRequestData` (clauses 5.16.7 and 6.3.2).
 fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejection> {
@@ -62,8 +68,7 @@ fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejecti
 
 /// The purge filter the request's query string names.
 fn parse_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, SnapshotPurgeRefusal> {
-    let query_str = parts.uri.query().unwrap_or("");
-    let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str).map_err(QueryDecodeError)?;
+    let raw: RawPurgeQuery = decode_query(parts.uri.query().unwrap_or(""))?;
     let q_value = raw.q.ok_or(SnapshotPurgeRefusal::MissingQ)?;
     let filter = parse_snapshot_q(&q_value).map_err(SnapshotPurgeRefusal::InvalidQ)?;
     Ok(SnapshotPurgeQ(filter))

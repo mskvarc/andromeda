@@ -12,6 +12,8 @@ use crate::{
     language_filter::deserialize_optional_language_filter,
     options::SysAttrsOptions,
     query::deserialization::deserialize_optional_projection_terms,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -34,6 +36,8 @@ pub struct RegistrationRetrieveParams {
     /// The system-attribute selection (clause 6.3.11 `options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
+
+query_parameter_set!(RegistrationRetrieveParams { Pick, Omit, Lang, Options });
 
 impl RegistrationRetrieveParams {
     /// The system-attribute selection the `options` parameter made.

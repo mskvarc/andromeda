@@ -15,6 +15,8 @@ use crate::{
         deserialize_optional_projection_terms,
         deserialize_optional_uri_csv,
     },
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::{WrittenValue, resolve_representation, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -22,6 +24,7 @@ use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admi
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
+    defined_token::deserialize_optional_token,
     projection::{
         exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
         grammar::RawProjectionTerm,
@@ -51,6 +54,8 @@ pub struct AppendParams {
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
+
+query_parameter_set!(AppendParams { Options, Type, Local });
 
 impl AppendParams {
     /// Whether the append may overwrite an attribute the entity already has.
@@ -82,6 +87,8 @@ pub struct AttributeWriteParams {
     pub local: Option<bool>,
 }
 
+query_parameter_set!(AttributeWriteParams { Type, Local });
+
 /// Query parameters for `PATCH /entities/{id}` (Merge Entity, Table 6.5.3.4-1).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +113,15 @@ pub struct MergeParams {
     /// Whether the operation is confined to this broker (clause 5.5.13).
     pub local: Option<bool>,
 }
+
+query_parameter_set!(MergeParams {
+    Format,
+    Lang,
+    ObservedAt,
+    Options,
+    Type,
+    Local
+});
 
 impl MergeParams {
     /// The representation the fragment is written in: `format` wins over the
@@ -165,6 +181,7 @@ pub struct GetEntityParams {
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     pub local: Option<bool>,
     /// How linked entities reach the response (clause 4.5.23 `join`).
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
@@ -184,6 +201,24 @@ pub struct GetEntityParams {
     #[serde(default, deserialize_with = "deserialize_optional_iso8601_duration")]
     pub entity_map_lifetime: Option<Iso8601Duration>,
 }
+
+query_parameter_set!(GetEntityParams {
+    Type,
+    Attrs,
+    Options,
+    Format,
+    Pick,
+    Omit,
+    Lang,
+    DatasetId,
+    GeometryProperty,
+    Local,
+    Join,
+    JoinLevel,
+    ContainedBy,
+    EntityMap,
+    EntityMapLifetime
+});
 
 impl GetEntityParams {
     /// Determine the [`ResponseFormat`] from the `format` and `options` query parameters.

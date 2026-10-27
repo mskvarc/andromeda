@@ -58,7 +58,9 @@ fn sealed_at(path: &str, member: &str) -> Outcome {
 
 /// The decode refusal of the member at `path`, named by no attribute name.
 fn attribute_name_refused_at(path: &str) -> Outcome {
-    Outcome::Refused(format!("the node at {path} is refused: invalid attribute name: invalid NGSI-LD reference"))
+    Outcome::Refused(format!(
+        "the node at {path} is refused: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+    ))
 }
 
 /// The screening refusal of a keyword-form key at `path`.

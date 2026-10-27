@@ -1,13 +1,11 @@
 //! HTTP handling for temporal delete attribute instance (clause 5.6.15).
 
 use crate::temporal::{
-    AttributeName,
     ContextSpec,
     ContextUrl,
     ForwardProvisionRequest,
     ForwardingOperation,
     HeaderMap,
-    Identifier,
     IncomingVia,
     InstanceIdentity,
     IntoResponse,
@@ -28,7 +26,10 @@ use crate::temporal::{
     local_temporal_outcome,
     provision_response,
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{
+    context_target,
+    path_segment::{AttrId, EntityId, InstanceId},
+};
 
 pub async fn delete_attr_instance(
     // Clause 6.3.20: the parameters are read first, before the tenant is
@@ -41,7 +42,7 @@ pub async fn delete_attr_instance(
     }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
+    TypedPath((EntityId(id), AttrId(attr_id), InstanceId(instance_id))): TypedPath<(EntityId, AttrId, InstanceId)>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {

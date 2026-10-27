@@ -14,6 +14,8 @@ use crate::{
     options::TemporalRepresentationOptions,
     pagination::parameters::OffsetPageParameters,
     query::temporal::TemporalQueryParameters,
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
     representation_parameter::WrittenValue,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
@@ -43,6 +45,8 @@ pub struct TemporalPostQueryParams {
     /// clause 5.7.4.4 admits as an entity selection criterion of its own.
     pub local: Option<bool>,
 }
+
+query_parameter_set!(TemporalPostQueryParams { Count, Format, Options, Local } + OffsetPageParameters);
 
 impl TemporalPostQueryParams {
     /// Put the URL's half of the query onto the parameters the clause 5.2.23

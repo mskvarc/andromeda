@@ -1,6 +1,9 @@
 //! Typed route parameters with NGSI-LD problem-detail rejections.
 
-use crate::addressed_uri::addressed_uri;
+use crate::{
+    addressed_uri::addressed_uri,
+    path_segment::{InvalidPathSegment, PathSegments},
+};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
@@ -10,36 +13,48 @@ use axum::{
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
-/// A route parameter parsed once into its canonical domain type.
+/// The route parameters of a request, each parsed once into its domain type.
 ///
-/// Axum performs percent-decoding before Serde deserialization. Any decoding or
-/// domain parsing failure is mapped to the clause-5.5.2 `BadRequestData`
-/// problem shape and names the complete request URI as its `instance`.
+/// Axum percent-decodes the segments; each is then read through its
+/// [`crate::path_segment::PathSegment`], so a refusal names the specification
+/// parameter at fault. Every failure is the clause 5.5.2 `BadRequestData`
+/// problem, naming the complete request URI as its `instance`.
 pub struct TypedPath<T>(pub T);
 
 impl<S, T> FromRequestParts<S> for TypedPath<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned + Send,
+    T: PathSegments + Send,
+    T::Raw: DeserializeOwned + Send,
 {
     type Rejection = ExtractorRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<TypedPath<T>, ExtractorRejection> {
-        Path::<T>::from_request_parts(parts, state)
+        let Path(raw) = Path::<T::Raw>::from_request_parts(parts, state)
             .await
-            .map(|Path(value)| TypedPath(value))
-            .map_err(|rejection: PathRejection| InvalidPathParameter(rejection).into_rejection(addressed_uri(parts)))
+            .map_err(|rejection| PathRefusal::Undecodable(rejection).into_rejection(addressed_uri(parts)))?;
+        T::read_segments(raw)
+            .map(TypedPath)
+            .map_err(|refusal| PathRefusal::Segment(refusal).into_rejection(addressed_uri(parts)))
     }
 }
 
-/// A route parameter that axum could not decode or the domain type refused.
+/// Why the route parameters of a request are refused.
 #[derive(Debug, Error)]
-#[error("invalid URI path parameter: {0}")]
-struct InvalidPathParameter(#[source] PathRejection);
+enum PathRefusal {
+    /// The router could not hand the segments over as text.
+    #[error("the request path does not decode: {0}")]
+    Undecodable(#[source] PathRejection),
+    /// A segment is not a value of its parameter's type.
+    #[error(transparent)]
+    Segment(#[from] InvalidPathSegment),
+}
 
-impl RequestRefusal for InvalidPathParameter {
+impl RequestRefusal for PathRefusal {
     fn error_type(&self) -> NgsiLdErrorType {
-        NgsiLdErrorType::BadRequestData
+        match self {
+            PathRefusal::Undecodable(_) | PathRefusal::Segment(_) => NgsiLdErrorType::BadRequestData,
+        }
     }
 }
 
@@ -49,8 +64,11 @@ impl RequestRefusal for InvalidPathParameter {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::typed_path::TypedPath;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::UriView};
+    use crate::{
+        path_segment::{AttrId, EntityId, InstanceId},
+        typed_path::TypedPath,
+    };
+    use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, uri::UriView};
     use axum::{
         Router,
         body::{Body, to_bytes},
@@ -61,7 +79,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    async fn uri_value(TypedPath(id): TypedPath<Identifier>) -> String {
+    async fn uri_value(TypedPath(EntityId(id)): TypedPath<EntityId>) -> String {
         match id.view() {
             UriView::Urn(value) => format!("urn:{value}"),
             UriView::Url(value) => format!("url:{value}"),
@@ -69,12 +87,16 @@ mod tests {
         }
     }
 
-    async fn attribute_value(TypedPath(attribute): TypedPath<AttributeName>) -> String {
+    async fn attribute_value(TypedPath(AttrId(attribute)): TypedPath<AttrId>) -> String {
         attribute.to_string()
     }
 
-    async fn instance_value(TypedPath(instance): TypedPath<Identifier>) -> String {
+    async fn instance_value(TypedPath(InstanceId(instance)): TypedPath<InstanceId>) -> String {
         instance.to_string()
+    }
+
+    async fn attribute_of_entity(TypedPath((EntityId(_id), AttrId(attribute))): TypedPath<(EntityId, AttrId)>) -> String {
+        attribute.to_string()
     }
 
     async fn response(path: &str, route: &str, handler: MethodRouter) -> Response {
@@ -89,6 +111,10 @@ mod tests {
         String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.expect("body bytes").to_vec()).expect("UTF-8 body")
     }
 
+    async fn problem(response: Response) -> Value {
+        serde_json::from_str(&body_text(response).await).expect("problem detail JSON")
+    }
+
     #[tokio::test]
     async fn uri_paths_accept_urns_and_https_urls_without_changing_their_spelling() {
         let urn = response("/entities/urn%3Angsi-ld%3ABuilding%3A001", "/entities/{id}", get(uri_value)).await;
@@ -99,14 +125,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_uri_paths_return_bad_request_data_with_the_request_uri() {
+    async fn malformed_uri_paths_return_bad_request_data_naming_the_parameter_and_the_request_uri() {
         for path in ["/entities/bare-name", "/entities/%20", "/entities/%ZZ"] {
             let response = response(path, "/entities/{id}", get(uri_value)).await;
             pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-            let body = body_text(response).await;
-            let problem: Value = serde_json::from_str(&body).expect("problem detail JSON");
+            let problem = problem(response).await;
             pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
             pretty_assertions::assert_eq!(problem["instance"], path);
+            assert!(
+                problem["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.starts_with("invalid path parameter entityId: ")),
+                "{problem}"
+            );
         }
     }
 
@@ -117,7 +148,7 @@ mod tests {
         let path = format!("/entities/urn%3Angsi-ld%3ABuilding%3A{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
         let response = response(&path, "/entities/{id}", get(uri_value)).await;
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem: Value = serde_json::from_str(&body_text(response).await).expect("problem detail JSON");
+        let problem = problem(response).await;
         pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
         assert!(problem["detail"].as_str().is_some_and(|detail| detail.contains("bytes")), "{problem}");
     }
@@ -138,6 +169,13 @@ mod tests {
 
         let response = response("/attributes/%20", "/attributes/{attribute}", get(attribute_value)).await;
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem = problem(response).await;
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.starts_with("invalid path parameter attrId: ")),
+            "{problem}"
+        );
     }
 
     #[tokio::test]
@@ -154,5 +192,26 @@ mod tests {
 
         let response = response("/instances/bare", "/instances/{instance}", get(instance_value)).await;
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_route_with_two_segments_names_the_one_at_fault() {
+        let ok = response(
+            "/entities/urn%3Angsi-ld%3AV%3A1/attrs/speed",
+            "/entities/{id}/attrs/{attr_id}",
+            get(attribute_of_entity),
+        )
+        .await;
+        pretty_assertions::assert_eq!(body_text(ok).await, "speed");
+
+        let refused = response("/entities/bare/attrs/speed", "/entities/{id}/attrs/{attr_id}", get(attribute_of_entity)).await;
+        pretty_assertions::assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let problem = problem(refused).await;
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.starts_with("invalid path parameter entityId: ")),
+            "{problem}"
+        );
     }
 }

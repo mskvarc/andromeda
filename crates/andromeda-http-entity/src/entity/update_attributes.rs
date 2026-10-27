@@ -8,7 +8,6 @@ use crate::{
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
-        Identifier,
         IncomingVia,
         JsonLd,
         LocalOutcome,
@@ -29,7 +28,7 @@ use crate::{
 };
 use andromeda_entity::{write_kind::UpdateAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::{HeaderMap, Method};
@@ -45,7 +44,7 @@ pub(crate) async fn update_attrs(
         snapshot: _,
     }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    TypedPath(id): TypedPath<Identifier>,
+    TypedPath(EntityId(id)): TypedPath<EntityId>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
     JsonLd { body, context }: JsonLd<EntityPatch>,

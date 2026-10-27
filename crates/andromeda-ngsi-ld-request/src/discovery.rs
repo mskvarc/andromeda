@@ -1,5 +1,9 @@
 //! The parameters of the `/types` and `/attributes` list endpoints.
 
+use crate::{
+    query_parameter::{QueryParameter, QueryParameterSet},
+    query_parameter_set,
+};
 use serde::Deserialize;
 
 /// Query parameters shared by the two discovery list endpoints (clause 5.7.6
@@ -13,6 +17,8 @@ pub struct DiscoveryListParams {
     /// Whether the listing is confined to this broker.
     pub local: Option<bool>,
 }
+
+query_parameter_set!(DiscoveryListParams { Details, Local });
 
 #[cfg(test)]
 #[expect(
