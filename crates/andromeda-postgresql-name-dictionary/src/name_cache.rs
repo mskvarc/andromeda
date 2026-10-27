@@ -21,6 +21,7 @@ use crate::{
 use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_telemetry::name_dictionary::{DictionaryEntries, record_lookups, record_minted};
 use moka::sync::Cache;
 use sqlx::{Executor, PgConnection, Postgres, postgres::PgPool};
 use std::{
@@ -68,6 +69,9 @@ pub struct NameCache<N: DictionaryRelation> {
     /// Milliseconds since [`EPOCH`] at the last schema-stamp probe, throttling
     /// the staleness check to at most once per [`EPOCH_CHECK_INTERVAL`].
     epoch_checked_at: AtomicU64,
+    /// This cache's share of the dictionary's entries gauge, taken back out
+    /// when the cache is dropped with its tenant.
+    entries: DictionaryEntries,
 }
 
 impl<N: DictionaryRelation> NameCache<N> {
@@ -85,6 +89,7 @@ impl<N: DictionaryRelation> NameCache<N> {
             // moment it is built, so its first resolutions serve cached hits
             // without a catalogue probe until the interval first elapses.
             epoch_checked_at: AtomicU64::new(now_millis()),
+            entries: DictionaryEntries::new(N::KIND.into()),
         }
     }
 
@@ -107,6 +112,9 @@ impl<N: DictionaryRelation> NameCache<N> {
     }
 
     /// Answer from the cache what it can, and report what it cannot.
+    ///
+    /// Every consult counts each name asked as a hit or a miss, and refreshes
+    /// the entries gauge, which therefore also follows evictions.
     fn probe<'a>(&self, names: &'a [N]) -> (Vec<(N, N::Key)>, Vec<&'a N>) {
         let mut resolved = Vec::with_capacity(names.len());
         let mut missing = Vec::new();
@@ -117,6 +125,8 @@ impl<N: DictionaryRelation> NameCache<N> {
                 None => missing.push(name),
             }
         }
+        record_lookups(N::KIND.into(), resolved.len(), missing.len());
+        self.entries.report(self.keys.entry_count());
         (resolved, missing)
     }
 
@@ -129,6 +139,7 @@ impl<N: DictionaryRelation> NameCache<N> {
                     self.keys.insert(name.clone(), *id); // clone: the cache keeps its own key
                     self.names.insert(*id, name.clone()); // clone: each direction keeps its own name
                 }
+                self.entries.report(self.keys.entry_count());
             }
             CachePublication::Withhold => {}
         }
@@ -261,11 +272,15 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
             return Ok(resolved.into_iter().collect());
         }
 
-        name_insert_query::<N>(&unheld)
+        // A name another writer minted since the read above conflicts and
+        // inserts nothing, so only this insert's own rows count as minted.
+        let inserted = name_insert_query::<N>(&unheld)
             .map_err(NameLookupError::StatementBuild)?
             .to_query()
             .execute(&mut *connection)
-            .await?;
+            .await?
+            .rows_affected();
+        record_minted(N::KIND.into(), inserted);
         let minted = decode::<N>(&name_select_query::<N>(&unheld).to_query().fetch_all(&mut *connection).await?)?;
         self.absorb(&minted, CachePublication::Withhold);
         resolved.extend(minted);
@@ -337,8 +352,10 @@ mod tests {
     use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_telemetry::{names::NAME_DICTIONARY_LOOKUPS_TOTAL, recorder::TelemetryRecorder};
     use sea_query::PostgresQueryBuilder;
     use sqlx::postgres::{PgConnectOptions, PgPool};
+    use std::error::Error;
 
     /// A cache over a pool that can never connect.
     ///
@@ -583,6 +600,26 @@ mod tests {
                 }
             }
         };
+    }
+
+    #[tokio::test]
+    async fn a_hit_and_a_miss_each_move_the_lookup_counter() -> Result<(), Box<dyn Error>> {
+        let recorder = TelemetryRecorder::detached()?;
+        let cache = cache::<AttributeName>();
+        let cached: AttributeName = "https://example.com/speed".parse()?;
+        let uncached: AttributeName = "https://example.com/brand".parse()?;
+        cache.keys.insert(cached.clone(), AttributeNameKey::from(7));
+        recorder.record_locally(|| cache.probe(&[cached, uncached]).1.len());
+        let rendered = recorder.render();
+        for outcome in ["hit", "miss"] {
+            assert!(
+                rendered.contains(&format!(
+                    "{NAME_DICTIONARY_LOOKUPS_TOTAL}{{dictionary=\"attribute-names\",outcome=\"{outcome}\"}} 1"
+                )),
+                "{rendered}"
+            );
+        }
+        Ok(())
     }
 
     name_cache_tests!(

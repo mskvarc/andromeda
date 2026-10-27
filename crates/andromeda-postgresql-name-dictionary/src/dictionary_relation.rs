@@ -2,6 +2,7 @@
 
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_postgresql_query::dictionary::interned_name::InternedName;
+use andromeda_telemetry::name_dictionary::NameDictionary;
 use sea_query::DynIden;
 use std::str::FromStr;
 use strum::{Display, IntoStaticStr};
@@ -17,6 +18,16 @@ pub enum DictionaryKind {
     AttributeNames,
     /// The `entity_type_names` dictionary of expanded entity type IRIs.
     EntityTypeNames,
+}
+
+// No derive maps one enum's variants onto another crate's enum.
+impl From<DictionaryKind> for NameDictionary {
+    fn from(kind: DictionaryKind) -> NameDictionary {
+        match kind {
+            DictionaryKind::AttributeNames => NameDictionary::AttributeNames,
+            DictionaryKind::EntityTypeNames => NameDictionary::EntityTypeNames,
+        }
+    }
 }
 
 /// An interned name type together with the relation that interns it.
@@ -43,11 +54,18 @@ pub trait DictionaryRelation: InternedName + FromStr<Err = NgsiLdReferenceError>
 #[cfg(test)]
 mod tests {
     use crate::dictionary_relation::DictionaryKind;
+    use andromeda_telemetry::name_dictionary::NameDictionary;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn dictionary_kinds_render_in_kebab_case() {
         assert_eq!(DictionaryKind::AttributeNames.to_string(), "attribute-names");
         assert_eq!(DictionaryKind::EntityTypeNames.to_string(), "entity-type-names");
+    }
+
+    #[test]
+    fn each_dictionary_kind_names_its_own_metric_dictionary() {
+        assert_eq!(NameDictionary::from(DictionaryKind::AttributeNames), NameDictionary::AttributeNames);
+        assert_eq!(NameDictionary::from(DictionaryKind::EntityTypeNames), NameDictionary::EntityTypeNames);
     }
 }

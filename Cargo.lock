@@ -1781,6 +1781,7 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-telemetry",
  "async-trait",
  "chrono",
  "moka",

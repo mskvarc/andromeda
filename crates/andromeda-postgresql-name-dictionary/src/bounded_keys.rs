@@ -11,9 +11,12 @@
 //! stream of names written once therefore cannot push out the core vocabulary
 //! every request resolves.
 
+use crate::dictionary_relation::DictionaryRelation;
 use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
 use andromeda_postgresql_query::dictionary::interned_name::InternedName;
-use moka::sync::Cache;
+use andromeda_telemetry::name_dictionary::{DictionaryEviction, NameDictionary, record_eviction};
+use moka::{notification::RemovalCause, sync::Cache};
+use std::sync::Arc;
 
 /// Bytes one cached mapping is charged on top of its name's text.
 ///
@@ -26,8 +29,14 @@ use moka::sync::Cache;
 const ENTRY_OVERHEAD_BYTES: u32 = 160;
 
 /// A cache from name to key over one dictionary, sized and timed by `config`.
-pub(crate) fn bounded_keys<N: InternedName>(config: &NameCacheConfig) -> Cache<N, N::Key> {
-    let builder = Cache::builder().max_capacity(config.capacity_bytes()).weigher(entry_weight::<N>);
+///
+/// Its evictions are the dictionary's eviction metric. The cache from key to
+/// name holds the same mappings and reports none, so no eviction counts twice.
+pub(crate) fn bounded_keys<N: DictionaryRelation>(config: &NameCacheConfig) -> Cache<N, N::Key> {
+    let builder = Cache::builder()
+        .max_capacity(config.capacity_bytes())
+        .weigher(entry_weight::<N>)
+        .eviction_listener(|_: Arc<N>, _: N::Key, cause| record_departure(N::KIND.into(), cause));
     match config.idle_timeout() {
         Some(idle) => builder.time_to_idle(idle).build(),
         None => builder.build(),
@@ -43,6 +52,25 @@ pub(crate) fn bounded_names<N: InternedName>(config: &NameCacheConfig) -> Cache<
     match config.idle_timeout() {
         Some(idle) => builder.time_to_idle(idle).build(),
         None => builder.build(),
+    }
+}
+
+/// Count a cached name's departure when the cache evicted it.
+///
+/// No time-to-live is configured, so an expiry is always the idle timeout. An
+/// explicit invalidation or a replaced value is not an eviction.
+fn record_departure(dictionary: NameDictionary, cause: RemovalCause) {
+    if let Some(cause) = eviction_cause(cause) {
+        record_eviction(dictionary, cause);
+    }
+}
+
+/// The eviction cause a removal is counted under, if it was an eviction.
+const fn eviction_cause(cause: RemovalCause) -> Option<DictionaryEviction> {
+    match cause {
+        RemovalCause::Size => Some(DictionaryEviction::Size),
+        RemovalCause::Expired => Some(DictionaryEviction::Idle),
+        RemovalCause::Explicit | RemovalCause::Replaced => None,
     }
 }
 
@@ -71,7 +99,7 @@ fn entry_weight<N: InternedName>(name: &N, _key: &N::Key) -> u32 {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, preload_row_limit};
+    use crate::bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, eviction_cause, preload_row_limit};
     use andromeda_configuration::{
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
@@ -79,8 +107,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_telemetry::{name_dictionary::DictionaryEviction, names::NAME_DICTIONARY_EVICTIONS_TOTAL, recorder::TelemetryRecorder};
+    use moka::notification::RemovalCause;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::{thread, time::Duration};
 
     fn name(position: usize) -> AttributeName {
         format!("https://example.com/generated/{position}").parse().expect("valid name")
@@ -152,5 +182,67 @@ mod tests {
             ..NameCacheConfig::default()
         };
         assert_eq!(preload_row_limit(&config), 100);
+    }
+
+    #[test]
+    fn only_size_and_idle_removals_are_evictions() {
+        assert_eq!(eviction_cause(RemovalCause::Size), Some(DictionaryEviction::Size));
+        assert_eq!(eviction_cause(RemovalCause::Expired), Some(DictionaryEviction::Idle));
+        assert_eq!(eviction_cause(RemovalCause::Explicit), None);
+        assert_eq!(eviction_cause(RemovalCause::Replaced), None);
+    }
+
+    #[test]
+    fn a_name_dropped_to_stay_inside_the_budget_is_counted_as_a_size_eviction() {
+        let recorder = TelemetryRecorder::detached().expect("recorder");
+        let keys = bounded_keys::<AttributeName>(&NameCacheConfig {
+            max_size_per_dictionary: HumanByteSize::kib(8),
+            ..NameCacheConfig::default()
+        });
+        recorder.record_locally(|| {
+            for position in 0..1_000 {
+                keys.insert(name(position), AttributeNameKey::from(i32::try_from(position).expect("fits")));
+            }
+            keys.run_pending_tasks();
+        });
+        let rendered = recorder.render();
+        assert!(
+            rendered.contains(&format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"size\"}}")),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("cause=\"idle\""), "{rendered}");
+    }
+
+    #[test]
+    fn a_name_unused_past_the_idle_timeout_is_counted_as_an_idle_eviction() {
+        let recorder = TelemetryRecorder::detached().expect("recorder");
+        let keys = bounded_keys::<AttributeName>(&NameCacheConfig {
+            idle_eviction_after: IdleEviction::After(HumanDuration::from_millis(1)),
+            ..NameCacheConfig::default()
+        });
+        recorder.record_locally(|| {
+            keys.insert(name(0), AttributeNameKey::from(0));
+            keys.run_pending_tasks();
+            thread::sleep(Duration::from_millis(50));
+            keys.run_pending_tasks();
+        });
+        let rendered = recorder.render();
+        assert!(
+            rendered.contains(&format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"idle\"}} 1")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn an_invalidated_name_is_not_an_eviction() {
+        let recorder = TelemetryRecorder::detached().expect("recorder");
+        let keys = bounded_keys::<AttributeName>(&NameCacheConfig::default());
+        recorder.record_locally(|| {
+            keys.insert(name(0), AttributeNameKey::from(0));
+            keys.insert(name(0), AttributeNameKey::from(0));
+            keys.invalidate_all();
+            keys.run_pending_tasks();
+        });
+        assert!(!recorder.render().contains(NAME_DICTIONARY_EVICTIONS_TOTAL), "{}", recorder.render());
     }
 }

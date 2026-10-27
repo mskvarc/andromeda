@@ -100,6 +100,14 @@ pub const TENANT_BUILD_ADMISSION_WAIT_SECONDS: &str = "andromeda_tenant_build_ad
 pub const TENANT_EVICTIONS_TOTAL: &str = "andromeda_tenant_evictions_total";
 /// Counter of dormant-tenant wake attempts, labelled by outcome.
 pub const TENANT_WAKES_TOTAL: &str = "andromeda_tenant_wakes_total";
+/// Counter of names asked of a name dictionary cache, labelled by dictionary and outcome.
+pub const NAME_DICTIONARY_LOOKUPS_TOTAL: &str = "andromeda_name_dictionary_lookups_total";
+/// Counter of names evicted from a name dictionary cache, labelled by dictionary and cause.
+pub const NAME_DICTIONARY_EVICTIONS_TOTAL: &str = "andromeda_name_dictionary_evictions_total";
+/// Gauge of names held by every loaded cache of one name dictionary.
+pub const NAME_DICTIONARY_ENTRIES: &str = "andromeda_name_dictionary_entries";
+/// Counter of names newly inserted into a name dictionary, labelled by dictionary.
+pub const NAME_DICTIONARY_MINTED_TOTAL: &str = "andromeda_name_dictionary_minted_total";
 
 /// The `statement` label naming a database statement.
 pub const LABEL_STATEMENT: &str = "statement";
@@ -129,3 +137,7 @@ pub const LABEL_DECISION: &str = "decision";
 pub const LABEL_ACTION: &str = "action";
 /// The `level` label naming a database freeze pressure level.
 pub const LABEL_LEVEL: &str = "level";
+/// The `dictionary` label naming a name dictionary.
+pub const LABEL_DICTIONARY: &str = "dictionary";
+/// The `cause` label naming why a cached name was evicted.
+pub const LABEL_CAUSE: &str = "cause";
