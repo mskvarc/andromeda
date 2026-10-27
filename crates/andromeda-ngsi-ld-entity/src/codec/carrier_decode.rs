@@ -153,7 +153,8 @@ fn names(elements: Vec<Decoded>, attribute: &AttributeName, shape: MemberShape) 
 }
 
 /// The entries of a language map (clause 4.5.18); a tagged Null deletes one
-/// language, an untagged one the `@none` entry.
+/// language, an untagged one the `@none` entry, and neither stands beside a
+/// string of its language.
 fn language_entries(elements: Vec<Decoded>, attribute: &AttributeName) -> Result<LanguageEntries<Fragment>, EntityRefusal> {
     elements
         .into_iter()
@@ -169,7 +170,7 @@ fn language_entries(elements: Vec<Decoded>, attribute: &AttributeName) -> Result
             }
         })
         .collect::<Result<Vec<_>, _>>()
-        .map(LanguageEntries::new)
+        .and_then(|entries| LanguageEntries::written(attribute, entries))
 }
 
 /// The JSON literals of a `json` member (clause 4.5.24).

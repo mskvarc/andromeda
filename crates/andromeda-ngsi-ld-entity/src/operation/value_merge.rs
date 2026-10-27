@@ -4,7 +4,8 @@
 //! Clause 5.5.12 merges "up to an arbitrary depth, e.g. including going into
 //! JSON objects representing a Property value": two structured nodes merge
 //! member by member, a member set to the NGSI-LD Null is deleted, a `@json`
-//! literal merges by IETF RFC 7396 and a language map by language. Anything
+//! literal merges by IETF RFC 7396 and a language map by language, each
+//! written language replacing every stored string of it. Anything
 //! atomic (a value object, a node naming an identifier, a list) is replaced
 //! wholesale, and so is a member holding more than one value. A deletion that
 //! meets nothing has nothing to delete, so a written value merged into nothing
@@ -17,6 +18,7 @@ use crate::{
 };
 use andromeda_json_literal::admission::JsonLiteralError;
 use indexmap::IndexMap;
+use langtag::LangTagBuf;
 use std::mem;
 
 /// A written value with every deletion it carries left out.
@@ -151,21 +153,31 @@ fn merge_node(base: &mut ValueNode, patch: &ValueNode<Fragment>) -> Result<(), J
 
 /// Merge a written language map into a stored one, language by language.
 ///
-/// A language set to the NGSI-LD Null loses every entry; any other written
-/// entry replaces the first entry of its language or is added.
+/// A language's value is a string or an array of strings, which IETF RFC
+/// 7396 replaces whole: the strings written for a language take the place of
+/// every stored string of it, at the position of the first, or are added. A
+/// language set to the NGSI-LD Null loses every entry. Languages compare
+/// case-insensitively and keep the written spelling.
 pub(crate) fn merge_language_entries(base: &mut LanguageEntries, patch: &LanguageEntries<Fragment>) {
-    for entry in patch.entries() {
-        match entry.text() {
-            FragmentText::Remove => base.entries_mut().retain(|held| held.language() != entry.language()),
-            FragmentText::Text(text) => {
-                // clone: the stored map owns its copy of the borrowed fragment.
-                let written = LanguageEntry::new(entry.language().cloned(), text.clone());
-                match base.entries_mut().iter_mut().find(|held| held.language() == entry.language()) {
-                    Some(held) => *held = written,
-                    None => base.entries_mut().push(written),
-                }
-            }
+    let mut merged: Vec<Option<&LangTagBuf>> = Vec::new();
+    for language in patch.entries().iter().map(LanguageEntry::language) {
+        if merged.contains(&language) {
+            continue;
         }
+        merged.push(language);
+        let written = patch
+            .entries()
+            .iter()
+            .filter(|entry| entry.language() == language)
+            .filter_map(|entry| match entry.text() {
+                // clone: the stored map owns its copy of the borrowed fragment.
+                FragmentText::Text(text) => Some(LanguageEntry::new(entry.language().cloned(), text.clone())),
+                FragmentText::Remove => None,
+            });
+        let held = base.entries_mut();
+        let at = held.iter().position(|entry| entry.language() == language).unwrap_or(held.len());
+        held.retain(|entry| entry.language() != language);
+        held.splice(at..at, written);
     }
 }
 
@@ -239,18 +251,21 @@ mod tests {
         pretty_assertions::assert_eq!(held, number(5));
     }
 
-    /// A written language entry replaces the first held entry of its
-    /// language; a language set to the NGSI-LD Null loses every entry.
+    /// The strings written for a language replace every held string of it
+    /// in place; a language set to the NGSI-LD Null loses every entry; a new
+    /// language is added.
     #[test]
-    fn a_language_merge_replaces_the_first_entry_and_deletes_by_language() {
+    fn a_language_merge_replaces_every_held_string_of_a_written_language() {
         let mut held = LanguageEntries::new(vec![
             LanguageEntry::new(Some(tag("en")), "one".into()),
+            LanguageEntry::new(Some(tag("fr")), "un".into()),
             LanguageEntry::new(Some(tag("en")), "two".into()),
             LanguageEntry::new(Some(tag("de")), "eins".into()),
         ]);
         let written = LanguageEntries::<Fragment>::new(vec![
-            LanguageEntry::new(Some(tag("en")), FragmentText::Text("uno".into())),
+            LanguageEntry::new(Some(tag("en")), FragmentText::Text("x".into())),
             LanguageEntry::new(Some(tag("de")), FragmentText::Remove),
+            LanguageEntry::new(Some(tag("en")), FragmentText::Text("y".into())),
             LanguageEntry::new(None, FragmentText::Text("none".into())),
         ]);
 
@@ -259,10 +274,43 @@ mod tests {
         pretty_assertions::assert_eq!(
             held,
             LanguageEntries::new(vec![
-                LanguageEntry::new(Some(tag("en")), "uno".into()),
-                LanguageEntry::new(Some(tag("en")), "two".into()),
+                LanguageEntry::new(Some(tag("en")), "x".into()),
+                LanguageEntry::new(Some(tag("en")), "y".into()),
+                LanguageEntry::new(Some(tag("fr")), "un".into()),
                 LanguageEntry::new(None, "none".into()),
             ])
         );
+    }
+
+    /// One string written for a language held as several leaves that one
+    /// string.
+    #[test]
+    fn a_single_string_replaces_several_held_strings_of_its_language() {
+        let mut held = LanguageEntries::new(vec![
+            LanguageEntry::new(Some(tag("en")), "one".into()),
+            LanguageEntry::new(Some(tag("en")), "two".into()),
+        ]);
+        let written = LanguageEntries::<Fragment>::new(vec![LanguageEntry::new(Some(tag("en")), FragmentText::Text("x".into()))]);
+
+        merge_language_entries(&mut held, &written);
+
+        pretty_assertions::assert_eq!(held, LanguageEntries::new(vec![LanguageEntry::new(Some(tag("en")), "x".into())]));
+    }
+
+    /// Language tags compare case-insensitively (IETF RFC 5646 section
+    /// 2.1.1): `EN` replaces a held `en` and keeps its written spelling.
+    #[test]
+    fn a_language_written_in_another_case_replaces_the_held_one() {
+        let mut held = LanguageEntries::new(vec![
+            LanguageEntry::new(Some(tag("en")), "one".into()),
+            LanguageEntry::new(Some(tag("fr")), "un".into()),
+        ]);
+        let written = LanguageEntries::<Fragment>::new(vec![LanguageEntry::new(Some(tag("EN")), FragmentText::Text("x".into()))]);
+
+        merge_language_entries(&mut held, &written);
+
+        let languages: Vec<_> = held.entries().iter().map(|entry| entry.language().map(LangTagBuf::as_str)).collect();
+        pretty_assertions::assert_eq!(languages, vec![Some("EN"), Some("fr")]);
+        pretty_assertions::assert_eq!(held.entries().first().map(LanguageEntry::text).map(AsRef::as_ref), Some("x"));
     }
 }

@@ -648,6 +648,37 @@ mod tests {
         );
     }
 
+    /// A language written as several strings replaces every stored string of
+    /// it (clause 5.5.12, IETF RFC 7396 replaces an array whole).
+    #[test]
+    fn deep_merge_of_several_strings_replaces_every_stored_string_of_the_language() {
+        let tag = |raw: &str| Some(LangTagBuf::new(raw.to_owned()).expect("a language tag"));
+        let stored = Instance::builder()
+            .value(FamilyValue::LanguageProperty {
+                entries: LanguageEntries::new(vec![LanguageEntry::new(tag("en"), "one".into()), LanguageEntry::new(tag("en"), "two".into())]),
+                value_type: None,
+            })
+            .build();
+        let mut target = entity(vec![(SPEED, instances(vec![(None, stored)]))]);
+        let patch = InstanceDocument::builder()
+            .value(ValueSlot::Set(WrittenValue::LanguageMap(LanguageEntries::<Fragment>::new(vec![
+                LanguageEntry::new(tag("en"), FragmentText::Text("x".into())),
+                LanguageEntry::new(tag("en"), FragmentText::Text("y".into())),
+            ]))))
+            .build();
+
+        target.merge(&speed(vec![patch]), None).expect("merge succeeds");
+
+        let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
+        pretty_assertions::assert_eq!(
+            instance.value(),
+            &FamilyValue::LanguageProperty {
+                entries: LanguageEntries::new(vec![LanguageEntry::new(tag("en"), "x".into()), LanguageEntry::new(tag("en"), "y".into())]),
+                value_type: None,
+            }
+        );
+    }
+
     /// A language set to the NGSI-LD Null loses its entry (clause 5.5.12).
     #[test]
     fn deep_merge_of_a_language_deletion_removes_only_that_language() {

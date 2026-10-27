@@ -60,9 +60,10 @@ pub fn value_slot(
         ValueCarrier::Value if family == Some(AttributeType::GeoProperty) => WrittenValue::Geometry(geo_value(attribute, items)?),
         ValueCarrier::Value => WrittenValue::Value(expanded_values(attribute, items)?),
         ValueCarrier::Object => WrittenValue::Object(non_empty(attribute, shape, each(items, |item| object(attribute, &item))?)?),
-        ValueCarrier::LanguageMap => WrittenValue::LanguageMap(LanguageEntries::new(
+        ValueCarrier::LanguageMap => WrittenValue::LanguageMap(LanguageEntries::written(
+            attribute,
             non_empty(attribute, shape, each(items, |item| language_entry(attribute, item))?)?.into_vec(),
-        )),
+        )?),
         ValueCarrier::Vocab => WrittenValue::Vocab(non_empty(attribute, shape, each(items, |item| vocab(attribute, &item))?)?),
         ValueCarrier::Json => WrittenValue::Json(non_empty(attribute, shape, each(items, |item| json(attribute, item))?)?),
         ValueCarrier::ValueList => WrittenValue::ValueList(expanded_values(attribute, single_list(attribute, shape, items)?)?),

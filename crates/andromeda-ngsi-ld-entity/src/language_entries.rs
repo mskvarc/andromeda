@@ -4,9 +4,14 @@
 //! entry into a value object carrying the text and its `@language`; the
 //! `@none` entry carries no language, and a language with several strings
 //! yields one value object per string. The entries are kept in that expanded
-//! order.
+//! order. Language tags compare case-insensitively (IETF RFC 5646 section
+//! 2.1.1), so `EN` and `en` name one language.
 
-use crate::value_mode::{Stored, ValueMode};
+use crate::{
+    refusal::EntityRefusal,
+    value_mode::{Fragment, FragmentText, Stored, ValueMode},
+};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use langtag::LangTagBuf;
 
 /// One entry of a language map.
@@ -76,5 +81,29 @@ impl<M: ValueMode> LanguageEntries<M> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+impl LanguageEntries<Fragment> {
+    /// Hold the written `entries` of `attribute`'s language map.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityRefusal::NullBesideData`] when one language holds the
+    /// NGSI-LD Null beside a string: the Null deletes the language
+    /// (clause 5.5.12) and a string writes it, so the two cannot share it.
+    pub fn written(attribute: &AttributeName, entries: Vec<LanguageEntry<Fragment>>) -> Result<LanguageEntries<Fragment>, EntityRefusal> {
+        let deletes_beside_text = entries.iter().any(|deletion| {
+            matches!(deletion.text(), FragmentText::Remove)
+                && entries
+                    .iter()
+                    .any(|text| text.language() == deletion.language() && matches!(text.text(), FragmentText::Text(_)))
+        });
+        if deletes_beside_text {
+            return Err(EntityRefusal::NullBesideData {
+                attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+            });
+        }
+        Ok(LanguageEntries(entries))
     }
 }

@@ -213,6 +213,8 @@ fn nulls_beside_data(sentinel: &str) -> Vec<(&'static str, Value)> {
             "wrappedListRelationship",
             json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Device:a"}, {"object": sentinel}]}),
         ),
+        ("languageProperty", json!({"type": "LanguageProperty", "languageMap": {"en": ["a", sentinel]}})),
+        ("noneLanguage", json!({"type": "LanguageProperty", "languageMap": {"@none": [sentinel, "a"]}})),
         ("nestedArray", json!({"type": "Property", "value": {"tags": ["x", sentinel]}})),
         ("nestedNode", json!({"type": "Property", "value": {"id": sentinel, "level": 1}})),
     ]

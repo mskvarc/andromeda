@@ -78,6 +78,7 @@ mod tests {
         expanded_value::{ExpandedValue, ValueNode},
         family_value::FamilyValue,
         instance::Instance,
+        language_entries::{LanguageEntries, LanguageEntry},
         non_empty::NonEmpty,
         operation::{
             mutation_error::MutationError,
@@ -102,11 +103,12 @@ mod tests {
             },
         },
         refusal::EntityRefusal,
-        value_mode::FragmentMember,
+        value_mode::{Fragment, FragmentMember, FragmentText},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri};
     use cefact_units::UnitCode;
     use indexmap::IndexMap;
+    use langtag::LangTagBuf;
     use serde_json::json;
 
     const WEATHER: &str = "https://example.org/hasWeatherObserved";
@@ -271,6 +273,42 @@ mod tests {
             &FamilyValue::Property {
                 values: vec![node(vec![("https://example.org/street", "c")])],
                 unit_code: None,
+                value_type: None,
+            }
+        );
+    }
+
+    /// Clause 5.5.8 replaces at the attribute level: a language map written
+    /// as several strings replaces the stored map whole, other languages
+    /// included.
+    #[test]
+    fn a_language_map_is_replaced_whole_rather_than_merged() {
+        let tag = |raw: &str| Some(LangTagBuf::new(raw.to_owned()).expect("a language tag"));
+        let stored = Instance::builder()
+            .value(FamilyValue::LanguageProperty {
+                entries: LanguageEntries::new(vec![
+                    LanguageEntry::new(tag("en"), "one".into()),
+                    LanguageEntry::new(tag("en"), "two".into()),
+                    LanguageEntry::new(tag("de"), "eins".into()),
+                ]),
+                value_type: None,
+            })
+            .build();
+        let mut target = entity(vec![(SPEED, instances(vec![(None, stored)]))]);
+        let fragment = InstanceDocument::builder()
+            .value(ValueSlot::Set(WrittenValue::LanguageMap(LanguageEntries::<Fragment>::new(vec![
+                LanguageEntry::new(tag("en"), FragmentText::Text("x".into())),
+                LanguageEntry::new(tag("en"), FragmentText::Text("y".into())),
+            ]))))
+            .build();
+
+        target.partial_update_attribute(&name(SPEED), &fragment).expect("the patch applies");
+
+        let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
+        pretty_assertions::assert_eq!(
+            instance.value(),
+            &FamilyValue::LanguageProperty {
+                entries: LanguageEntries::new(vec![LanguageEntry::new(tag("en"), "x".into()), LanguageEntry::new(tag("en"), "y".into())]),
                 value_type: None,
             }
         );

@@ -155,6 +155,34 @@ fn a_null_beside_data_in_one_member_is_refused() {
     assert!(matches!(error, EntityRefusal::NullBesideData { .. }), "{error:?}");
 }
 
+/// A language holding the NGSI-LD Null beside a string can be neither deleted
+/// nor written (clause 5.5.12).
+#[test]
+fn a_language_holding_the_null_beside_a_string_is_refused() {
+    let document = json!([{"https://ex.org/name": [{
+        "@type": [ngsi("LanguageProperty")],
+        ngsi("hasLanguageMap"): [{"@value": "x", "@language": "en"}, {"@value": NULL, "@language": "EN"}]
+    }]}]);
+    let error = EntityDocument::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect_err("a deletion beside a string");
+    assert!(matches!(error, EntityRefusal::NullBesideData { .. }), "{error:?}");
+}
+
+/// Several strings of one language, and a deletion of another, decode as
+/// written.
+#[test]
+fn several_strings_of_one_language_beside_a_deleted_language_decode() {
+    let document = json!([{"https://ex.org/name": [{
+        "@type": [ngsi("LanguageProperty")],
+        ngsi("hasLanguageMap"): [{"@value": "x", "@language": "en"}, {"@value": "y", "@language": "en"}, {"@value": NULL, "@language": "de"}]
+    }]}]);
+    let written = decode(&document);
+    let ValueSlot::Set(WrittenValue::LanguageMap(entries)) = instance(&written, "https://ex.org/name").value() else {
+        panic!("a language map");
+    };
+    pretty_assertions::assert_eq!(entries.entries().len(), 3);
+    assert!(matches!(entries.entries().get(2).map(LanguageEntry::text), Some(FragmentText::Remove)));
+}
+
 #[test]
 fn an_output_only_member_is_refused() {
     let document = json!([{"https://ex.org/speed": [{"@type": [ngsi("Property")], ngsi("hasValue"): [{"@value": 1}], properties::PREVIOUS_VALUE.as_str(): [{"@value": 0}]}]}]);
