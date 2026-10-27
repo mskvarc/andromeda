@@ -13,7 +13,11 @@ use crate::{
     notification_validation::{validate_endpoint_present, validate_notification},
     subscription_validation_reason::SubscriptionValidationReason,
 };
-use andromeda_ngsi_ld_model::{subscription::standing::SubscriptionStanding, subscription_request::SubscriptionRequest};
+use andromeda_ngsi_ld_model::{
+    notification_media_type::NotificationMediaType,
+    subscription::standing::SubscriptionStanding,
+    subscription_request::SubscriptionRequest,
+};
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, language_targeting::LanguageTargeting, predicate::Predicate},
     geo::admission::GeoQueryAdmission,
@@ -220,6 +224,26 @@ pub const fn validate_no_temporal_q(request: &SubscriptionRequest) -> Result<(),
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TemporalQNotForEntitySubscription));
     }
     Ok(())
+}
+
+/// Refuse `application/geo+json` as the notification media type of a Context
+/// Source Registration Subscription: clause 6.3.9 lets a csource notification
+/// be changed from `application/json` to `application/ld+json` only.
+///
+/// # Errors
+///
+/// Returns [`SubscriptionValidationReason::GeoJsonForCsourceSubscription`] when
+/// the request's endpoint accepts `application/geo+json`.
+pub fn validate_no_geo_json_accept(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+    let accept = request
+        .notification
+        .as_ref()
+        .and_then(|notification| notification.endpoint.as_ref())
+        .and_then(|endpoint| endpoint.accept);
+    match accept {
+        Some(NotificationMediaType::GeoJson) => Err(SubscriptionError::Validation(SubscriptionValidationReason::GeoJsonForCsourceSubscription)),
+        None | Some(NotificationMediaType::Json | NotificationMediaType::JsonLd) => Ok(()),
+    }
 }
 
 /// Validate the notification an update fragment names: it replaces the stored

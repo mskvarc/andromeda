@@ -339,9 +339,8 @@ mod tests {
     };
     use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use mediatype::MediaTypeBuf;
     use reqwest::header::LINK;
     use serde_json::json;
     use std::{
@@ -487,7 +486,6 @@ mod tests {
     /// `receiverInfo` carries `Link: receiver_link`, laid out as `layout` asks.
     fn notification_link_lines(receiver_link: &str, layout: LinkFieldLayout) -> Vec<String> {
         let payload = json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"});
-        let media = MediaTypeBuf::from_str("application/json").expect("a well-formed media type");
         let endpoint = Url::parse("http://receiver.example/notify").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
         let context = NotificationContext::core();
@@ -497,7 +495,7 @@ mod tests {
         }];
         let request = NotificationDelivery::builder()
             .endpoint_uri(&endpoint)
-            .accept(Some(&media))
+            .accept(Some(NotificationMediaType::Json))
             .receiver_info(Some(&pairs))
             .context(&context)
             .tenant(None)

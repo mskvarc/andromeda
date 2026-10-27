@@ -43,7 +43,7 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         key: stored.key,
         standing: sub.lifecycle.standing,
         endpoint_uri: sub.notification.endpoint.uri.url().clone(), // clone: compiled state owns the URL every delivery is built from.
-        endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
+        endpoint_accept: sub.notification.endpoint.accept,
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_notifier_info: sub.notification.endpoint.notifier_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_cooldown: sub.notification.endpoint.cooldown,
@@ -87,7 +87,7 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
         standing: sub.lifecycle.standing,
         endpoint_uri: sub.notification.endpoint.uri.url().clone(), // clone: compiled state owns the URL every delivery is built from.
-        endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.
+        endpoint_accept: sub.notification.endpoint.accept,
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_notifier_info: sub.notification.endpoint.notifier_info.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_cooldown: sub.notification.endpoint.cooldown,

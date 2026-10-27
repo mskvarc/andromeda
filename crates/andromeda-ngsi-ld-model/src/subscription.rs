@@ -9,6 +9,7 @@ use crate::{
     ignored_member,
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
+    notification_media_type::NotificationMediaType,
     query::temporal_query::TemporalQuery,
     subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
 };
@@ -32,7 +33,6 @@ use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::Res
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
-use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::num::NonZeroU32;
@@ -76,9 +76,10 @@ pub struct Endpoint {
     /// client's members back as they were supplied, and a bare [`url::Url`]
     /// would answer with the canonical spelling instead.
     pub uri: DereferenceableUri,
-    /// Preferred content type for the notification payload.
+    /// The media type the notification payload is written as; absent means
+    /// `application/json`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub accept: Option<MediaTypeBuf>,
+    pub accept: Option<NotificationMediaType>,
     /// Additional key-value pairs the delivery carries alongside the payload.
     ///
     /// Rendered as HTTP headers, as MQTT v5 user properties and as the MQTT
@@ -589,18 +590,18 @@ mod tests {
     }
 
     #[test]
-    fn a_subscription_endpoint_accept_is_a_media_type() {
+    fn a_subscription_endpoint_accept_is_one_of_the_notification_media_types() {
         let endpoint: Endpoint =
             serde_json::from_value(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "application/ld+json"})).expect("parses");
-        let accept = endpoint.accept.expect("accept present");
-        pretty_assertions::assert_eq!(accept.ty().as_str(), "application");
-        pretty_assertions::assert_eq!(accept.subty().as_str(), "ld");
-        pretty_assertions::assert_eq!(accept.suffix().map(|name| name.as_str().to_owned()), Some("json".to_owned()));
+        pretty_assertions::assert_eq!(endpoint.accept, Some(NotificationMediaType::JsonLd));
     }
 
+    /// Table 5.2.15-1: `accept` "shall be one of" its three media types.
     #[test]
-    fn a_subscription_endpoint_rejects_a_malformed_accept() {
-        assert!(serde_json::from_value::<Endpoint>(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "not a media type"})).is_err());
+    fn a_subscription_endpoint_rejects_an_accept_outside_the_three() {
+        for refused in ["not a media type", "application/xml"] {
+            assert!(serde_json::from_value::<Endpoint>(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": refused})).is_err());
+        }
     }
 
     #[test]

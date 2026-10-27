@@ -98,7 +98,7 @@ impl NotificationProcessor {
         };
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(&compiled_sub.endpoint_uri)
-            .accept(compiled_sub.endpoint_accept.as_ref())
+            .accept(compiled_sub.endpoint_accept)
             .receiver_info(compiled_sub.endpoint_receiver_info.as_deref())
             .context(&context)
             .tenant(self.tenant.tenant_name())

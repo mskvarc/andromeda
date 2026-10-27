@@ -27,7 +27,6 @@ headers = "0.4.2"
 humantime = "2.4.0"
 ip_network = "0.4.1"
 iri-rs = "3.4.1"
-mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }

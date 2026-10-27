@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
+    notification_media_type::NotificationMediaType,
     subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
 };
 use andromeda_ngsi_ld_query::{
@@ -32,7 +33,6 @@ use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::Res
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
-use mediatype::MediaTypeBuf;
 use std::{collections::HashSet, num::NonZeroU32};
 use url::Url;
 
@@ -45,8 +45,8 @@ pub struct CompiledCsrSubscription {
     pub standing: SubscriptionStanding,
     /// Notification endpoint URL.
     pub endpoint_uri: Url,
-    /// Preferred notification response media type.
-    pub endpoint_accept: Option<MediaTypeBuf>,
+    /// The media type notifications are written as; absent means JSON.
+    pub endpoint_accept: Option<NotificationMediaType>,
     /// Receiver metadata sent with a notification.
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     /// Transport-selection metadata interpreted by delivery bindings.
@@ -117,8 +117,8 @@ pub struct CompiledSubscription {
     pub standing: SubscriptionStanding,
     /// Notification endpoint URL.
     pub endpoint_uri: Url,
-    /// Preferred notification response media type.
-    pub endpoint_accept: Option<MediaTypeBuf>,
+    /// The media type notifications are written as; absent means JSON.
+    pub endpoint_accept: Option<NotificationMediaType>,
     /// Receiver metadata sent with a notification.
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     /// Transport-selection metadata interpreted by delivery bindings.

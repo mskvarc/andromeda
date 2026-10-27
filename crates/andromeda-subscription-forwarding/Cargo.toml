@@ -32,7 +32,6 @@ andromeda-tenancy.workspace = true
 chrono = "0.4.45"
 futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-mediatype = "0.23.0"
 serde ={ version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }

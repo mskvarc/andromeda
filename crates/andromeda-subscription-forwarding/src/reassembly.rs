@@ -248,7 +248,7 @@ impl SubscriptionForwardingService {
         let context = NotificationContext::resolve(subscription.delivery.jsonld_context.as_ref(), &self.engine).await?;
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(endpoint.uri.url())
-            .accept(endpoint.accept.as_ref())
+            .accept(endpoint.accept)
             .receiver_info(endpoint.receiver_info.as_deref())
             .context(&context)
             .tenant(self.tenant.tenant_name())

@@ -11,11 +11,11 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::Notificatio
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     notification::{Notification, NotificationData},
+    notification_media_type::NotificationMediaType,
 };
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::Utc;
 use iri_rs::IriBuf;
-use mediatype::MediaTypeBuf;
 use typed_builder::TypedBuilder;
 use url::Url;
 
@@ -93,7 +93,7 @@ pub struct NotificationDelivery<'a> {
     endpoint_uri: &'a Url,
     /// The subscription's `notification.endpoint.accept`, if it set one.
     #[builder(default = None)]
-    accept: Option<&'a MediaTypeBuf>,
+    accept: Option<NotificationMediaType>,
     /// The subscription's `notification.endpoint.receiverInfo`, if it set any.
     #[builder(default = None)]
     receiver_info: Option<&'a [KeyValuePair]>,
@@ -116,7 +116,7 @@ pub struct NotificationDelivery<'a> {
 impl<'a> NotificationDelivery<'a> {
     /// The media type the notification is written and sent as.
     #[must_use]
-    pub fn content_type(&self) -> ResponseMediaType {
+    pub const fn content_type(&self) -> ResponseMediaType {
         notification_media_type(self.accept)
     }
 
@@ -207,15 +207,14 @@ impl<'a> NotificationDelivery<'a> {
 
 /// The media type a notification body is written as.
 ///
-/// Clause 5.2.15 leaves `accept` optional and clause 6.3.4 makes
-/// `application/json` the default; an `accept` naming something this broker
-/// does not render falls back to the same default rather than failing the
-/// delivery, because the subscription was accepted with that value and
-/// refusing to notify would be a worse answer than notifying in JSON.
-fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaType {
-    accept
-        .and_then(|media_type| ResponseMediaType::from_media_type(&media_type.to_ref()))
-        .unwrap_or_default()
+/// Table 5.2.15-1 leaves `accept` optional with `application/json` as the
+/// default, and admits no value outside the three a response can carry.
+const fn notification_media_type(accept: Option<NotificationMediaType>) -> ResponseMediaType {
+    match accept {
+        None | Some(NotificationMediaType::Json) => ResponseMediaType::Json,
+        Some(NotificationMediaType::JsonLd) => ResponseMediaType::JsonLd,
+        Some(NotificationMediaType::GeoJson) => ResponseMediaType::GeoJson,
+    }
 }
 
 #[cfg(test)]
@@ -232,16 +231,16 @@ mod tests {
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName, time::date_time::NgsiLdDateTime};
-    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification::NotificationData};
+    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification::NotificationData, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
-    use mediatype::MediaTypeBuf;
     use serde_json::{json, value::RawValue};
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
     use url::Url;
 
-    fn media(raw: &str) -> MediaTypeBuf {
-        MediaTypeBuf::from_str(raw).expect("a well-formed media type")
+    fn media(raw: &str) -> NotificationMediaType {
+        NotificationMediaType::from_str(raw).expect("one of the notification media types")
     }
 
     fn endpoint() -> Url {
@@ -275,7 +274,7 @@ mod tests {
     /// Whether the delivery of an endpoint accepting `accept`, with
     /// `receiver_info`, carries the context in the body, and the request it
     /// assembles.
-    fn delivered(accept: Option<&MediaTypeBuf>, receiver_info: Option<&[KeyValuePair]>, jsonld_context: Option<&str>) -> (bool, DeliveryRequest) {
+    fn delivered(accept: Option<NotificationMediaType>, receiver_info: Option<&[KeyValuePair]>, jsonld_context: Option<&str>) -> (bool, DeliveryRequest) {
         let endpoint = endpoint();
         let subscription = subscription();
         let context = context_of(jsonld_context);
@@ -303,23 +302,10 @@ mod tests {
     }
 
     #[test]
-    fn each_media_type_clause_6_3_4_defines_is_recognised_from_the_accept_member() {
-        pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/json"))), ResponseMediaType::Json);
-        pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/ld+json"))), ResponseMediaType::JsonLd);
-        pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/geo+json"))), ResponseMediaType::GeoJson);
-    }
-
-    #[test]
-    fn a_parameter_on_the_accept_member_does_not_stop_it_being_recognised() {
-        pretty_assertions::assert_eq!(
-            notification_media_type(Some(&media("application/ld+json; charset=utf-8"))),
-            ResponseMediaType::JsonLd
-        );
-    }
-
-    #[test]
-    fn an_accept_this_broker_does_not_render_falls_back_to_json_rather_than_failing() {
-        pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/xml"))), ResponseMediaType::Json);
+    fn each_accept_value_is_written_as_the_response_media_type_of_the_same_spelling() {
+        for accept in NotificationMediaType::iter() {
+            pretty_assertions::assert_eq!(notification_media_type(Some(accept)).as_str(), accept.to_string());
+        }
     }
 
     /// Clauses 5.2.3, 6.3.5 and 6.3.6: a JSON-LD notification carries the
@@ -327,7 +313,7 @@ mod tests {
     /// `Link`.
     #[test]
     fn a_json_ld_notification_carries_its_context_in_the_body_and_no_link() {
-        let (in_body, request) = delivered(Some(&media("application/ld+json")), None, Some("https://example.com/ctx.jsonld"));
+        let (in_body, request) = delivered(Some(media("application/ld+json")), None, Some("https://example.com/ctx.jsonld"));
         assert!(in_body);
         assert!(request.context_link().is_none());
         pretty_assertions::assert_eq!(request.content_type, ResponseMediaType::JsonLd);
@@ -337,7 +323,7 @@ mod tests {
     /// the `Link` header, so its body holds no `@context` member.
     #[test]
     fn a_json_notification_carries_no_body_context() {
-        let (in_body, request) = delivered(Some(&media("application/json")), None, Some("https://example.com/ctx.jsonld"));
+        let (in_body, request) = delivered(Some(media("application/json")), None, Some("https://example.com/ctx.jsonld"));
         assert!(!in_body);
         assert!(request.context_link().is_some());
         assert!(!delivered(None, None, None).0);
@@ -349,7 +335,7 @@ mod tests {
     /// clause 6.3.7 rule for a `GeoJSON` *response*.
     #[test]
     fn a_geo_json_notification_carries_its_context_in_the_body_by_default() {
-        let (in_body, request) = delivered(Some(&media("application/geo+json")), None, Some("https://example.com/ctx.jsonld"));
+        let (in_body, request) = delivered(Some(media("application/geo+json")), None, Some("https://example.com/ctx.jsonld"));
         assert!(in_body);
         assert!(request.context_link().is_none());
     }
@@ -360,7 +346,7 @@ mod tests {
     #[test]
     fn a_geo_json_notification_preferring_json_carries_a_context_link_and_no_body_context() {
         let pairs = prefer_json();
-        let (in_body, request) = delivered(Some(&media("application/geo+json")), Some(&pairs), None);
+        let (in_body, request) = delivered(Some(media("application/geo+json")), Some(&pairs), None);
         assert!(!in_body);
         let rendered = request.context_link().expect("a Link").to_header_string().expect("the Link encodes");
         assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
@@ -368,14 +354,14 @@ mod tests {
 
     #[test]
     fn a_json_notification_carries_the_core_context_link_when_the_subscription_named_none() {
-        let link = delivered(Some(&media("application/json")), None, None).1.context_link().expect("a Link");
+        let link = delivered(Some(media("application/json")), None, None).1.context_link().expect("a Link");
         let rendered = link.to_header_string().expect("the Link encodes");
         assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 
     #[test]
     fn the_subscriptions_own_context_wins_over_the_core_context() {
-        let link = delivered(Some(&media("application/json")), None, Some("https://example.com/ctx.jsonld"))
+        let link = delivered(Some(media("application/json")), None, Some("https://example.com/ctx.jsonld"))
             .1
             .context_link()
             .expect("a Link");
@@ -399,7 +385,7 @@ mod tests {
         let data = NotificationData::written(RawValue::from_string(data_text.to_owned()).expect("a JSON data member"));
         NotificationDelivery::builder()
             .endpoint_uri(&endpoint)
-            .accept(Some(&accept))
+            .accept(Some(accept))
             .receiver_info(receiver_info)
             .context(&context)
             .subscription_id(&subscription)

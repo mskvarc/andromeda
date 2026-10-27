@@ -200,7 +200,7 @@ impl CsourceNotificationDelivery {
     fn delivery_for<'a>(&'a self, subscription: &'a CompiledCsrSubscription, context: &'a NotificationContext) -> NotificationDelivery<'a> {
         NotificationDelivery::builder()
             .endpoint_uri(&subscription.endpoint_uri)
-            .accept(subscription.endpoint_accept.as_ref())
+            .accept(subscription.endpoint_accept)
             .receiver_info(subscription.endpoint_receiver_info.as_deref())
             .context(context)
             .tenant(self.tenant.tenant_name())

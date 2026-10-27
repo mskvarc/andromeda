@@ -191,7 +191,7 @@ impl IntervalNotificationOperation {
         };
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(endpoint_uri)
-            .accept(sub.notification.endpoint.accept.as_ref())
+            .accept(sub.notification.endpoint.accept)
             .receiver_info(sub.notification.endpoint.receiver_info.as_deref())
             .context(&context)
             .tenant(self.tenant.tenant_name())

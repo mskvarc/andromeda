@@ -59,9 +59,8 @@ mod tests {
         request::{DeliveryRequest, NotificationDelivery},
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
-    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use mediatype::MediaTypeBuf;
     use serde::Deserialize;
     use serde_json::{Value, json, value::RawValue};
     use std::{collections::BTreeMap, str::FromStr};
@@ -79,13 +78,13 @@ mod tests {
     /// The MQTT delivery of the notification `payload` to an endpoint whose
     /// `accept` is `accept`.
     fn notification(payload: &Value, accept: &str, receiver_info: Option<&[KeyValuePair]>, tenant: Option<&TenantName>) -> DeliveryRequest {
-        let media = MediaTypeBuf::from_str(accept).expect("a well-formed media type");
+        let media = NotificationMediaType::from_str(accept).expect("one of the notification media types");
         let endpoint = Url::parse("mqtt://broker:1883/topic").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
         let context = NotificationContext::core();
         NotificationDelivery::builder()
             .endpoint_uri(&endpoint)
-            .accept(Some(&media))
+            .accept(Some(media))
             .receiver_info(receiver_info)
             .context(&context)
             .tenant(tenant)

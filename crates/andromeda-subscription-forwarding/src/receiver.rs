@@ -1,8 +1,7 @@
 //! The notification endpoint this broker advertises to context sources.
 
 use andromeda_ngsi_ld_lexicon::dereferenceable_uri::DereferenceableUri;
-use andromeda_ngsi_ld_model::subscription::Endpoint;
-use mediatype::{MediaTypeBuf, names};
+use andromeda_ngsi_ld_model::{notification_media_type::NotificationMediaType, subscription::Endpoint};
 use url::Url;
 
 /// The path of the inbound notification resource below the API base.
@@ -50,7 +49,7 @@ impl ReceiverEndpoint {
     pub fn notification_endpoint(&self) -> Endpoint {
         Endpoint {
             uri: DereferenceableUri::from(self.0.clone()), // clone: the endpoint owns its URI apart from the receiver
-            accept: Some(MediaTypeBuf::new(names::APPLICATION, names::JSON)),
+            accept: Some(NotificationMediaType::Json),
             receiver_info: None,
             notifier_info: None,
             cooldown: None,

@@ -1,6 +1,7 @@
 use crate::{
     change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
+    request_validation,
     term_expansion,
     variant::{DatasetIdPolicy, SubscriptionVariant},
 };
@@ -36,8 +37,8 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     /// `notificationTrigger` default is supplied.
     fn present(&self, _subscription: &mut Subscription) {}
 
-    fn validate_members(&self, _request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
-        Ok(())
+    fn validate_members(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+        request_validation::validate_no_geo_json_accept(request)
     }
 
     fn validate_update_extra(&self, _request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
@@ -64,7 +65,12 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{csource::CsrSubscriptionVariant, variant::SubscriptionVariant};
+    use crate::{
+        csource::CsrSubscriptionVariant,
+        error::SubscriptionError,
+        subscription_validation_reason::SubscriptionValidationReason,
+        variant::SubscriptionVariant,
+    };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
@@ -79,5 +85,30 @@ mod tests {
         let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
         let result = variant.validate_members(&request);
         assert!(result.is_ok(), "got {result:?}");
+    }
+
+    fn validated(accept: &str) -> Result<(), SubscriptionError> {
+        let variant = CsrSubscriptionVariant::new(JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"));
+        let wire = json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify", "accept": accept}}});
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        variant.validate_members(&request)
+    }
+
+    /// Clause 6.3.9: a csource notification is `application/json` by default
+    /// and "can be changed to" `application/ld+json`, and to nothing else.
+    #[test]
+    fn a_geo_json_accept_on_a_context_source_registration_subscription_is_refused() {
+        assert!(matches!(
+            validated("application/geo+json"),
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::GeoJsonForCsourceSubscription))
+        ));
+    }
+
+    #[test]
+    fn a_json_or_json_ld_accept_on_a_context_source_registration_subscription_is_admitted() {
+        for accept in ["application/json", "application/ld+json"] {
+            let result = validated(accept);
+            assert!(result.is_ok(), "{accept}: {result:?}");
+        }
     }
 }

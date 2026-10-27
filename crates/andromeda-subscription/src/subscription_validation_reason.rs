@@ -96,6 +96,10 @@ pub enum SubscriptionValidationReason {
     /// reserves for Context Registration Subscriptions.
     #[error("temporalQ is only allowed in Context Source Registration Subscriptions")]
     TemporalQNotForEntitySubscription,
+    /// A Context Source Registration Subscription asked for `GeoJSON`
+    /// notifications, which clause 6.3.9 does not offer it.
+    #[error("notification.endpoint.accept of a Context Source Registration Subscription shall be application/json or application/ld+json")]
+    GeoJsonForCsourceSubscription,
     /// The notification projection combined mutually exclusive selectors
     /// (clause 4.21).
     #[error(transparent)]
