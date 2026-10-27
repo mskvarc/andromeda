@@ -1042,6 +1042,7 @@ dependencies = [
  "headers",
  "pretty_assertions",
  "serde",
+ "strum",
  "thiserror 2.0.21",
  "tokio",
  "tower",
