@@ -8,11 +8,7 @@
 //! Context hosting is not handled here; the lifecycle adds that on top.
 
 use crate::{error::SubscriptionError, filter_opt_ins::FilterOptIns, projection_expansion::expand_notification_projection};
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
-    term_expansion::ContextualExpander,
-};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -21,37 +17,16 @@ use andromeda_ngsi_ld_model::{
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{
-    filter::expansion::expand_csf_expr,
+    error::QueryError,
+    filter::expansion::{expand_attribute_names, expand_csf_expr},
     term_expander::TermExpander,
     type_selection::{expansion::expand_type_expression, grammar::TypeExpr},
 };
 use std::mem;
-use tracing::warn;
 
 /// Expand every name of one attribute-name list in place (clause 5.5.7).
-///
-/// An unavailable `@context` fails the request; a single name the context
-/// cannot expand is left as written and reported.
-async fn expand_name_list(
-    engine: &JsonLdEngine,
-    prepared_context: &PreparedTermContext,
-    names: &mut [AttributeName],
-    member: &str,
-) -> Result<(), SubscriptionError> {
-    for name in names {
-        match engine.expand_term(name.as_str(), prepared_context).await {
-            Ok(expanded) => match expanded.as_str().parse() {
-                Ok(expanded_name) => *name = expanded_name,
-                Err(error) => warn!(member, term = name.as_str(), %error, "Expanded subscription attribute name is not an attribute name"),
-            },
-            Err(error) => {
-                if error.is_context_not_available() {
-                    return Err(SubscriptionError::from(error));
-                }
-                warn!(member, term = name.as_str(), %error, "Failed to expand subscription attribute name");
-            }
-        }
-    }
+async fn expand_name_list(names: &mut Vec<AttributeName>, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
+    *names = expand_attribute_names(names, expander).await?;
     Ok(())
 }
 
@@ -64,33 +39,17 @@ async fn expand_selector_types(selectors: &mut [EntitySelector], expander: &impl
 }
 
 /// Expand the attribute list and the projection lists of a notification.
-async fn expand_notification(
-    engine: &JsonLdEngine,
-    prepared_context: &PreparedTermContext,
-    notification: &mut NotificationRequest,
-    expander: &impl TermExpander,
-) -> Result<(), SubscriptionError> {
-    if let Some(names) = notification.attributes.as_deref_mut() {
-        expand_name_list(engine, prepared_context, names, "attributes").await?;
+async fn expand_notification(notification: &mut NotificationRequest, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
+    if let Some(names) = notification.attributes.as_mut() {
+        expand_name_list(names, expander).await?;
     }
     expand_notification_projection(notification.pick.as_deref_mut(), notification.omit.as_deref_mut(), expander).await
 }
 
-/// Expand the geoproperty a `geoQ` names, leaving it as written when the
-/// context cannot expand it.
-async fn expand_geoproperty(engine: &JsonLdEngine, prepared_context: &PreparedTermContext, geoproperty: &mut NgsiLdReference) -> Result<(), SubscriptionError> {
-    match engine.expand_term(geoproperty.as_ref(), prepared_context).await {
-        Ok(expanded) => match NgsiLdReference::try_from(expanded.to_string()) {
-            Ok(expanded) => *geoproperty = expanded,
-            Err(error) => warn!(%error, "Expanded geoQ.geoproperty '{geoproperty}' is not a reference"),
-        },
-        Err(error) => {
-            if error.is_context_not_available() {
-                return Err(SubscriptionError::from(error));
-            }
-            warn!("Failed to expand geoQ.geoproperty '{}': {}", geoproperty, error);
-        }
-    }
+/// Expand the geoproperty a `geoQ` names.
+async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
+    let iri = expander.expand_term(geoproperty.as_ref()).await?;
+    *geoproperty = NgsiLdReference::try_from(iri.to_string()).map_err(QueryError::AttributeNameInvalid)?;
     Ok(())
 }
 
@@ -105,9 +64,12 @@ async fn expand_geoproperty(engine: &JsonLdEngine, prepared_context: &PreparedTe
 ///
 /// # Errors
 ///
-/// Returns [`SubscriptionError::JsonLd`] when the `@context` cannot be
-/// resolved, and [`SubscriptionError::Query`] when a type selection, an
-/// opt-in term or a filter term does not expand to a usable name.
+/// Returns [`SubscriptionError::Query`] when the `@context` cannot be resolved
+/// or when any term the request names (an entity type, a watched or notified
+/// attribute, a projection or opt-in name, a filter term, the `geoproperty`)
+/// does not expand to a usable name. Such a term is refused rather than kept
+/// as written, since matching runs only against expanded names and the
+/// subscription would never match on it.
 pub async fn expand_common_subscription_terms(
     engine: &JsonLdEngine,
     request: &mut SubscriptionRequest,
@@ -120,10 +82,10 @@ pub async fn expand_common_subscription_terms(
         expand_selector_types(entities, &term_expander).await?;
     }
     if let Some(watched) = request.watched_attributes.as_set_mut() {
-        expand_name_list(engine, &prepared_context, watched, "watchedAttributes").await?;
+        expand_name_list(watched, &term_expander).await?;
     }
     if let Some(notification) = request.notification.as_mut() {
-        expand_notification(engine, &prepared_context, notification, &term_expander).await?;
+        expand_notification(notification, &term_expander).await?;
     }
 
     let opt_ins = FilterOptIns::expanded(&mut request.expand_values, &mut request.json_keys, &term_expander).await?;
@@ -145,7 +107,7 @@ pub async fn expand_common_subscription_terms(
     if let Some(geo_q) = request.geo_q.as_set_mut()
         && let Some(geoproperty) = geo_q.geoproperty.as_mut()
     {
-        expand_geoproperty(engine, &prepared_context, geoproperty).await?;
+        expand_geoproperty(geoproperty, &term_expander).await?;
     }
 
     Ok(())
@@ -158,10 +120,11 @@ pub async fn expand_common_subscription_terms(
 )]
 mod tests {
     use crate::{error::SubscriptionError, term_expansion::expand_common_subscription_terms};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
+    use andromeda_ngsi_ld_query::{error::QueryError, filter::serialize::serialize_written_members, term_expander::TermExpansionFailure};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
 
@@ -183,6 +146,23 @@ mod tests {
         let mut request = request(&wire);
         expand_common_subscription_terms(&offline_engine(), &mut request, &ContextSpec::none()).await?;
         Ok(request)
+    }
+
+    /// `wire` expanded under a body `@context` that maps `speed`, `Vehicle`
+    /// and `place` to nothing, so none of them names an IRI.
+    async fn expanded_under_null_mappings(wire: Value) -> Result<SubscriptionRequest, SubscriptionError> {
+        let mut request = request(&wire);
+        let context = JsonLiteral::admit(&json!({"speed": null, "Vehicle": null, "place": null}).to_string()).expect("an admissible literal");
+        expand_common_subscription_terms(&offline_engine(), &mut request, &ContextSpec::from_body(context)).await?;
+        Ok(request)
+    }
+
+    /// Whether `result` is the refusal of a term that expands to nothing.
+    fn is_not_expanded(result: &Result<SubscriptionRequest, SubscriptionError>) -> bool {
+        matches!(
+            result,
+            Err(SubscriptionError::Query(QueryError::TermExpansion(TermExpansionFailure::NotExpanded)))
+        )
     }
 
     /// The expanded request as the wire form a client would read it in.
@@ -385,5 +365,36 @@ mod tests {
         let written = written(&request);
         pretty_assertions::assert_eq!(written["entities"], json!([{"type": format!("{DEFAULT}Vehicle")}]));
         pretty_assertions::assert_eq!(written["watchedAttributes"], json!([format!("{DEFAULT}speed")]));
+    }
+
+    /// Clause 5.5.7: matching reads only expanded names, so a term the
+    /// `@context` maps to nothing would leave a member that never matches.
+    #[tokio::test]
+    async fn an_unexpandable_term_in_each_member_is_refused() {
+        let cases = [
+            json!({"entities": [{"type": "Vehicle"}]}),
+            json!({"watchedAttributes": ["speed"]}),
+            json!({"notification": {"attributes": ["speed"], "endpoint": {"uri": "http://example.com/notify"}}}),
+            json!({"notification": {"pick": ["speed"], "endpoint": {"uri": "http://example.com/notify"}}}),
+            json!({"q": "speed>10"}),
+            json!({"geoQ": {"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": [1, 2], "geoproperty": "place"}}),
+        ];
+        for wire in cases {
+            let result = expanded_under_null_mappings(wire.clone()).await;
+            assert!(is_not_expanded(&result), "{wire} gave {result:?}");
+        }
+    }
+
+    /// The control for the test above: the same members expand when the
+    /// context maps their terms.
+    #[tokio::test]
+    async fn the_same_members_expand_under_the_core_context() {
+        let request = expanded(json!({"watchedAttributes": ["speed"], "geoQ": {"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": [1, 2], "geoproperty": "place"}}))
+            .await
+            .expect("expands");
+
+        let written = written(&request);
+        pretty_assertions::assert_eq!(written["watchedAttributes"], json!([format!("{DEFAULT}speed")]));
+        pretty_assertions::assert_eq!(written["geoQ"]["geoproperty"], json!(format!("{DEFAULT}place")));
     }
 }
