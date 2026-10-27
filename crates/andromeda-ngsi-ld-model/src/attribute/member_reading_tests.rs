@@ -71,14 +71,14 @@ fn property_value(instance: &Attribute) -> &NgsiLdValue {
 #[test]
 fn a_bare_scalar_member_reads_as_a_concise_property() {
     for (member, value) in [(json!(42), "42"), (json!("x"), r#""x""#), (json!(true), "true"), (json!(1.50), "1.5")] {
-        assert_eq!(property_value(&single(&member)), &NgsiLdValue::Json(literal(value)), "{member}");
+        assert_eq!(property_value(&single(&member)), &NgsiLdValue::from(literal(value)), "{member}");
     }
     let instance = single(&json!({"type": "Property", "value": 1, "accuracy": 0.5}));
     let accuracy = instance.common().sub_attributes.get("accuracy").expect("the sub-attribute");
     let AttributeValue::Single(accuracy) = accuracy else {
         panic!("one instance: {accuracy:?}");
     };
-    assert_eq!(property_value(accuracy), &NgsiLdValue::Json(literal("0.5")));
+    assert_eq!(property_value(accuracy), &NgsiLdValue::from(literal("0.5")));
 }
 
 /// An array none of whose items is an instance is the value of a concise
@@ -87,7 +87,7 @@ fn a_bare_scalar_member_reads_as_a_concise_property() {
 fn an_array_of_values_reads_as_a_concise_property_value() {
     for member in [json!([1, 2, 3]), json!([[1]]), json!([{"a": 1}]), json!([])] {
         let expected = literal(&member.to_string());
-        assert_eq!(property_value(&single(&member)), &NgsiLdValue::Json(expected), "{member}");
+        assert_eq!(property_value(&single(&member)), &NgsiLdValue::from(expected), "{member}");
     }
 }
 
@@ -95,7 +95,7 @@ fn an_array_of_values_reads_as_a_concise_property_value() {
 #[test]
 fn a_typeless_object_without_a_value_member_reads_as_a_property_value() {
     let instance = single(&json!({"street": "Main", "no": 1}));
-    assert_eq!(property_value(&instance), &NgsiLdValue::Json(literal(r#"{"street":"Main","no":1}"#)));
+    assert_eq!(property_value(&instance), &NgsiLdValue::from(literal(r#"{"street":"Main","no":1}"#)));
 }
 
 /// An object with no `type` carrying `value` is a Property, or a
@@ -298,21 +298,12 @@ fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
         (json!({"type": "LanguageProperty", "languageMap": "urn:ngsi-ld:null"}), "/languageMap"),
         (json!({"type": "ListProperty", "valueList": 1}), "/valueList"),
         (
-            json!({"type": "ListProperty", "valueList": [1, {"type": "Point", "coordinates": [1, 99]}]}),
-            "/valueList/1",
-        ),
-        (
             json!({"type": "ListRelationship", "objectList": [{"subject": "urn:ngsi-ld:A:1"}]}),
             "/objectList",
         ),
-        (json!({"type": "Property", "value": {"type": "Point", "coordinates": [200, 0]}}), "/value"),
         (
             json!({"type": "GeoProperty", "value": {"type": "GeometryCollection", "geometries": []}}),
             "/value",
-        ),
-        (
-            json!({"type": "Property", "value": 1, "previousValue": {"type": "Point", "coordinates": [1]}}),
-            "/previousValue",
         ),
         (json!({"type": "Property", "value": 1, "unitCode": "QQQ"}), "/unitCode"),
         (json!({"type": "Property", "value": 1, "valueType": "bad ref"}), "/valueType"),
@@ -322,6 +313,25 @@ fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
         (json!({"type": "Property", "value": 1, "instanceId": 3}), "/instanceId"),
     ] {
         assert_eq!(refused(&member).path.to_string(), at, "{member}");
+    }
+}
+
+/// Clause 5.2.5 admits any JSON value for a Property, and the clause 4.7.1
+/// geometry rules bind a `GeoProperty` only: `GeoJSON` written where a
+/// Property value, a list item or a previous value stands is that JSON, valid
+/// geometry or not, and renders back as written.
+#[test]
+fn geojson_in_a_stated_property_family_is_read_as_json() {
+    for member in [
+        json!({"type": "Property", "value": {"type": "Point", "coordinates": [200, 0]}}),
+        json!({"type": "Property", "value": {"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [13, 52]}]}}),
+        json!({"type": "Property", "value": 1, "previousValue": {"type": "Point", "coordinates": [1]}}),
+        json!({"type": "Property", "value": {"area": {"type": "Point", "coordinates": [1, 99]}}}),
+        json!({"type": "ListProperty", "valueList": [1, {"type": "Point", "coordinates": [1, 99]}]}),
+    ] {
+        let read = read("member", &member).expect("any JSON value");
+        assert!(matches!(read, AttributeValue::Single(_)), "{member}");
+        assert_eq!(rendered(&read), member, "{member}");
     }
 }
 
@@ -527,13 +537,13 @@ fn an_entity_that_is_none_is_refused() {
 /// top level of an entity as at any other place.
 #[test]
 fn an_empty_array_member_reads_as_an_empty_property_value() {
-    assert_eq!(property_value(&single(&json!([]))), &NgsiLdValue::Json(literal("[]")));
+    assert_eq!(property_value(&single(&json!([]))), &NgsiLdValue::from(literal("[]")));
     let entity = <Entity>::from_request_text(br#"{"id": "urn:ngsi-ld:T:1", "type": "T", "tags": []}"#, CoreTermAliases::keyword_spellings())
         .expect("the entity is read");
     let Some(AttributeValue::Single(tags)) = entity.attrs.get("tags") else {
         panic!("one instance: {:?}", entity.attrs);
     };
-    assert_eq!(property_value(tags), &NgsiLdValue::Json(literal("[]")));
+    assert_eq!(property_value(tags), &NgsiLdValue::from(literal("[]")));
 }
 
 /// The instance `member` reads as under the name `member`, read through
@@ -558,7 +568,7 @@ fn a_keyword_spelled_instance_reads_typed() {
     let Some(AttributeValue::Single(since)) = instance.common().sub_attributes.get("since") else {
         panic!("one sub-attribute instance: {instance:?}");
     };
-    assert_eq!(property_value(since), &NgsiLdValue::Json(literal("1")));
+    assert_eq!(property_value(since), &NgsiLdValue::from(literal("1")));
 }
 
 /// Clause 5.5.7: the terms a context defines for `@type`, `ngsi-ld:hasValue`
@@ -570,7 +580,7 @@ fn an_aliased_instance_reads_typed() {
     aliases.alias("v", "value");
     aliases.alias("Prop", "Property");
     let instance = single_through(&json!({"kind": "Prop", "v": 21, "unitCode": "CEL"}), &aliases);
-    assert_eq!(property_value(&instance), &NgsiLdValue::Json(literal("21")));
+    assert_eq!(property_value(&instance), &NgsiLdValue::from(literal("21")));
     let Attribute::Property(property) = &instance else {
         panic!("a Property: {instance:?}");
     };

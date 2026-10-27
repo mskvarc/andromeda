@@ -267,13 +267,9 @@ fn screen_keys_in_entity(entity: &Entity, at: &[JsonPointerSegment]) -> Result<(
         .try_for_each(|(name, member)| screen_keys_in_member(member, &extended(at, member_segment(name))))
 }
 
-/// The key rule over one client-written value; a typed geometry holds
-/// positions only and carries nothing to refuse.
+/// The key rule over one client-written value.
 fn screen_keys_in_value(value: &NgsiLdValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
-    match value {
-        NgsiLdValue::Json(json) => screen_keys_in_written(json, at),
-        NgsiLdValue::Geometry(_) => Ok(()),
-    }
+    screen_keys_in_written(value.literal(), at)
 }
 
 /// The key rule over one value carried as written, standing at `at` below the

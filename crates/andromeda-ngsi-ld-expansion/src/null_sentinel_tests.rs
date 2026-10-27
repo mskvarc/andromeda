@@ -2,7 +2,6 @@
 //! it, through every write kind.
 
 use crate::{
-    assembly_error::AssemblyError,
     expansion_fixture::{attribute, decoded_both_ways, engine, entity, patch},
     normalization::Normalization,
 };
@@ -248,10 +247,7 @@ async fn the_stored_document_decoder_refuses_what_the_write_refuses() {
     for (name, instance) in nulls_beside_data(NULL) {
         let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
         let (decoded, canonical) = decoded_both_ways(&engine, body, Normalization::Entity).await.expect("expands");
-        assert!(
-            matches!(decoded, Err(AssemblyError::Refused(EntityRefusal::NullBesideData { .. }))),
-            "{name}: {decoded:?}"
-        );
+        assert!(matches!(decoded, Err(EntityRefusal::NullBesideData { .. })), "{name}: {decoded:?}");
         assert!(canonical.is_err(), "{name}: {canonical:?}");
     }
 }

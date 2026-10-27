@@ -255,6 +255,36 @@ async fn a_property_holding_a_geometry_is_the_geojson_node() {
     pretty_assertions::assert_eq!(node.types()[0].as_str(), "https://purl.org/geojson/vocab#LineString");
 }
 
+/// Clause 5.2.5 admits any JSON value for a Property, and the clause 4.7.1
+/// geometry rules bind a `GeoProperty` only: `GeoJSON` a Property holds keeps
+/// every digit of its ordinates, and one no geometry admits is data as well.
+#[tokio::test]
+async fn a_property_holding_geojson_keeps_its_digits_and_is_no_geometry() {
+    let body = r#"{"id": "urn:ngsi-ld:Site:4", "type": "Site",
+        "sketch": {"type": "Property", "value": {"type": "Point", "coordinates": [13.123456789012345678, 52.5]}},
+        "off": {"type": "Property", "value": {"type": "Point", "coordinates": [200, 0, 1, 2]}},
+        "group": {"type": "Property", "value": {"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [13, 52]}]}}}"#;
+    let document = entity(&engine(), serde_json::from_str(body).expect("exact JSON"), Normalization::Entity)
+        .await
+        .expect("the fixture expands")
+        .agreed();
+
+    let [ExpandedValue::Node(sketch)] = values(instance(&document, &term("sketch"))) else {
+        panic!("one node");
+    };
+    let Some(FragmentMember::Values(coordinates)) = sketch.members().get("https://purl.org/geojson/vocab#coordinates") else {
+        panic!("the coordinates of {sketch:?}");
+    };
+    let [ExpandedValue::List(ordinates)] = coordinates.as_slice() else {
+        panic!("one list, got {coordinates:?}");
+    };
+    let ordinates: Vec<String> = ordinates.iter().map(|ordinate| number(ordinate).to_string()).collect();
+    pretty_assertions::assert_eq!(ordinates, ["13.123456789012345678", "52.5"]);
+    for name in ["off", "group"] {
+        assert!(matches!(values(instance(&document, &term(name))), [ExpandedValue::Node(_)]), "{name}");
+    }
+}
+
 /// Clauses 4.6.3 and 4.6.4: numbers keep their exact value.
 #[tokio::test]
 async fn numbers_keep_their_exact_value() {

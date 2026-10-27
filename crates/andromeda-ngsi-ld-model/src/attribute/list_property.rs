@@ -50,9 +50,9 @@ mod tests {
         pretty_assertions::assert_eq!(
             values,
             vec![
-                &NgsiLdValue::Json(JsonLiteral::admit("1").expect("a number")),
-                &NgsiLdValue::Json(JsonLiteral::admit("2").expect("a number")),
-                &NgsiLdValue::Json(JsonLiteral::admit("3").expect("a number"))
+                &NgsiLdValue::from(JsonLiteral::admit("1").expect("a number")),
+                &NgsiLdValue::from(JsonLiteral::admit("2").expect("a number")),
+                &NgsiLdValue::from(JsonLiteral::admit("3").expect("a number"))
             ]
         );
         assert!(lp.previous_value_list.is_some());

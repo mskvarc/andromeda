@@ -21,7 +21,6 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 mod assembly;
-pub mod assembly_error;
 pub mod attribute_fragment;
 mod compact_walk;
 pub mod decline;

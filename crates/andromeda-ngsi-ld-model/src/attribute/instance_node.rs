@@ -22,14 +22,14 @@ use crate::{
         one_or_many::OneOrMany,
         property::Property,
         relationship::Relationship,
-        value::{NgsiLdValue, ValueRefusal},
+        value::NgsiLdValue,
         vocab_property::VocabProperty,
     },
     compact_member::decoded,
     entity::Entity,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
-use andromeda_json_literal::JsonLiteral;
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
 use serde::de::DeserializeOwned;
@@ -190,12 +190,8 @@ pub(crate) fn optional_present<'n, T, N: CompactNode<'n>>(
 }
 
 /// The refusal of a value the member `member` holds.
-pub(crate) fn value_refusal(member: RefusedMember, refusal: ValueRefusal) -> NodeRefusal {
-    match refusal {
-        ValueRefusal::Geometry(source) => NodeRefusal::Value { member, source },
-        ValueRefusal::Written(source) => NodeRefusal::Member { member, source },
-        ValueRefusal::Literal(source) => NodeRefusal::Literal { member, source },
-    }
+pub(crate) const fn value_refusal(member: RefusedMember, source: JsonLiteralError) -> NodeRefusal {
+    NodeRefusal::Literal { member, source }
 }
 
 /// The refusal of a geometry the member `member` holds.

@@ -29,7 +29,6 @@ use andromeda_ngsi_ld_model::attribute::{
     merge_member::MergeMember,
     merge_value::MergeValue,
     patched::Patched,
-    value::NgsiLdValue,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 use jsonld::Type;
@@ -111,7 +110,7 @@ fn instance_items(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -
 /// expands to, when the term's user `@context` definition coerces it to a time
 /// value form; `None` for every other instance.
 fn coerced_time_literal(parent: &TermScope<'_>, key: &str, instance: &MergeInstance) -> Option<ExpandedItem> {
-    let (Declaration::Concise(written), Some(Patched::Set(MergeValue::Property(NgsiLdValue::Json(_))))) = (&instance.declaration, &instance.value) else {
+    let (Declaration::Concise(written), Some(Patched::Set(MergeValue::Property(_)))) = (&instance.declaration, &instance.value) else {
         return None;
     };
     let text = written.piece().as_str()?;

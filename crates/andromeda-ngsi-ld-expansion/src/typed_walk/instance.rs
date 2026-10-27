@@ -170,12 +170,9 @@ fn common_members(node: &mut NodeBuilder, scope: &TermScope<'_>, common: &Common
     Ok(())
 }
 
-/// A Property `value`: the JSON as written, or the geometry already read.
+/// A Property `value`: the JSON as written.
 pub(crate) fn add_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: &NgsiLdValue) -> Result<(), Decline> {
-    match value {
-        NgsiLdValue::Json(json) => add_json(node, scope, key, json.piece()),
-        NgsiLdValue::Geometry(geometry) => add_geometry(node, scope, key, geometry),
-    }
+    add_json(node, scope, key, value.literal().piece())
 }
 
 /// A `GeoProperty` `value`: the geometry already read, the clause 4.7.2 string
@@ -196,10 +193,7 @@ pub(crate) fn add_value_list(node: &mut NodeBuilder, scope: &TermScope<'_>, valu
     };
     let mut items = Vec::with_capacity(values.len());
     for value in values {
-        match value {
-            NgsiLdValue::Json(json) => items.extend(expand_element(scope, Some(key), json.piece())?.into_items()),
-            NgsiLdValue::Geometry(geometry) => items.push(geometry_item(scope, key, geometry)?),
-        }
+        items.extend(expand_element(scope, Some(key), value.literal().piece())?.into_items());
     }
     node.add_expanded(name, expanded_member(scope, key, items, Written::Array)?);
     Ok(())

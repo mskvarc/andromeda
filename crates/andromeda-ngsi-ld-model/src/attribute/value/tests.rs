@@ -1,11 +1,15 @@
-use crate::attribute::value::{NgsiLdValue, ValueRefusal};
-use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
-use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, position::PositionError};
+use crate::attribute::value::NgsiLdValue;
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError, piece::JsonPiece};
 use serde_json::{Value, json, value::RawValue};
 
 /// The value `json` reads as, from the text it is written as.
-fn read(json: &Value) -> Result<NgsiLdValue, ValueRefusal> {
-    let text = RawValue::from_string(json.to_string()).expect("the fixture is JSON");
+fn read(json: &Value) -> Result<NgsiLdValue, JsonLiteralError> {
+    read_text(&json.to_string())
+}
+
+/// The value the JSON text `text` reads as.
+fn read_text(text: &str) -> Result<NgsiLdValue, JsonLiteralError> {
+    let text = RawValue::from_string(text.to_owned()).expect("the fixture is JSON");
     match NgsiLdValue::from_node(JsonPiece::new(&text)) {
         Ok(read) => read,
         Err(never) => match never {},
@@ -29,47 +33,35 @@ fn a_string_value_is_served_back_in_the_spelling_the_client_wrote() {
     ] {
         let value = read(&json!(literal)).expect("a string value");
         let expected = JsonLiteral::admit(&json!(literal).to_string()).expect("a literal");
-        pretty_assertions::assert_eq!(value, NgsiLdValue::Json(expected), "{literal}");
+        pretty_assertions::assert_eq!(value, NgsiLdValue::from(expected), "{literal}");
         pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!(literal), "{literal}");
     }
 }
 
+/// Clause 5.2.5 admits any JSON value for a Property, and the clause 4.7.1
+/// geometry rules bind a `GeoProperty` only: a `GeoJSON`-shaped value is the
+/// JSON it was written as, valid geometry or not.
 #[test]
-fn a_geojson_object_decodes_as_a_geometry_with_its_altitude() {
-    let NgsiLdValue::Geometry(flat) = read(&json!({"type": "Point", "coordinates": [13.38, 52.52]})).expect("a point") else {
-        panic!("a geometry");
-    };
-    pretty_assertions::assert_eq!(flat.dimension(), GeometryDimension::TwoD);
-    let NgsiLdValue::Geometry(elevated) = read(&json!({"type": "Point", "coordinates": [13.38, 52.52, 34.5]})).expect("a point") else {
-        panic!("a geometry");
-    };
-    pretty_assertions::assert_eq!(elevated.dimension(), GeometryDimension::ThreeD);
-}
-
-/// RFC 7946 section 4: a `GeoJSON`-shaped value is a geometry or an error,
-/// never an ordinary Property carrying a position that names no point.
-#[test]
-fn a_geojson_shaped_value_that_is_no_geometry_is_refused_rather_than_demoted() {
-    let error = read(&json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]})).expect_err("four ordinates have no meaning");
-    assert!(
-        matches!(
-            error,
-            ValueRefusal::Geometry(GeometryError::Position {
-                source: PositionError::TooManyOrdinates { ordinates: 4 },
-                ..
-            })
-        ),
-        "got {error:?}"
-    );
-    let error = read(&json!({"type": "Point", "coordinates": [0.0, 91.0]})).expect_err("a position off the axes");
-    assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "got {error}");
-}
-
-#[test]
-fn a_value_that_is_not_geojson_shaped_is_json() {
-    for value in [json!({"type": "Point"}), json!("a string"), json!({"speed": 42}), json!([1, 2])] {
-        assert!(matches!(read(&value), Ok(NgsiLdValue::Json(_))), "{value}");
+fn a_geojson_shaped_value_is_json() {
+    for value in [
+        r#"{"type":"Point","coordinates":[1,2,3,4]}"#,
+        r#"{"type":"Point","coordinates":[0,91]}"#,
+        r#"{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[13,52]}]}"#,
+        r#"{"type":"LineString","coordinates":[[13,52],[13,52,34.5]]}"#,
+    ] {
+        let read = read_text(value).expect("any JSON value");
+        pretty_assertions::assert_eq!(read, NgsiLdValue::from(JsonLiteral::admit(value).expect("a literal")), "{value}");
+        pretty_assertions::assert_eq!(serde_json::to_string(&read).expect("serialize"), value, "{value}");
     }
+}
+
+/// A Property value keeps every significant digit (clause 4.6.4), an ordinate
+/// of `GeoJSON` it holds included: no geometry narrows it to a double.
+#[test]
+fn an_ordinate_in_a_property_value_keeps_every_digit() {
+    let value = r#"{"type":"Point","coordinates":[13.123456789012345678,52.5]}"#;
+    let read = read_text(value).expect("any JSON value");
+    pretty_assertions::assert_eq!(serde_json::to_string(&read).expect("serialize"), value);
 }
 
 /// A value is admitted as a literal: a name written twice in one object is
@@ -78,5 +70,5 @@ fn a_value_that_is_not_geojson_shaped_is_json() {
 fn a_value_naming_a_member_twice_is_refused() {
     let text = RawValue::from_string(r#"{"a": 1, "a": 2}"#.to_owned()).expect("JSON text");
     let read = NgsiLdValue::from_node(andromeda_json_literal::piece::JsonPiece::new(&text));
-    assert!(matches!(read, Ok(Err(ValueRefusal::Literal(_)))), "{read:?}");
+    assert!(matches!(read, Ok(Err(_))), "{read:?}");
 }

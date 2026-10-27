@@ -61,7 +61,7 @@ mod tests {
         };
         pretty_assertions::assert_eq!(
             property.value,
-            NgsiLdValue::Json(JsonLiteral::admit(r#""2018-12-04T12:00:00.250000Z""#).expect("a string"))
+            NgsiLdValue::from(JsonLiteral::admit(r#""2018-12-04T12:00:00.250000Z""#).expect("a string"))
         );
         pretty_assertions::assert_eq!(property.value_type.as_ref().map(CoercedTerm::as_str), Some("DateTime"));
         assert!(property.previous_value.is_some());

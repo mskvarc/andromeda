@@ -12,7 +12,6 @@ use crate::{
         member_value::{malformed, null_beside_data, reference_id},
         null_sentinel::{is_deletion, is_list_object_null, is_null},
     },
-    assembly_error::AssemblyError,
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
 };
 use andromeda_json_literal::JsonLiteral;
@@ -46,15 +45,13 @@ use langtag::LangTagBuf;
 ///
 /// # Errors
 ///
-/// Returns the refusal of a value that is not what its member holds, and
-/// [`AssemblyError::UnspellableOrdinate`] for a geometry held as a Property
-/// value whose ordinate has no JSON number.
+/// Returns the refusal of a value that is not what its member holds.
 pub fn value_slot(
     attribute: &AttributeName,
     family: Option<AttributeType>,
     carrier: ValueCarrier,
     items: Vec<ExpandedItem>,
-) -> Result<ValueSlot, AssemblyError> {
+) -> Result<ValueSlot, EntityRefusal> {
     if is_deletion(carrier, &items) {
         return Ok(ValueSlot::Remove(carrier));
     }
@@ -115,23 +112,23 @@ fn single_list(attribute: &AttributeName, shape: MemberShape, items: Vec<Expande
 
 /// The geometry of a `GeoProperty` (clause 4.7): the `GeoJSON` node, or the JSON
 /// string of clause 4.7.2.
-fn geo_value(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<GeoValue, AssemblyError> {
+fn geo_value(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<GeoValue, EntityRefusal> {
     let refused = |source| EntityRefusal::GeoProperty {
         attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
         source,
     };
     let mut items = items.into_iter();
     let (Some(item), None) = (items.next(), items.next()) else {
-        return Err(malformed(attribute, MemberShape::Geometry).into());
+        return Err(malformed(attribute, MemberShape::Geometry));
     };
     match item {
         ExpandedItem::Geometry(geometry) => geometry_value(attribute, *geometry).map(GeoValue::Geometry),
         ExpandedItem::Node(node) => geometry_value(attribute, geometry_of(node).map_err(refused)?).map(GeoValue::Geometry),
         ExpandedItem::Value(value) => match literal(attribute, value)?.value() {
             LiteralValue::String(text) => Ok(EncodedGeometry::parse(text.to_string()).map(GeoValue::Encoded).map_err(refused)?),
-            LiteralValue::Number(_) | LiteralValue::Boolean(_) => Err(refused(GeometryError::NotAnObject).into()),
+            LiteralValue::Number(_) | LiteralValue::Boolean(_) => Err(refused(GeometryError::NotAnObject)),
         },
-        ExpandedItem::Json(_) | ExpandedItem::List(_) => Err(refused(GeometryError::NotAnObject).into()),
+        ExpandedItem::Json(_) | ExpandedItem::List(_) => Err(refused(GeometryError::NotAnObject)),
     }
 }
 
@@ -235,7 +232,7 @@ fn list_object(attribute: &AttributeName, item: &ExpandedItem) -> Result<ListObj
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{assembly::written_value::value_slot, assembly_error::AssemblyError};
+    use crate::assembly::written_value::value_slot;
     use andromeda_ngsi_ld_entity::{
         document::{
             value_carrier::ValueCarrier,
@@ -275,7 +272,7 @@ mod tests {
         for (family, carrier, member) in cases {
             let refusal = value_slot(&tags(), family, carrier, Vec::new()).expect_err("an empty member names nothing");
             assert!(
-                matches!(&refusal, AssemblyError::Refused(EntityRefusal::Malformed { attribute: Some(attribute), member: refused }) if *attribute == tags() && *refused == member),
+                matches!(&refusal, EntityRefusal::Malformed { attribute: Some(attribute), member: refused } if *attribute == tags() && *refused == member),
                 "{carrier:?}: {refusal:?}"
             );
         }

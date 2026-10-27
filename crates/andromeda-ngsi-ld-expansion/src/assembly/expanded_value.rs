@@ -8,11 +8,9 @@
 
 use crate::{
     assembly::{
-        geometry_node::geometry_value_node,
         member_value::null_beside_data,
         null_sentinel::{is_null, is_sole_null},
     },
-    assembly_error::AssemblyError,
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
 };
 use andromeda_ngsi_ld_entity::{
@@ -73,7 +71,7 @@ impl MemberMode for Fragment {
 /// # Errors
 ///
 /// As [`expanded_value`].
-pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<Vec<ExpandedValue<M>>, AssemblyError> {
+pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<Vec<ExpandedValue<M>>, EntityRefusal> {
     items.into_iter().map(|item| expanded_value(attribute, item)).collect()
 }
 
@@ -83,21 +81,20 @@ pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<Expa
 ///
 /// Returns [`EntityRefusal::NullBesideData`] for the NGSI-LD Null, which is
 /// never data, [`EntityRefusal::Malformed`] for a number out of the supported
-/// range or a datatype or language that is not one, and
+/// range, a datatype or language that is not one, or a typed geometry, which
+/// stands only for a `GeoProperty` value (clause 4.7.1), and
 /// [`EntityRefusal::ExpandedMemberName`] for a member name or a node type
-/// expansion never keeps, each as [`AssemblyError::Refused`], and
-/// [`AssemblyError::UnspellableOrdinate`] for a geometry ordinate with no JSON
-/// number.
-pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedItem) -> Result<ExpandedValue<M>, AssemblyError> {
+/// expansion never keeps.
+pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedItem) -> Result<ExpandedValue<M>, EntityRefusal> {
     if is_null(&item) {
-        return Err(null_beside_data(attribute).into());
+        return Err(null_beside_data(attribute));
     }
     match item {
         ExpandedItem::Value(value) => Ok(ExpandedValue::Literal(literal(attribute, value)?)),
         ExpandedItem::Json(json) => Ok(ExpandedValue::Json(json)),
         ExpandedItem::Node(node) => value_node(attribute, node).map(ExpandedValue::Node),
         ExpandedItem::List(items) => expanded_values(attribute, items).map(ExpandedValue::List),
-        ExpandedItem::Geometry(geometry) => geometry_value_node(attribute, *geometry),
+        ExpandedItem::Geometry(_) => Err(nested_malformed(attribute)),
     }
 }
 
@@ -123,11 +120,11 @@ pub fn literal(attribute: &AttributeName, value: ValueObject) -> Result<Literal,
 }
 
 /// Read a node object of a structured value.
-fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> Result<ValueNode<M>, AssemblyError> {
+fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> Result<ValueNode<M>, EntityRefusal> {
     // A node that is the Null alone was read as the Null before it came here;
     // one naming the Null beside types or members is the Null beside data.
     if node.id.as_deref().is_some_and(is_ngsi_ld_null) {
-        return Err(null_beside_data(attribute).into());
+        return Err(null_beside_data(attribute));
     }
     let id = node.id.as_deref().map(NodeId::from);
     let types = node
@@ -150,7 +147,7 @@ fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> R
 /// # Errors
 ///
 /// As [`expanded_value`], and the refusal of a mode that holds no deletion.
-pub fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<M::Member, AssemblyError> {
+pub fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<M::Member, EntityRefusal> {
     if is_sole_null(&items) {
         Ok(M::deletion(attribute)?)
     } else {
@@ -175,7 +172,6 @@ fn nested_malformed(attribute: &AttributeName) -> EntityRefusal {
 mod tests {
     use crate::{
         assembly::expanded_value::expanded_value,
-        assembly_error::AssemblyError,
         expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
     };
     use andromeda_ngsi_ld_entity::{
@@ -216,7 +212,7 @@ mod tests {
     #[test]
     fn a_member_that_is_the_null_alone_is_refused_in_state() {
         let refusal = expanded_value::<Stored>(&attribute(), structured(vec![text("urn:ngsi-ld:null")])).expect_err("state holds no deletion");
-        assert!(matches!(refusal, AssemblyError::Refused(EntityRefusal::NullInState { .. })), "{refusal:?}");
+        assert!(matches!(refusal, EntityRefusal::NullInState { .. }), "{refusal:?}");
     }
 
     /// Clause 4.5.0: beside data the Null is refused in either mode.
@@ -225,8 +221,8 @@ mod tests {
         let items = || structured(vec![text("a"), text("urn:ngsi-ld:null")]);
         let fragment = expanded_value::<Fragment>(&attribute(), items()).expect_err("the Null is no data");
         let stored = expanded_value::<Stored>(&attribute(), items()).expect_err("the Null is no data");
-        assert!(matches!(fragment, AssemblyError::Refused(EntityRefusal::NullBesideData { .. })), "{fragment:?}");
-        assert!(matches!(stored, AssemblyError::Refused(EntityRefusal::NullBesideData { .. })), "{stored:?}");
+        assert!(matches!(fragment, EntityRefusal::NullBesideData { .. }), "{fragment:?}");
+        assert!(matches!(stored, EntityRefusal::NullBesideData { .. }), "{stored:?}");
     }
 
     /// A node naming the Null beside other members is the Null beside data.
@@ -238,6 +234,6 @@ mod tests {
             ..ExpandedNode::default()
         });
         let refusal = expanded_value::<Fragment>(&attribute(), node).expect_err("the Null is no node identifier");
-        assert!(matches!(refusal, AssemblyError::Refused(EntityRefusal::NullBesideData { .. })), "{refusal:?}");
+        assert!(matches!(refusal, EntityRefusal::NullBesideData { .. }), "{refusal:?}");
     }
 }

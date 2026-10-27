@@ -221,14 +221,13 @@ impl From<EntityRefusal> for TemporalError {
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// A context that does not load and a document the processor refuses are
-/// JSON-LD failures; a refused document is classified as the
-/// model refuses it, and an ordinate with no JSON number is the broker's fault.
+/// JSON-LD failures, and a refused document is classified as the
+/// model refuses it.
 impl From<ExpansionError> for TemporalError {
     fn from(error: ExpansionError) -> TemporalError {
         match error {
             ExpansionError::Context(failure) | ExpansionError::Processor(failure) => TemporalError::JsonLd(failure),
             ExpansionError::Refused(refusal) => TemporalError::from(refusal),
-            ExpansionError::UnspellableOrdinate(fault) => TemporalError::Internal(TemporalInvariant::UnspellableOrdinate(fault)),
             ExpansionError::CompactDocument(source) => TemporalError::Validation(TemporalValidationReason::CompactDocument(source)),
         }
     }
@@ -319,10 +318,7 @@ impl TemporalError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
-    use andromeda_ngsi_ld_expansion::{assembly_error::UnspellableOrdinate, error::ExpansionError};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_number::JsonNumber;
+    use crate::error::TemporalError;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
     /// A store that cannot be reached is retryable, answered 503 rather than
@@ -334,20 +330,5 @@ mod tests {
             TemporalError::from(PersistenceFailure::Misconfigured),
             TemporalError::Persistence(PersistenceFailure::Misconfigured)
         ));
-    }
-
-    /// Clause 5.5.6: a geometry ordinate with no JSON number is the broker's
-    /// fault, reported with the attribute holding it.
-    #[test]
-    #[expect(
-        clippy::expect_used,
-        reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-    )]
-    fn an_unspellable_ordinate_is_an_internal_error_naming_its_attribute() {
-        let attribute = "https://example.org/footprint".parse::<AttributeName>().expect("an attribute name");
-        let source = JsonNumber::try_from(f64::NAN).expect_err("NaN has no JSON number");
-        let error = TemporalError::from(ExpansionError::UnspellableOrdinate(UnspellableOrdinate { attribute, source }));
-        assert!(matches!(error, TemporalError::Internal(TemporalInvariant::UnspellableOrdinate(_))), "{error:?}");
-        assert!(error.to_string().contains("https://example.org/footprint"), "{error}");
     }
 }

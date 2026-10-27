@@ -6,7 +6,6 @@
 
 use crate::residual_predicate::ResidualPredicate;
 use andromeda_json_literal::admission::JsonLiteralError;
-use andromeda_ngsi_ld_expansion::assembly_error::UnspellableOrdinate;
 use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
@@ -51,10 +50,6 @@ pub enum EntityInvariant {
         /// The entity the write addressed.
         entity: Identifier,
     },
-    /// A geometry held as a Property value has an ordinate with no JSON number,
-    /// although every ordinate the broker holds is finite.
-    #[error("{0}")]
-    UnspellableOrdinate(#[source] UnspellableOrdinate),
     /// A JSON literal merged into a stored one could not be written back.
     #[error("a merged JSON literal could not be written: {0}")]
     LiteralMerge(#[source] JsonLiteralError),

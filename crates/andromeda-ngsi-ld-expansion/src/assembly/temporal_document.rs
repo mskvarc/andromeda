@@ -7,7 +7,7 @@
 //! from the instant it names (clause 4.18) and not the entity's own `scope`
 //! member, and the entity's system times are the peer's, carried apart.
 
-use crate::{assembly::attribute_member, assembly_error::AssemblyError, expanded_tree::ExpandedNode};
+use crate::{assembly::attribute_member, expanded_tree::ExpandedNode};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, member_role::MemberRole, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
@@ -21,7 +21,7 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn temporal_document(node: Option<ExpandedNode>, system_times: EntitySystemTimes) -> Result<TemporalDocument, AssemblyError> {
+pub fn temporal_document(node: Option<ExpandedNode>, system_times: EntitySystemTimes) -> Result<TemporalDocument, EntityRefusal> {
     let Some(node) = node else {
         return Ok(TemporalDocument::new(EntityDocument::default(), system_times, IndexMap::new()));
     };
@@ -41,7 +41,7 @@ pub fn temporal_document(node: Option<ExpandedNode>, system_times: EntitySystemT
         }
         let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
         if name.as_str() != properties::SCOPE.as_str() && MemberRole::is_reserved(name.as_str()) {
-            return Err(EntityRefusal::ReservedAttributeName { attribute: name }.into());
+            return Err(EntityRefusal::ReservedAttributeName { attribute: name });
         }
         let member = attribute_member(&name, items)?;
         attributes.insert(name, member);
