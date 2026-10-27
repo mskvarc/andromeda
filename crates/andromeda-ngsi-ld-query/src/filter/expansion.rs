@@ -251,6 +251,24 @@ pub async fn expand_attribute_names(terms: &[AttributeName], expander: &impl Ter
     Ok(expanded_names)
 }
 
+/// Expand a request's clause 4.9 `jsonKeys` declaration into the attributes
+/// every path of that request reads as raw JSON, the empty set when the
+/// request declared none.
+///
+/// One request has one declaration, so its `q` filter and its `orderBy` or
+/// grouping paths all resolve a member under a declared attribute the same
+/// way.
+///
+/// # Errors
+///
+/// Returns the errors of [`expand_attribute_names`].
+pub async fn expand_json_keys(declared: Option<&[AttributeName]>, expander: &impl TermExpander) -> Result<JsonKeyAttributes, QueryError> {
+    Ok(match declared {
+        Some(names) => expand_attribute_names(names, expander).await?.into_iter().collect(),
+        None => JsonKeyAttributes::default(),
+    })
+}
+
 /// Expand the right-hand side of a comparison when its attribute opted in via
 /// `expandValues`.
 async fn expand_compare_values<S: BuildHasher + Sync>(
@@ -651,6 +669,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["https://example.com/value"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_json_keys_declaration_names_the_expanded_attributes() {
+        let names = ["parkingTickets".parse().expect("valid attribute name")];
+        let declared = expand_json_keys(Some(&names), &PrefixExpander).await.expect("expands");
+        assert!(declared.contains(&"https://example.com/parkingTickets".parse().expect("valid attribute name")));
+        assert!(!declared.contains(&names[0]), "the compact name is no key of the expanded paths");
+    }
+
+    #[tokio::test]
+    async fn a_request_without_json_keys_declares_no_attribute() {
+        assert!(expand_json_keys(None, &PrefixExpander).await.expect("expands").is_empty());
     }
 
     /// A declared attribute's NGSI-LD sub-attributes are not object keys, so

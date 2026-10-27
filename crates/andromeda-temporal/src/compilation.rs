@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_json_keys, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
@@ -78,7 +78,8 @@ impl TemporalService {
             .map(ToOwned::to_owned)
             .unwrap_or_default();
 
-        let q_expr = compile_q_filter(params, &expander).await?;
+        let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
+        let q_expr = compile_q_filter(params, &json_keys, &expander).await?;
         if let Some(q) = &q_expr {
             language_targeting.admit(q)?;
         }
@@ -86,7 +87,7 @@ impl TemporalService {
 
         let format = params.parse_format()?;
         let page = compile_instance_page(params.last_n, format, params.aggr_period_duration, self.limits.instance_limits);
-        let grouping = compile_grouping(params, format, &expander).await?;
+        let grouping = compile_grouping(params, format, &json_keys, &expander).await?;
 
         Ok(CompiledTemporalQuery::builder()
             .entities(
@@ -148,21 +149,18 @@ impl TemporalService {
     }
 }
 
-/// Expand the `q` filter and apply the attribute-scoped opt-ins to it.
-async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl TermExpander) -> Result<Option<Expr>, TemporalError> {
+/// Expand the `q` filter under the request's clause 4.9 `jsonKeys`
+/// declaration and apply the attribute-scoped opt-ins to it.
+async fn compile_q_filter(
+    params: &TemporalQueryParameters,
+    json_keys: &JsonKeyAttributes,
+    expander: &impl TermExpander,
+) -> Result<Option<Expr>, TemporalError> {
     // Expansion consumes the AST while the caller retains its request parameters.
     let Some(expr) = params.q.clone() else {
         return Ok(None);
     };
-    // `jsonKeys` (clause 4.9): the values of the listed attributes are raw
-    // JSON, so the object keys the filter addresses under them stay literal
-    // rather than being expanded against the supplied `@context`. That decides
-    // how the filter's terms expand, so it is resolved first.
-    let json_keys: JsonKeyAttributes = match params.json_keys.as_deref() {
-        Some(attributes) => expand_attribute_names(attributes, expander).await?.into_iter().collect(),
-        None => JsonKeyAttributes::default(),
-    };
-    let expr = expand_q_expr(expr, &json_keys, expander).await?;
+    let expr = expand_q_expr(expr, json_keys, expander).await?;
 
     // `expandValues`: expand string right-hand-side values for the attributes
     // that opted in, and refuse a bare word of any other.
@@ -227,8 +225,9 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
 /// Parse and expand the `aggrGroupBy` grouping (an Andromeda extension).
 ///
 /// Value-path keys are expanded against the request context so they match the
-/// stored attribute IRIs, exactly as `attrs` and `q` are; member and bucket
-/// keys carry no term to expand.
+/// stored attribute IRIs, exactly as `attrs` and `q` are, and the members under
+/// an attribute the request declared in `jsonKeys` stay literal object keys as
+/// in `q`; member and bucket keys carry no term to expand.
 ///
 /// # Errors
 ///
@@ -240,18 +239,18 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
 async fn compile_grouping(
     params: &TemporalQueryParameters,
     format: TemporalFormat,
+    json_keys: &JsonKeyAttributes,
     expander: &impl TermExpander,
 ) -> Result<Option<AggregationGrouping>, TemporalError> {
     let (true, Some(raw)) = (format.is_grouped(), params.aggr_group_by.as_deref()) else {
         return Ok(None);
     };
     let grouping = AggregationGrouping::parse(raw).map_err(|error| TemporalError::Request(ParameterError::AggrGroupByInvalid(error)))?;
-    let json_keys = JsonKeyAttributes::default();
     let mut expanded_terms = Vec::with_capacity(grouping.terms().len());
     for term in grouping.0 {
         let key = match term.key {
             GroupKey::Member(member) => GroupKey::Member(member),
-            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, TrailingMembers::Terms(&json_keys), expander).await?),
+            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, TrailingMembers::Terms(json_keys), expander).await?),
         };
         expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
     }
@@ -275,10 +274,60 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{compilation::compile_instance_page, instance_limits::TemporalInstanceLimits};
+    use crate::{
+        compilation::{compile_grouping, compile_instance_page},
+        instance_limits::TemporalInstanceLimits,
+    };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-    use andromeda_ngsi_ld_query::temporal::{aggregation_period::AggregationPeriod, instance_page::InstancePage, period_budget::PeriodBudget};
+    use andromeda_ngsi_ld_query::{
+        filter::expansion::expand_json_keys,
+        temporal::{aggregation_period::AggregationPeriod, grouping::group_key::GroupKey, instance_page::InstancePage, period_budget::PeriodBudget},
+    };
+    use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use std::num::{NonZeroU32, NonZeroU64};
+
+    /// The member names `aggrGroupBy=parkingTickets[value]` addresses once
+    /// compiled under the core context, with `jsonKeys` naming `declared`.
+    async fn grouped_members(declared: &str) -> Vec<String> {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
+        let context = engine.prepare_term_context(&ContextSpec::core_only());
+        let expander = ContextualExpander::new(&engine, &context);
+        let params = TemporalQueryParameters {
+            aggr_group_by: Some("parkingTickets[value]".to_owned()),
+            json_keys: Some(vec![declared.parse().expect("valid attribute name")]),
+            ..TemporalQueryParameters::default()
+        };
+        let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await.expect("jsonKeys expands");
+        let grouping = compile_grouping(&params, TemporalFormat::GroupedValues, &json_keys, &expander)
+            .await
+            .expect("the grouping compiles")
+            .expect("a grouped read groups");
+        let path = grouping
+            .terms()
+            .first()
+            .and_then(|term| if let GroupKey::Path(path) = &term.key { Some(path) } else { None })
+            .expect("the term groups by a value path");
+        path.members()
+            .expect("the path addresses a member")
+            .addressed
+            .iter()
+            .map(|name| name.as_str().to_owned())
+            .collect()
+    }
+
+    /// Clause 4.9 EXAMPLE 11: under a `jsonKeys` attribute `value` is the
+    /// literal object key, not the core context's `ngsi-ld:hasValue`, for a
+    /// grouping path as for a `q` one.
+    #[tokio::test]
+    async fn a_grouping_member_under_a_declared_json_key_stays_the_literal_key() {
+        pretty_assertions::assert_eq!(grouped_members("parkingTickets").await, vec!["value"]);
+    }
+
+    #[tokio::test]
+    async fn a_grouping_member_under_an_undeclared_attribute_expands() {
+        pretty_assertions::assert_eq!(grouped_members("other").await, vec!["https://uri.etsi.org/ngsi-ld/hasValue"]);
+    }
 
     /// `n` as a client `lastN`.
     fn count(n: u32) -> NonZeroU32 {

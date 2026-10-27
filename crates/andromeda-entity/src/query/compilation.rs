@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_json_keys, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{expand_attrs, expand_projection},
         projected_members::ProjectedMembers,
     },
+    term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::{collections::HashSet, sync::Arc};
@@ -95,7 +96,8 @@ impl EntityQueryService {
 
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
-        let q_expr = self.compile_q_expression(params, &prepared_context).await?;
+        let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
+        let q_expr = compile_q_expression(params, &json_keys, &expander).await?;
         if let Some(q) = &q_expr {
             language_targeting.admit(q)?;
         }
@@ -108,7 +110,7 @@ impl EntityQueryService {
         )
         .await?;
 
-        let order_by = self.compile_order_terms(params, &prepared_context, language_targeting).await?;
+        let order_by = compile_order_terms(params, &json_keys, &expander, language_targeting).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
         let compiled = CompiledEntityQuery::builder()
@@ -138,84 +140,6 @@ impl EntityQueryService {
         Ok(compiled)
     }
 
-    /// Expand the `q` filter under the clause 4.9 `jsonKeys` declaration, then
-    /// apply the `expandValues` coercion to the result.
-    async fn compile_q_expression(&self, params: &EntityQueryParameters, prepared_context: &PreparedTermContext) -> Result<Option<Expr>, EntityError> {
-        let expander = ContextualExpander::new(self.engine(), prepared_context);
-        // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
-        let Some(q_expr) = params.q.clone() else {
-            return Ok(None);
-        };
-        // `jsonKeys` decides how the filter's own terms expand, so it is
-        // resolved before the expansion rather than applied to its result.
-        let json_keys: JsonKeyAttributes = match params.json_keys {
-            Some(ref raw) => expand_attribute_names(raw, &expander).await?.into_iter().collect(),
-            None => JsonKeyAttributes::default(),
-        };
-        let q_expr = expand_q_expr(q_expr, &json_keys, &expander).await?;
-
-        let opted_in: HashSet<AttributeName> = match params.expand_values {
-            Some(ref raw) => expand_attribute_names(raw, &expander).await?.into_iter().collect(),
-            None => HashSet::new(),
-        };
-        Ok(Some(apply_expand_values(q_expr, &opted_in, &expander).await?))
-    }
-
-    /// Compile the `orderBy` terms against the active context (clause 4.23).
-    ///
-    /// Every name of an ordering path is expanded, not just its head. Clause
-    /// 4.9 requires it of the attribute path clause 4.23.3 borrows, "Every name
-    /// in the list shall be expanded to a URI (Fully Qualified Name) as mandated
-    /// by clause 5.5.7", and the members of a compound value expand for the
-    /// same reason, because expansion turns them into IRI-keyed nodes of the
-    /// graph. Expanding the head alone addressed `city` in a payload holding
-    /// the expansion of `city`, and ordered by nothing.
-    ///
-    /// The path is expanded under no `jsonKeys` declaration: an attribute whose
-    /// value is opaque JSON keeps literal member keys, and the ordering reads
-    /// that spelling from the path's own pre-expansion copy rather than from a
-    /// declaration `orderBy` has no parameter for.
-    ///
-    /// Clause 4.23.3 borrows the clause 4.9 path, so a term's target language
-    /// is held to `language_targeting` as a `q` one is.
-    async fn compile_order_terms(
-        &self,
-        params: &EntityQueryParameters,
-        context: &PreparedTermContext,
-        language_targeting: LanguageTargeting,
-    ) -> Result<Vec<CompiledOrderTerm>, EntityError> {
-        // Parsed and validated at the query boundary (clause 4.23).
-        let collation = params.ordering.collation.clone();
-        let expander = ContextualExpander::new(self.engine(), context);
-        let json_keys = JsonKeyAttributes::default();
-
-        let mut compiled = Vec::new();
-        let order_terms = &params.ordering.order_by;
-        for term in order_terms {
-            let target = match RawOrderTarget::classify(&term.attr) {
-                RawOrderTarget::Id => OrderTarget::Id,
-                RawOrderTarget::Type => OrderTarget::Type,
-                RawOrderTarget::Scope => OrderTarget::Scope,
-                // The system timestamps read their own columns and carry no IRI
-                // to expand, so they pass through like `id`/`type`/`scope`.
-                RawOrderTarget::CreatedAt => OrderTarget::CreatedAt,
-                RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
-                // clone: expansion rewrites the path it consumes, and the cached
-                // request parameters stay immutable across compilations.
-                RawOrderTarget::Attribute(path) => {
-                    language_targeting.admit_path(path)?;
-                    OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(&json_keys), &expander).await?)
-                }
-            };
-            compiled.push(CompiledOrderTerm {
-                target,
-                direction: term.direction,
-                collation: collation.clone(), // clone: every term carries its own copy of the query's collation
-            });
-        }
-        Ok(compiled)
-    }
-
     /// Compile the `georel` / `geometry` / `coordinates` triple (clause 4.10).
     ///
     /// # Errors
@@ -226,6 +150,73 @@ impl EntityQueryService {
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, EntityError> {
         Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.geo_admission).await?)
     }
+}
+
+/// Expand the `q` filter under the request's clause 4.9 `jsonKeys`
+/// declaration, then apply the `expandValues` coercion to the result.
+async fn compile_q_expression(
+    params: &EntityQueryParameters,
+    json_keys: &JsonKeyAttributes,
+    expander: &impl TermExpander,
+) -> Result<Option<Expr>, EntityError> {
+    // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
+    let Some(q_expr) = params.q.clone() else {
+        return Ok(None);
+    };
+    let q_expr = expand_q_expr(q_expr, json_keys, expander).await?;
+
+    let opted_in: HashSet<AttributeName> = match params.expand_values {
+        Some(ref raw) => expand_attribute_names(raw, expander).await?.into_iter().collect(),
+        None => HashSet::new(),
+    };
+    Ok(Some(apply_expand_values(q_expr, &opted_in, expander).await?))
+}
+
+/// Compile the `orderBy` terms against the active context (clause 4.23).
+///
+/// Every name of an ordering path is expanded, not just its head. Clause 4.9
+/// requires it of the attribute path clause 4.23.3 borrows, "Every name in the
+/// list shall be expanded to a URI (Fully Qualified Name) as mandated by clause
+/// 5.5.7", and the members of a compound value expand for the same reason,
+/// because expansion turns them into IRI-keyed nodes of the graph.
+///
+/// The members under an attribute the request declared in `jsonKeys` stay
+/// literal object keys (clause 4.9 EXAMPLE 11), so an ordering path resolves
+/// as a `q` path into the same attribute does. Clause 4.23.3 borrows the
+/// clause 4.9 path, so a term's target language is held to
+/// `language_targeting` as a `q` one is.
+async fn compile_order_terms(
+    params: &EntityQueryParameters,
+    json_keys: &JsonKeyAttributes,
+    expander: &impl TermExpander,
+    language_targeting: LanguageTargeting,
+) -> Result<Vec<CompiledOrderTerm>, EntityError> {
+    // Parsed and validated at the query boundary (clause 4.23).
+    let collation = params.ordering.collation.clone();
+    let mut compiled = Vec::new();
+    for term in &params.ordering.order_by {
+        let target = match RawOrderTarget::classify(&term.attr) {
+            RawOrderTarget::Id => OrderTarget::Id,
+            RawOrderTarget::Type => OrderTarget::Type,
+            RawOrderTarget::Scope => OrderTarget::Scope,
+            // The system timestamps read their own columns and carry no IRI
+            // to expand, so they pass through like `id`/`type`/`scope`.
+            RawOrderTarget::CreatedAt => OrderTarget::CreatedAt,
+            RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
+            // clone: expansion rewrites the path it consumes, and the cached
+            // request parameters stay immutable across compilations.
+            RawOrderTarget::Attribute(path) => {
+                language_targeting.admit_path(path)?;
+                OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(json_keys), expander).await?)
+            }
+        };
+        compiled.push(CompiledOrderTerm {
+            target,
+            direction: term.direction,
+            collation: collation.clone(), // clone: every term carries its own copy of the query's collation
+        });
+    }
+    Ok(compiled)
 }
 
 /// Compile `orderFrom` and `orderGeometry` into the reference geometry a
@@ -254,7 +245,7 @@ mod tests {
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting};
+    use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting, ordering::term::OrderTarget};
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use std::num::NonZeroUsize;
 
@@ -290,6 +281,46 @@ mod tests {
     fn assert_too_complex(result: Result<(), EntityError>) {
         let error = result.expect_err("the reference geometry exceeds the budget");
         assert!(matches!(error, EntityError::Query(QueryError::ReferenceGeometryTooComplex { .. })), "{error:?}");
+    }
+
+    /// The member names the first `orderBy` term of `query` addresses once
+    /// compiled under the core context.
+    async fn ordered_members(query: &str) -> Vec<String> {
+        let compiled = service_resolving(limit(5))
+            .compile_query_public(&params(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
+            .await
+            .expect("the query compiles");
+        let path = compiled
+            .ordering
+            .terms
+            .first()
+            .and_then(|term| if let OrderTarget::Attribute(path) = &term.target { Some(path) } else { None })
+            .expect("the first term orders by an attribute");
+        path.members()
+            .expect("the path addresses a member")
+            .addressed
+            .iter()
+            .map(|name| name.as_str().to_owned())
+            .collect()
+    }
+
+    /// Clause 4.9 EXAMPLE 11: under a `jsonKeys` attribute `value` is the
+    /// literal object key, not the core context's `ngsi-ld:hasValue`, for an
+    /// `orderBy` path as for a `q` one.
+    #[tokio::test]
+    async fn an_order_by_member_under_a_declared_json_key_stays_the_literal_key() {
+        pretty_assertions::assert_eq!(
+            ordered_members("type=Vehicle&orderBy=parkingTickets%5Bvalue%5D&jsonKeys=parkingTickets").await,
+            vec!["value"]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_order_by_member_under_an_undeclared_attribute_expands() {
+        pretty_assertions::assert_eq!(
+            ordered_members("type=Vehicle&orderBy=parkingTickets%5Bvalue%5D&jsonKeys=other").await,
+            vec!["https://uri.etsi.org/ngsi-ld/hasValue"]
+        );
     }
 
     #[tokio::test]

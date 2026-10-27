@@ -17,8 +17,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,
-        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
-        json_key_attributes::JsonKeyAttributes,
+        expansion::{apply_expand_values, expand_attribute_names, expand_json_keys, expand_q_expr},
         language_matching::LanguageMatching,
     },
     geo::compile::compile_geo_query,
@@ -71,14 +70,9 @@ pub(crate) async fn retain_matching(
             // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under the
             // same `jsonKeys` declaration the local query used, so one request
             // has one expansion of one filter.
-            let json_keys: JsonKeyAttributes = match deferred.json_keys {
-                Some(ref declared) => expand_attribute_names(declared, &term_expander)
-                    .await
-                    .with_entity_instance(instance)?
-                    .into_iter()
-                    .collect(),
-                None => JsonKeyAttributes::default(),
-            };
+            let json_keys = expand_json_keys(deferred.json_keys.as_deref(), &term_expander)
+                .await
+                .with_entity_instance(instance)?;
             let opted_in: HashSet<AttributeName> = match deferred.expand_values {
                 Some(ref declared) => expand_attribute_names(declared, &term_expander)
                     .await
