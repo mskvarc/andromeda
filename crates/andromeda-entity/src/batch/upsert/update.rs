@@ -125,6 +125,7 @@ impl EntityService {
         placement: SideEffectPlacement<'_>,
         chunk: Vec<AdmittedBatchEntity>,
         errors: &mut Vec<(Identifier, EntityError)>,
+        now: SystemInstant,
     ) -> Result<UpsertOutcome, EntityError> {
         // Clause 5.6.8.4: "If there were an existing Entity with the same Entity
         // ID, the behaviour defined by clause 5.6.2 shall be executed, but
@@ -144,7 +145,7 @@ impl EntityService {
             target: placement.target(),
         };
         let entries = prepared.into_iter().map(|prepared| UpsertFragment::Requested(Box::new(prepared))).collect();
-        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, entries).await?;
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, entries, now).await?;
         errors.extend(outcome.errors);
         Ok((
             BatchResult {

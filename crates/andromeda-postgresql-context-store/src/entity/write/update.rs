@@ -48,7 +48,6 @@ use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
     pg_array::nullable_array,
     pg_operator::PgBinaryOperator,
@@ -66,12 +65,12 @@ use sqlx::{Postgres, Transaction};
 const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 
 /// Build the batch update of `entities`, each held to its entry of
-/// `expected_modified_at`, with the attribute instance rows `rows` and the
-/// grains `grains` stage for them.
+/// `expected_modified_at` and modified at `accepted_at`, with the attribute
+/// instance rows `rows` and the grains `grains` stage for them.
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $13::timestamptz[]) AS d(…)),
-///      ents AS (UPDATE entities SET modified_at = NOW(), expires_at = proj.expires_at,
+///      ents AS (UPDATE entities SET modified_at = $accepted_at, expires_at = proj.expires_at,
 ///                                   min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM proj
 ///               WHERE entities.id = proj.id
@@ -145,6 +144,7 @@ pub(super) fn entity_update_statement<'entities>(
     rows: StagedRows<'_>,
     grains: StagedGrains<'_>,
     expected_modified_at: &[Option<DateTime<Utc>>],
+    accepted_at: DateTime<Utc>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
     let mut external = ExternalArguments::default();
@@ -190,7 +190,12 @@ pub(super) fn entity_update_statement<'entities>(
     let dropped = dropped_memberships(target);
     let mut with = WithClause::new();
     with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update))
-        .cte(CommonTableExpression::new().table_name(Ents).query(entity_write(target)).to_owned())
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Ents)
+                .query(entity_write(target, accepted_at))
+                .to_owned(),
+        )
         .cte(
             CommonTableExpression::new()
                 .table_name(Srch)
@@ -238,10 +243,10 @@ pub(super) fn entity_update_statement<'entities>(
 ///
 /// It finds each row through the unique identifier index, so its cost grows
 /// with the batch whatever row estimate the plan was made for.
-fn entity_write(target: &ContextTarget) -> UpdateStatement {
+fn entity_write(target: &ContextTarget, accepted_at: DateTime<Utc>) -> UpdateStatement {
     Query::update()
         .table(table_of(target, Entities::Table))
-        .value(Entities::ModifiedAt, now())
+        .value(Entities::ModifiedAt, Expr::val(accepted_at))
         .value(Entities::ExpiresAt, projected(Entities::ExpiresAt))
         .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
         .from(Proj)
@@ -311,6 +316,7 @@ impl EntityRepository {
         rows: StagedRows<'_>,
         grains: StagedGrains<'_>,
         expected_modified_at: &[Option<DateTime<Utc>>],
+        accepted_at: DateTime<Utc>,
     ) -> Result<Vec<Identifier>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
@@ -325,7 +331,7 @@ impl EntityRepository {
         }
         types_present(entities)?;
 
-        let rows = entity_update_statement(target, entities, rows, grains, expected_modified_at)?
+        let rows = entity_update_statement(target, entities, rows, grains, expected_modified_at, accepted_at)?
             .into_query_as::<(String,)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
@@ -349,13 +355,19 @@ mod tests {
         statement_text::text_of_query,
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+    use chrono::{DateTime, Utc};
     use std::collections::BTreeSet;
+
+    /// The instant every rendered update is accepted at.
+    fn accepted_at() -> DateTime<Utc> {
+        "2026-01-01T00:00:00Z".parse().expect("a valid instant")
+    }
 
     /// The rendered update of no entity on `target`.
     fn update_on(target: &ContextTarget) -> String {
         let entities = PreparedEntityColumns::with_capacity(0);
         text_of_query(
-            entity_update_statement(target, &entities, StagedRows::default(), StagedGrains::default(), &[])
+            entity_update_statement(target, &entities, StagedRows::default(), StagedGrains::default(), &[], accepted_at())
                 .expect("the fixed update builds")
                 .into_query(),
         )
@@ -379,7 +391,7 @@ mod tests {
     #[test]
     fn the_update_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = update();
-        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + 5;
+        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + 5 + 1;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -397,12 +409,13 @@ mod tests {
     }
 
     /// Clause 4.8: the compare-and-set token is the entity's `modifiedAt`, which
-    /// the anchor compares with what the caller read and stamps anew.
+    /// the anchor compares with what the caller read and stamps with the
+    /// instant the commit was accepted at, the one its attributes carry.
     #[test]
     fn a_compare_and_set_write_states_the_read_token() {
         let sql = update();
         assert!(
-            sql.contains(r#""ents" AS (UPDATE "entities" SET "modified_at" = NOW(), "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
+            sql.contains(r#""ents" AS (UPDATE "entities" SET "modified_at" = $12, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
             "{sql}"
         );
         assert!(
@@ -439,11 +452,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($40::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($41::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$36::text[], $37::integer[], $38::text[], $39::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$37::text[], $38::integer[], $39::text[], $40::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }

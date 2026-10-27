@@ -12,7 +12,6 @@ use crate::{
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-use chrono::Utc;
 use std::collections::HashSet;
 
 impl EntityService {
@@ -39,7 +38,12 @@ impl EntityService {
         (deduped, errors)
     }
 
-    pub(super) async fn batch_create_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_create_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        chunk: Vec<AdmittedBatchEntity>,
+        now: SystemInstant,
+    ) -> Result<BatchResult, EntityError> {
         let target = placement.target();
         // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
         // clause 5.5.4 excepts only the fragments of a partial update or a
@@ -54,7 +58,6 @@ impl EntityService {
         let lock_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
         let _id_guards = self.acquire_id_locks(target, &lock_ids).await;
 
-        let now = SystemInstant::new(Utc::now());
         let mut seen: HashSet<Identifier> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {

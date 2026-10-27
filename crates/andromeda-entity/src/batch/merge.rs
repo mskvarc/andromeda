@@ -2,7 +2,7 @@
 //!
 //! Like batch update, a read-modify-write over the whole chunk; unlike it, the
 //! fragment is applied with the Merge Entity semantics of clause 5.6.17
-//! (behaviour in clause 5.5.12) rather than by updating and appending in turn.
+//! (behaviour in clause 5.5.12) rather than appended (clause 5.6.3).
 //!
 //! A chunk carries at most one instance of any entity, because the coordinator
 //! gives each instance of a repeated identifier a round of its own. That is
@@ -70,7 +70,12 @@ impl ChunkRewrite for MergeRewrite<'_> {
 }
 
 impl EntityService {
-    pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_merge_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        chunk: Vec<AdmittedBatchEntity>,
+        now: SystemInstant,
+    ) -> Result<BatchResult, EntityError> {
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
         let prepared = prepared_chunk(chunk);
@@ -79,7 +84,7 @@ impl EntityService {
             service: self,
             target: placement.target(),
         };
-        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, prepared).await?;
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, prepared, now).await?;
         errors.extend(outcome.errors);
         Ok(BatchResult {
             success: outcome.success,

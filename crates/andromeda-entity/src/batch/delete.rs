@@ -121,12 +121,17 @@ impl EntityService {
         self.notifier.subscription_matches(deleted, &deletion(removed), snapshots)
     }
 
-    pub(super) async fn batch_delete_chunk(&self, placement: SideEffectPlacement<'_>, chunk: &[Identifier]) -> Result<DeleteChunkOutcome, EntityError> {
+    pub(super) async fn batch_delete_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        chunk: &[Identifier],
+        now: SystemInstant,
+    ) -> Result<DeleteChunkOutcome, EntityError> {
         let rewrite = DeleteRewrite {
             service: self,
             target: placement.target(),
         };
-        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, chunk.to_vec()).await?;
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, chunk.to_vec(), now).await?;
         Ok((outcome.success, outcome.errors))
     }
 }

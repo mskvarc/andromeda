@@ -17,8 +17,8 @@
 //! unchanged since that snapshot, and a write built for an absent entity holds
 //! while the entity is still absent.
 //!
-//! Every attempt stamps the one write instant the chunk took before the first,
-//! because "All Entities and Attributes in the batch will get the same
+//! Every attempt stamps the one write instant the batch took before its first
+//! round, because "All Entities and Attributes in the batch will get the same
 //! modifiedAt timestamp" (clause 5.5.11.0).
 
 use crate::{
@@ -32,7 +32,6 @@ use crate::{
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_retry::retry_policy::RetryAttempt;
-use chrono::Utc;
 use std::{collections::HashSet, future::Future, mem::take};
 
 /// One batch path's part in a chunk read-modify-write: what it reads besides
@@ -90,8 +89,9 @@ pub(super) struct PlannedWrite<E> {
 }
 
 impl EntityService {
-    /// Commit every entity of `entries` through `rewrite`, re-reading and
-    /// rebuilding whatever a concurrent writer got to first.
+    /// Commit every entity of `entries` through `rewrite` at the batch instant
+    /// `now`, re-reading and rebuilding whatever a concurrent writer got to
+    /// first.
     ///
     /// The per-identifier guards are held across every attempt, so a writer in
     /// this process waits rather than burning attempts; the compare-and-set is
@@ -107,6 +107,7 @@ impl EntityService {
         placement: SideEffectPlacement<'_>,
         rewrite: &R,
         entries: Vec<R::Entry>,
+        now: SystemInstant,
     ) -> Result<ChunkOutcome, EntityError> {
         let mut settled = ChunkOutcome::default();
         if entries.is_empty() {
@@ -114,7 +115,6 @@ impl EntityService {
         }
         let chunk_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the guards and the first read own the identifiers
         let _id_guards = self.acquire_id_locks(placement.target(), &chunk_ids).await;
-        let now = SystemInstant::new(Utc::now());
 
         let mut pending = entries;
         let contended = self

@@ -14,6 +14,11 @@
 //! at most one instance per identifier, rounds run one after another, and only
 //! the entries of a single round are chunked and committed concurrently. An
 //! array without repeats is one round, so the ordinary batch is unaffected.
+//!
+//! Each operation reads the clock once, before its first round, and every
+//! chunk of every round commits at that instant: "All Entities and Attributes
+//! in the batch will get the same modifiedAt timestamp" (clause 5.5.11.0), the
+//! instances of one repeated identifier included.
 
 /// The entities of a batch write the admission let through.
 pub mod admitted_batch;
@@ -84,8 +89,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_telemetry::entity::{self, EntityOperation};
+use chrono::Utc;
 use futures::{StreamExt, stream};
 use std::collections::HashSet;
 
@@ -179,6 +185,7 @@ impl EntityService {
     pub async fn batch_create(&self, placement: SideEffectPlacement<'_>, admitted: AdmittedBatch<BatchCreate>) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchCreate);
         let result: Result<BatchResult, EntityError> = async {
+            let now = SystemInstant::new(Utc::now());
             let (_, entities) = admitted.into_parts();
             // Clause 5.5.11.1: only the first instance of an identifier creates, so
             // there is nothing left to order and no second round to run.
@@ -189,7 +196,7 @@ impl EntityService {
             }
 
             let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(deduped))
-                .map(|chunk| async move { self.batch_create_chunk(placement, chunk).await })
+                .map(|chunk| async move { self.batch_create_chunk(placement, chunk, now).await })
                 .buffered(self.batch_execution.chunk_write_concurrency)
                 .collect()
                 .await;
@@ -216,6 +223,7 @@ impl EntityService {
     pub async fn batch_delete(&self, placement: SideEffectPlacement<'_>, entity_ids: &[Identifier]) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchDelete);
         let result: Result<BatchResult, EntityError> = async {
+            let now = SystemInstant::new(Utc::now());
             // Clause 5.5.11.4: the first occurrence deletes, every later one is
             // answered as an entity that does not exist.
             let mut seen = HashSet::new();
@@ -231,7 +239,7 @@ impl EntityService {
 
             let chunk_len = self.batch_chunk_len(unique_ids.len());
             let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> = stream::iter(unique_ids.chunks(chunk_len))
-                .map(|chunk| async move { self.batch_delete_chunk(placement, chunk).await })
+                .map(|chunk| async move { self.batch_delete_chunk(placement, chunk, now).await })
                 .buffered(self.batch_execution.chunk_write_concurrency)
                 .collect()
                 .await;
@@ -259,7 +267,8 @@ impl EntityService {
     /// An identifier the array repeats is updated once per instance, in array
     /// order, each instance against the state its predecessor left: clause
     /// 5.5.11.3 has the broker send separate notifications for each individual
-    /// update, which only holds if each is a separate write.
+    /// update, which only holds if each is a separate write. Every instance
+    /// still carries the one batch `modifiedAt` (clause 5.5.11.0).
     ///
     /// # Errors
     ///
@@ -276,12 +285,13 @@ impl EntityService {
     ) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchUpdate);
         let result: Result<BatchResult, EntityError> = async {
+            let now = SystemInstant::new(Utc::now());
             let (_, entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_update_chunk(placement, chunk, overwrite).await })
+                    .map(|chunk| async move { self.batch_update_chunk(placement, chunk, overwrite, now).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
                     .collect()
                     .await;
@@ -315,12 +325,13 @@ impl EntityService {
     pub async fn batch_merge(&self, placement: SideEffectPlacement<'_>, admitted: AdmittedBatch<BatchMerge>) -> Result<BatchResult, EntityError> {
         let timer = entity::start(EntityOperation::BatchMerge);
         let result: Result<BatchResult, EntityError> = async {
+            let now = SystemInstant::new(Utc::now());
             let (_, entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
                 let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_merge_chunk(placement, chunk).await })
+                    .map(|chunk| async move { self.batch_merge_chunk(placement, chunk, now).await })
                     .buffered(self.batch_execution.chunk_write_concurrency)
                     .collect()
                     .await;
@@ -361,6 +372,7 @@ impl EntityService {
     ) -> Result<(BatchResult, Vec<Identifier>), EntityError> {
         let timer = entity::start(EntityOperation::BatchUpsert);
         let result: Result<(BatchResult, Vec<Identifier>), EntityError> = async {
+            let now = SystemInstant::new(Utc::now());
             let (BatchUpsert(policy), entities) = admitted.into_parts();
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
@@ -371,8 +383,8 @@ impl EntityService {
                     .map(|chunk| async move {
                         let mut chunk_errors = Vec::new();
                         let outcome = match policy {
-                            UpsertPolicy::Update => self.batch_upsert_update_chunk(placement, chunk, &mut chunk_errors).await,
-                            UpsertPolicy::Replace => self.batch_upsert_replace_chunk(placement, chunk, &mut chunk_errors).await,
+                            UpsertPolicy::Update => self.batch_upsert_update_chunk(placement, chunk, &mut chunk_errors, now).await,
+                            UpsertPolicy::Replace => self.batch_upsert_replace_chunk(placement, chunk, &mut chunk_errors, now).await,
                         };
                         outcome.map(|(result, chunk_created)| (result, chunk_errors, chunk_created))
                     })

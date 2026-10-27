@@ -39,6 +39,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_context_store::entity::repo::EntityRepository;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{
     collections::{HashMap, HashSet},
@@ -89,12 +90,14 @@ impl PostgresAtomicCommitter {
     }
 
     /// Apply every current-state mutation and preserve submission-order
-    /// outcomes.
+    /// outcomes. Every entity inserted or updated is stamped `accepted_at`,
+    /// the instant its attributes carry (clause 4.8).
     async fn apply_entities(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         writes: &[AtomicWrite],
+        accepted_at: DateTime<Utc>,
     ) -> Result<EntityMutations, AttemptFailure> {
         let EntityGroups {
             inserts,
@@ -108,8 +111,8 @@ impl PostgresAtomicCommitter {
         }
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
-        self.apply_inserts(tx, target, &inserts, &names, &mut outcomes).await?;
-        self.apply_updates(tx, target, &updates, &names, &mut outcomes).await?;
+        self.apply_inserts(tx, target, &inserts, &names, accepted_at, &mut outcomes).await?;
+        self.apply_updates(tx, target, &updates, &names, accepted_at, &mut outcomes).await?;
         self.apply_deletes(tx, target, &deletes, &mut outcomes).await?;
         let outcomes = outcomes
             .into_iter()
@@ -126,13 +129,14 @@ impl PostgresAtomicCommitter {
         target: &ContextTarget,
         inserts: &[IndexedWrite<'_>],
         names: &NameKeys,
+        accepted_at: DateTime<Utc>,
         outcomes: &mut [Option<WriteOutcome>],
     ) -> Result<(), AttemptFailure> {
         if inserts.is_empty() {
             return Ok(());
         }
         let binds = columns_for(inserts, names)?;
-        let inserted = EntityRepository::create_batch_in_tx(tx, target, &binds.entities, binds.rows)
+        let inserted = EntityRepository::create_batch_in_tx(tx, target, &binds.entities, binds.rows, accepted_at)
             .await
             .map_err(|error| entity_statement(error))?;
         let landed: HashSet<Identifier> = inserted.into_iter().collect();
@@ -149,6 +153,7 @@ impl PostgresAtomicCommitter {
         target: &ContextTarget,
         updates: &[IndexedWrite<'_>],
         names: &NameKeys,
+        accepted_at: DateTime<Utc>,
         outcomes: &mut [Option<WriteOutcome>],
     ) -> Result<(), AttemptFailure> {
         if updates.is_empty() {
@@ -156,7 +161,7 @@ impl PostgresAtomicCommitter {
         }
         let binds = columns_for(updates, names)?;
         let expected = expectations(updates);
-        let saved = EntityRepository::save_batch_in_tx(tx, target, &binds.entities, binds.rows, binds.grains, &expected)
+        let saved = EntityRepository::save_batch_in_tx(tx, target, &binds.entities, binds.rows, binds.grains, &expected, accepted_at)
             .await
             .map_err(|error| entity_statement(error))?;
         let landed: HashSet<Identifier> = saved.into_iter().collect();
@@ -258,7 +263,7 @@ impl PostgresAtomicCommitter {
             tx.commit().await.map_err(|error| database(&error))?;
             return Ok(Vec::new());
         }
-        let EntityMutations { outcomes } = self.apply_entities(&mut tx, target, writes).await?;
+        let EntityMutations { outcomes } = self.apply_entities(&mut tx, target, writes, record.recorded_at()).await?;
         let landed: Vec<&AtomicWrite> = writes
             .iter()
             .zip(&outcomes)

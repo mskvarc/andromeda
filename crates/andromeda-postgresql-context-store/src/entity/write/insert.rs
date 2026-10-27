@@ -39,11 +39,11 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
-    clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
     unnest::UnnestAliased,
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
+use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, IntoIden, OnConflict, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
 
@@ -51,12 +51,12 @@ use sqlx::{Postgres, Transaction};
 const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 
 /// Build the batch insert of `entities` and the attribute instance rows
-/// `rows` stages for them.
+/// `rows` stages for them, each entity created and modified at `accepted_at`.
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
 ///      ins AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at)
-///              SELECT … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …
+///              SELECT proj.id, $accepted_at, $accepted_at, … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …
 ///              WHERE entities.created_at IS NULL RETURNING entity_key, id),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
@@ -104,6 +104,7 @@ pub(super) fn entity_insert_statement<'entities>(
     target: &ContextTarget,
     entities: &'entities PreparedEntityColumns,
     rows: StagedRows<'_>,
+    accepted_at: DateTime<Utc>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = insert_staging_columns();
     let mut external = ExternalArguments::default();
@@ -118,8 +119,8 @@ pub(super) fn entity_insert_statement<'entities>(
         .select_from(
             Query::select()
                 .expr(projected(Entities::Id))
-                .expr(now())
-                .expr(now())
+                .expr(Expr::val(accepted_at))
+                .expr(Expr::val(accepted_at))
                 .expr(projected(Entities::ExpiresAt))
                 .expr(projected(Entities::MinAttributeExpiresAt))
                 .from(Proj)
@@ -198,7 +199,9 @@ pub(super) fn entity_insert_statement<'entities>(
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, with the
     /// attribute instance rows `rows` stages for it, returning the entities
-    /// actually inserted.
+    /// actually inserted. Each is created and modified at `accepted_at`, the
+    /// instant its attributes carry (clause 4.8), so every entity one commit
+    /// writes shares it.
     ///
     /// # Errors
     ///
@@ -210,13 +213,14 @@ impl EntityRepository {
         target: &ContextTarget,
         entities: &PreparedEntityColumns,
         rows: StagedRows<'_>,
+        accepted_at: DateTime<Utc>,
     ) -> Result<Vec<Identifier>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
         types_present(entities)?;
 
-        let rows = entity_insert_statement(target, entities, rows)?
+        let rows = entity_insert_statement(target, entities, rows, accepted_at)?
             .into_query_as::<(String,)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
@@ -240,13 +244,19 @@ mod tests {
         statement_text::text_of_query,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use chrono::{DateTime, Utc};
     use std::collections::BTreeSet;
+
+    /// The instant every rendered insert is accepted at.
+    fn accepted_at() -> DateTime<Utc> {
+        "2026-01-01T00:00:00Z".parse().expect("a valid instant")
+    }
 
     /// The rendered insert of no entity, unwrapped for assertion.
     fn entity_insert_sql(target: &ContextTarget) -> String {
         let entities = PreparedEntityColumns::with_capacity(0);
         text_of_query(
-            entity_insert_statement(target, &entities, StagedRows::default())
+            entity_insert_statement(target, &entities, StagedRows::default(), accepted_at())
                 .expect("the fixed insert builds")
                 .into_query(),
         )
@@ -260,7 +270,7 @@ mod tests {
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1;
+        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 2;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -286,8 +296,8 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($10::text[]"), "{sql}");
-        assert!(sql.contains(r"$39::sub_attribute_tree[], $33::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($12::text[]"), "{sql}");
+        assert!(sql.contains(r"$41::sub_attribute_tree[], $35::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -370,8 +380,10 @@ mod tests {
         assert!(!sql.contains("ST_SetSRID"), "{sql}");
     }
 
-    /// The entity's own `createdAt` and `modifiedAt` are the transaction's
-    /// instant. An identity row holding a current state is left alone, and
+    /// The entity's own `createdAt` and `modifiedAt` are the instant the
+    /// commit was accepted at, the one its attributes carry (clause 4.8), so a
+    /// batch committed in several transactions stamps one instant (clause
+    /// 5.5.11.0). An identity row holding a current state is left alone, and
     /// one holding the Temporal Evolution alone (clause 5.6.6 deleted its
     /// current state) is given one and returned, so clause 5.6.1 creates the
     /// Entity anew under the same key.
@@ -380,7 +392,7 @@ mod tests {
         let sql = insert();
         assert!(
             sql.contains(concat!(
-                r#"SELECT "proj"."id", NOW(), NOW(), "proj"."expires_at", "proj"."min_attribute_expires_at" FROM "proj" "#,
+                r#"SELECT "proj"."id", $10, $11, "proj"."expires_at", "proj"."min_attribute_expires_at" FROM "proj" "#,
                 r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
                 r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at" "#,
                 r#"WHERE "entities"."created_at" IS NULL RETURNING "entity_key", "id""#
