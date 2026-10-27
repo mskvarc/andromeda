@@ -97,6 +97,16 @@ impl<T> Clearable<T> {
         matches!(self, Clearable::NgsiLdNull)
     }
 
+    /// The member with a deletion left out: the NGSI-LD Null becomes the
+    /// absent member, anything else is kept.
+    #[must_use]
+    pub fn without_deletion(self) -> Clearable<T> {
+        match self {
+            Clearable::NgsiLdNull => Clearable::Absent,
+            kept @ (Clearable::Absent | Clearable::Set(_)) => kept,
+        }
+    }
+
     /// The value the fragment wrote, if it wrote one.
     #[must_use]
     pub const fn as_set(&self) -> Option<&T> {

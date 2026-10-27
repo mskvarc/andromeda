@@ -7,7 +7,7 @@ use crate::{
         notified_member::MemberInstances,
         reified_member::{Reification, ReifiedMember},
     },
-    version::fallback::InstanceMember,
+    version::{deletion::DeletionEncoding, fallback::InstanceMember},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::attribute::{common_fields::CommonAttributeFields, instance::AttributeValue};
@@ -68,9 +68,34 @@ pub(crate) fn serialize_sub_attributes<M: SerializeMap>(
     reification: Reification,
     walk: MemberWalk<'_>,
 ) -> Result<(), M::Error> {
-    sub_attributes
-        .iter()
-        .try_for_each(|(name, value)| object.serialize_entry(name.as_str(), &ReifiedMember::new(MemberInstances::Held(value), reification, walk)))
+    sub_attributes.iter().try_for_each(|(name, value)| {
+        serialize_attribute_member(
+            object,
+            name.as_str(),
+            value,
+            walk,
+            &ReifiedMember::new(MemberInstances::Held(value), reification, walk),
+        )
+    })
+}
+
+/// Write the attribute member `name`, which `written` writes as `member`
+/// holds it; the NGSI-LD Null deleting the member is written only as the
+/// walk's target reads such a deletion, and left out when it reads none.
+pub(crate) fn serialize_attribute_member<M: SerializeMap, W: Serialize>(
+    object: &mut M,
+    name: &str,
+    member: &AttributeValue,
+    walk: MemberWalk<'_>,
+    written: &W,
+) -> Result<(), M::Error> {
+    match (member, walk.attribute_deletion()) {
+        (AttributeValue::Single(_) | AttributeValue::Multiple(_), _) | (AttributeValue::NgsiLdNull, Some(DeletionEncoding::NgsiLdNull)) => {
+            object.serialize_entry(name, written)
+        }
+        (AttributeValue::NgsiLdNull, Some(DeletionEncoding::JsonNull)) => object.serialize_entry(name, &()),
+        (AttributeValue::NgsiLdNull, None) => Ok(()),
+    }
 }
 
 /// Write a member when the instance carries it.

@@ -6,10 +6,10 @@
 //! create among them: "None of the members described admit a null value
 //! directly".
 
-use strum::Display;
+use strum::{Display, IntoStaticStr};
 
 /// A member of a Subscription an update may delete (Table 5.2.12-1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Display)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "camelCase")]
 pub enum SubscriptionMember {
     /// `subscriptionName`, the human-readable name.
@@ -72,5 +72,6 @@ mod tests {
         pretty_assertions::assert_eq!(SubscriptionMember::Q.to_string(), "q");
         pretty_assertions::assert_eq!(SubscriptionMember::GeoQ.to_string(), "geoQ");
         pretty_assertions::assert_eq!(SubscriptionMember::NgsildConformance.to_string(), "ngsildConformance");
+        pretty_assertions::assert_eq!(<&'static str>::from(SubscriptionMember::ExpiresAt), "expiresAt");
     }
 }

@@ -35,6 +35,10 @@ impl SpecVersion {
     pub const V1_3: SpecVersion = SpecVersion::new(1, 3);
     /// NGSI-LD v1.4.
     pub const V1_4: SpecVersion = SpecVersion::new(1, 4);
+    /// NGSI-LD v1.5, whose clause 5.5.8 deletes no member at all.
+    pub const V1_5: SpecVersion = SpecVersion::new(1, 5);
+    /// NGSI-LD v1.6, which introduces the NGSI-LD Null (clause 4.5.0).
+    pub const V1_6: SpecVersion = SpecVersion::new(1, 6);
     /// NGSI-LD v1.8.
     pub const V1_8: SpecVersion = SpecVersion::new(1, 8);
     /// NGSI-LD v1.9.

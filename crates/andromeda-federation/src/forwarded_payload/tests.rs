@@ -273,6 +273,37 @@ async fn a_forwarded_subscription_is_spelled_from_the_typed_subscription() {
     pretty_assertions::assert_eq!(forwarded["q"], json!("velocity>1"));
 }
 
+/// Clause 4.3.6.6: an update of the copy at a source is written for the
+/// version the registration's `ngsildConformance` names. V1.5.1 deletes no
+/// member and refuses any null member value (clause 5.5.4), so a 1.5 source
+/// is sent neither the NGSI-LD Null nor JSON `null`; V1.4.2 clause 5.5.8 deletes
+/// with JSON `null`; a source naming no version reads the NGSI-LD Null.
+#[tokio::test]
+async fn a_forwarded_subscription_update_deletes_as_the_source_version_reads() {
+    let fragment: SubscriptionRequest = serde_json::from_value(json!({
+        "watchedAttributes": ["speed"],
+        "q": "urn:ngsi-ld:null",
+        "expiresAt": "urn:ngsi-ld:null",
+        "notification": {"endpoint": {"uri": "http://receiver.example.org/"}}
+    }))
+    .expect("a subscription fragment");
+    let inbound = link_spec(USER_CONTEXT);
+    let written_for = async |entries: &[(&str, &str)]| forwarded_json(&payload(&inbound, entries, Some(OutgoingBody::Subscription(&fragment))).await);
+
+    let at_1_5 = written_for(&[("ngsildConformance", "1.5")]).await;
+    assert!(!at_1_5.to_string().contains("null"), "{at_1_5}");
+    assert!(at_1_5.get("q").is_none() && at_1_5.get("expiresAt").is_none(), "{at_1_5}");
+    pretty_assertions::assert_eq!(at_1_5["watchedAttributes"], json!(["speed"]));
+
+    let at_1_4 = written_for(&[("ngsildConformance", "1.4")]).await;
+    pretty_assertions::assert_eq!((&at_1_4["q"], &at_1_4["expiresAt"]), (&Value::Null, &Value::Null));
+    assert!(at_1_4.get("q").is_some() && !at_1_4.to_string().contains("urn:ngsi-ld:null"), "{at_1_4}");
+
+    let unversioned = written_for(&[]).await;
+    pretty_assertions::assert_eq!(unversioned["q"], json!("urn:ngsi-ld:null"));
+    pretty_assertions::assert_eq!(unversioned["expiresAt"], json!("urn:ngsi-ld:null"));
+}
+
 /// A relative reference is never forwarded. An inline
 /// context holding one -- as an entry, or as an `@import` -- would resolve
 /// against the source's URL rather than this broker's request, so the

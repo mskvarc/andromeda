@@ -43,6 +43,7 @@ use andromeda_ngsi_ld_render::{
     contextual_body::ContextualBody,
     forwarded_entity::{ForwardedAttribute, ForwardedEntity},
     forwarded_fragment::ForwardedFragment,
+    forwarded_subscription::ForwardedSubscription,
     version::adapted_payload::AdaptedPayload,
 };
 use indexmap::IndexMap;
@@ -209,7 +210,7 @@ async fn written_body(
         OutgoingBody::Subscription(request) => {
             let resolver = TermResolver::new(engine, inbound);
             let names = ForwardedNames::prepare(engine, &resolver, &naming, decision.context.rewording()).await?;
-            written(inline.as_ref(), &names.subscription(request).await?)
+            written(inline.as_ref(), &ForwardedSubscription::new(names.subscription(request).await?, conformance))
         }
         OutgoingBody::Query(query) => written(inline.as_ref(), query),
     }

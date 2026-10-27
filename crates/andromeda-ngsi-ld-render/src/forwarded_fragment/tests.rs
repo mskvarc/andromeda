@@ -94,3 +94,54 @@ fn the_default_instance_alone_reaches_a_source_below_1_3() {
         json!([{"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"type": "Property", "value": 2}])
     );
 }
+
+/// V1.4.2 clause 5.5.8 removes a member of the fragment written as JSON `null`,
+/// which reaches a sub-attribute and an instance member alike.
+#[test]
+fn a_1_4_source_receives_a_removed_member_as_json_null() {
+    let text = r#"{"type": "Property", "unitCode": "urn:ngsi-ld:null", "observedAt": "urn:ngsi-ld:null", "source": "urn:ngsi-ld:null"}"#;
+    pretty_assertions::assert_eq!(
+        forwarded(text, Some(SpecVersion::V1_4)),
+        json!({"type": "Property", "unitCode": null, "observedAt": null, "source": null})
+    );
+}
+
+/// V1.4.2 clause 5.6.4.4: "The value of a Property or the object of a
+/// Relationship shall not be set to null in order to delete it", so neither
+/// deletion of the attribute reaches a 1.4 source.
+#[test]
+fn a_1_4_source_receives_no_deletion_of_the_attribute() {
+    pretty_assertions::assert_eq!(
+        forwarded(
+            r#"{"type": "Property", "value": "urn:ngsi-ld:null", "unitCode": "CEL"}"#,
+            Some(SpecVersion::V1_4)
+        ),
+        json!({"type": "Property", "unitCode": "CEL"})
+    );
+    pretty_assertions::assert_eq!(forwarded(r#""urn:ngsi-ld:null""#, Some(SpecVersion::V1_4)), json!({}));
+}
+
+/// V1.5.1 clause 5.5.4 refuses every null member value and its clause 5.5.8
+/// deletes nothing, so a 1.5 source receives no deletion at all.
+#[test]
+fn a_1_5_source_receives_no_deletion() {
+    let text = r#"{"type": "Property", "value": 5, "unitCode": "urn:ngsi-ld:null", "source": "urn:ngsi-ld:null"}"#;
+    pretty_assertions::assert_eq!(forwarded(text, Some(SpecVersion::V1_5)), json!({"type": "Property", "value": 5}));
+    pretty_assertions::assert_eq!(forwarded(r#""urn:ngsi-ld:null""#, Some(SpecVersion::V1_5)), json!({}));
+}
+
+/// Clause 4.5.0 from V1.6.1: every deletion is the NGSI-LD Null.
+#[test]
+fn a_1_6_source_receives_the_ngsi_ld_null() {
+    let text = r#"{"type": "Property", "value": "urn:ngsi-ld:null", "unitCode": "urn:ngsi-ld:null", "source": "urn:ngsi-ld:null"}"#;
+    pretty_assertions::assert_eq!(
+        forwarded(text, Some(SpecVersion::V1_6)),
+        json!({
+            "type": "Property",
+            "value": "urn:ngsi-ld:null",
+            "unitCode": "urn:ngsi-ld:null",
+            "source": {"type": "Property", "value": "urn:ngsi-ld:null"}
+        })
+    );
+    pretty_assertions::assert_eq!(forwarded(r#""urn:ngsi-ld:null""#, Some(SpecVersion::V1_6)), json!("urn:ngsi-ld:null"));
+}

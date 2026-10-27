@@ -12,10 +12,13 @@
 //! alone: a Subscription or a Query is never written here.
 //!
 //! The members the patch leaves out are left out: a fragment names neither its
-//! `id` nor its `type` where the request path names the entity.
+//! `id` nor its `type` where the request path names the entity. An attribute
+//! the patch deletes reaches only a source that reads the NGSI-LD Null: no
+//! version before 1.6 deletes an attribute through an entity body.
 
 use crate::{
     entity_body::{
+        common_members::serialize_attribute_member,
         member_walk::MemberWalk,
         notified_member::MemberInstances,
         reified_member::{Reification, ReifiedMember},
@@ -121,7 +124,13 @@ impl Serialize for ForwardedEntity<'_> {
             object.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
         }
         for (name, member) in patch.attribute_members() {
-            object.serialize_entry(name, &ForwardedAttribute::member(member, self.walk, self.layout))?;
+            serialize_attribute_member(
+                &mut object,
+                name,
+                member,
+                self.walk,
+                &ForwardedAttribute::member(member, self.walk, self.layout),
+            )?;
         }
         object.end()
     }
@@ -278,6 +287,31 @@ mod tests {
         let old = serde_json::to_value(ForwardedEntity::new(&entity, Some(version), AdaptedPayload::TemporalEvolution).with_scope_history(&history))
             .expect("the entity writes");
         assert!(old.get("scope").is_none(), "{old}");
+    }
+
+    /// V1.4.2 clause 5.6.2 replaces the attributes an entity body names and
+    /// V1.5.1 deletes nothing, so neither reads an attribute or sub-attribute
+    /// the body deletes; from 1.6 the NGSI-LD Null travels.
+    #[test]
+    fn a_deleted_attribute_reaches_only_a_source_that_reads_the_ngsi_ld_null() {
+        let entity = patch(&json!({
+            "speed": "urn:ngsi-ld:null",
+            "brand": {"type": "Property", "value": "Mercedes", "source": "urn:ngsi-ld:null"}
+        }));
+        for version in [SpecVersion::V1_4, SpecVersion::V1_5] {
+            pretty_assertions::assert_eq!(
+                written(&entity, Some(version), AdaptedPayload::Entity),
+                json!({"brand": {"type": "Property", "value": "Mercedes"}}),
+                "{version}"
+            );
+        }
+        for version in [Some(SpecVersion::V1_6), None] {
+            pretty_assertions::assert_eq!(
+                written(&entity, version, AdaptedPayload::Entity),
+                json!({"speed": "urn:ngsi-ld:null", "brand": {"type": "Property", "value": "Mercedes", "source": "urn:ngsi-ld:null"}}),
+                "{version:?}"
+            );
+        }
     }
 
     /// Tables 4.3.6.8-2 and -3 reach the instance of the one attribute a

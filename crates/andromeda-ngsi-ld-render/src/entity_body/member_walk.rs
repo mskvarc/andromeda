@@ -2,7 +2,10 @@
 
 use crate::{
     entity_body::linked_entities::AttributeJoin,
-    version::fallback::{EntityMember, InstanceMember, VersionFallback},
+    version::{
+        deletion::{DeletionEncoding, DeletionSite},
+        fallback::{EntityMember, InstanceMember, VersionFallback},
+    },
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
@@ -93,5 +96,16 @@ impl<'a> MemberWalk<'a> {
             Some(fallback) => fallback.keeps_instance_member(family, member),
             None => true,
         }
+    }
+
+    /// How the payload writes the deletion of an attribute member, if its
+    /// target reads one: no version before 1.6 merges an entity body, so
+    /// every member of one stands at [`DeletionSite::Attribute`].
+    pub(crate) const fn attribute_deletion(self) -> Option<DeletionEncoding> {
+        let target = match self.fallback {
+            Some(fallback) => Some(fallback.target()),
+            None => None,
+        };
+        DeletionEncoding::for_target(target, DeletionSite::Attribute)
     }
 }

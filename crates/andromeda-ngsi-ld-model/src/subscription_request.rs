@@ -198,14 +198,13 @@ pub struct SubscriptionRequest {
 impl RequestBody for SubscriptionRequest {}
 
 impl SubscriptionRequest {
-    /// The first member, in the order of Table 5.2.12-1, which the body wrote
-    /// as the NGSI-LD Null (clause 4.5.0).
+    /// Every member, in the order of Table 5.2.12-1, which the body wrote as
+    /// the NGSI-LD Null (clause 4.5.0).
     ///
     /// Clause 5.5.8 gives the Null the meaning "the target member is deleted"
     /// in an update; a create has no member to delete, and clause 5.2.1 makes
     /// an NGSI-LD Null elsewhere `BadRequestData`.
-    #[must_use]
-    pub fn ngsi_ld_null_member(&self) -> Option<SubscriptionMember> {
+    pub fn deleted_members(&self) -> impl Iterator<Item = SubscriptionMember> {
         [
             (SubscriptionMember::SubscriptionName, self.subscription_name.is_ngsi_ld_null()),
             (SubscriptionMember::Description, self.description.is_ngsi_ld_null()),
@@ -231,7 +230,45 @@ impl SubscriptionRequest {
             (SubscriptionMember::NgsildConformance, self.ngsild_conformance.is_ngsi_ld_null()),
         ]
         .into_iter()
-        .find_map(|(member, deleted)| deleted.then_some(member))
+        .filter_map(|(member, deleted)| deleted.then_some(member))
+    }
+
+    /// The first member [`SubscriptionRequest::deleted_members`] names.
+    #[must_use]
+    pub fn ngsi_ld_null_member(&self) -> Option<SubscriptionMember> {
+        self.deleted_members().next()
+    }
+
+    /// The body with every member it deletes left out, as a payload written
+    /// for a version that reads no NGSI-LD Null leaves the deletion out
+    /// (clause 4.3.6.8).
+    #[must_use]
+    pub fn without_deletions(self) -> SubscriptionRequest {
+        SubscriptionRequest {
+            subscription_name: self.subscription_name.without_deletion(),
+            description: self.description.without_deletion(),
+            entities: self.entities.without_deletion(),
+            watched_attributes: self.watched_attributes.without_deletion(),
+            notification_trigger: self.notification_trigger.without_deletion(),
+            time_interval: self.time_interval.without_deletion(),
+            q: self.q.without_deletion(),
+            geo_q: self.geo_q.without_deletion(),
+            scope_q: self.scope_q.without_deletion(),
+            csf: self.csf.without_deletion(),
+            dataset_id: self.dataset_id.without_deletion(),
+            temporal_q: self.temporal_q.without_deletion(),
+            expand_values: self.expand_values.without_deletion(),
+            json_keys: self.json_keys.without_deletion(),
+            throttling: self.throttling.without_deletion(),
+            expires_at: self.expires_at.without_deletion(),
+            is_active: self.is_active.without_deletion(),
+            lang: self.lang.without_deletion(),
+            jsonld_context: self.jsonld_context.without_deletion(),
+            local_only: self.local_only.without_deletion(),
+            split_entities: self.split_entities.without_deletion(),
+            ngsild_conformance: self.ngsild_conformance.without_deletion(),
+            ..self
+        }
     }
 
     /// Whether the body carries no member to apply beyond its `id` and
@@ -301,7 +338,7 @@ impl SubscriptionRequest {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{request_body::RequestBody, subscription_request::SubscriptionRequest};
+    use crate::{request_body::RequestBody, subscription_member::SubscriptionMember, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::{Value, json};
 
@@ -567,5 +604,25 @@ mod tests {
         )
         .expect("the context is skipped");
         assert!(request.q.as_set().is_some());
+    }
+
+    /// Every deleted member is named, in the order of Table 5.2.12-1, and
+    /// leaving the deletions out keeps every member the fragment sets.
+    #[test]
+    fn the_deletions_are_named_and_can_be_left_out() {
+        let fragment: SubscriptionRequest = serde_json::from_value(json!({
+            "expiresAt": "urn:ngsi-ld:null",
+            "entities": ["urn:ngsi-ld:null"],
+            "q": "speed>1",
+            "throttling": "urn:ngsi-ld:null"
+        }))
+        .expect("a fragment");
+        pretty_assertions::assert_eq!(
+            fragment.deleted_members().collect::<Vec<_>>(),
+            [SubscriptionMember::Entities, SubscriptionMember::Throttling, SubscriptionMember::ExpiresAt]
+        );
+        let kept = fragment.without_deletions();
+        pretty_assertions::assert_eq!(kept.deleted_members().count(), 0);
+        pretty_assertions::assert_eq!(serde_json::to_value(&kept).expect("the fragment writes"), json!({"q": "speed>1"}));
     }
 }
