@@ -179,7 +179,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
 }
 
 /// Insert a non-cached Context under the identifier and kind policy chose,
-/// unless a row already holds the identifier.
+/// unless a row already holds the identifier or its serving URL.
 async fn insert_context(
     repository: &JsonLdContextRepository,
     identifier: &JsonLdContextId,
@@ -213,8 +213,8 @@ fn insert_statement(
 
 /// Convert the affected-row count of a conflict-free insert into its outcome.
 ///
-/// The insert does nothing on an identifier conflict, so no row affected means
-/// the identifier was already held.
+/// The insert does nothing on a conflict, so no row affected means the
+/// identifier or its serving URL was already held.
 const fn insertion(rows_affected: u64) -> ContextInsertion {
     if rows_affected == 0 {
         ContextInsertion::Occupied

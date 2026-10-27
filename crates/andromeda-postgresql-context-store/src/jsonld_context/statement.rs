@@ -245,14 +245,19 @@ pub fn replace_download_update(local_id: &str, document_url: &str, payload: &Jso
 }
 
 /// Insert a hosted or implicitly-created Context under an exact kind, unless a
-/// row already holds `local_id`.
+/// row already holds `local_id` or `serving_url`.
 ///
 /// Registry policy chooses the identifier, and an `ImplicitlyCreated` one is
 /// derived from the content, so the same document arrives under the same
-/// identifier again. The insert therefore does nothing on an identifier
-/// conflict, and the affected-row count tells the caller whether the
-/// identifier was free; deciding what an occupied identifier means is left to
-/// that caller, which compares the entry holding it.
+/// identifier and serving URL again. The insert therefore does nothing on a
+/// conflict, and the affected-row count tells the caller whether the slot was
+/// free; deciding what an occupied slot means is left to that caller, which
+/// compares the entry holding it.
+///
+/// The conflict names no target, so every unique index arbitrates it. With
+/// `id` alone as the target, two concurrent inserts of one document collide on
+/// the `url` index outside the speculative insertion, and the loser fails with
+/// a unique violation instead of doing nothing.
 ///
 /// # Errors
 ///
@@ -280,7 +285,7 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldCont
             Expr::current_timestamp(),
             0_i64.into(),
         ])?
-        .on_conflict(OnConflict::column(JsonldContexts::Id).do_nothing().to_owned());
+        .on_conflict(OnConflict::new().do_nothing().to_owned());
     Ok(statement.clone())
 }
 
@@ -432,20 +437,21 @@ mod tests {
         );
     }
 
-    /// A content-derived identifier arrives again with the same document, so
-    /// the insert of a hosted or implicitly created Context does nothing on an
-    /// identifier conflict and leaves the entry already there untouched.
+    /// A content-derived identifier arrives again with the same document and
+    /// the same serving URL, possibly from a concurrent request, so the insert
+    /// does nothing on a conflict with any unique index and leaves the entry
+    /// already there untouched.
     #[test]
-    fn a_hosted_insert_does_nothing_on_an_identifier_conflict() -> Result<(), SeaQueryError> {
+    fn a_hosted_insert_does_nothing_on_a_conflict_with_any_unique_index() -> Result<(), SeaQueryError> {
         let sql = hosted_insert(
             "urn:ngsi-ld:JsonLdContext:1",
-            None,
+            Some("https://broker.example/jsonldContexts/urn:ngsi-ld:JsonLdContext:1"),
             JsonldContextKindCode::ImplicitlyCreated,
             &JsonLiteral::admit(r#"{"@context": []}"#).expect("admissible"),
         )?
         .to_string(PostgresQueryBuilder);
 
-        assert!(sql.contains("ON CONFLICT (\"id\") DO NOTHING"), "{sql}");
+        assert!(sql.ends_with("ON CONFLICT  DO NOTHING"), "no conflict target: {sql}");
         Ok(())
     }
 
