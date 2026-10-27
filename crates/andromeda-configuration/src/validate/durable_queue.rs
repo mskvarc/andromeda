@@ -1,34 +1,30 @@
 //! The rules every durable queue table follows.
 
-use crate::{
-    schema::durable_queue::DurableQueue,
-    validate::{
-        bound::{Bound, Relation},
-        config_key::{ConfigKey, QueueKey, QueueName},
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    bound::Relation,
+    config_key::{ConfigKey, QueueKey, QueueName},
+    rule::{Limit, Rule},
 };
 
 /// A worker that polls without pause, an idle backoff ending below where it
 /// starts, a claim lapsing as it is taken, a retry with no delay and a retry
 /// delay capped below its first step all leave a queue no worker can run.
-pub(crate) fn check_queue(queue: &DurableQueue, name: QueueName, log: &mut ViolationLog) {
-    let key = |queue_key| ConfigKey::Queue(name, queue_key);
-    log.positive_duration(key(QueueKey::PollInterval), queue.poll_interval);
-    log.require(
-        key(QueueKey::MaxPollInterval),
-        queue.max_poll_interval.duration(),
-        Relation::AtLeast,
-        Bound::setting(key(QueueKey::PollInterval), queue.poll_interval.duration()),
-    );
-    log.positive_duration(key(QueueKey::LeaseTimeout), queue.lease_timeout);
-    log.positive_duration(key(QueueKey::RetryInterval), queue.retry_interval);
-    log.require(
-        key(QueueKey::MaxRetryInterval),
-        queue.max_retry_interval.duration(),
-        Relation::AtLeast,
-        Bound::setting(key(QueueKey::RetryInterval), queue.retry_interval.duration()),
-    );
+pub(crate) const fn queue_rules(name: QueueName) -> [Rule; 5] {
+    [
+        Rule::Positive(ConfigKey::Queue(name, QueueKey::PollInterval)),
+        Rule::Ordered {
+            key: ConfigKey::Queue(name, QueueKey::MaxPollInterval),
+            relation: Relation::AtLeast,
+            limit: Limit::Key(ConfigKey::Queue(name, QueueKey::PollInterval)),
+        },
+        Rule::Positive(ConfigKey::Queue(name, QueueKey::LeaseTimeout)),
+        Rule::Positive(ConfigKey::Queue(name, QueueKey::RetryInterval)),
+        Rule::Ordered {
+            key: ConfigKey::Queue(name, QueueKey::MaxRetryInterval),
+            relation: Relation::AtLeast,
+            limit: Limit::Key(ConfigKey::Queue(name, QueueKey::RetryInterval)),
+        },
+    ]
 }
 
 #[cfg(test)]

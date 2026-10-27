@@ -1,5 +1,6 @@
 //! Whether the broker believes the forwarded-protocol fields it is sent.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -16,16 +17,21 @@ use strum::{Display, EnumString};
 /// So the default is [`ForwardedHeaderTrust::Untrusted`], and an operator opts
 /// in only once a reverse proxy in front of the broker sets these fields and
 /// strips whatever the client sent.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether the `Forwarded` and `X-Forwarded-Proto` request fields decide the scheme of the URLs the broker builds from a request.")]
 pub enum ForwardedHeaderTrust {
     /// Ignore every forwarded-protocol field. The scheme the broker's own
     /// listener speaks is the scheme of the URLs it mints.
     #[default]
+    #[schemars(description = "Ignores both fields. The URLs the broker builds carry the scheme its own listener speaks.")]
     Untrusted,
     /// Believe the forwarded-protocol fields, because a reverse proxy the
     /// operator controls sets them and overwrites whatever the client sent.
+    #[schemars(
+        description = "Believes both fields. Set it only behind a reverse proxy that overwrites both, or any client chooses the scheme of the URLs the broker builds, including the stored URL of an `@context` it serves to later readers."
+    )]
     Trusted,
 }
 

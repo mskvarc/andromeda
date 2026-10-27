@@ -5,10 +5,10 @@
 //! value one replica stored is one every other replica reads back.
 
 use crate::{header_section_limit::HeaderSectionLimit, human_byte_size::HumanByteSize, human_duration::HumanDuration};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use thiserror::Error;
-use toml_comment::TomlComment;
 
 /// The default most JSON values one request payload may hold: four entities at
 /// the default entity budget, or one geometry of the default position budget
@@ -31,46 +31,59 @@ const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturatin
 pub const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// What one request may cost the broker.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "What one request may cost the broker. A load balancer can send any request to any replica, so every replica of one deployment runs the same values."
+)]
 pub struct RequestLimitsConfig {
     /// The longest one request may take, in human-readable form (`"30s"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "The longest one request may run. A request still running then is answered `500` `InternalError`.")]
     pub timeout: HumanDuration,
     /// The largest request body accepted, in human-readable form
     /// (`"64 MiB"`). A larger body is answered 413.
-    #[toml_comment(inline)]
+    #[schemars(description = "The largest request body the broker accepts, counted after decompression. A larger body is answered `413`.")]
     pub max_body: HumanByteSize,
     /// The largest request header section accepted, from `"8 KiB"` to
     /// `"32 KiB"`, on HTTP/1.1, HTTP/2 and HTTP/3 alike: every field, the
     /// request line's method, target and authority included, costs its name,
     /// its value and 32 bytes. A request over it is answered 431. The
     /// management listener applies the same value.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and HTTP/3 alike, from 8 KiB to 32 KiB. Every field, the method, target and authority included, costs its name, its value and 32 bytes. A request over it is answered a bare `431`. The management listener applies the same limit."
+    )]
     pub max_header_section: HeaderSectionLimit,
     /// The most JSON values one request payload may hold, counted before the
     /// payload is parsed. Every scalar, array and object is one value. A
     /// payload's processing cost follows this count rather than its bytes; a
     /// request over it is answered 413 like one over `max_body`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most JSON values one request body may hold, counted before it is parsed. Every object, array, string, number, boolean and `null` counts once, so the count follows the cost of processing the body rather than its bytes. A body over it is answered `413`. Zero is refused."
+    )]
     pub max_json_values: NonZeroUsize,
     /// The most JSON values one written entity may hold outside its
     /// geometries and JSON literals, counted on the document the write
     /// expands to; an entity over it is answered 413.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most JSON values one written entity may hold outside its geometries and JSON literals, counted on the expanded document. An entity over it is answered `413`. Zero is refused."
+    )]
     pub max_entity_json_values: NonZeroUsize,
     /// The most positions one `GeoProperty` geometry may hold, in a written
     /// entity and in a query, subscription or registration geometry. A typed
     /// entity's geometry is counted before it is expanded. A written geometry
     /// over it is answered 413, a query's 403 `TooComplexQuery`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most positions one geometry may hold, in a written entity and in a query, subscription or registration geometry. A written geometry over it is answered `413`, a query's `403` `TooComplexQuery`. Zero is refused."
+    )]
     pub max_geometry_positions: NonZeroUsize,
     /// The deepest nesting one written attribute may have, counted in levels:
     /// each sub-attribute, each JSON object or list of a value, and each
     /// object or array inside a JSON literal is one. An attribute nesting
     /// deeper is answered 400 `BadRequestData`. At most 62, the deepest every
     /// stored value reads back at.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The deepest one written attribute may nest: each sub-attribute, each JSON object or list of a value, and each object or array inside a JSON literal is one level. An attribute nesting deeper is answered `400` `BadRequestData`. It is also the depth a `q` or `orderBy` path may walk. From 1 to 62, the deepest every stored value reads back at."
+    )]
     pub max_attribute_nesting: NonZeroUsize,
 }
 

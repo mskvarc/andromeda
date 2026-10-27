@@ -10,8 +10,9 @@ use crate::{
         tls::{ClientAuthenticationMode, TlsConfig},
     },
     validate::{
-        bound::{Bound, Relation},
+        bound::Relation,
         config_key::{ConfigKey, QueueKey, QueueName},
+        rule::{CompoundRule, Limit, Rule},
         violation::{ConfigurationViolation, Requirement},
         violation_log::ViolationLog,
     },
@@ -29,54 +30,61 @@ use std::time::Duration;
 /// statement itself, before another worker could reclaim the job.
 const SIDE_EFFECT_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
-/// Every rule that reads more than one table.
-pub(crate) fn check_cross_section(config: &BrokerConfig, log: &mut ViolationLog) {
-    check_deadlines(config, log);
-    check_listeners(config, log);
-}
-
 /// A saturated pool and a tenant cold build each answer 503 with
 /// `Retry-After` before the request deadline races them, and a side-effect
 /// lease outlasts the wait for its replay's connection. A provisional tenant
 /// outlives the longest creating request, or a request still running could
 /// find its database gone.
-fn check_deadlines(config: &BrokerConfig, log: &mut ViolationLog) {
-    let request = config.request_limits.timeout.duration();
-    let acquire = config.database.acquire_timeout.duration();
-    log.require(
-        ConfigKey::DatabaseAcquireTimeout,
-        acquire,
-        Relation::Below,
-        Bound::setting(ConfigKey::RequestLimitsTimeout, request),
-    );
-    log.require(
-        ConfigKey::Queue(QueueName::EntitySideEffects, QueueKey::LeaseTimeout),
-        config.entity.side_effects.queue.lease_timeout.duration(),
-        Relation::AtLeast,
-        Bound::SettingPlusMargin {
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Ordered {
             key: ConfigKey::DatabaseAcquireTimeout,
-            value: acquire,
-            margin: SIDE_EFFECT_LEASE_MARGIN,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
         },
-    );
-    log.require(
-        ConfigKey::TenancyBuildAdmissionTimeout,
-        config.tenancy.build.admission_timeout.duration(),
-        Relation::Below,
-        Bound::setting(ConfigKey::RequestLimitsTimeout, request),
-    );
-    log.require(
-        ConfigKey::TenancyProvisionalTenantLifetime,
-        config.tenancy.provisional_tenant_lifetime.duration(),
-        Relation::Above,
-        Bound::setting(ConfigKey::RequestLimitsTimeout, request),
-    );
+        Rule::Ordered {
+            key: ConfigKey::Queue(QueueName::EntitySideEffects, QueueKey::LeaseTimeout),
+            relation: Relation::AtLeast,
+            limit: Limit::KeyPlusMargin(ConfigKey::DatabaseAcquireTimeout, SIDE_EFFECT_LEASE_MARGIN),
+        },
+        Rule::Ordered {
+            key: ConfigKey::TenancyBuildAdmissionTimeout,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+        Rule::Ordered {
+            key: ConfigKey::TenancyProvisionalTenantLifetime,
+            relation: Relation::Above,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+    ]
+    .into_iter()
 }
+
+/// What [`check_listeners`] asks.
+pub(crate) const COMPOUND_RULES: [CompoundRule; 4] = [
+    CompoundRule {
+        keys: &[ConfigKey::ManagementPort, ConfigKey::ServerPort],
+        statement: "With `management.mode` at `\"separate-port\"`, `management.port` differs from `server.port`.",
+    },
+    CompoundRule {
+        keys: &[ConfigKey::ObservabilityMetricsMode, ConfigKey::ManagementMode],
+        statement: "Metrics are served on the management plane, so `observability.metrics.mode` at `\"prometheus\"` needs `management.mode` other than `\"disabled\"`.",
+    },
+    CompoundRule {
+        keys: &[ConfigKey::TlsCertificate, ConfigKey::TlsPrivateKey],
+        statement: "`tls.certificate` and `tls.private_key` are required as soon as a listener terminates TLS: `server.transport` at `\"tls\"`, `server.http3.mode` at `\"enabled\"`, or `management.transport` at `\"tls\"` with `management.mode` at `\"separate-port\"`.",
+    },
+    CompoundRule {
+        keys: &[ConfigKey::TlsClientAuthenticationCa, ConfigKey::TlsClientAuthenticationMode],
+        statement: "Once a listener terminates TLS, `tls.client_authentication.ca` is required while `tls.client_authentication.mode` is `\"optional\"` or `\"required\"`, and refused while it is `\"disabled\"`.",
+    },
+];
 
 /// A separate management plane binds its own port, metrics have a management
 /// plane to be served on, and every listener that terminates TLS has an
 /// identity to present.
-fn check_listeners(config: &BrokerConfig, log: &mut ViolationLog) {
+pub(crate) fn check_listeners(config: &BrokerConfig, log: &mut ViolationLog) {
     let management = &config.management;
     if matches!(management.mode, ManagementMode::SeparatePort) && management.port == config.server.port {
         log.record(ConfigurationViolation::ManagementPortCollision { port: management.port });

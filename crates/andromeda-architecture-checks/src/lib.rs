@@ -10,11 +10,13 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod architecture;
+pub mod configuration_description;
 pub mod configuration_layering;
 pub mod configuration_ownership;
 pub mod dependencies;
 pub mod detail_message;
 pub mod detail_message_baseline;
+pub mod generated_artifact;
 pub mod god_file;
 pub mod linked_retrieval;
 pub mod manifest_hygiene;

@@ -5,16 +5,20 @@ use crate::{
     human_duration::HumanDuration,
     schema::{db_name_prefix::DbNamePrefix, feature_mode::FeatureMode},
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::{NonZeroU32, NonZeroUsize};
-use toml_comment::TomlComment;
 
 /// Where each named tenant's data lives.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
+#[schemars(description = "How each named tenant's database is named, and how many connections its pool opens.")]
 #[serde(deny_unknown_fields)]
 pub struct TenantDatabasesConfig {
     /// The prefix of every per-tenant database name the broker provisions.
-    #[toml_comment(inline)]
+    #[schemars(
+        title = "SQL identifier prefix",
+        description = "The prefix every tenant database name starts with. Maintenance also uses it to recognise databases on the server that look like a tenant's but belong to none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no quoting."
+    )]
     pub name_prefix: DbNamePrefix,
     /// The most connections one tenant's pool opens.
     ///
@@ -22,7 +26,9 @@ pub struct TenantDatabasesConfig {
     /// stay open at once, this bounds the live connection count at
     /// `max_resident * max_connections` (plus the platform pools), so tenant
     /// churn cannot exhaust the server's connection limit.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most connections each named tenant's pool opens, in each broker process. With `tenancy.residency.max_resident` it bounds the open connections at their product, plus the default tenant's pool. Behind a proxy, `database.pooler.max_connections_per_tenant` applies instead."
+    )]
     pub max_connections: NonZeroU32,
 }
 
@@ -36,12 +42,13 @@ impl Default for TenantDatabasesConfig {
 }
 
 /// How many tenant runtimes stay open, and for how long.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[schemars(description = "How many tenants a broker process keeps loaded, for how long, and how an unloaded tenant with due work is loaded again.")]
 #[serde(deny_unknown_fields)]
 pub struct ResidencyConfig {
     /// How long an unused tenant runtime stays open before it is evicted, in
     /// human-readable form (`"15m"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How long an unused tenant stays loaded. Unloading a tenant closes its pool and stops its background work.")]
     pub idle_eviction_after: HumanDuration,
     /// The most tenant runtimes open at once.
     ///
@@ -50,11 +57,13 @@ pub struct ResidencyConfig {
     /// tenants than this have requests in flight at once the cache overshoots
     /// it by at most the number of concurrent requests, trimmed back as they
     /// complete.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, so the count can exceed this by the number of concurrent requests until they complete."
+    )]
     pub max_resident: NonZeroUsize,
     /// How often idle and orphaned runtimes are swept, in human-readable form
     /// (`"30s"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How often idle tenants are unloaded and provisional tenants settled.")]
     pub sweep_interval: HumanDuration,
     /// The shortest wait before a just-evicted tenant with due work is woken
     /// again, in human-readable form (`"30s"`).
@@ -63,18 +72,24 @@ pub struct ResidencyConfig {
     /// recorded for it; a due instant sooner than this is pushed back to it,
     /// so evicting a tenant that is only a little overdue and reloading it
     /// cannot thrash. A failed probe records a retry this far out.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out."
+    )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in
     /// human-readable form (`"1m"`). It is the first idle-eviction candidate
     /// yet keeps this much idle life, so it never displaces a runtime a
     /// request touched. Below `idle_eviction_after` to have that effect.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long a tenant loaded for its due work stays loaded. Such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
+    )]
     pub woken_lifetime: HumanDuration,
     /// The most dormant tenants one wake pass opens. Woken runtimes are
     /// built through the same admission bound as request cold builds, so this
     /// keeps a wake burst from starving request-driven cold loads.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most unloaded tenants one pass loads for due work. Woken tenants share `tenancy.build.max_concurrent` with tenants loaded for requests, so this keeps a burst of wakes from crowding requests out."
+    )]
     pub max_wakes_per_pass: NonZeroUsize,
     /// The most tenant runtimes torn down at once.
     ///
@@ -82,7 +97,9 @@ pub struct ResidencyConfig {
     /// takes a teardown slot first, so the runtimes alive at once stay within
     /// `max_resident` plus this bound. A cold build that must make room while
     /// every slot is busy waits for one within `tenancy.build.admission_timeout`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most tenants unloading at once. Loaded and unloading tenants together stay within `tenancy.residency.max_resident` plus this. A load that must make room while every slot is busy waits for one within `tenancy.build.admission_timeout`."
+    )]
     pub max_concurrent_evictions: NonZeroUsize,
 }
 
@@ -101,7 +118,8 @@ impl Default for ResidencyConfig {
 }
 
 /// How a tenant runtime is opened on its first request.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[schemars(description = "How a tenant is loaded on its first request.")]
 #[serde(deny_unknown_fields)]
 pub struct TenantBuildConfig {
     /// The most tenant runtimes built at once.
@@ -110,7 +128,9 @@ pub struct TenantBuildConfig {
     /// absent, runs the migrator over a direct connection. Requests past the
     /// bound wait for a build permit for at most `admission_timeout`; the wait
     /// is reported as `andromeda_tenant_build_admission_wait_seconds`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most tenants loading at once. Loading opens a pool and, when the tenant's schema is behind or absent, runs migrations over a direct connection. Requests past the bound wait for at most `tenancy.build.admission_timeout`."
+    )]
     pub max_concurrent: NonZeroUsize,
     /// How long a request may wait to be admitted to a cold build before it is
     /// answered 503 with `Retry-After`, in human-readable form (`"20s"`).
@@ -118,7 +138,9 @@ pub struct TenantBuildConfig {
     /// Covers every wait ahead of the build itself: another request's build of
     /// the same tenant, a build permit, and a teardown slot when the cache is
     /// full. Below `request_limits.timeout`, which it would otherwise race.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long a request may wait for its tenant to start loading before it is answered `503` with `Retry-After`. Covers every wait ahead of the load itself: another request loading the same tenant, a free loading slot, and a free unloading slot when the cache is full."
+    )]
     pub admission_timeout: HumanDuration,
 }
 
@@ -133,11 +155,14 @@ impl Default for TenantBuildConfig {
 
 /// Whether named tenants are served, where their data lives, how many stay
 /// open, and how one is opened.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
+#[schemars(description = "Whether named tenants are served, how their databases are named and pooled, and how many stay loaded.")]
 #[serde(deny_unknown_fields)]
 pub struct TenancyConfig {
     /// Whether named tenants are served: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether named tenants are served. With `\"disabled\"` only the default tenant exists, and a request naming a tenant in `NGSILD-Tenant` is answered `501` `NoMultiTenantSupport`."
+    )]
     pub mode: FeatureMode,
     /// How long a provisional tenant whose database holds no information is
     /// kept before it is retired, in human-readable form (`"10m"`).
@@ -150,13 +175,18 @@ pub struct TenancyConfig {
     /// provisioned for this long. Longer than `request_limits.timeout`, the
     /// longest a creating request can take, or a request still running could
     /// find its database gone.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long a new tenant whose database still holds nothing is kept before its database is dropped. A creating operation that names a tenant for the first time prepares its database before it runs, and the tenant is answered as nonexistent until that database holds information; a refused operation leaves such a tenant behind."
+    )]
     pub provisional_tenant_lifetime: HumanDuration,
     /// Where each named tenant's data lives.
+    #[schemars(description = "How each named tenant's database is named and pooled.")]
     pub databases: TenantDatabasesConfig,
     /// How many tenant runtimes stay open, and for how long.
+    #[schemars(description = "How many tenants stay loaded, and for how long.")]
     pub residency: ResidencyConfig,
     /// How a tenant runtime is opened on its first request.
+    #[schemars(description = "How a tenant is loaded on its first request.")]
     pub build: TenantBuildConfig,
 }
 

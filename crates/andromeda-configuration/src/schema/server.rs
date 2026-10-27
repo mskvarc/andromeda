@@ -5,34 +5,41 @@ use crate::{
     human_duration::HumanDuration,
     schema::{http3::Http3Config, listener_transport::ListenerTransport},
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
-use toml_comment::TomlComment;
 
 /// The data-plane listener.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "The data-plane listener that serves the NGSI-LD API over HTTP/1.1 and HTTP/2, and its HTTP/3 sibling.")]
 pub struct ServerConfig {
     /// Listener address.
-    #[toml_comment(inline)]
+    #[schemars(description = "The address the API listens on. The `--host` command-line flag overrides it.")]
     pub host: IpAddr,
     /// Listener port.
+    #[schemars(description = "The TCP port the API listens on. The `--port` command-line flag overrides it.")]
     pub port: u16,
     /// Whether the listener serves plaintext or terminates TLS: `plaintext` or `tls`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether the API listener serves plaintext or terminates TLS with the `[tls]` certificate. One port speaks one or the other, never both."
+    )]
     pub transport: ListenerTransport,
     /// How long accepted connections may take to drain once shutdown begins,
     /// in human-readable form (`"30s"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How long open connections get to finish their requests once shutdown begins. Connections still open after it are closed.")]
     pub graceful_drain_timeout: HumanDuration,
     /// How long a connection stays half-closed, unread, after a response
     /// announced `Connection: close` (an HTTP/1.1 refusal of an upload the
     /// broker did not read), so the client reads the response before the
     /// connection is closed, in human-readable form (`"1s"`). Shorter than
     /// `graceful_drain_timeout`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long an HTTP/1.1 connection stays open, unread, after a response that announced `Connection: close`, so the client reads the response before the connection goes. Such a response refuses an upload the broker did not read."
+    )]
     pub announced_close_timeout: HumanDuration,
     /// The HTTP/3 listener sharing this listener's host and port.
+    #[schemars(description = "The optional HTTP/3 listener on the same host and port as the API.")]
     pub http3: Http3Config,
 }
 

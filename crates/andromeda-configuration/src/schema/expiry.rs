@@ -2,9 +2,9 @@
 //! `expiresAt`.
 
 use crate::human_duration::HumanDuration;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
-use toml_comment::TomlComment;
 
 /// How often expired resources are deleted, and how many entities one pass
 /// reads.
@@ -15,15 +15,18 @@ use toml_comment::TomlComment;
 /// Entity Maps. A resource may outlive its `expiresAt` in storage by up to one
 /// cadence; the read paths hide what has expired in the meantime, so the API
 /// never serves it.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[schemars(description = "How often each tenant deletes the resources past their `expiresAt`, and how many entities one pass reads.")]
 #[serde(deny_unknown_fields)]
 pub struct ExpiryConfig {
     /// How often the sweeps run, in human-readable form (`"30s"`).
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots and Entity Maps. An expired resource may stay in storage for up to one interval, but the API never serves it."
+    )]
     pub sweep_interval: HumanDuration,
     /// The expired entities, or entities with expired attributes, one pass of
     /// the entity sweep reads at a time.
-    #[toml_comment(inline)]
+    #[schemars(description = "The most expired entities, or entities with expired attributes, one step of the entity sweep reads.")]
     pub batch_size: NonZeroU32,
 }
 

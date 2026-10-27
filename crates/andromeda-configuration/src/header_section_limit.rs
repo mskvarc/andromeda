@@ -2,6 +2,7 @@
 //! version.
 
 use crate::human_byte_size::HumanByteSize;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -29,8 +30,11 @@ pub enum HeaderSectionLimitError {
 /// over the limit is answered 431 Request Header Fields Too Large (RFC 6585
 /// section 5) on HTTP/1.1, HTTP/2 and HTTP/3 alike. Its wire form is a byte
 /// size (`"32 KiB"`), from 8 KiB to 32 KiB.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(try_from = "HumanByteSize", into = "HumanByteSize")]
+#[schemars(
+    description = "A request header section size, written as a byte size from `\"8 KiB\"` to `\"32 KiB\"`. Each field costs its name, its value and 32 bytes."
+)]
 pub struct HeaderSectionLimit(u16);
 
 impl HeaderSectionLimit {

@@ -2,21 +2,25 @@
 
 use crate::{comma_list::array_or_comma_list, schema::content_coding::ContentCoding};
 use enumset::EnumSet;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// How hard the response compressor works, trading CPU against ratio.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "How hard the response compressor works, trading CPU time against compression ratio.")]
 pub enum CompressionQuality {
     /// Favour speed over compression ratio.
+    #[schemars(description = "Favours speed over compression ratio.")]
     Fastest,
     /// Favour compression ratio over speed.
+    #[schemars(description = "Favours compression ratio over speed.")]
     Best,
     /// The coding's own balanced default.
     #[default]
+    #[schemars(description = "Uses each coding's own balance of speed and ratio.")]
     Default,
 }
 
@@ -24,15 +28,20 @@ pub enum CompressionQuality {
 ///
 /// The enabled codings are a single typed set listed as an array; an empty set
 /// means response compression is off, so there is no separate umbrella toggle.
-#[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Response compression: which codings, at what quality.")]
 pub struct CompressionConfig {
     /// The content codings the broker may compress responses with. An empty
     /// array disables response compression entirely.
     #[serde(deserialize_with = "array_or_comma_list")]
+    #[schemars(
+        with = "Vec<ContentCoding>",
+        description = "The codings responses may be compressed with, chosen against the client's `Accept-Encoding`. An empty list turns response compression off."
+    )]
     pub algorithms: EnumSet<ContentCoding>,
     /// How hard the compressor works.
-    #[toml_comment(inline)]
+    #[schemars(description = "How hard the compressor works.")]
     pub quality: CompressionQuality,
 }
 

@@ -6,6 +6,7 @@ use crate::{
     broker_config::BrokerConfig,
     load::{ListenerOverrides, LoadError, PRECEDENCE, default_config_file, load, resolve_config_file},
     redact::{redacted_json, redacted_toml},
+    reference::template::configuration_template,
     schema::{
         content_coding::ContentCoding,
         database::{pooler::PoolerConfig, write_reserve::WriteReserve},
@@ -15,7 +16,6 @@ use crate::{
             cors::{CorsMode, MethodRule},
         },
     },
-    template::default_template,
     validate::{
         bound::{Bound, Quantity, Relation},
         config_key::{ConfigKey, QueueKey, QueueName},
@@ -160,7 +160,7 @@ fn a_cors_method_list_set_from_the_environment_splits_on_commas() {
 #[test]
 #[serial]
 fn the_generated_defaults_load_back_to_the_defaults() {
-    let loaded = load_file(&default_template()).expect("the generated defaults load");
+    let loaded = load_file(&configuration_template().expect("the template renders")).expect("the generated defaults load");
     pretty_assertions::assert_eq!(
         toml::to_string(&loaded).expect("the loaded configuration renders"),
         toml::to_string(&BrokerConfig::default()).expect("the defaults render")
@@ -356,7 +356,7 @@ fn the_default_config_file_lives_under_the_application_subdir() {
 
 #[test]
 fn the_template_renders_tables_and_commented_fields() {
-    let rendered = default_template();
+    let rendered = configuration_template().expect("the template renders");
     assert!(rendered.contains("[server]"), "{rendered}");
     assert!(rendered.contains("[database.maintenance]"), "{rendered}");
     assert!(rendered.lines().any(|line| line.starts_with('#')), "{rendered}");
@@ -366,7 +366,7 @@ fn the_template_renders_tables_and_commented_fields() {
 /// bulk-write strategy to choose.
 #[test]
 fn the_default_configuration_names_no_atomic_write_table() {
-    let rendered = default_template();
+    let rendered = configuration_template().expect("the template renders");
     assert!(!rendered.contains("atomic_write") && !rendered.contains("bulk_mode"), "{rendered}");
 }
 

@@ -33,7 +33,7 @@ const CONFIG_SUBDIR: &str = "andromeda";
 const CONFIG_FILE_NAME: &str = "andromeda.toml";
 
 /// The prefix every environment variable the configuration reads carries.
-const ENVIRONMENT_PREFIX: &str = "ANDROMEDA__";
+pub(crate) const ENVIRONMENT_PREFIX: &str = "ANDROMEDA__";
 
 /// The layers in the order a later one overrides an earlier one, for operator
 /// reporting.

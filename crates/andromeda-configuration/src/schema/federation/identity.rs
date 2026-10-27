@@ -3,20 +3,23 @@
 
 use crate::schema::{source_alias::SourceAlias, source_extras::SourceExtras, source_identifier::SourceIdentifier};
 use iri_rs::iri;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 use url::Url;
 
 /// The identity returned by `/info/sourceIdentity` and used for distributed
 /// loop detection (Table 5.2.40-1).
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "The identity the broker reports at `/ngsi-ld/v1/info/sourceIdentity` and uses to detect distributed forwarding loops.")]
 pub struct IdentityConfig {
     /// The URI identifying this Context Source.
-    #[toml_comment(inline)]
+    #[schemars(description = "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI.")]
     pub source_id: SourceIdentifier,
     /// The pseudonym appended to forwarded requests' `Via` fields.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The name the broker adds to the `Via` header of every request it forwards. A request whose `Via` already holds this name is treated as a forwarding loop, so every broker in a federation needs its own. Must be an HTTP token, as a `Via` entry requires."
+    )]
     pub source_alias: SourceAlias,
     /// The origin peers reach this broker at, such as `https://broker-a:1056`.
     ///
@@ -25,12 +28,18 @@ pub struct IdentityConfig {
     /// source; left out, the broker cannot receive those notifications, and
     /// forwarding stays off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The address peers and clients reach the broker at, path prefix included, such as `https://broker.example.org`. Every absolute URL the broker hands out is built on it, including stored `@context` URLs, and forwarded subscriptions name it as the endpoint their notifications come back to. Left out, URLs are built on the origin each request reveals, with no prefix, and subscriptions are not forwarded to context sources."
+    )]
     pub advertised_url: Option<Url>,
     /// Instance-specific information reported verbatim as
     /// `contextSourceExtras`, written as a table whose keys are reported as
     /// written. Raw JSON, never JSON-LD, never interpreted. Set in the file
     /// only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Instance-specific information the broker reports verbatim as the NGSI-LD `contextSourceExtras` member at `/ngsi-ld/v1/info/sourceIdentity`, with the enabled extensions listed beside it. Its keys are reported exactly as written and none is reserved, since the member is raw JSON that is never interpreted. Set in the file only. A date-time, `inf` or `nan`, which JSON cannot spell, is refused when the broker starts. Left out, `contextSourceExtras` lists only the enabled extensions, and is absent when none is enabled."
+    )]
     pub extras: Option<SourceExtras>,
 }
 

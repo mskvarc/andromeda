@@ -51,6 +51,9 @@ pub enum ConfigKey {
     /// `management.port`.
     #[display("management.port")]
     ManagementPort,
+    /// `management.mode`.
+    #[display("management.mode")]
+    ManagementMode,
     /// `tls.certificate`.
     #[display("tls.certificate")]
     TlsCertificate,
@@ -60,6 +63,9 @@ pub enum ConfigKey {
     /// `tls.client_authentication.ca`.
     #[display("tls.client_authentication.ca")]
     TlsClientAuthenticationCa,
+    /// `tls.client_authentication.mode`.
+    #[display("tls.client_authentication.mode")]
+    TlsClientAuthenticationMode,
     /// `request_limits.timeout`.
     #[display("request_limits.timeout")]
     RequestLimitsTimeout,
@@ -69,6 +75,21 @@ pub enum ConfigKey {
     /// `http.body_decoding.blocking_threshold`.
     #[display("http.body_decoding.blocking_threshold")]
     HttpBodyDecodingBlockingThreshold,
+    /// `http.cors.allow_origins`.
+    #[display("http.cors.allow_origins")]
+    HttpCorsAllowOrigins,
+    /// `http.cors.allow_methods`.
+    #[display("http.cors.allow_methods")]
+    HttpCorsAllowMethods,
+    /// `http.cors.allow_headers`.
+    #[display("http.cors.allow_headers")]
+    HttpCorsAllowHeaders,
+    /// `http.cors.expose_headers`.
+    #[display("http.cors.expose_headers")]
+    HttpCorsExposeHeaders,
+    /// `http.cors.credentials`.
+    #[display("http.cors.credentials")]
+    HttpCorsCredentials,
     /// `database.max_connections`.
     #[display("database.max_connections")]
     DatabaseMaxConnections,
@@ -111,6 +132,9 @@ pub enum ConfigKey {
     /// `jsonld.cache.hit_flush_interval`.
     #[display("jsonld.cache.hit_flush_interval")]
     JsonLdCacheHitFlushInterval,
+    /// `jsonld.preloaded_contexts.url`.
+    #[display("jsonld.preloaded_contexts.url")]
+    JsonLdPreloadedContextUrl,
     /// `entity.spatial_index.rebuild_interval`.
     #[display("entity.spatial_index.rebuild_interval")]
     EntitySpatialIndexRebuildInterval,
@@ -150,6 +174,9 @@ pub enum ConfigKey {
     /// `temporal.storage.retention.sweep_interval`.
     #[display("temporal.storage.retention.sweep_interval")]
     TemporalStorageRetentionSweepInterval,
+    /// `temporal.storage.retention.mode`.
+    #[display("temporal.storage.retention.mode")]
+    TemporalStorageRetentionMode,
     /// `notifications.delivery.request_timeout`.
     #[display("notifications.delivery.request_timeout")]
     NotificationsDeliveryRequestTimeout,
@@ -192,6 +219,9 @@ pub enum ConfigKey {
     /// `snapshot.preparation.scoped_operation_timeout`.
     #[display("snapshot.preparation.scoped_operation_timeout")]
     SnapshotPreparationScopedOperationTimeout,
+    /// `observability.metrics.mode`.
+    #[display("observability.metrics.mode")]
+    ObservabilityMetricsMode,
 }
 
 #[cfg(test)]

@@ -1,19 +1,17 @@
 //! A byte size rendered and parsed in the human-readable `bytesize` form.
 
 use bytesize::ByteSize;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::borrow::Cow;
 
 /// A [`ByteSize`] whose wire form is the human-readable spelling (`"64 MiB"`,
 /// `"512 kB"`) and which also accepts a bare integer byte count.
 ///
-/// The broker wraps [`ByteSize`] in this newtype for the same reason
-/// [`HumanDuration`](crate::human_duration::HumanDuration) exists: the
-/// commented-configuration renderer (`toml_comment::TomlComment`) serialises
-/// each field through the field type's own `Serialize` impl, so the size
-/// representation has to live on the type rather than in a container-level
-/// `#[serde(with = ...)]`. Delegating to `ByteSize`'s own serde keeps the human
-/// spelling on every rendering path -- the commented template, the
-/// effective-config dump, and figment loading.
+/// The representation lives on the type for the reason
+/// [`HumanDuration`](crate::human_duration::HumanDuration) gives: the
+/// template, the effective configuration and the JSON Schema all see the same
+/// spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HumanByteSize(ByteSize);
 
@@ -61,6 +59,23 @@ impl Serialize for HumanByteSize {
         S: Serializer,
     {
         self.0.serialize(serializer)
+    }
+}
+
+// Manual: the size reads from a string or a bare integer, a shape no derive
+// states.
+impl JsonSchema for HumanByteSize {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("ByteSize")
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "title": "size",
+            "description": "A size such as \"512 KiB\", \"64 MiB\" or \"2 MB\", or a bare number of bytes.",
+            "type": ["string", "integer"],
+            "minimum": 0
+        })
     }
 }
 

@@ -1,5 +1,6 @@
 //! How the link-values of one message are laid out over `Link` field lines.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -13,17 +14,23 @@ use strum::{Display, EnumString};
 /// Whatever the layout, the link-values keep one order: the JSON-LD `@context`
 /// link first, then the pagination links as `first`, `prev`, `next`, `last`,
 /// then every other link-value in the order it was written.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(
+    description = "How the `Link` values of one response or HTTP notification are spread over field lines. Every layout means the same; they differ in which clients read them correctly. The order is always the `@context` link, the pagination links, then any other value."
+)]
 pub enum LinkFieldLayout {
     /// Every link-value on one field line, separated by `, `.
     #[default]
+    #[schemars(description = "Puts every `Link` value on one field line, separated by commas, for clients that read only one field line.")]
     Combined,
     /// One field line per concern: the `@context` link, the pagination links,
     /// and every other link-value, each concern that is present on its own line.
+    #[schemars(description = "Gives the `@context` link, the pagination links and any other values a field line each.")]
     Grouped,
     /// Every link-value on its own field line.
+    #[schemars(description = "Gives every `Link` value its own field line, for clients that never split a line on commas.")]
     Separate,
 }
 

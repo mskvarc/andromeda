@@ -1,17 +1,11 @@
 //! The `[management]` rules.
 
-use crate::{
-    schema::management::{ManagementConfig, ManagementMode},
-    validate::{config_key::ConfigKey, violation_log::ViolationLog},
-};
+use crate::validate::{config_key::ConfigKey, rule::Rule};
 
 /// A separate management port of zero is reserved for dynamic binding and
 /// cannot be advertised; in the other modes the port is not read.
-pub(crate) fn check_management(management: &ManagementConfig, log: &mut ViolationLog) {
-    match management.mode {
-        ManagementMode::SeparatePort => log.positive_count(ConfigKey::ManagementPort, management.port.into()),
-        ManagementMode::SharedPort | ManagementMode::Disabled => {}
-    }
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [Rule::Positive(ConfigKey::ManagementPort)].into_iter()
 }
 
 #[cfg(test)]

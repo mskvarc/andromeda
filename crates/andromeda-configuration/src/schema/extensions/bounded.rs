@@ -1,22 +1,27 @@
 //! The tables of the extensions that refuse a request past a count.
 
 use crate::schema::feature_mode::FeatureMode;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
-use toml_comment::TomlComment;
 
 /// The temporal delete-by-query extension.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Temporal delete-by-query: a windowed, selector-scoped purge of temporal history on `DELETE /temporal/entities`.")]
 pub struct TemporalDeleteByQueryConfig {
     /// Whether the extension is served: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether temporal delete-by-query is served on `DELETE /temporal/entities`. It acts on local history only and is never forwarded."
+    )]
     pub mode: FeatureMode,
     /// The most history instances one delete-by-query removes before it is
     /// refused with `TooManyResults` (403). Counted before anything is
     /// deleted, so an oversized purge is refused whole rather than
     /// half-executed.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most history instances one delete-by-query may remove. The matches are counted before anything is deleted, so a larger purge is refused whole with `403` `TooManyResults` and deletes nothing. Zero is refused."
+    )]
     pub max_matches: NonZeroU64,
 }
 
@@ -30,17 +35,22 @@ impl Default for TemporalDeleteByQueryConfig {
 }
 
 /// The grouped temporal aggregation extension.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.")]
 pub struct TemporalAggregationGroupingConfig {
     /// Whether the extension is served: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether grouped temporal aggregation is served: calendar and cyclic time buckets, per-entity-member keys and value-in-effect keys, with groups of mixed units split rather than refused. Off, `aggrGroupBy` and `groupedValues` are refused with `InvalidRequest`."
+    )]
     pub mode: FeatureMode,
     /// The most distinct groups one grouped aggregation produces before it is
     /// refused with `TooManyResults` (403). Counted before the groups are
     /// computed, so an oversized grouping is refused whole rather than
     /// partly returned.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most distinct groups one grouped aggregation may produce. The groups are counted before they are computed, so a larger grouping is refused whole with `403` `TooManyResults`. Zero is refused."
+    )]
     pub max_groups: NonZeroU64,
 }
 

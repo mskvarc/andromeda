@@ -4,7 +4,7 @@
 //! optional port, and an optional prefix string." A broker behind a reverse
 //! proxy that mounts it under a prefix cannot learn that prefix from the
 //! request, so an operator who configures the URL peers reach the broker at
-//! (`[identity] advertised_url`) configures the `apiRoot` itself, path included,
+//! (`federation.identity.advertised_url`) configures the `apiRoot` itself, path included,
 //! and every URL the broker mints is built on it. Without one, the origin the
 //! request reveals is the `apiRoot`, with no prefix.
 
@@ -27,7 +27,7 @@ pub enum ApiRootError {
 }
 
 /// The configured `apiRoot`, installed as a request extension by the API
-/// assembly when `[identity] advertised_url` is set.
+/// assembly when `federation.identity.advertised_url` is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdvertisedApiRoot(Url);
 

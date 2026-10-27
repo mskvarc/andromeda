@@ -12,26 +12,32 @@ use crate::{
     human_duration::HumanDuration,
     schema::tls_material_sources::{ClientTrust, TlsMaterialSources},
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, path::PathBuf};
 use strum::{Display, EnumString};
 use thiserror::Error;
-use toml_comment::TomlComment;
 
 /// Whether the broker asks a connecting client for a certificate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether the broker asks a connecting client for a certificate (mutual TLS).")]
 pub enum ClientAuthenticationMode {
     /// No client certificate is requested; authentication, if any, is an
     /// application-layer concern.
     #[default]
+    #[schemars(description = "Asks for no client certificate. Authentication, if any, happens above TLS.")]
     Disabled,
     /// A client certificate is requested and verified when presented, but a
     /// client presenting none is still served. A certificate from an unknown
     /// issuer fails the handshake.
+    #[schemars(
+        description = "Verifies a client certificate when the client sends one and still serves a client without. A certificate from an issuer outside `tls.client_authentication.ca` fails the handshake."
+    )]
     Optional,
     /// Every client must present a certificate issued by the configured CA.
+    #[schemars(description = "Serves only clients that present a certificate chaining to `tls.client_authentication.ca`.")]
     Required,
 }
 
@@ -40,16 +46,19 @@ pub enum ClientAuthenticationMode {
 /// Clause 6.2 requires TLS 1.2 support, so `tls1.2` is the default; `tls1.3`
 /// is the stricter choice for a deployment whose clients all speak it. QUIC
 /// carries TLS 1.3 only (RFC 9001) and ignores this setting.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
+#[schemars(description = "The oldest TLS version a TCP handshake may negotiate. HTTP/3 always uses TLS 1.3 and ignores it.")]
 pub enum MinimumProtocolVersion {
     /// TLS 1.2 and TLS 1.3.
     #[default]
     #[serde(rename = "tls1.2")]
     #[strum(serialize = "tls1.2")]
+    #[schemars(description = "Accepts TLS 1.2 and TLS 1.3. NGSI-LD requires TLS 1.2 support.")]
     Tls12,
     /// TLS 1.3 only.
     #[serde(rename = "tls1.3")]
     #[strum(serialize = "tls1.3")]
+    #[schemars(description = "Accepts TLS 1.3 only, for a deployment whose clients all speak it.")]
     Tls13,
 }
 
@@ -72,43 +81,62 @@ pub enum TlsConfigError {
 
 /// Whether connecting clients are asked for a certificate, and which issuer
 /// it must chain to.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Whether clients must present a certificate, and which issuers it must chain to.")]
 pub struct ClientAuthenticationConfig {
     /// Whether clients are asked for a certificate: `disabled`, `optional` or
     /// `required`.
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether clients are asked for a certificate, and whether one is required.")]
     pub mode: ClientAuthenticationMode,
     /// PEM bundle of the CAs client certificates must chain to. Required
     /// exactly when `mode` is not `disabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        title = "path",
+        description = "The PEM bundle of the CAs client certificates must chain to. Left out, no client certificate can be verified."
+    )]
     pub ca: Option<PathBuf>,
 }
 
 /// The broker's TLS identity and handshake policy, shared by every listener
 /// that terminates TLS.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "The TLS identity and handshake policy every TLS-terminating listener shares: the API listener with `server.transport` at `\"tls\"`, the HTTP/3 listener, and a separate management listener with `management.transport` at `\"tls\"`. Nothing reads it while no listener terminates TLS."
+)]
 pub struct TlsConfig {
     /// PEM-encoded certificate chain the broker presents, leaf first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        title = "path",
+        description = "The PEM certificate chain the broker presents, leaf first. Left out, no listener can terminate TLS. The file is reloaded when it changes."
+    )]
     pub certificate: Option<PathBuf>,
     /// PEM-encoded private key for the leaf certificate (PKCS#8, SEC1 or PKCS#1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        title = "path",
+        description = "The PEM private key of the leaf certificate, as PKCS#8, SEC1 or PKCS#1. Left out, no listener can terminate TLS. The file is reloaded when it changes."
+    )]
     pub private_key: Option<PathBuf>,
     /// Oldest TLS version a TCP handshake may negotiate: `tls1.2` or `tls1.3`.
-    #[toml_comment(inline)]
+    #[schemars(description = "The oldest TLS version a TCP connection may negotiate. HTTP/3 always uses TLS 1.3.")]
     pub minimum_protocol_version: MinimumProtocolVersion,
     /// How long a TCP client may take to complete its handshake before the
     /// connection is dropped, in human-readable form (`"10s"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a TCP client may take to finish its TLS handshake before the connection is dropped.")]
     pub handshake_timeout: HumanDuration,
     /// How long the certificate files must stay unchanged after a change
     /// before they are reloaded, in human-readable form (`"2s"`), so a
     /// certificate and key replaced one after the other load together.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long the certificate files must stay unchanged after an edit before the broker loads them again, so a certificate and key replaced one after the other load together."
+    )]
     pub reload_settle_after: HumanDuration,
     /// Client certificate authentication.
+    #[schemars(description = "Client certificate authentication (mutual TLS).")]
     pub client_authentication: ClientAuthenticationConfig,
 }
 

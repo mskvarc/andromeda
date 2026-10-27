@@ -1,9 +1,9 @@
 //! The `[temporal.query]` table: how much of a Temporal Evolution one read
 //! returns.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
-use toml_comment::TomlComment;
 
 /// The largest `temporal.query.max_last_n` a deployment may configure.
 ///
@@ -33,13 +33,15 @@ pub const MAX_AGGREGATION_INSTANCES_CEILING: u64 = 100_000_000;
 pub const DEFAULT_MAX_AGGREGATION_INSTANCES: NonZeroU64 = NonZeroU64::MIN.saturating_add(999_999);
 
 /// How much of a Temporal Evolution one read returns.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "How much of a Temporal Evolution one temporal read returns.")]
 pub struct TemporalQueryConfig {
     /// Instances per attribute a temporal read without `lastN` returns before
     /// it is paged forwards (clause 6.3.10: "If no limits are specified, a
     /// default limit is enforced, depending on implementation specific
     /// configurations").
+    #[schemars(description = "Instances per attribute a temporal read without `lastN` returns before it is paged forwards.")]
     pub default_last_n: u32,
     /// The largest `lastN` answered in full; a larger one is narrowed to this
     /// many instances per attribute and paged backwards with a 206 whose
@@ -49,6 +51,9 @@ pub struct TemporalQueryConfig {
     /// It is also the page of an aggregated read (clause 4.5.19): at most this
     /// many whole periods per attribute, paged forwards with a 206 whose
     /// `Content-Range` ends at the last period served.
+    #[schemars(
+        description = "The largest `lastN` answered in one response. A larger `lastN` is narrowed to this many instances per attribute and paged backwards with a 206 whose `Content-Range` still reports the requested `lastN`. It is also the most whole periods per attribute on one page of an aggregated read."
+    )]
     pub max_last_n: u32,
     /// The most instances of one attribute sharing one instant on the
     /// requested axis a temporal page carries.
@@ -60,6 +65,9 @@ pub struct TemporalQueryConfig {
     /// records with one `createdAt` and `modifiedAt`. A larger group is
     /// refused with `TooManyResults` (clause 5.5.6). At most 1,000,000, and
     /// not below `max_last_n`.
+    #[schemars(
+        description = "The most instances of one attribute sharing one instant that a temporal page carries. A page never splits the instances sharing the instant at its edge, since a client resumes from a timestamp that cannot point inside an instant, so it carries them whole however far past its size that takes it. A larger group is refused with `403` `TooManyResults`."
+    )]
     pub max_edge_group: u32,
     /// The raw instances one page of an aggregated temporal read folds per
     /// attribute at most, beside its `max_last_n` periods.
@@ -68,7 +76,9 @@ pub struct TemporalQueryConfig {
     /// instance beyond the bound falls in; a first period holding more than
     /// the bound alone is read whole, since a period is never split. At most
     /// 100,000,000.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most raw instances per attribute one page of an aggregated temporal read folds, beside its `temporal.query.max_last_n` periods. A page that would fold more ends at the start of the period the first instance beyond the bound falls in; a first period holding more than the bound is read whole, since a period is never split. Zero is refused."
+    )]
     pub max_aggregation_instances: NonZeroU64,
 }
 

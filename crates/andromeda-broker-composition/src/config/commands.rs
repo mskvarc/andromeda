@@ -9,12 +9,9 @@ use andromeda_configuration::{
     broker_config::BrokerConfig,
     load::{ListenerOverrides, load, resolve_config_file},
     redact::{redacted_json, redacted_toml},
-    template::default_template,
+    reference::{ReferenceError, descriptor::configuration_descriptor_text, json_schema::configuration_schema_text, template::configuration_template},
 };
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 /// Effective configuration output selected by the CLI.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,31 +96,57 @@ pub fn print_effective_reported(config_file: Option<PathBuf>, format: Configurat
     }
 }
 
-/// Emit a fully commented default configuration, reporting a write failure.
+/// Emit the commented configuration template, reporting a failure.
 ///
-/// With `output` set the commented TOML is written to that file; without it the
-/// document is printed to standard output. Every emitted setting carries the
-/// rustdoc of the field it comes from as a leading comment, and every field
-/// left at its built-in default is shown with that default's value.
+/// With `output` set the template is written to that file; without it the
+/// document is printed to standard output. Every table and key carries its
+/// operator description as a leading comment and is shown at its built-in
+/// default; a key that is not set by default is shown commented out, at an
+/// example value.
 #[must_use]
 pub fn generate_default_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
-    let rendered = default_template();
+    emit_reported(configuration_template(), output, "configuration template")
+}
+
+/// Emit the JSON Schema of the configuration file, reporting a failure.
+///
+/// With `output` set the schema is written to that file; without it the schema
+/// is printed to standard output.
+#[must_use]
+pub fn generate_schema_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
+    emit_reported(configuration_schema_text(), output, "configuration schema")
+}
+
+/// Emit the configuration descriptor, reporting a failure.
+///
+/// With `output` set the descriptor is written to that file; without it the
+/// descriptor is printed to standard output.
+#[must_use]
+pub fn generate_descriptor_reported(output: Option<PathBuf>) -> ProcessExitOutcome {
+    emit_reported(configuration_descriptor_text(), output, "configuration descriptor")
+}
+
+/// Print `rendered`, or write it to `output`, reporting the outcome; `what`
+/// names the document in the report.
+fn emit_reported(rendered: Result<String, ReferenceError>, output: Option<PathBuf>, what: &str) -> ProcessExitOutcome {
+    let rendered = match rendered {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            eprintln!("{error}");
+            return ProcessExitOutcome::ConfigurationFailure;
+        }
+    };
     let Some(path) = output else {
         print!("{rendered}");
         return ProcessExitOutcome::Success;
     };
-    write_template(&path, &rendered)
-}
-
-/// Write the template to `path`, reporting the outcome.
-fn write_template(path: &Path, rendered: &str) -> ProcessExitOutcome {
-    match fs::write(path, rendered) {
+    match fs::write(&path, rendered) {
         Ok(()) => {
-            println!("Default configuration written to {}", path.display());
+            println!("{what} written to {}", path.display());
             ProcessExitOutcome::Success
         }
         Err(error) => {
-            eprintln!("failed to write default configuration to {}: {error}", path.display());
+            eprintln!("failed to write the {what} to {}: {error}", path.display());
             ProcessExitOutcome::ConfigurationFailure
         }
     }

@@ -1,5 +1,6 @@
 //! Whether Core API writes add to the Temporal Evolution of an Entity.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -11,17 +12,22 @@ use strum::{Display, EnumString};
 /// of an Entity whenever the 'current state' is modified via the Core API."
 /// Either way, a Core write still changes current state, and a Temporal API
 /// write (clauses 5.6.11 to 5.6.16) is recorded exactly as before.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether a Core API write adds to the Temporal Evolution of the entity it changes.")]
 pub enum CoreWriteHistory {
     /// Every Core write that changes current state records the instances it
     /// modified, the instances it removed and the Scope it changed or
     /// cleared; a write restating what the Entity holds records nothing.
     #[default]
+    #[schemars(
+        description = "A Core API write that changes current state records the attribute instances it modified or removed and any Scope it changed or cleared; a write restating what the entity holds records nothing."
+    )]
     Recorded,
     /// Core writes leave the Temporal Evolution untouched: only the Temporal
     /// API adds to it or removes from it.
+    #[schemars(description = "Core API writes leave history untouched: only the Temporal API adds to it or removes from it.")]
     NotRecorded,
 }
 

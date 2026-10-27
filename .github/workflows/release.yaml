@@ -298,6 +298,15 @@ jobs:
             dist/andromeda-*.tar.xz
             dist/andromeda-*.zip
 
+      # The checked-in copies equal what the tagged code generates; the
+      # architecture checks refuse a commit where they differ.
+      - name: Stage configuration schema and descriptor
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp docs/configuration/andromeda.schema.json "dist/andromeda-${{ github.ref_name }}.schema.json"
+          cp docs/configuration/andromeda.descriptor.json "dist/andromeda-${{ github.ref_name }}.descriptor.json"
+
       - name: Generate release notes
         uses: orhun/git-cliff-action@v4
         with:

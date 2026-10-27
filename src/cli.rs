@@ -56,6 +56,13 @@ pub enum ConfigCommand {
 
     /// Write a fully commented configuration file populated with the defaults.
     Generate(GenerateArgs),
+
+    /// Write the JSON Schema of the configuration file.
+    Schema(OutputArgs),
+
+    /// Write the configuration descriptor: every key with its type, default,
+    /// choices, environment variable and limits, as JSON.
+    Describe(OutputArgs),
 }
 
 #[derive(Args)]
@@ -69,6 +76,13 @@ pub struct ShowArgs {
 pub struct GenerateArgs {
     /// File to write the commented configuration to. Printed to standard output
     /// when omitted.
+    #[arg(short = 'o', long, value_name = "FILE")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct OutputArgs {
+    /// File to write to. Printed to standard output when omitted.
     #[arg(short = 'o', long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 }

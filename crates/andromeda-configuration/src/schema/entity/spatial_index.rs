@@ -2,9 +2,9 @@
 //! consistent with the store.
 
 use crate::human_duration::HumanDuration;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// How the resident spatial index is kept consistent with the store whose
 /// geo queries it accelerates.
@@ -13,7 +13,8 @@ use toml_comment::TomlComment;
 /// entities hold, so an index may narrow a query only while it holds every
 /// entity a geometry could match. The three modes differ in how they uphold
 /// that, and in the deployments they uphold it for.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
+#[schemars(description = "How the in-memory spatial index stays consistent with the database whose geo queries it narrows.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum SpatialConsistency {
@@ -26,6 +27,9 @@ pub enum SpatialConsistency {
     /// per geo query; the default because a broker cannot know whether another
     /// process writes its database.
     #[default]
+    #[schemars(
+        description = "Before narrowing a geo query, catch the index up with every location the database changed since its last recorded position. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query."
+    )]
     Watermark,
     /// Every committed write updates the index before the write returns.
     ///
@@ -34,21 +38,30 @@ pub enum SpatialConsistency {
     /// process sharing the store, a replica, reaches this process's index
     /// only at the next rebuild, and until then a geo query here can miss the
     /// entity.
+    #[schemars(
+        description = "Update the index with every committed write before the write returns. Exact only when a single broker process writes the database: another process's writes reach this index only at the next rebuild, and until then a geo query here can miss the entity."
+    )]
     CommitSynchronous,
     /// The index is not kept: the store evaluates every geo query.
     ///
     /// Exact in every deployment, at the cost of the store evaluating the
     /// relation against every candidate row its own spatial index yields.
+    #[schemars(
+        description = "Keep no index and let the database evaluate every geo query. Exact in every deployment, at the cost of the database checking every candidate row its own spatial index yields."
+    )]
     StoreVerified,
 }
 
 /// Spatial-index consistency and rebuild policy.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
+#[schemars(description = "How each tenant's in-memory spatial index is kept consistent and rebuilt.")]
 #[serde(deny_unknown_fields)]
 pub struct SpatialIndexConfig {
     /// How the index is kept consistent with the store: `watermark`
     /// (default), `commit-synchronous` or `store-verified`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How the index is kept consistent with the database. `\"commit-synchronous\"` saves a read per geo query but is exact only when a single broker process writes the database."
+    )]
     pub consistency: SpatialConsistency,
     /// Interval between full index rebuilds from the store, in human-readable
     /// form (`"30m"`).
@@ -57,7 +70,9 @@ pub struct SpatialIndexConfig {
     /// completes the store evaluates every geo query. Later rebuilds drop the
     /// entries of entities deleted since, and under `commit-synchronous` they
     /// are also what brings in a replica's writes.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes."
+    )]
     pub rebuild_interval: HumanDuration,
 }
 

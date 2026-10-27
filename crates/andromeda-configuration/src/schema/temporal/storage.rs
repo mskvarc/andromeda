@@ -2,10 +2,10 @@
 //! the columnstore, and aged out.
 
 use crate::{human_duration::HumanDuration, schema::feature_mode::FeatureMode};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use thiserror::Error;
-use toml_comment::TomlComment;
 
 /// The chunk interval the tenant schema declares when no override is set.
 ///
@@ -24,18 +24,23 @@ pub const DEFAULT_CONVERT_AFTER: HumanDuration = HumanDuration::from_days(30);
 const SECONDS_PER_DAY: u64 = 86_400;
 
 /// When a history partition is converted to the columnstore.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "When history partitions are converted to the columnstore.")]
 pub struct ColumnstoreConfig {
     /// The age past which a history partition is converted, as a whole number
     /// of days in human-readable form (`"30days"`). Not below the chunk
     /// interval, or a partition still receiving rows would be converted.
     /// Ignored on an edition without a columnstore.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The age past which a history partition is converted to the columnstore. Only the TimescaleDB TSL edition has a columnstore; on the Apache-2.0 edition the key has no effect."
+    )]
     pub convert_after: HumanDuration,
     /// How often partitions past `convert_after` are converted, in
     /// human-readable form (`"1h"`). The first sweep runs when a tenant opens.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How often partitions past `temporal.storage.columnstore.convert_after` are converted. The first sweep runs when a tenant opens."
+    )]
     pub sweep_interval: HumanDuration,
 }
 
@@ -53,21 +58,29 @@ impl Default for ColumnstoreConfig {
 /// Retention ages temporal storage out and is not an NGSI-LD operation: the
 /// specification defines deletion of a Temporal Evolution (clause 5.6.16)
 /// and says nothing about storage an operator chooses not to keep.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "Whether, and at what age, history is deleted. Retention is a storage decision, not an NGSI-LD deletion: history past the age leaves the database without a deletion record and without a notification."
+)]
 pub struct RetentionConfig {
     /// Whether history older than `delete_after` is deleted: `enabled` or
     /// `disabled`. Off by default: a broker never deletes history it was not
     /// told to.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether history older than `temporal.storage.retention.delete_after` is deleted. A broker never deletes history it was not told to."
+    )]
     pub mode: FeatureMode,
     /// The age past which history is deleted, as a whole number of days in
     /// human-readable form (`"365days"`). Required when `mode` is `enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "How much history to keep. History partitions recorded entirely before this age are dropped, together with the Scope history no remaining instance needs. Left out, no age is set and no history is deleted."
+    )]
     pub delete_after: Option<HumanDuration>,
     /// How often history past `delete_after` is deleted, in human-readable
     /// form (`"1h"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How often history past `temporal.storage.retention.delete_after` is deleted while retention is enabled.")]
     pub sweep_interval: HumanDuration,
 }
 
@@ -82,18 +95,24 @@ impl Default for RetentionConfig {
 }
 
 /// How history is partitioned, converted to the columnstore, and aged out.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "How history is partitioned, converted to the columnstore and aged out.")]
 pub struct TemporalStorageConfig {
     /// The span one write-side history partition covers, as a whole number of
     /// days in human-readable form (`"7days"`). Left out, the schema's own
     /// default stands. Reconciled against the stored partitioning when a
     /// tenant opens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The span of time one history partition covers. Left out, a partition covers 7 days. A change is reconciled against the stored partitioning when the broker next opens the tenant; shorten it if the largest partition still in the rowstore keeps passing 4 GB."
+    )]
     pub chunk_interval: Option<HumanDuration>,
     /// When a history partition is converted to the columnstore.
+    #[schemars(description = "When history partitions are converted to the columnstore.")]
     pub columnstore: ColumnstoreConfig,
     /// Whether, and at what age, history is deleted.
+    #[schemars(description = "Whether, and at what age, history is deleted.")]
     pub retention: RetentionConfig,
 }
 

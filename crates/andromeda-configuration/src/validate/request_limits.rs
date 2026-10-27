@@ -2,14 +2,27 @@
 
 use crate::{
     schema::request_limits::RequestLimitsConfig,
-    validate::{config_key::ConfigKey, violation::ConfigurationViolation, violation_log::ViolationLog},
+    validate::{
+        config_key::ConfigKey,
+        rule::{CompoundRule, Rule},
+        violation::ConfigurationViolation,
+        violation_log::ViolationLog,
+    },
 };
 
-/// A request needs a positive deadline and a positive body ceiling, and a
-/// ceiling past the address width would admit every body.
+/// A request needs a positive deadline and a positive body ceiling.
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [Rule::Positive(ConfigKey::RequestLimitsTimeout), Rule::Positive(ConfigKey::RequestLimitsMaxBody)].into_iter()
+}
+
+/// What [`check_request_limits`] asks.
+pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
+    keys: &[ConfigKey::RequestLimitsMaxBody],
+    statement: "It must fit the platform's address width.",
+}];
+
+/// A ceiling past the address width would admit every body.
 pub(crate) fn check_request_limits(limits: &RequestLimitsConfig, log: &mut ViolationLog) {
-    log.positive_duration(ConfigKey::RequestLimitsTimeout, limits.timeout);
-    log.positive_count(ConfigKey::RequestLimitsMaxBody, limits.max_body.as_u64());
     if limits.max_body_bytes().is_err() {
         log.record(ConfigurationViolation::ExceedsAddressWidth {
             key: ConfigKey::RequestLimitsMaxBody,

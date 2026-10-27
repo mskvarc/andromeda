@@ -2,10 +2,10 @@
 //! blocking thread pool.
 
 use crate::human_byte_size::HumanByteSize;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use thiserror::Error;
-use toml_comment::TomlComment;
 
 /// The default most payloads decoded beside the executor at once.
 const DEFAULT_MAX_CONCURRENT_BLOCKING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(3);
@@ -20,19 +20,24 @@ pub enum BodyDecodingConfigError {
 }
 
 /// Where request payloads are decoded.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Where request bodies are parsed, so a large body does not hold up other requests.")]
 pub struct BodyDecodingConfig {
     /// The payload size, in human-readable form (`"256 KiB"`), from which a
     /// payload is parsed and decoded on the blocking thread pool instead of
     /// on an executor worker, so a large payload does not stall unrelated
     /// requests sharing that worker.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The body size from which a body is parsed on a separate thread pool instead of the request's own worker, so a large body does not stall unrelated requests sharing that worker."
+    )]
     pub blocking_threshold: HumanByteSize,
     /// The most payloads decoded on the blocking thread pool at once. A
     /// decode holds memory in proportion to its payload while it runs; a
     /// payload waiting for its turn holds only its bytes.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How many large bodies are parsed on the separate thread pool at once. A parse holds memory in proportion to its body while it runs; a body waiting for its turn holds only its bytes. Zero is refused."
+    )]
     pub max_concurrent_blocking: NonZeroUsize,
 }
 

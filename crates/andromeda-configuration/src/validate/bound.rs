@@ -3,6 +3,7 @@
 use crate::validate::config_key::ConfigKey;
 use derive_more::{Display, From};
 use humantime::format_duration;
+use serde::Serialize;
 use std::time::Duration;
 
 /// A configured value an ordering rule compares: a span of time or a count.
@@ -19,8 +20,20 @@ pub enum Quantity {
     Count(u64),
 }
 
+impl Quantity {
+    /// Whether the quantity is zero: no time, or no items.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        match self {
+            Quantity::Duration(duration) => duration.is_zero(),
+            Quantity::Count(count) => count == 0,
+        }
+    }
+}
+
 /// How a configured value must relate to its bound.
-#[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Relation {
     /// Strictly less than the bound.
     #[display("below")]

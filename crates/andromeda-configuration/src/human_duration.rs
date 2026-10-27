@@ -1,6 +1,7 @@
 //! A duration rendered and parsed in the human-readable `humantime` form.
 
 use humantime_serde as humantime;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::time::Duration;
 
@@ -8,14 +9,15 @@ use std::time::Duration;
 /// (`"30s"`, `"1h"`, `"7days"`) rather than the `{ secs, nanos }` shape serde
 /// derives for a bare `Duration`.
 ///
-/// The broker uses this newtype instead of `#[serde(with = "humantime_serde")]`
-/// on a plain `Duration` field because the commented-configuration renderer
-/// (`toml_comment::TomlComment`) serialises each field through the field type's
-/// own `Serialize` impl and does not see a `with` attribute; a bare `Duration`
-/// would therefore render as an inline table. Owning the representation on the
-/// type keeps every rendering path -- the commented template, the effective-config
-/// dump, and figment loading -- in agreement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The representation lives on the type rather than in a field's
+/// `#[serde(with = "humantime_serde")]`, so the template, the effective
+/// configuration and the JSON Schema all see the same spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[schemars(
+    with = "String",
+    title = "duration",
+    description = "A duration such as \"500ms\", \"30s\", \"15m\", \"1h 30m\" or \"7days\"."
+)]
 pub struct HumanDuration(Duration);
 
 impl HumanDuration {

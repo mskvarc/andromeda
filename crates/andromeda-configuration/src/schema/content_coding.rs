@@ -1,6 +1,7 @@
 //! The HTTP content codings the broker may compress with or decompress from.
 
 use enumset::EnumSetType;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -13,18 +14,23 @@ use strum::{Display, EnumString};
 /// unrepresentable, iterates in a stable order, and is a single value the layer
 /// builders can test. `#[enumset(serialize_repr = "list")]` is what renders the
 /// set as that array of tokens instead of a packed bitmask integer.
-#[derive(Debug, Display, EnumString, Deserialize, Serialize, EnumSetType)]
+#[derive(Debug, Display, EnumString, Deserialize, Serialize, EnumSetType, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 #[enumset(serialize_repr = "list")]
+#[schemars(description = "One HTTP content coding the broker can compress with or decompress from.")]
 pub enum ContentCoding {
     /// The `gzip` coding (RFC 1952).
+    #[schemars(description = "The `gzip` coding.")]
     Gzip,
     /// The `br` Brotli coding (RFC 7932); spelled `brotli` in configuration.
+    #[schemars(description = "The Brotli coding, `br` on the wire.")]
     Brotli,
     /// The `deflate` zlib coding (RFC 1950/1951).
+    #[schemars(description = "The `deflate` (zlib) coding.")]
     Deflate,
     /// The `zstd` Zstandard coding (RFC 8878).
+    #[schemars(description = "The `zstd` Zstandard coding.")]
     Zstd,
 }
 

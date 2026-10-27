@@ -1,22 +1,20 @@
 //! The `[entity]` rules.
 
-use crate::{
-    schema::entity::EntityConfig,
-    validate::{
-        config_key::{ConfigKey, QueueName},
-        durable_queue::check_queue,
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    config_key::{ConfigKey, QueueName},
+    durable_queue::queue_rules,
+    rule::Rule,
 };
 
 /// The side-effect queue follows the queue rules. A dead-lettered job kept
 /// for no time is removed the moment it gives up, and the removal and the
 /// index rebuild need a positive cadence.
-pub(crate) fn check_entity(entity: &EntityConfig, log: &mut ViolationLog) {
-    check_queue(&entity.side_effects.queue, QueueName::EntitySideEffects, log);
-    log.positive_duration(ConfigKey::EntitySideEffectsDeadLetterAfter, entity.side_effects.retention.dead_letter_after);
-    log.positive_duration(ConfigKey::EntitySideEffectsCleanupInterval, entity.side_effects.retention.cleanup_interval);
-    log.positive_duration(ConfigKey::EntitySpatialIndexRebuildInterval, entity.spatial_index.rebuild_interval);
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    queue_rules(QueueName::EntitySideEffects).into_iter().chain([
+        Rule::Positive(ConfigKey::EntitySideEffectsDeadLetterAfter),
+        Rule::Positive(ConfigKey::EntitySideEffectsCleanupInterval),
+        Rule::Positive(ConfigKey::EntitySpatialIndexRebuildInterval),
+    ])
 }
 
 #[cfg(test)]

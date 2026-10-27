@@ -6,13 +6,15 @@
 //! at most the rest of the pool and writes always find the reserve.
 
 use derive_more::Into;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// A percentage of a tenant pool read requests never hold.
 ///
 /// Below 100, so a read request always has a connection to wait for.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Into, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Into, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "A percentage of a tenant pool that read requests never hold, from 0 to 99.")]
 #[serde(try_from = "u8", into = "u8")]
 pub struct WriteReserve(u8);
 

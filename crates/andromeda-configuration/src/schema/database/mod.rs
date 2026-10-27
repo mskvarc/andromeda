@@ -10,10 +10,10 @@ use crate::{
     human_duration::HumanDuration,
     schema::database::{maintenance::MaintenanceConfig, name_cache::NameCacheConfig, pooler::PoolerConfig, write_reserve::WriteReserve},
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 use url::Url;
 use url_macro::url;
 
@@ -32,58 +32,81 @@ use url_macro::url;
 /// ingest throughput: a server crash then loses the transactions of up to three
 /// times `wal_writer_delay` that were already acknowledged, and their
 /// notifications may already have been sent.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
+#[schemars(description = "The PostgreSQL `synchronous_commit` level the broker sets on every database it serves.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum SynchronousCommit {
     /// Wait for local WAL flush.
     #[default]
+    #[schemars(description = "Acknowledge a commit once its WAL is flushed to disk, and on synchronous standbys when any are configured.")]
     On,
     /// Acknowledge before WAL flush.
+    #[schemars(
+        description = "Acknowledge a commit before its WAL is flushed. Ingest is faster, but a server crash loses the transactions acknowledged in the last three times `wal_writer_delay`, and notifications for them may already have gone out."
+    )]
     Off,
     /// Wait for local WAL flush without synchronous standbys.
+    #[schemars(description = "Wait for the local WAL flush only, never for synchronous standbys.")]
     Local,
     /// Wait for a synchronous standby to apply WAL.
+    #[schemars(description = "Wait until synchronous standbys have applied the WAL, so a read on a standby sees the commit.")]
     RemoteApply,
     /// Wait for a synchronous standby to write WAL.
+    #[schemars(description = "Wait until synchronous standbys have handed the WAL to their operating system, without waiting for it to reach disk.")]
     RemoteWrite,
 }
 
 /// The PostgreSQL the broker stores in, and how it connects.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
+#[schemars(description = "The PostgreSQL server the broker stores in, and how it connects to it.")]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// PostgreSQL connection URL. It always names PostgreSQL itself, never a
     /// proxy: provisioning, migration and maintenance connect here, and so
     /// does the request path unless `[database.pooler]` is configured.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The PostgreSQL server and the default tenant's database. It always names PostgreSQL itself, never a proxy: tenant creation, migrations and maintenance connect here even when `database.pooler` is set, and so do requests when it is not."
+    )]
     pub url: Url,
     /// The most connections the platform pool opens.
+    #[schemars(
+        description = "The most connections the default tenant's pool opens, in each broker process. Named tenants size their pools with `tenancy.databases.max_connections`."
+    )]
     pub max_connections: u32,
     /// Percentage of each tenant pool that read requests (queries, retrievals,
     /// discovery and temporal reads) never hold, so writes keep connections
     /// however many reads queue. Rounded down: a pool too small to spare a
     /// whole connection keeps every one for reads. Below 100.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Rounded down to whole connections: a pool too small to spare one keeps every connection for reads. Must be below 100."
+    )]
     pub write_reserve_percent: WriteReserve,
     /// How long a request-path connection checkout waits for a free connection
     /// before it is shed as backpressure, in human-readable form (`"5s"`). Kept
     /// below `request_limits.timeout` so a saturated pool surfaces as a 503
     /// with `Retry-After` before the request deadline races it.
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a request waits for a free database connection before it is answered `503` with `Retry-After`.")]
     pub acquire_timeout: HumanDuration,
     /// Commit durability installed on each database with `ALTER DATABASE ...
     /// SET`: `on` by default; `off` trades the durability of acknowledged
     /// writes for ingest throughput.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The PostgreSQL `synchronous_commit` level set on the default tenant's database and every tenant database. It is installed with `ALTER DATABASE ... SET`, so every session inherits it, including sessions a transaction-pooling proxy hands out. With `\"off\"`, a server crash can lose writes clients were already told succeeded."
+    )]
     pub synchronous_commit: SynchronousCommit,
     /// A transaction-pooling proxy on the request path. Left out, every
     /// connection goes to `url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "A transaction-pooling proxy, such as PgBouncer in transaction mode, on the request path. Left out, every connection goes straight to `database.url`."
+    )]
     pub pooler: Option<PoolerConfig>,
     /// The tenant name dictionary caches.
+    #[schemars(description = "The in-memory caches of each tenant's attribute and entity type names.")]
     pub name_cache: NameCacheConfig,
     /// Adaptive PostgreSQL inspection and maintenance.
+    #[schemars(description = "The adaptive PostgreSQL inspection and maintenance controller.")]
     pub maintenance: MaintenanceConfig,
 }
 

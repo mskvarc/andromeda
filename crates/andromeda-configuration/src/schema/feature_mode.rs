@@ -1,5 +1,6 @@
 //! The `mode` of a feature that is either wholly on or wholly off.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -9,14 +10,17 @@ use strum::{Display, EnumString};
 /// more than two states has a mode enum of its own, and an enumerable set of
 /// independent choices (the content codings) is a typed set listed as an
 /// array.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
+#[schemars(description = "Whether a feature is on or off.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum FeatureMode {
     /// The feature is off.
+    #[schemars(description = "Turn the feature off.")]
     Disabled,
     /// Enable the feature.
     #[default]
+    #[schemars(description = "Turn the feature on.")]
     Enabled,
 }
 

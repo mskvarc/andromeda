@@ -20,65 +20,86 @@ use crate::schema::extensions::{
     cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
     switch::ExtensionSwitch,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// Whether the extensions follow their own tables or are all forced off.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether the extensions follow their own tables or are all forced off.")]
 pub enum ExtensionsMode {
     /// Each extension is served as its own table says.
     #[default]
+    #[schemars(description = "Each extension is served as its own table says.")]
     Configured,
     /// Every extension is off, cursor pagination included, whatever its own
     /// table says; the override is logged at startup.
+    #[schemars(
+        description = "Every extension is off, cursor pagination included, whatever its own table says; each override is logged at startup. The ETSI conformance runs set it, so the shipped binary is the one tested."
+    )]
     Conformance,
 }
 
 /// What a `q` bracket may name as a target language, each level admitting
 /// everything the one before it does.
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, Display, EnumString)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "What a `q` bracket may name as a target language, each level admitting everything the one before it does.")]
 pub enum QTargetLanguages {
     /// The clause 4.9 ABNF alone: `[en]`, never `[en-GB]`.
     #[default]
+    #[schemars(description = "Only an attribute name, as the NGSI-LD `q` grammar defines: `[en]` is admitted, `[en-GB]` is refused with `BadRequestData`.")]
     Specification,
     /// Every RFC 5646 language tag, matched by tag equality.
+    #[schemars(description = "Every RFC 5646 language tag, matched by case-insensitive tag equality.")]
     LanguageTags,
     /// Every RFC 5646 tag and RFC 4647 extended range, matched by extended
     /// filtering.
+    #[schemars(
+        description = "Every RFC 5646 tag and RFC 4647 extended range, matched by extended filtering, so `[en]` selects `en-GB` too. This changes what some queries valid under `\"specification\"` select."
+    )]
     LanguageRanges,
 }
 
 /// The `[extensions.q_target_languages]` table.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "What a `q` bracket may name as a target language.")]
 pub struct QTargetLanguagesConfig {
     /// What a `q` bracket may name: `specification`, `language-tags` or
     /// `language-ranges`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "What a `q` bracket may name as a target language. A query carrying a target language is held to the level every context source it reaches advertises."
+    )]
     pub mode: QTargetLanguages,
 }
 
 /// Andromeda's opt-in, non-standard features.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "Andromeda's opt-in, non-standard features, one table each. Every extension is inert unless a client asks for it, and its off state is the behaviour of a conformant broker."
+)]
 pub struct ExtensionsConfig {
     /// Whether the extensions follow their own tables (`configured`) or are
     /// all forced off (`conformance`), as the ETSI conformance runs set.
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether the extensions follow their own tables (`\"configured\"`) or are all forced off (`\"conformance\"`).")]
     pub mode: ExtensionsMode,
     /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1), the default
     /// paging of a fresh request unless set otherwise.
+    #[schemars(description = "Opaque cursor page pointers, and how a request that names neither `offset` nor `cursor` is paged.")]
     pub cursor_pagination: CursorPaginationConfig,
     /// Temporal delete-by-query on `DELETE /temporal/entities`.
     ///
     /// A windowed, selector-scoped temporal history purge the NGSI-LD
     /// temporal-delete family (clauses 5.6.13, 5.6.15, 5.6.16) has no
     /// operation for. Local-scope only; never forwarded.
+    #[schemars(
+        description = "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for."
+    )]
     pub temporal_delete_by_query: TemporalDeleteByQueryConfig,
     /// Grouped temporal aggregation via `aggrGroupBy` and
     /// `format=groupedValues`.
@@ -88,6 +109,7 @@ pub struct ExtensionsConfig {
     /// per-entity-member keys, and value-in-effect keys, with mixed-unit
     /// groups (clause 4.5.2) split rather than refused. Off, `aggrGroupBy` and
     /// `groupedValues` are refused with `InvalidRequest`.
+    #[schemars(description = "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.")]
     pub temporal_aggregation_grouping: TemporalAggregationGroupingConfig,
     /// Linked Entity retrieval on the temporal operations.
     ///
@@ -99,6 +121,9 @@ pub struct ExtensionsConfig {
     /// parameters are refused with `InvalidRequest` on the temporal URL
     /// bindings, and a nested projection, a `q` hop or a retrieving `join` in
     /// a query body with `BadRequestData`.
+    #[schemars(
+        description = "Linked entity retrieval on the temporal operations. On, Retrieve and Query Temporal Evolution and the temporal Entity Map accept `join`, `joinLevel` and `containedBy` and retrieve the linked entities' temporal evolution over the request's window. Off, those parameters are refused with `InvalidRequest`, and a nested projection, a `q` hop or a retrieving `join` in a query body with `BadRequestData`."
+    )]
     pub temporal_linked_retrieval: ExtensionSwitch,
     /// `datasetId` and `deleteAll` granularity on entity Purge.
     ///
@@ -106,6 +131,9 @@ pub struct ExtensionsConfig {
     /// the per-`datasetId` precision the single-entity Delete Attribute
     /// operation (clause 5.6.5) already has. Off, a `datasetId` or `deleteAll`
     /// on `DELETE /entities` is refused with `InvalidRequest`.
+    #[schemars(
+        description = "`datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId` or `deleteAll` there is refused with `InvalidRequest`."
+    )]
     pub purge_dataset_scope: ExtensionSwitch,
     /// Tenant management on `/tenants`.
     ///
@@ -114,6 +142,9 @@ pub struct ExtensionsConfig {
     /// paginated tenant collection and suspend/resume via `PATCH isActive`,
     /// and advertises the surface at `/info/sourceIdentity`. No API operation
     /// ever drops a tenant's physical database.
+    #[schemars(
+        description = "Tenant management on `/tenants`. On, the broker serves the tenant collection, per-tenant introspection and suspend or resume through `PATCH isActive`, and advertises them at `/info/sourceIdentity`. No API operation ever drops a tenant's database."
+    )]
     pub tenant_management: ExtensionSwitch,
     /// A `near` geo-query bounded from both sides.
     ///
@@ -122,6 +153,9 @@ pub struct ExtensionsConfig {
     /// `minDistance` and at most `maxDistance` away, on queries, temporal
     /// queries, Subscription `geoQ` and registration discovery. Off, the pair
     /// is refused with `BadRequestData` (clause 5.7.2.4).
+    #[schemars(
+        description = "A `near` geo-query bounded from both sides. On, a `near` carrying both `minDistance` and `maxDistance` matches the entities between the two, on queries, temporal queries, subscription `geoQ` and registration discovery. Off, the pair is refused with `BadRequestData`."
+    )]
     pub near_distance_band: ExtensionSwitch,
     /// `Accept-Language` read as the clause 4.15 language filter.
     ///
@@ -131,6 +165,9 @@ pub struct ExtensionsConfig {
     /// `Accept-Language` field, and each of those responses carries
     /// `Vary: Accept-Language` (RFC 9110 section 12.5.5). Off, the field is
     /// ignored, as RFC 9110 section 12.5.4 permits.
+    #[schemars(
+        description = "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities, Temporal Evolutions or context source registrations that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
+    )]
     pub accept_language: ExtensionSwitch,
     /// What a `q` bracket may name as a target language.
     ///
@@ -142,6 +179,7 @@ pub struct ExtensionsConfig {
     /// extended filtering, so `[en]` selects `en-GB` too (Class 2). A query
     /// carrying a target language is held to the level every Context Source
     /// it reaches advertises.
+    #[schemars(description = "What a `q` bracket may name as a target language.")]
     pub q_target_languages: QTargetLanguagesConfig,
 }
 

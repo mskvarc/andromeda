@@ -3,8 +3,9 @@
 use crate::{
     schema::jsonld::JsonLdConfig,
     validate::{
-        bound::{Bound, Quantity, Relation},
+        bound::{Quantity, Relation},
         config_key::ConfigKey,
+        rule::{CompoundRule, Limit, Rule},
         violation::ConfigurationViolation,
         violation_log::ViolationLog,
     },
@@ -15,17 +16,29 @@ use std::{collections::HashSet, time::Duration};
 /// before a remote origin server could answer.
 const MIN_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// A download needs a deadline of a second and room for one byte, the hit
-/// counters a positive flush cadence, and a preloaded URL one file to serve it.
+/// A download needs a deadline of a second and room for one byte, and the hit
+/// counters a positive flush cadence.
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Ordered {
+            key: ConfigKey::JsonLdFetchTimeout,
+            relation: Relation::AtLeast,
+            limit: Limit::Fixed(Quantity::Duration(MIN_FETCH_TIMEOUT)),
+        },
+        Rule::Positive(ConfigKey::JsonLdFetchMaxSize),
+        Rule::Positive(ConfigKey::JsonLdCacheHitFlushInterval),
+    ]
+    .into_iter()
+}
+
+/// What [`check_jsonld`] asks.
+pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
+    keys: &[ConfigKey::JsonLdPreloadedContextUrl],
+    statement: "No two preloaded contexts name the same URL.",
+}];
+
+/// A preloaded URL has one file to serve it.
 pub(crate) fn check_jsonld(jsonld: &JsonLdConfig, log: &mut ViolationLog) {
-    log.require(
-        ConfigKey::JsonLdFetchTimeout,
-        jsonld.fetch.timeout.duration(),
-        Relation::AtLeast,
-        Bound::Fixed(Quantity::Duration(MIN_FETCH_TIMEOUT)),
-    );
-    log.positive_count(ConfigKey::JsonLdFetchMaxSize, jsonld.fetch.max_size.as_u64());
-    log.positive_duration(ConfigKey::JsonLdCacheHitFlushInterval, jsonld.cache.hit_flush_interval);
     let mut named = HashSet::with_capacity(jsonld.preloaded_contexts.len());
     let mut reported = HashSet::new();
     jsonld

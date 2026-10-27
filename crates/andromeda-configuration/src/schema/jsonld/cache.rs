@@ -1,16 +1,17 @@
 //! The `[jsonld.cache]` table: how long resolved contexts are kept in memory.
 
 use crate::{human_duration::HumanDuration, schema::configured_lifetime::ConfiguredLifetime};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
-use toml_comment::TomlComment;
 
 /// How long resolved contexts are kept in memory.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "How long resolved contexts are kept in memory.")]
 pub struct JsonLdCacheConfig {
     /// The most entries each in-process context cache holds.
-    #[toml_comment(inline)]
+    #[schemars(description = "The most entries each in-process context cache holds. Zero is refused.")]
     pub max_entries: NonZeroU64,
     /// How long a term-cache entry lives, and how long a downloaded `@context`
     /// whose response states no expiration time is kept, in human-readable form
@@ -23,7 +24,9 @@ pub struct JsonLdCacheConfig {
     /// heuristic expiration time the same clause recommends assigning when the
     /// origin server specifies none. A span of zero or below one second is
     /// refused as the configuration is read.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long a downloaded `@context` is kept when its response sets no `Expires` and no `Cache-Control` `max-age` or `s-maxage`, and how long a term-cache entry lives. A response that sets one of those keeps its own lifetime. At least one second."
+    )]
     pub default_lifetime: ConfiguredLifetime,
     /// How long this process uses its in-memory copy of an `@context` the
     /// broker stores itself before reading the stored row again, in
@@ -36,11 +39,13 @@ pub struct JsonLdCacheConfig {
     /// served document is held to it too. A span of zero or below one second
     /// is refused as the configuration is read, since `max-age` states whole
     /// seconds.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How long a broker process uses its in-memory copy of a `@context` the broker stores itself before reading it from the database again, since another process sharing the database may have deleted it. It is also the `max-age` sent when such a `@context` is served. At least one second."
+    )]
     pub hosted_revalidation_interval: ConfiguredLifetime,
     /// How often the stored contexts' hit counters are written back, in
     /// human-readable form (`"5s"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How often the `numberOfHits` counters of stored `@context`s are written to the database.")]
     pub hit_flush_interval: HumanDuration,
 }
 

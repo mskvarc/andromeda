@@ -1,33 +1,29 @@
 //! The `[snapshot]` rules.
 
-use crate::{
-    schema::snapshot::SnapshotConfig,
-    validate::{
-        bound::{Bound, Relation},
-        config_key::ConfigKey,
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    bound::Relation,
+    config_key::ConfigKey,
+    rule::{Limit, Rule},
 };
 
 /// Both lifetimes are positive and the default is one a client could ask for.
 /// Preparation needs positive waits and cadences, and a storage quota of no
 /// bytes would refuse every Snapshot.
-pub(crate) fn check_snapshot(snapshot: &SnapshotConfig, log: &mut ViolationLog) {
-    log.positive_duration(ConfigKey::SnapshotDefaultLifetime, snapshot.default_lifetime);
-    log.positive_duration(ConfigKey::SnapshotMaxLifetime, snapshot.max_lifetime);
-    log.require(
-        ConfigKey::SnapshotDefaultLifetime,
-        snapshot.default_lifetime.duration(),
-        Relation::AtMost,
-        Bound::setting(ConfigKey::SnapshotMaxLifetime, snapshot.max_lifetime.duration()),
-    );
-    let preparation = &snapshot.preparation;
-    log.positive_duration(ConfigKey::SnapshotPreparationLeaseTimeout, preparation.lease_timeout);
-    log.positive_duration(ConfigKey::SnapshotPreparationRecoveryInterval, preparation.recovery_interval);
-    log.positive_duration(ConfigKey::SnapshotPreparationScopedOperationTimeout, preparation.scoped_operation_timeout);
-    if let Some(storage) = snapshot.quota.max_storage_per_tenant {
-        log.positive_count(ConfigKey::SnapshotMaxStoragePerTenant, storage.as_u64());
-    }
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Positive(ConfigKey::SnapshotDefaultLifetime),
+        Rule::Positive(ConfigKey::SnapshotMaxLifetime),
+        Rule::Ordered {
+            key: ConfigKey::SnapshotDefaultLifetime,
+            relation: Relation::AtMost,
+            limit: Limit::Key(ConfigKey::SnapshotMaxLifetime),
+        },
+        Rule::Positive(ConfigKey::SnapshotPreparationLeaseTimeout),
+        Rule::Positive(ConfigKey::SnapshotPreparationRecoveryInterval),
+        Rule::Positive(ConfigKey::SnapshotPreparationScopedOperationTimeout),
+        Rule::Positive(ConfigKey::SnapshotMaxStoragePerTenant),
+    ]
+    .into_iter()
 }
 
 #[cfg(test)]

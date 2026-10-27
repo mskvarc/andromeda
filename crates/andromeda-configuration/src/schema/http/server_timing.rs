@@ -2,9 +2,9 @@
 
 use crate::{comma_list::array_or_comma_list, schema::feature_mode::FeatureMode};
 use enumset::{EnumSet, EnumSetType};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// One stack-level span the broker can report in the `Server-Timing` header.
 ///
@@ -12,27 +12,32 @@ use toml_comment::TomlComment;
 /// per-subsystem spans (database query, JSON-LD expansion, rendering) are
 /// recorded by their owning crates into the same response extension and are not
 /// enumerated here.
-#[derive(Debug, Display, EnumString, Deserialize, Serialize, EnumSetType)]
+#[derive(Debug, Display, EnumString, Deserialize, Serialize, EnumSetType, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 #[enumset(serialize_repr = "list")]
+#[schemars(description = "One time the `Server-Timing` header can report.")]
 pub enum ServerTimingPhase {
     /// The whole request as seen at the stack boundary. Emitted by the base
     /// timing layer whenever `Server-Timing` is enabled.
+    #[schemars(description = "Reports the whole request, as seen where it enters the HTTP stack. Present whenever `Server-Timing` is on.")]
     Total,
     /// The span from the stack entry point to handler dispatch and back.
+    #[schemars(description = "Reports the time from the HTTP stack's entry to the handler and back.")]
     Dispatch,
 }
 
 /// `Server-Timing` configuration.
-#[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Whether responses carry a `Server-Timing` header, and which times it reports.")]
 pub struct ServerTimingConfig {
     /// Whether the broker emits a `Server-Timing` response header at all.
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether responses carry a `Server-Timing` header.")]
     pub mode: FeatureMode,
     /// Which stack-level phases are reported when the header is emitted.
     #[serde(deserialize_with = "array_or_comma_list")]
+    #[schemars(with = "Vec<ServerTimingPhase>", description = "Which times the header reports.")]
     pub phases: EnumSet<ServerTimingPhase>,
 }
 

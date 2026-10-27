@@ -2,8 +2,26 @@
 
 use crate::{
     schema::http::HttpStackConfig,
-    validate::{config_key::ConfigKey, violation::ConfigurationViolation, violation_log::ViolationLog},
+    validate::{config_key::ConfigKey, rule::CompoundRule, violation::ConfigurationViolation, violation_log::ViolationLog},
 };
+
+/// What [`check_http`] asks.
+pub(crate) const COMPOUND_RULES: [CompoundRule; 2] = [
+    CompoundRule {
+        keys: &[ConfigKey::HttpBodyDecodingBlockingThreshold],
+        statement: "It must fit the platform's address width.",
+    },
+    CompoundRule {
+        keys: &[
+            ConfigKey::HttpCorsCredentials,
+            ConfigKey::HttpCorsAllowOrigins,
+            ConfigKey::HttpCorsAllowMethods,
+            ConfigKey::HttpCorsAllowHeaders,
+            ConfigKey::HttpCorsExposeHeaders,
+        ],
+        statement: "With `http.cors.mode` at `\"enabled\"`, `http.cors.credentials` at `\"allowed\"` cannot be combined with `\"any\"` in an allow or expose list.",
+    },
+];
 
 /// A decode threshold past the address width would never send a payload to
 /// the blocking pool, and the Fetch standard forbids credentials beside a

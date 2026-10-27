@@ -1,6 +1,7 @@
 //! A configured span a cached `@context` stays fresh for.
 
 use crate::human_duration::HumanDuration;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
@@ -10,7 +11,8 @@ use thiserror::Error;
 /// Zero is not representable, since a lifetime of nothing caches nothing, and
 /// neither is a span below one second, since such a span is advertised as
 /// `max-age` in whole seconds, where it would become zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "A cache lifetime of at least one second, since it is advertised as `max-age` in whole seconds.")]
 #[serde(try_from = "HumanDuration", into = "HumanDuration")]
 pub struct ConfiguredLifetime(Duration);
 

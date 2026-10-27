@@ -1,16 +1,17 @@
 //! The table of an extension that is only switched on or off.
 
 use crate::schema::feature_mode::FeatureMode;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 
 /// Whether one extension is served. Off by default: a broker that sets no
 /// extension is a conformant broker.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Whether one extension that is only switched on or off is served.")]
 pub struct ExtensionSwitch {
     /// Whether the extension is served: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.")]
     pub mode: FeatureMode,
 }
 

@@ -1,13 +1,10 @@
 //! The `[notifications]` rules.
 
-use crate::{
-    schema::notifications::{NotificationsConfig, delivery::DeliveryConfig},
-    validate::{
-        bound::{Bound, Relation},
-        config_key::{ConfigKey, QueueKey, QueueName},
-        durable_queue::check_queue,
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    bound::Relation,
+    config_key::{ConfigKey, QueueKey, QueueName},
+    durable_queue::queue_rules,
+    rule::{Limit, Rule},
 };
 use std::time::Duration;
 
@@ -21,33 +18,25 @@ use std::time::Duration;
 /// worker could reclaim the delivery and send it again.
 const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
-/// The delivery tables, and the periodic drain's positive sleep bound.
-pub(crate) fn check_notifications(notifications: &NotificationsConfig, log: &mut ViolationLog) {
-    check_delivery(&notifications.delivery, log);
-    log.positive_duration(ConfigKey::NotificationsPeriodicMaxPollInterval, notifications.periodic.max_poll_interval);
-}
-
 /// An outbound notification needs a positive deadline, the queue the queue
 /// rules, its lease the margin over one attempt, and every retention a
-/// positive age and cadence.
-fn check_delivery(delivery: &DeliveryConfig, log: &mut ViolationLog) {
-    log.positive_duration(ConfigKey::NotificationsDeliveryRequestTimeout, delivery.request_timeout);
-    check_queue(&delivery.queue, QueueName::NotificationDelivery, log);
-    log.require(
-        ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
-        delivery.queue.lease_timeout.duration(),
-        Relation::AtLeast,
-        Bound::SettingPlusMargin {
-            key: ConfigKey::NotificationsDeliveryRequestTimeout,
-            value: delivery.request_timeout.duration(),
-            margin: DELIVERY_LEASE_MARGIN,
-        },
-    );
-    let retention = &delivery.retention;
-    log.positive_duration(ConfigKey::NotificationsDeliveryAcknowledgedAfter, retention.acknowledged_after);
-    log.positive_duration(ConfigKey::NotificationsDeliveryDeadLetterAfter, retention.dead_letter_after);
-    log.positive_duration(ConfigKey::NotificationsDeliveryOrphanEventAfter, retention.orphan_event_after);
-    log.positive_duration(ConfigKey::NotificationsDeliveryCleanupInterval, retention.cleanup_interval);
+/// positive age and cadence, as the periodic drain a positive sleep bound.
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [Rule::Positive(ConfigKey::NotificationsDeliveryRequestTimeout)]
+        .into_iter()
+        .chain(queue_rules(QueueName::NotificationDelivery))
+        .chain([
+            Rule::Ordered {
+                key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
+                relation: Relation::AtLeast,
+                limit: Limit::KeyPlusMargin(ConfigKey::NotificationsDeliveryRequestTimeout, DELIVERY_LEASE_MARGIN),
+            },
+            Rule::Positive(ConfigKey::NotificationsDeliveryAcknowledgedAfter),
+            Rule::Positive(ConfigKey::NotificationsDeliveryDeadLetterAfter),
+            Rule::Positive(ConfigKey::NotificationsDeliveryOrphanEventAfter),
+            Rule::Positive(ConfigKey::NotificationsDeliveryCleanupInterval),
+            Rule::Positive(ConfigKey::NotificationsPeriodicMaxPollInterval),
+        ])
 }
 
 #[cfg(test)]

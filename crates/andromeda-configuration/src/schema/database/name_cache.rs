@@ -9,21 +9,24 @@
 //! is resolved, which costs one indexed read and never refuses anything.
 
 use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// When a tenant's name caches are filled.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
+#[schemars(description = "When a tenant's name caches are filled.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum NameLoading {
     /// Every stored name is read into its cache when the tenant opens, so
     /// the first requests resolve names from memory.
     #[default]
+    #[schemars(description = "Read every stored name into the caches when the tenant is loaded, so its first requests resolve names from memory.")]
     Eager,
     /// A name is read into its cache the first time it is resolved.
+    #[schemars(description = "Read a name into its cache the first time it is resolved.")]
     Lazy,
 }
 
@@ -35,22 +38,27 @@ pub enum NameLoading {
 /// holds at most twice [`max_size_per_dictionary`](Self::max_size_per_dictionary)
 /// of cached names, and only as much as it has actually resolved: the budget is
 /// a ceiling, not an allocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TomlComment)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[schemars(
+    description = "How each tenant's attribute and entity type name caches are filled, how much memory each may hold, and how long an unused name stays in one."
+)]
 #[serde(deny_unknown_fields)]
 pub struct NameCacheConfig {
     /// When the caches are filled: `eager` (as the tenant opens) or `lazy`
     /// (as names are first resolved).
-    #[toml_comment(inline)]
+    #[schemars(description = "When the caches are filled: as the tenant is loaded, or as names are first resolved.")]
     pub loading: NameLoading,
     /// Memory each dictionary's cache may hold, in human-readable form
     /// (`"16 MiB"`). When it is full, the least valuable names are dropped to
     /// make room; a dropped name is read from its table when next resolved.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The memory each of a tenant's two name caches may hold, in each broker process. A tenant holds at most twice this, and only as much as it has resolved. When a cache is full the least valuable names are dropped; a dropped name is read back from the database the next time it is resolved, so a full cache costs reads but never refuses a write."
+    )]
     pub max_size_per_dictionary: HumanByteSize,
     /// How long a cached name may go unused before it is dropped, in
     /// human-readable form (`"8h"`), or `"unlimited"` to drop names only when
     /// the capacity is full.
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a cached name may go unused before it is dropped, or `\"unlimited\"` to drop names only when a cache is full.")]
     pub idle_eviction_after: IdleEviction,
 }
 
@@ -89,20 +97,25 @@ impl NameCacheConfig {
 /// When an unused name leaves the cache on its own.
 ///
 /// Written in configuration either as a duration (`"8h"`) or as `"unlimited"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[schemars(description = "How long an unused name stays cached: a duration, or `\"unlimited\"`.")]
 #[serde(untagged)]
 pub enum IdleEviction {
     /// Names are dropped only to make room within the capacity.
+    #[schemars(description = "Drop names only to make room when the cache is full.")]
     Never(Unlimited),
     /// Names unused for this long are dropped.
+    #[schemars(description = "Drop a name once it has gone unused this long.")]
     After(HumanDuration),
 }
 
 /// The `"unlimited"` spelling of [`IdleEviction::Never`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[schemars(description = "No idle timeout: names leave a cache only when it is full.")]
 #[serde(rename_all = "kebab-case")]
 pub enum Unlimited {
     /// No idle timeout.
+    #[schemars(description = "Keep names until the cache needs the room.")]
     Unlimited,
 }
 

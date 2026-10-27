@@ -3,17 +3,20 @@
 //! delivery is kept.
 
 use crate::{human_duration::HumanDuration, schema::durable_queue::DurableQueue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// How notifications are delivered to HTTP and MQTT subscribers.
 ///
 /// Both deliver every notification; they differ only in durability.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(
+    description = "How notifications are delivered to HTTP and MQTT subscribers. Both modes deliver every notification; they differ only in durability."
+)]
 pub enum DeliveryMode {
     /// Subscriptions are evaluated and notifications delivered in-process,
     /// without persistence, retry, or dead-lettering. A crashed broker loses
@@ -21,48 +24,60 @@ pub enum DeliveryMode {
     /// already queued in the tenant database are still drained, with their
     /// retry.
     #[default]
+    #[schemars(
+        description = "Subscriptions are evaluated and notifications sent from memory, without persistence, retry or dead-lettering; a crashed broker loses the notifications still in flight. Deliveries already queued in the tenant database are still drained, with their retries."
+    )]
     Live,
     /// Every notification is recorded in the durable queue in the commit that
     /// raised it, and delivered with retry, leasing and dead-lettering.
+    #[schemars(
+        description = "Every notification is written to the durable queue in the transaction that raised it, and sent by a worker with retry, leasing and dead-lettering."
+    )]
     Durable,
 }
 
 /// Whether a notification may be sent to an endpoint that resolves into
 /// private or reserved address space.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether a notification may be sent to an endpoint that resolves into private or reserved address space.")]
 pub enum PrivateAddresses {
     /// Any endpoint the broker's network reaches is notified.
     #[default]
+    #[schemars(description = "Any endpoint the broker's network reaches is notified.")]
     Allowed,
     /// An HTTP endpoint whose resolved address is loopback, private or
     /// reserved is refused, so a client-supplied subscription cannot aim the
     /// broker at internal infrastructure.
+    #[schemars(
+        description = "An HTTP endpoint whose resolved address is loopback, private or reserved is refused, so a client-supplied subscription cannot aim the broker at internal hosts. The refusal is recorded as a failed delivery."
+    )]
     Refused,
 }
 
 /// How long a finished delivery is kept.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "How long finished deliveries and their change events are kept in the tenant database.")]
 pub struct DeliveryRetentionConfig {
     /// How long an acknowledged delivery is kept, in human-readable form
     /// (`"1day"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a delivered notification is kept.")]
     pub acknowledged_after: HumanDuration,
     /// How long a delivery that ran out of attempts is kept, in
     /// human-readable form (`"7days"`): longer than an acknowledged one, as
     /// evidence of a notification that never arrived.
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a delivery that ran out of attempts is kept, as a record of a notification that never arrived.")]
     pub dead_letter_after: HumanDuration,
     /// How long an event no delivery refers to is kept, in human-readable
     /// form (`"1day"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "How long a change event no delivery refers to any more is kept.")]
     pub orphan_event_after: HumanDuration,
     /// How often expired deliveries and events are removed, in human-readable
     /// form (`"5m"`). A pass runs only when the tenant may have written since
     /// the last one.
-    #[toml_comment(inline)]
+    #[schemars(description = "How often expired deliveries and events are removed. A pass runs only for a tenant that may have written since the last one.")]
     pub cleanup_interval: HumanDuration,
 }
 
@@ -85,35 +100,48 @@ impl Default for DeliveryRetentionConfig {
 /// sharing it, or this broker before it was switched to live delivery, may
 /// have queued deliveries that are still due. `request_timeout` bounds every
 /// outbound notification, queued or live.
-#[derive(Clone, Copy, Deserialize, Serialize, TomlComment, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "How notifications reach their subscribers. The queue and its retention govern the delivery drain, which runs under either mode: a tenant database can still hold deliveries queued by a durable broker, or by this one before it was switched to live delivery."
+)]
 pub struct DeliveryConfig {
     /// Whether notifications are delivered `live` (in-process) or `durable`
     /// (queued).
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether notifications are sent from memory (`\"live\"`) or through a queue in the tenant database (`\"durable\"`).")]
     pub mode: DeliveryMode,
     /// How long an outbound notification may take before it is abandoned, in
     /// human-readable form (`"10s"`). A subscription's own Table 5.2.15-1
     /// `timeout` may only shorten it.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The longest an outgoing notification may take before it is abandoned, live or queued. A subscription's own `timeout` can shorten it but not lengthen it."
+    )]
     pub request_timeout: HumanDuration,
     /// The most notifications one delivery pass sends at once.
-    #[toml_comment(inline)]
+    #[schemars(description = "The most notifications one delivery pass sends at once. Between 1 and 1024.")]
     pub max_concurrent: NonZeroU32,
     /// The most characters of a failure diagnostic kept when a failed attempt
     /// is recorded; at most the longest failure summary the store keeps.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The most characters of a failure diagnostic kept with a failed delivery attempt. Between 1 and 2048, the longest failure summary the store keeps."
+    )]
     pub max_error_length: NonZeroU32,
     /// Whether an endpoint resolving into private or reserved address space is
     /// `allowed` or `refused`. Checked against the address actually resolved.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether a notification endpoint resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
+    )]
     pub private_addresses: PrivateAddresses,
     /// How the queue is polled, claimed and retried. A delivery is retried on
     /// a delay that doubles from `retry_interval`, and dead-lettered after
     /// `max_attempts`. `lease_timeout` must exceed `request_timeout` by five
     /// seconds.
+    #[schemars(
+        description = "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval`, and dead-lettered after `notifications.delivery.queue.max_attempts`. The lease may be at most one day."
+    )]
     pub queue: DurableQueue,
     /// How long a finished delivery is kept.
+    #[schemars(description = "How long finished deliveries and their change events are kept.")]
     pub retention: DeliveryRetentionConfig,
 }
 

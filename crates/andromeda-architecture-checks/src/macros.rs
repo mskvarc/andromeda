@@ -184,6 +184,12 @@ macro_rules! workspace_architecture {
                 $crate::configuration_ownership::assert_configuration_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Every configuration type, key and choice carries an operator description.
+            #[test]
+            fn configuration_is_described_for_the_operator() {
+                $crate::configuration_description::assert_configuration_is_described(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// The configuration schema crate depends on no other in-tree crate.
             #[test]
             fn configuration_is_the_bottom_of_the_graph() {

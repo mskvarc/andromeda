@@ -1,13 +1,10 @@
 //! The `[expiry]` rules.
 
-use crate::{
-    schema::expiry::ExpiryConfig,
-    validate::{config_key::ConfigKey, violation_log::ViolationLog},
-};
+use crate::validate::{config_key::ConfigKey, rule::Rule};
 
 /// The sweeps need a positive cadence.
-pub(crate) fn check_expiry(expiry: &ExpiryConfig, log: &mut ViolationLog) {
-    log.positive_duration(ConfigKey::ExpirySweepInterval, expiry.sweep_interval);
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [Rule::Positive(ConfigKey::ExpirySweepInterval)].into_iter()
 }
 
 #[cfg(test)]

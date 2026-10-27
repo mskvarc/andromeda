@@ -1,8 +1,8 @@
 //! The security response fields the broker sets on its API.
 
 use crate::schema::feature_mode::FeatureMode;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 
 /// Whether the broker sets its security response fields.
 ///
@@ -12,11 +12,14 @@ use toml_comment::TomlComment;
 /// subtree. `Strict-Transport-Security` belongs to the set too, but a response
 /// carries it only when the request arrived over a TLS listener. Enabled by
 /// default; an operator setting these fields at a proxy can turn them off.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Whether API responses carry a fixed set of security headers.")]
 pub struct SecurityHeadersConfig {
     /// Whether the security response fields are set: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether API responses carry a fixed set of security headers, such as `Content-Security-Policy` and `X-Content-Type-Options`, and `Strict-Transport-Security` on a TLS listener. Turn it off when a proxy in front sets them."
+    )]
     pub mode: FeatureMode,
 }
 

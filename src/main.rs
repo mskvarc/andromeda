@@ -9,6 +9,8 @@ use andromeda_broker_composition::config::commands::{
     ConfigurationLoadOutcome,
     ConfigurationOutputFormat,
     generate_default_reported,
+    generate_descriptor_reported,
+    generate_schema_reported,
     load_reported,
     print_effective_reported,
     validate_reported,
@@ -54,6 +56,8 @@ async fn main() -> ExitCode {
                 print_effective_reported(config_file, format)
             }
             ConfigCommand::Generate(generate_args) => generate_default_reported(generate_args.output),
+            ConfigCommand::Schema(output_args) => generate_schema_reported(output_args.output),
+            ConfigCommand::Describe(output_args) => generate_descriptor_reported(output_args.output),
         },
     };
     ExitCode::from(outcome)

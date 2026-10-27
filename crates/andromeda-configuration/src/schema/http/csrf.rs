@@ -1,8 +1,8 @@
 //! Cross-Site Request Forgery protection policy.
 
 use crate::{comma_list::array_or_comma_list, schema::feature_mode::FeatureMode};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 use url::Url;
 
 /// CSRF protection configuration.
@@ -10,15 +10,21 @@ use url::Url;
 /// Off by default: the broker's primary clients are machine-to-machine, which
 /// send no `Origin` and are unaffected, while a browser-driven UI in front of the
 /// broker enables it and declares the origins it serves from.
-#[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "Cross-Site Request Forgery protection, for a browser-driven interface in front of the broker. Machine clients send no `Origin` and are unaffected."
+)]
 pub struct CsrfConfig {
     /// Whether the CSRF layer is installed.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether a cross-site request from an origin outside `http.csrf.trusted_origins` is answered `403`. Same-origin requests, requests with neither `Origin` nor `Sec-Fetch-Site`, and `GET`, `HEAD` and `OPTIONS` always go through."
+    )]
     pub mode: FeatureMode,
     /// Browser origins whose cross-site requests are trusted, in addition to
     /// same-origin requests which are always allowed.
     #[serde(deserialize_with = "array_or_comma_list")]
+    #[schemars(description = "The browser origins whose cross-site requests are trusted, in addition to same-origin requests.")]
     pub trusted_origins: Vec<Url>,
 }
 

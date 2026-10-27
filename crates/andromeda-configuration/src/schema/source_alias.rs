@@ -1,6 +1,7 @@
 //! The alias a broker names itself by in a `Via` chain.
 
 use derive_more::Display;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The alias configured for this broker as a Context Source
@@ -10,9 +11,10 @@ use serde::{Deserialize, Serialize};
 /// 7.6.3) belongs to the lexicon's pseudonym, which also reads every token
 /// another broker writes; loading converts the configured alias into it, so a
 /// configuration naming an alias outside that grammar is refused there.
-#[derive(Debug, Clone, PartialEq, Eq, Display, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Display, Serialize, Deserialize, JsonSchema)]
 #[display("{_0}")]
 #[serde(transparent)]
+#[schemars(description = "The name the broker carries in the `Via` header of forwarded requests, an HTTP token such as `broker-a`.")]
 pub struct SourceAlias(String);
 
 impl SourceAlias {

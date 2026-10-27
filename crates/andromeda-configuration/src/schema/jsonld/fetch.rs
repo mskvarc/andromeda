@@ -2,27 +2,30 @@
 //! downloaded.
 
 use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration, schema::feature_mode::FeatureMode};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 
 /// Whether and how a remote `@context` is downloaded.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Whether and how a remote `@context` is downloaded.")]
 pub struct JsonLdFetchConfig {
     /// Whether a context that is neither embedded, preloaded nor cached may
     /// be downloaded: `enabled` or `disabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether a context that is neither embedded, preloaded, stored nor cached may be downloaded. With `\"disabled\"` nothing is downloaded: only the core `@context`, preloaded documents, stored `@context`s and what is already cached are used."
+    )]
     pub mode: FeatureMode,
     /// How long one download may take, in human-readable form (`"30s"`); at
     /// least one second.
-    #[toml_comment(inline)]
+    #[schemars(description = "How long one download may take.")]
     pub timeout: HumanDuration,
     /// How many redirects one download may follow.
-    #[toml_comment(inline)]
+    #[schemars(description = "How many redirects one download may follow.")]
     pub max_redirects: u32,
     /// The size beyond which a downloaded context is refused, in
     /// human-readable form (`"2 MiB"`).
-    #[toml_comment(inline)]
+    #[schemars(description = "The largest `@context` document the broker downloads. A larger one is refused with `504` `LdContextNotAvailable`.")]
     pub max_size: HumanByteSize,
 }
 

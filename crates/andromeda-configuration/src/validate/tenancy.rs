@@ -1,31 +1,29 @@
 //! The `[tenancy]` rules.
 
-use crate::{
-    schema::tenancy::TenancyConfig,
-    validate::{
-        bound::{Bound, Relation},
-        config_key::ConfigKey,
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    bound::Relation,
+    config_key::ConfigKey,
+    rule::{Limit, Rule},
 };
 
 /// Every tenancy duration is positive. A runtime woken for due work lives
 /// shorter than an idle one, so it is the first eviction candidate yet never
 /// displaces a runtime a request touched.
-pub(crate) fn check_tenancy(tenancy: &TenancyConfig, log: &mut ViolationLog) {
-    let residency = &tenancy.residency;
-    log.positive_duration(ConfigKey::TenancyProvisionalTenantLifetime, tenancy.provisional_tenant_lifetime);
-    log.positive_duration(ConfigKey::TenancyResidencyIdleEvictionAfter, residency.idle_eviction_after);
-    log.positive_duration(ConfigKey::TenancyResidencySweepInterval, residency.sweep_interval);
-    log.positive_duration(ConfigKey::TenancyResidencyMinWakeInterval, residency.min_wake_interval);
-    log.positive_duration(ConfigKey::TenancyResidencyWokenLifetime, residency.woken_lifetime);
-    log.require(
-        ConfigKey::TenancyResidencyWokenLifetime,
-        residency.woken_lifetime.duration(),
-        Relation::Below,
-        Bound::setting(ConfigKey::TenancyResidencyIdleEvictionAfter, residency.idle_eviction_after.duration()),
-    );
-    log.positive_duration(ConfigKey::TenancyBuildAdmissionTimeout, tenancy.build.admission_timeout);
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Positive(ConfigKey::TenancyProvisionalTenantLifetime),
+        Rule::Positive(ConfigKey::TenancyResidencyIdleEvictionAfter),
+        Rule::Positive(ConfigKey::TenancyResidencySweepInterval),
+        Rule::Positive(ConfigKey::TenancyResidencyMinWakeInterval),
+        Rule::Positive(ConfigKey::TenancyResidencyWokenLifetime),
+        Rule::Ordered {
+            key: ConfigKey::TenancyResidencyWokenLifetime,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::TenancyResidencyIdleEvictionAfter),
+        },
+        Rule::Positive(ConfigKey::TenancyBuildAdmissionTimeout),
+    ]
+    .into_iter()
 }
 
 #[cfg(test)]

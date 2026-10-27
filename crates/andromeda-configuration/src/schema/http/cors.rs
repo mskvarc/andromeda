@@ -1,6 +1,7 @@
 //! Cross-Origin Resource Sharing policy for browser-facing clients.
 
 use crate::human_duration::HumanDuration;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{
     Deserialize,
     Deserializer,
@@ -8,8 +9,8 @@ use serde::{
     Serializer,
     de::{Error as DeError, value::StrDeserializer},
 };
+use std::borrow::Cow;
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 use url::Url;
 
 /// The browser-origin policy the broker installs at its edge.
@@ -17,18 +18,25 @@ use url::Url;
 /// `permissive` and `very-permissive` are complete profiles that ignore every
 /// other `[http.cors]` field; `enabled` builds the policy from the custom fields;
 /// `disabled` installs no CORS middleware at all.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "The CORS policy the broker applies to browser requests.")]
 pub enum CorsMode {
     /// Install no CORS middleware.
+    #[schemars(description = "Adds no CORS headers.")]
     Disabled,
     /// Build the CORS policy from the custom `[http.cors]` fields.
+    #[schemars(
+        description = "Builds the policy from `http.cors.allow_origins`, `http.cors.allow_methods`, `http.cors.allow_headers`, `http.cors.expose_headers`, `http.cors.credentials`, `http.cors.private_network` and `http.cors.preflight_lifetime`."
+    )]
     Enabled,
     /// Accept any origin, method and header, without credentials.
     #[default]
+    #[schemars(description = "Allows any origin, method and header, without credentials. Every other `[http.cors]` key is ignored.")]
     Permissive,
     /// Mirror the request's origin, method and headers, and allow credentials.
+    #[schemars(description = "Mirrors the request's origin, method and headers, and allows credentials. Every other `[http.cors]` key is ignored.")]
     VeryPermissive,
 }
 
@@ -37,8 +45,9 @@ pub enum CorsMode {
 /// The method grammar belongs to the HTTP layer, which converts the token
 /// into its method type while the configuration loads, so a token that is no
 /// method is refused there.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(transparent)]
+#[schemars(description = "An HTTP method token, such as `\"GET\"`.")]
 pub struct CorsMethod(String);
 
 impl CorsMethod {
@@ -55,8 +64,9 @@ impl CorsMethod {
 /// The field-name grammar belongs to the HTTP layer, which converts the name
 /// into its header-name type while the configuration loads, so a name that is
 /// no field name is refused there.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(transparent)]
+#[schemars(description = "An HTTP header name, such as `\"Content-Type\"`.")]
 pub struct CorsHeaderName(String);
 
 impl CorsHeaderName {
@@ -142,6 +152,18 @@ macro_rules! cors_rule {
                 }
             }
         }
+
+        // Manual: a keyword or a list, a shape no derive states.
+        impl JsonSchema for $name {
+            fn schema_name() -> Cow<'static, str> {
+                Cow::Borrowed(stringify!($name))
+            }
+
+            fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+                let list = generator.subschema_for::<Vec<$elem>>();
+                json_schema!({ "anyOf": [{ "enum": [$($token),+] }, list] })
+            }
+        }
     };
 }
 
@@ -182,51 +204,70 @@ cors_rule! {
 }
 
 /// Whether CORS grants a browser something it asks for.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "Whether CORS grants a browser what it asks for.")]
 pub enum CorsPermission {
     /// The browser is granted it.
+    #[schemars(description = "Grants it.")]
     Allowed,
     /// The browser is not granted it.
     #[default]
+    #[schemars(description = "Does not grant it.")]
     Disallowed,
 }
 
 /// CORS policy configuration for the broker edge.
-#[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "The Cross-Origin Resource Sharing policy browser clients see.")]
 pub struct CorsConfig {
     /// The overall CORS mode. `permissive` and `very-permissive` ignore every
     /// other field in this table.
-    #[toml_comment(inline)]
+    #[schemars(description = "Which CORS policy applies. Only `\"enabled\"` reads the other keys of this table.")]
     pub mode: CorsMode,
     /// Origins accepted when `mode = enabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The origins allowed to read the API: `\"any\"`, or a list such as `[\"https://dashboard.example.org\"]`. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub allow_origins: OriginRule,
     /// Methods allowed when `mode = enabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The methods allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list such as `[\"GET\", \"POST\"]`. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub allow_methods: MethodRule,
     /// Request headers allowed when `mode = enabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The request headers allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list of header names. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub allow_headers: HeaderRule,
     /// Response headers exposed to the browser when `mode = enabled`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "The response headers a browser script may read: `\"any\"`, or a list of header names. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub expose_headers: ExposeRule,
     /// Whether credentialed requests (cookies, HTTP auth) are `allowed` or
     /// `disallowed`. The Fetch standard forbids allowing them with an `any`
     /// wildcard, which the broker refuses at configuration time rather than
     /// letting the CORS layer panic.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether cookies and HTTP authentication may accompany a cross-origin request. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub credentials: CorsPermission,
     /// Whether `Access-Control-Allow-Private-Network` is granted to a
     /// private-network preflight: `allowed` or `disallowed`.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether a private-network preflight is answered with `Access-Control-Allow-Private-Network`. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub private_network: CorsPermission,
     /// How long a browser may cache a preflight result
     /// (`Access-Control-Max-Age`), in human-readable form (`"10m"`). Left out,
     /// the browser's own default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "How long a browser may cache a preflight answer, sent as `Access-Control-Max-Age`. Left out, the broker sends no `Access-Control-Max-Age` and the browser's own default applies. Read only when `http.cors.mode` is `\"enabled\"`."
+    )]
     pub preflight_lifetime: Option<HumanDuration>,
 }
 

@@ -2,6 +2,7 @@
 
 use derive_more::{Display, Into};
 use iri_rs::{Iri, IriBuf};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
@@ -13,9 +14,14 @@ use thiserror::Error;
 /// names anything else is refused when it loads. The bound an identifier of a
 /// stored resource carries is the lexicon's to apply, on the conversion into
 /// its identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Display, Into, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Display, Into, Serialize, Deserialize, JsonSchema)]
 #[display("{_0}")]
 #[serde(try_from = "String", into = "IriBuf")]
+#[schemars(
+    with = "String",
+    title = "IRI",
+    description = "An IRI naming the broker as a context source, such as `urn:ngsi-ld:ContextSourceIdentity:andromeda`."
+)]
 pub struct SourceIdentifier(IriBuf);
 
 /// The configured `federation.identity.source_id` is not an IRI.

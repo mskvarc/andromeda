@@ -3,20 +3,23 @@
 
 use crate::{comma_list::array_or_comma_list, schema::content_coding::ContentCoding};
 use enumset::EnumSet;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// What happens to a request body whose content coding is not among the
 /// decoded `algorithms`.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "What happens to a request body in a coding not listed in `http.decompression.algorithms`.")]
 pub enum UnacceptedEncoding {
     /// The request is answered 415 Unsupported Media Type.
     #[default]
+    #[schemars(description = "Answers the request `415` Unsupported Media Type.")]
     Refuse,
     /// The body is handed on still encoded.
+    #[schemars(description = "Passes the body on still encoded.")]
     PassThrough,
 }
 
@@ -24,15 +27,20 @@ pub enum UnacceptedEncoding {
 ///
 /// The decoded codings are a single typed set listed as an array; an empty set
 /// turns inbound decompression off, so there is no separate switch.
-#[derive(Debug, Clone, Deserialize, Serialize, TomlComment, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(description = "Request decompression: which codings a request body may arrive in, and what happens to one in any other.")]
 pub struct DecompressionConfig {
     /// The content codings request bodies are decoded from. An empty array
     /// turns inbound decompression off.
     #[serde(deserialize_with = "array_or_comma_list")]
+    #[schemars(
+        with = "Vec<ContentCoding>",
+        description = "The codings a request body may arrive in, decoded before the body is read. An empty list turns request decompression off."
+    )]
     pub algorithms: EnumSet<ContentCoding>,
     /// What happens to a body in any other coding: `refuse` or `pass-through`.
-    #[toml_comment(inline)]
+    #[schemars(description = "What happens to a body in a coding that is not listed.")]
     pub unaccepted_encoding: UnacceptedEncoding,
 }
 

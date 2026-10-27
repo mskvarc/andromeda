@@ -17,8 +17,8 @@ pub mod human_byte_size;
 pub mod human_duration;
 pub mod load;
 pub mod redact;
+pub mod reference;
 pub mod schema;
-pub mod template;
 pub mod validate;
 
 #[cfg(test)]

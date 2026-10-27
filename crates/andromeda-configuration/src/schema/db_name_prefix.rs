@@ -1,6 +1,7 @@
 //! The operator-configured prefix every tenant database name is built from.
 
 use derive_more::{AsRef, Display, Into};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
@@ -13,7 +14,8 @@ use thiserror::Error;
 /// (`[A-Za-z_][A-Za-z0-9_]*`) or the joined name cannot be used without
 /// quoting. Validating it here rejects an unusable prefix at startup rather
 /// than at the first tenant provision.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Into)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Into, JsonSchema)]
+#[schemars(description = "The prefix every tenant database name starts with: an unquoted SQL identifier fragment matching `[A-Za-z_][A-Za-z0-9_]*`.")]
 #[serde(try_from = "String", into = "String")]
 #[as_ref(str)]
 pub struct DbNamePrefix(String);

@@ -3,3 +3,11 @@ inline_table_expand = false
 array_auto_collapse = true
 column_width = 200
 indent_string = "    "
+
+# Every Andromeda configuration file is validated against the schema
+# `andromeda config schema` writes.
+[[rule]]
+include = ["**/andromeda.toml"]
+
+[rule.schema]
+path = "./docs/configuration/andromeda.schema.json"

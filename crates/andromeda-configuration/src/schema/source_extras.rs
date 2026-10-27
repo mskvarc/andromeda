@@ -1,6 +1,8 @@
 //! The operator's own data a broker reports as its `contextSourceExtras`.
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use thiserror::Error;
 use toml::{Table, Value};
 
@@ -14,6 +16,20 @@ use toml::{Table, Value};
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct SourceExtras(Table);
+
+// Manual: the table is the operator's, so any key and any value is accepted.
+impl JsonSchema for SourceExtras {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("SourceExtras")
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "description": "Operator data the broker reports verbatim as the NGSI-LD `contextSourceExtras` member: any keys, any values JSON can spell."
+        })
+    }
+}
 
 /// A value in `[federation.identity.extras]` that JSON cannot spell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

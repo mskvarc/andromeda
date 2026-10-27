@@ -1,11 +1,14 @@
 //! Every rule a loaded configuration passes before the broker reads it.
 //!
-//! Each table's own bounds live in the module named after the table; the rules
-//! that span tables live in `cross_section`. Every rule runs on every pass and
-//! records what it finds, so one run reports every rule the configuration
-//! breaks. A check that needs a domain type belongs to the crate that owns the
-//! type, and the broker composition runs it on a configuration these rules
-//! accepted.
+//! Each table's own rules live in the module named after the table; the rules
+//! that span tables live in `cross_section`. A rule that compares one key with
+//! zero, a fixed limit or another key is declared as data, so the
+//! configuration descriptor lists the rules the validator runs; a rule that is
+//! no single comparison is code, described beside it. Every rule runs on every
+//! pass and records what it finds, so one run reports every rule the
+//! configuration breaks. A check that needs a domain type belongs to the
+//! crate that owns the type, and the broker composition runs it on a
+//! configuration these rules accepted.
 
 pub mod bound;
 pub mod config_key;
@@ -17,9 +20,11 @@ mod expiry;
 mod federation;
 mod http;
 mod jsonld;
+mod key_reading;
 mod management;
 mod notifications;
 mod request_limits;
+pub mod rule;
 #[cfg(test)]
 mod rule_tests;
 mod server;
@@ -32,20 +37,12 @@ mod violation_log;
 use crate::{
     broker_config::BrokerConfig,
     validate::{
-        cross_section::check_cross_section,
-        database::check_database,
-        entity::check_entity,
-        expiry::check_expiry,
-        federation::check_federation,
+        cross_section::check_listeners,
         http::check_http,
         jsonld::check_jsonld,
-        management::check_management,
-        notifications::check_notifications,
         request_limits::check_request_limits,
-        server::check_server,
-        snapshot::check_snapshot,
-        temporal::check_temporal,
-        tenancy::check_tenancy,
+        rule::{CompoundRule, Rule},
+        temporal::check_retention,
         violation::ConfigurationViolation,
         violation_log::ViolationLog,
     },
@@ -87,7 +84,36 @@ impl Display for ViolationLines<'_> {
     }
 }
 
-/// Run every rule over the configuration.
+/// Every comparison rule a configuration passes, table by table, the rules
+/// spanning tables last.
+pub fn declared_rules() -> impl Iterator<Item = Rule> {
+    server::rules()
+        .chain(management::rules())
+        .chain(request_limits::rules())
+        .chain(database::rules())
+        .chain(tenancy::rules())
+        .chain(expiry::rules())
+        .chain(jsonld::rules())
+        .chain(entity::rules())
+        .chain(temporal::rules())
+        .chain(notifications::rules())
+        .chain(federation::rules())
+        .chain(snapshot::rules())
+        .chain(cross_section::rules())
+}
+
+/// What every rule that is no single comparison asks.
+pub fn compound_rules() -> impl Iterator<Item = CompoundRule> {
+    request_limits::COMPOUND_RULES
+        .into_iter()
+        .chain(http::COMPOUND_RULES)
+        .chain(jsonld::COMPOUND_RULES)
+        .chain(temporal::COMPOUND_RULES)
+        .chain(cross_section::COMPOUND_RULES)
+}
+
+/// Run every rule over the configuration: the comparisons first, then the
+/// rules that are none.
 ///
 /// # Errors
 ///
@@ -95,19 +121,11 @@ impl Display for ViolationLines<'_> {
 /// breaks.
 pub fn validate(config: &BrokerConfig) -> Result<(), InvalidConfiguration> {
     let mut log = ViolationLog::default();
-    check_server(&config.server, &mut log);
-    check_management(&config.management, &mut log);
+    declared_rules().for_each(|rule| log.apply(rule, config));
     check_request_limits(&config.request_limits, &mut log);
     check_http(&config.http, &mut log);
-    check_database(&config.database, &mut log);
-    check_tenancy(&config.tenancy, &mut log);
-    check_expiry(&config.expiry, &mut log);
     check_jsonld(&config.jsonld, &mut log);
-    check_entity(&config.entity, &mut log);
-    check_temporal(&config.temporal, &mut log);
-    check_notifications(&config.notifications, &mut log);
-    check_federation(&config.federation, &mut log);
-    check_snapshot(&config.snapshot, &mut log);
-    check_cross_section(config, &mut log);
+    check_retention(&config.temporal.storage, &mut log);
+    check_listeners(config, &mut log);
     log.into_result()
 }

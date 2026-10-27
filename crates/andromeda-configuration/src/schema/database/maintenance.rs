@@ -1,44 +1,52 @@
 //! Configuration selecting whether and how PostgreSQL maintenance runs.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
-use toml_comment::TomlComment;
 
 /// Whether the maintenance controller is active and may mutate tenant databases.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, Eq, PartialEq, JsonSchema)]
+#[schemars(description = "Whether the maintenance controller runs, and whether it may change tenant databases.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum MaintenanceMode {
     /// Do not register or execute the controller.
     #[default]
+    #[schemars(description = "Do not run the controller.")]
     Disabled,
     /// Inspect and report decisions without executing maintenance statements.
+    #[schemars(description = "Inspect the databases and report the maintenance the controller decides on, without carrying any of it out.")]
     Observe,
     /// Inspect and execute qualifying maintenance statements.
+    #[schemars(description = "Inspect the databases and carry out the maintenance the controller decides on.")]
     Automatic,
 }
 
 /// A fixed maintenance policy profile.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, Eq, PartialEq, JsonSchema)]
+#[schemars(description = "The fixed thresholds and cadence the maintenance controller follows.")]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum MaintenanceProfile {
     /// Prefer fewer probes and a high confidence threshold before acting.
     #[default]
+    #[schemars(description = "Inspect less often and require stronger evidence before acting.")]
     Conservative,
     /// Inspect more frequently and react to smaller degradation signals.
+    #[schemars(description = "Inspect more often and react to smaller signs of degradation.")]
     Responsive,
 }
 
 /// Adaptive PostgreSQL maintenance configuration.
-#[derive(Clone, Copy, Deserialize, Serialize, Default, TomlComment, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Deserialize, Serialize, Default, JsonSchema, Debug, Eq, PartialEq)]
+#[schemars(description = "Adaptive PostgreSQL inspection and maintenance of the tenant databases.")]
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceConfig {
     /// Whether inspection is disabled, observational, or automatic.
-    #[toml_comment(inline)]
+    #[schemars(description = "Whether maintenance is off, only inspects and reports, or also acts on what it finds.")]
     pub mode: MaintenanceMode,
     /// Fixed threshold and cadence profile.
-    #[toml_comment(inline)]
+    #[schemars(description = "How often the controller inspects, and how much evidence it needs before it acts.")]
     pub profile: MaintenanceProfile,
 }
 

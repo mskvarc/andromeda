@@ -1,16 +1,16 @@
 //! The `[federation]` rules. The cooldown schedule is checked by the
 //! forwarding layer that builds it.
 
-use crate::{
-    schema::federation::FederationConfig,
-    validate::{config_key::ConfigKey, violation_log::ViolationLog},
-};
+use crate::validate::{config_key::ConfigKey, rule::Rule};
 
 /// Connecting to a source and a forwarded request each need a positive
 /// deadline.
-pub(crate) fn check_federation(federation: &FederationConfig, log: &mut ViolationLog) {
-    log.positive_duration(ConfigKey::FederationForwardingConnectTimeout, federation.forwarding.connect_timeout);
-    log.positive_duration(ConfigKey::FederationForwardingRequestTimeout, federation.forwarding.request_timeout);
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Positive(ConfigKey::FederationForwardingConnectTimeout),
+        Rule::Positive(ConfigKey::FederationForwardingRequestTimeout),
+    ]
+    .into_iter()
 }
 
 #[cfg(test)]

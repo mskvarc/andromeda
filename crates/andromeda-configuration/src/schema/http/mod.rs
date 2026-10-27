@@ -27,12 +27,15 @@ use crate::schema::{
     },
     link_field_layout::LinkFieldLayout,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use toml_comment::TomlComment;
 
 /// How the inbound HTTP stack treats a request it accepts.
-#[derive(Deserialize, Serialize, TomlComment, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[schemars(
+    description = "The web-facing layers in front of the API: forwarded-field trust, `Link` layout, body decoding, CORS, compression, `Server-Timing`, security headers and CSRF. The defaults suit machine clients."
+)]
 pub struct HttpStackConfig {
     /// Whether the `Forwarded` and `X-Forwarded-Proto` fields of an inbound
     /// request may decide the scheme of the URLs the broker mints from the
@@ -43,7 +46,9 @@ pub struct HttpStackConfig {
     /// client choose the scheme of a `Location` field, a pagination `Link`, and
     /// the durably stored `@context` URL of clause 5.13. Trust them only
     /// behind a reverse proxy that overwrites both fields.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "Whether the `Forwarded` and `X-Forwarded-Proto` request fields decide the scheme of the URLs the broker builds, such as a `Location` field, a pagination `Link` and the stored URL of an `@context`. Trust them only behind a reverse proxy that overwrites both fields."
+    )]
     pub forwarded_headers: ForwardedHeaderTrust,
     /// How the link-values of a response or an HTTP notification are laid out
     /// over `Link` field lines: `combined` (one line), `grouped` (the
@@ -53,28 +58,37 @@ pub struct HttpStackConfig {
     /// Every layout means the same (IETF RFC 9110 section 5.3); they differ in
     /// which clients read them. `combined` suits clients that read only one
     /// field line, `separate` clients that never split a line on commas.
-    #[toml_comment(inline)]
+    #[schemars(
+        description = "How the `Link` values of a response or an HTTP notification are spread over field lines. All layouts mean the same; pick the one your clients read."
+    )]
     pub link_field: LinkFieldLayout,
     /// Where request payloads are decoded.
+    #[schemars(description = "Where request bodies are parsed: on the request's own worker or on a separate thread pool.")]
     pub body_decoding: BodyDecodingConfig,
     /// CORS policy for browser-facing clients.
+    #[schemars(description = "The Cross-Origin Resource Sharing policy browser clients see.")]
     pub cors: CorsConfig,
     /// Response compression.
+    #[schemars(description = "Which codings responses may be compressed with, and how hard.")]
     pub compression: CompressionConfig,
     /// Request decompression.
+    #[schemars(description = "Which codings a request body may arrive in.")]
     pub decompression: DecompressionConfig,
     /// The `Server-Timing` response field.
+    #[schemars(description = "Whether responses carry a `Server-Timing` header, and what it reports.")]
     pub server_timing: ServerTimingConfig,
     /// The security response fields.
+    #[schemars(description = "Whether API responses carry a fixed set of security headers.")]
     pub security_headers: SecurityHeadersConfig,
     /// Cross-Site Request Forgery protection.
+    #[schemars(description = "Cross-Site Request Forgery protection for browser clients.")]
     pub csrf: CsrfConfig,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::schema::{forwarded_header_trust::ForwardedHeaderTrust, http::HttpStackConfig, link_field_layout::LinkFieldLayout};
-    use toml_comment::TomlComment;
+    use toml::ser::Error as TomlError;
 
     /// A broker that has not been told about a proxy must not believe one, so
     /// the declared default has to be the untrusted edge.
@@ -90,8 +104,8 @@ mod tests {
     }
 
     #[test]
-    fn default_toml_contains_every_nested_http_table() {
-        let rendered = <HttpStackConfig as TomlComment>::default_toml();
+    fn default_toml_contains_every_nested_http_table() -> Result<(), TomlError> {
+        let rendered = toml::to_string(&HttpStackConfig::default())?;
         for table in [
             "[body_decoding]",
             "[cors]",
@@ -103,5 +117,6 @@ mod tests {
         ] {
             assert!(rendered.contains(table), "missing {table} in:\n{rendered}");
         }
+        Ok(())
     }
 }

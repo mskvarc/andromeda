@@ -1,29 +1,18 @@
 //! The `[database]` rules.
 
-use crate::{
-    schema::database::{
-        DatabaseConfig,
-        name_cache::{IdleEviction, NameCacheConfig},
-    },
-    validate::{config_key::ConfigKey, violation_log::ViolationLog},
-};
+use crate::validate::{config_key::ConfigKey, rule::Rule};
 
 /// The pool needs a connection and a positive acquire deadline. A name cache
 /// without capacity reads every name from its table, and a zero idle timeout
 /// evicts every name the moment it is cached.
-pub(crate) fn check_database(database: &DatabaseConfig, log: &mut ViolationLog) {
-    log.positive_count(ConfigKey::DatabaseMaxConnections, database.max_connections.into());
-    log.positive_duration(ConfigKey::DatabaseAcquireTimeout, database.acquire_timeout);
-    check_name_cache(&database.name_cache, log);
-}
-
-/// The name cache's capacity and idle timeout.
-fn check_name_cache(name_cache: &NameCacheConfig, log: &mut ViolationLog) {
-    log.positive_count(ConfigKey::DatabaseNameCacheMaxSizePerDictionary, name_cache.max_size_per_dictionary.as_u64());
-    match name_cache.idle_eviction_after {
-        IdleEviction::After(idle) => log.positive_duration(ConfigKey::DatabaseNameCacheIdleEvictionAfter, idle),
-        IdleEviction::Never(_) => {}
-    }
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Positive(ConfigKey::DatabaseMaxConnections),
+        Rule::Positive(ConfigKey::DatabaseAcquireTimeout),
+        Rule::Positive(ConfigKey::DatabaseNameCacheMaxSizePerDictionary),
+        Rule::Positive(ConfigKey::DatabaseNameCacheIdleEvictionAfter),
+    ]
+    .into_iter()
 }
 
 #[cfg(test)]

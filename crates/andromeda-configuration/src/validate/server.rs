@@ -1,26 +1,25 @@
 //! The `[server]` rules.
 
-use crate::{
-    schema::server::ServerConfig,
-    validate::{
-        bound::{Bound, Relation},
-        config_key::ConfigKey,
-        violation_log::ViolationLog,
-    },
+use crate::validate::{
+    bound::Relation,
+    config_key::ConfigKey,
+    rule::{Limit, Rule},
 };
 
 /// Port zero is reserved for dynamic binding and cannot be advertised. A zero
 /// announced-close timeout resets a client still sending before it reads the
 /// response, and a connection delaying its close must never outlive the drain.
-pub(crate) fn check_server(server: &ServerConfig, log: &mut ViolationLog) {
-    log.positive_count(ConfigKey::ServerPort, server.port.into());
-    log.positive_duration(ConfigKey::ServerAnnouncedCloseTimeout, server.announced_close_timeout);
-    log.require(
-        ConfigKey::ServerAnnouncedCloseTimeout,
-        server.announced_close_timeout.duration(),
-        Relation::Below,
-        Bound::setting(ConfigKey::ServerGracefulDrainTimeout, server.graceful_drain_timeout.duration()),
-    );
+pub(crate) fn rules() -> impl Iterator<Item = Rule> {
+    [
+        Rule::Positive(ConfigKey::ServerPort),
+        Rule::Positive(ConfigKey::ServerAnnouncedCloseTimeout),
+        Rule::Ordered {
+            key: ConfigKey::ServerAnnouncedCloseTimeout,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::ServerGracefulDrainTimeout),
+        },
+    ]
+    .into_iter()
 }
 
 #[cfg(test)]
