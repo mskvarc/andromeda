@@ -36,11 +36,11 @@ pub trait SharedQueryParams {
     fn dataset_ids(&self) -> Option<&[DatasetSelector]>;
 }
 
-/// The page size of the three query endpoints: 20 when the request names no
-/// `limit`, and at most the broker's cap (clause 5.5.6 leaves both to the
-/// broker).
+/// The page size of the three query endpoints: the broker's cap of one
+/// thousand when the request names no `limit`, and at most that cap when it
+/// names one (clause 5.5.6 leaves both to the broker).
 pub const QUERY_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
-    default: 20,
+    default: 1000,
     cap: BROKER_PAGE_SIZE_CAP,
 };
 
@@ -80,11 +80,12 @@ mod tests {
     use crate::{pagination::page_size::PageSizeExceeded, query::QUERY_PAGE_SIZE};
     use pretty_assertions::assert_eq;
 
-    /// The query endpoints answer with 20 by default, serve 1000 and refuse
-    /// more.
+    /// The query endpoints answer with 1000 by default, serve a smaller page
+    /// when asked and refuse more.
     #[test]
-    fn query_page_size_is_twenty_capped_at_one_thousand() {
-        assert_eq!(QUERY_PAGE_SIZE.limit(None), Ok(20));
+    fn query_page_size_defaults_to_its_cap_of_one_thousand() {
+        assert_eq!(QUERY_PAGE_SIZE.limit(None), Ok(1000));
+        assert_eq!(QUERY_PAGE_SIZE.limit(Some(20)), Ok(20));
         assert_eq!(QUERY_PAGE_SIZE.limit(Some(1000)), Ok(1000));
         assert_eq!(QUERY_PAGE_SIZE.limit(Some(5000)), Err(PageSizeExceeded { requested: 5000, cap: 1000 }));
     }
