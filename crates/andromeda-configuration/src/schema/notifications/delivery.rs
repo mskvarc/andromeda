@@ -2,7 +2,12 @@
 //! subscribers, the durable queue that carries them, and how long a finished
 //! delivery is kept.
 
-use crate::{human_duration::HumanDuration, schema::durable_queue::DurableQueue};
+use crate::{
+    human_duration::HumanDuration,
+    mqtt_packet_limit::MqttPacketLimit,
+    notification_body_limit::NotificationBodyLimit,
+    schema::durable_queue::DurableQueue,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
@@ -132,6 +137,21 @@ pub struct DeliveryConfig {
         description = "Whether a notification endpoint resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
     )]
     pub private_addresses: PrivateAddresses,
+    /// The largest notification body an HTTP delivery sends, in human-readable
+    /// form (`"128 MiB"`). A larger notification fails without a retry.
+    #[schemars(
+        description = "The largest notification body sent over HTTP. A larger notification is not sent, and its delivery fails without a retry, since every attempt would send the same body. Keep it above `request_limits.max_body`, so that any entity a client can write can also be notified."
+    )]
+    pub max_http_body: NotificationBodyLimit,
+    /// The largest MQTT packet a notification is published in, from one byte
+    /// to 256 MiB, in human-readable form (`"128 MiB"`). It is also the largest
+    /// packet the broker reads. An MQTT 5 server that announces a smaller
+    /// maximum lowers it for that connection. A larger notification fails
+    /// without a retry.
+    #[schemars(
+        description = "The largest MQTT packet a notification is published in, envelope and topic included, from 1 byte to 256 MiB. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry."
+    )]
+    pub max_mqtt_packet: MqttPacketLimit,
     /// How the queue is polled, claimed and retried. A delivery is retried on
     /// a delay that doubles from `retry_interval`, and dead-lettered after
     /// `max_attempts`. `lease_timeout` must exceed `request_timeout` by five
@@ -153,6 +173,8 @@ impl Default for DeliveryConfig {
             max_concurrent: NonZeroU32::MIN.saturating_add(19),
             max_error_length: NonZeroU32::MIN.saturating_add(1023),
             private_addresses: PrivateAddresses::Allowed,
+            max_http_body: NotificationBodyLimit::DEFAULT,
+            max_mqtt_packet: MqttPacketLimit::DEFAULT,
             queue: DurableQueue {
                 batch_size: NonZeroU32::MIN.saturating_add(49),
                 retry_interval: HumanDuration::from_secs(5),
@@ -189,6 +211,13 @@ mod tests {
         assert_eq!(config.mode, DeliveryMode::Live);
         assert_eq!(config.private_addresses, PrivateAddresses::Allowed);
         assert_eq!(config.queue.batch_size.get(), 50);
+    }
+
+    #[test]
+    fn the_default_notification_limits_admit_a_body_twice_the_default_request_body() {
+        let config = DeliveryConfig::default();
+        assert_eq!(config.max_http_body.octets(), 134_217_728);
+        assert_eq!(config.max_mqtt_packet.octets(), 134_217_728);
     }
 
     #[test]

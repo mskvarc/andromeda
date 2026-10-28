@@ -87,10 +87,9 @@ impl TransportDispatcher {
     /// Deliver a notification, logging the outcome and classifying a failure by
     /// whether it is worth retrying.
     ///
-    /// The payload limit is left to each transport: the HTTP transport enforces
-    /// its configured maximum (and answers `PayloadTooLarge`), while an MQTT
-    /// publish is bounded by the broker's packet size. Applying the HTTP knob to
-    /// an MQTT publish would govern one transport by another's.
+    /// The payload limit is left to each transport: the HTTP transport bounds
+    /// the notification body, and the MQTT transport the whole packet carrying
+    /// its envelope. Either answers `PayloadTooLarge`, which is not retried.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let handle = match endpoint {
             EndpointTransport::Http => TransportHandle::Http(&self.http),

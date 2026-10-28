@@ -50,6 +50,11 @@ pub enum ConnectionFailure {
     #[error("connection lost before the broker acknowledged the publish")]
     AcknowledgementLost,
 
+    /// The connection was lost, or the client refused the packet, before a
+    /// `QoS` 0 publish was written.
+    #[error("connection lost before the publish was written")]
+    PublishNotWritten,
+
     /// The broker is still inside its reconnect backoff, so no dial was
     /// attempted.
     #[error("connection unhealthy, backoff active")]

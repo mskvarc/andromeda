@@ -16,6 +16,8 @@ pub mod header_section_limit;
 pub mod human_byte_size;
 pub mod human_duration;
 pub mod load;
+pub mod mqtt_packet_limit;
+pub mod notification_body_limit;
 pub mod redact;
 pub mod reference;
 pub mod schema;

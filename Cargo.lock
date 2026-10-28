@@ -311,6 +311,7 @@ dependencies = [
  "andromeda-retry",
  "andromeda-telemetry",
  "async-trait",
+ "bytes",
  "chrono",
  "dashmap",
  "derive_more",

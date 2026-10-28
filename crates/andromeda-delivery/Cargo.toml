@@ -44,5 +44,6 @@ uuid = { version = "1.29.0", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+bytes = "1.12.1"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["io-util", "macros", "rt-multi-thread"] }

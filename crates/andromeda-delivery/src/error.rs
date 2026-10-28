@@ -42,7 +42,8 @@ pub enum TransportError {
         source: reqwest::Error,
     },
 
-    /// The serialised notification exceeds the transport's configured limit.
+    /// The serialised notification, or the MQTT packet carrying it, exceeds
+    /// the transport's limit.
     #[error("payload size {size} exceeds limit {limit}")]
     PayloadTooLarge {
         /// Size of the payload that was refused, in bytes.

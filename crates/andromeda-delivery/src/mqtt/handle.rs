@@ -5,40 +5,16 @@ use crate::{
     delivery_deadline::delivery_deadline,
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
-    mqtt::{ack::AckKind, connection::MqttClientVariant, envelope::build_envelope, metadata::transported_headers, pool::MqttTransportPool},
+    mqtt::{ack::AckKind, envelope::build_envelope, outgoing_publish::OutgoingPublish, pool::MqttTransportPool},
     outcome::{DeliveryOutcome, delivery_metric_outcome},
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
-use rumqttc::{
-    QoS,
-    v5::mqttbytes::{QoS as QoSV5, v5::PublishProperties},
-};
 use std::{sync::Arc, time::Instant};
-use tokio::{sync::oneshot::Receiver, time::timeout};
+use tokio::time::timeout;
 use tracing::info;
-
-impl MqttQoS {
-    /// The MQTT 5 quality-of-service this level is.
-    const fn as_v5(self) -> QoSV5 {
-        match self {
-            MqttQoS::AtMost => QoSV5::AtMostOnce,
-            MqttQoS::AtLeast => QoSV5::AtLeastOnce,
-            MqttQoS::Exactly => QoSV5::ExactlyOnce,
-        }
-    }
-
-    /// The MQTT 3.1.1 quality-of-service this level is.
-    const fn as_v311(self) -> QoS {
-        match self {
-            MqttQoS::AtMost => QoS::AtMostOnce,
-            MqttQoS::AtLeast => QoS::AtLeastOnce,
-            MqttQoS::Exactly => QoS::ExactlyOnce,
-        }
-    }
-}
 
 /// Per-endpoint MQTT transport handle.
 ///
@@ -58,13 +34,12 @@ impl MqttTransportHandle {
         MqttTransportHandle { pool, config }
     }
 
-    /// The acknowledgement a publish at this endpoint's `QoS` is completed by, or
-    /// `None` for `QoS` 0, which is fire-and-forget and never acknowledged.
-    const fn completing_ack(&self) -> Option<AckKind> {
+    /// What completes a publish at this endpoint's `QoS`.
+    const fn completing_ack(&self) -> AckKind {
         match self.config.qos {
-            MqttQoS::AtMost => None,
-            MqttQoS::AtLeast => Some(AckKind::PubAck),
-            MqttQoS::Exactly => Some(AckKind::PubComp),
+            MqttQoS::AtMost => AckKind::Written,
+            MqttQoS::AtLeast => AckKind::PubAck,
+            MqttQoS::Exactly => AckKind::PubComp,
         }
     }
 
@@ -101,40 +76,20 @@ impl MqttTransportHandle {
         let connection = self.pool.get_or_create_connection(&self.config).await?;
         let start = Instant::now();
         let envelope = build_envelope(request)?;
+        let outgoing = OutgoingPublish::admitted(&connection.client, &self.config.topic, self.config.qos, request, envelope)?;
+        let completes_on = self.completing_ack();
 
-        // Register the ack waiter and enqueue the publish under one lock, so the
-        // event loop assigns packet ids to waiters in the order it sends them.
+        // Register the waiter and enqueue the publish under one lock, so the
+        // event loop meets waiters in the order it writes their packets.
         let publish_guard = connection.state.publish_lock.lock().await;
-        let ack_receiver: Option<Receiver<()>> = self.completing_ack().map(|kind| connection.state.acks().register(kind));
-
-        let published = match &connection.client {
-            MqttClientVariant::V5 { client } => {
-                let mut properties = PublishProperties {
-                    content_type: Some(request.content_type.as_str().to_string()),
-                    ..Default::default()
-                };
-                properties.user_properties = transported_headers(request);
-
-                client
-                    .publish_with_properties(self.config.topic.as_str(), self.config.qos.as_v5(), false, envelope, properties)
-                    .await
-                    .map_err(|error| ConnectionFailure::MqttV5Publish(Box::new(error)))
-            }
-            // MQTT 3.1.1 has no user properties, so the envelope is the only
-            // place the metadata can go.
-            MqttClientVariant::V311 { client } => client
-                .publish(self.config.topic.as_str(), self.config.qos.as_v311(), false, envelope)
-                .await
-                .map_err(|error| ConnectionFailure::MqttV311Publish(Box::new(error))),
-        };
+        let completion = connection.state.acks().register(completes_on);
+        let published = outgoing.publish(&self.config.topic).await;
         drop(publish_guard);
 
         if let Err(cause) = published {
-            // The packet never reached the wire, so its waiter never will be
-            // assigned an id; drop it before it desynchronises the tracker.
-            if ack_receiver.is_some() {
-                connection.state.acks().cancel_last_registered();
-            }
+            // The packet never reached the event loop, so its waiter never
+            // will; drop it before it desynchronises the tracker.
+            connection.state.acks().cancel_last_registered();
             connection.state.mark_unhealthy();
             return Err(TransportError::ConnectionFailed {
                 endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
@@ -142,40 +97,227 @@ impl MqttTransportHandle {
             });
         }
 
-        // QoS 0 is fire-and-forget: the packet is on its way and there is no
-        // acknowledgement to await. Enqueue is deliberately not a health signal
-        // (the event loop reports health from real broker traffic), so a queued
-        // publish cannot mask a degraded connection.
-        let Some(ack_receiver) = ack_receiver else {
-            return Ok(self.succeeded(start));
-        };
-
-        // QoS 1/2: the delivery is confirmed only once the broker acknowledges
-        // it (PUBACK / PUBCOMP). Until then it must not be reported delivered, or
-        // an unacked packet the event loop later drops would never retransmit.
+        // QoS 0 is never acknowledged, so it is delivered once the client has
+        // written it; a packet the client refuses to write ends the
+        // connection, which fails the waiter instead. Table 5.2.15-1 confines
+        // the endpoint's `timeout` to a binding whose "protocol always returns
+        // a response", which QoS 0 is not, so only the broker-wide window
+        // bounds the wait.
         //
-        // Table 5.2.15-1 confines the endpoint's `timeout` to a binding whose
-        // "protocol always returns a response". This is the branch where MQTT
-        // is one (the acknowledgement above is that response), so the
-        // endpoint's deadline is honoured here, under the same rule the HTTP
-        // binding follows: "the NGSI-LD system can override this value", and
-        // the pool's acknowledgement window is that system value. The QoS 0
-        // branch returned above without waiting for anything, which is where
-        // the member genuinely does not apply.
-        let deadline = delivery_deadline(request.timeout, self.pool.publish_ack_timeout());
-        match timeout(deadline, ack_receiver).await {
+        // QoS 1/2 is delivered only once the broker acknowledges it (PUBACK /
+        // PUBCOMP). Until then it must not be reported delivered, or an unacked
+        // packet the event loop later drops would never retransmit. Here MQTT
+        // does always respond, so the endpoint's deadline is honoured under the
+        // rule the HTTP binding follows: "the NGSI-LD system can override this
+        // value", and the pool's acknowledgement window is that system value.
+        let (deadline, lost) = match completes_on {
+            AckKind::Written => (self.pool.publish_ack_timeout(), ConnectionFailure::PublishNotWritten),
+            AckKind::PubAck | AckKind::PubComp => (
+                delivery_deadline(request.timeout, self.pool.publish_ack_timeout()),
+                ConnectionFailure::AcknowledgementLost,
+            ),
+        };
+        match timeout(deadline, completion).await {
             Ok(Ok(())) => Ok(self.succeeded(start)),
-            // The connection failed before the acknowledgement arrived.
             Ok(Err(_cancelled)) => Err(TransportError::ConnectionFailed {
                 endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                cause: ConnectionFailure::AcknowledgementLost,
+                cause: lost,
             }),
-            // The broker did not acknowledge within the allowed time; the delivery queue
-            // retransmits rather than assuming it arrived.
+            // The publish did not complete within the allowed time; the
+            // delivery queue retransmits rather than assuming it arrived.
             Err(_elapsed) => Err(TransportError::Timeout {
                 endpoint: self.config.endpoint_uri.clone(), // clone: same
                 duration: deadline,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{
+        endpoint::{
+            mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+            topic::MqttTopic,
+        },
+        error::TransportError,
+        host_port::HostPort,
+        mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, envelope::build_envelope, pool::MqttTransportPool},
+        notification_body::NotificationBody,
+        notification_context::NotificationContext,
+        outcome::DeliveryOutcome,
+        request::{DeliveryRequest, NotificationDelivery},
+        transport::NotificationTransport,
+    };
+    use andromeda_configuration::{human_byte_size::HumanByteSize, mqtt_packet_limit::MqttPacketLimit};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use bytes::BytesMut;
+    use rumqttc::{ConnAck, ConnectReturnCode, Packet, PubAck, QoS, SubAck, SubscribeReasonCode, mqttbytes::Error as PacketError};
+    use serde_json::json;
+    use std::{
+        net::SocketAddr,
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
+    use url::Url;
+
+    const MIB: usize = 1024 * 1024;
+
+    /// The packet `answering` writes back for `packet`, if any.
+    fn answer(packet: &Packet, received: &AtomicUsize) -> Option<Packet> {
+        match packet {
+            Packet::Connect(_) => Some(Packet::ConnAck(ConnAck::new(ConnectReturnCode::Success, false))),
+            Packet::Subscribe(subscribe) => Some(Packet::SubAck(SubAck::new(
+                subscribe.pkid,
+                subscribe.filters.iter().map(|_| SubscribeReasonCode::Success(QoS::AtMostOnce)).collect(),
+            ))),
+            Packet::Publish(publish) => {
+                received.store(publish.payload.len(), Ordering::SeqCst);
+                (publish.qos == QoS::AtLeastOnce).then(|| Packet::PubAck(PubAck::new(publish.pkid)))
+            }
+            Packet::PingReq => Some(Packet::PingResp),
+            Packet::ConnAck(_)
+            | Packet::PubAck(_)
+            | Packet::PubRec(_)
+            | Packet::PubRel(_)
+            | Packet::PubComp(_)
+            | Packet::SubAck(_)
+            | Packet::Unsubscribe(_)
+            | Packet::UnsubAck(_)
+            | Packet::PingResp
+            | Packet::Disconnect => None,
+        }
+    }
+
+    /// Serve one MQTT 3.1.1 session: accept every connect and subscription,
+    /// and acknowledge every `QoS` 1 publish, recording its payload length.
+    async fn serve(mut stream: TcpStream, received: Arc<AtomicUsize>) {
+        let mut buffer = BytesMut::new();
+        loop {
+            match stream.read_buf(&mut buffer).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            loop {
+                let packet = match Packet::read(&mut buffer, usize::MAX) {
+                    Ok(packet) => packet,
+                    Err(PacketError::InsufficientBytes(_)) => break,
+                    Err(_) => return,
+                };
+                if let Some(reply) = answer(&packet, &received) {
+                    let mut written = BytesMut::new();
+                    reply.write(&mut written, usize::MAX).expect("the reply is written");
+                    if stream.write_all(&written).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// An MQTT 3.1.1 broker on loopback that records the payload length of the
+    /// last publish it received.
+    async fn broker() -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");
+        let address = listener.local_addr().expect("the listener has an address");
+        let received = Arc::new(AtomicUsize::new(0));
+        let recorder = Arc::clone(&received);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(serve(stream, Arc::clone(&recorder)));
+            }
+        });
+        (address, received)
+    }
+
+    fn endpoint(address: SocketAddr, qos: MqttQoS) -> MqttEndpointConfig {
+        MqttEndpointConfig {
+            authority: HostPort::from_str(&address.to_string()).expect("a valid authority"),
+            topic: MqttTopic::from_str("notifications").expect("a valid topic"),
+            endpoint_uri: Url::parse(&format!("mqtt://{address}/notifications")).expect("a valid endpoint URI"),
+            use_tls: false,
+            version: MqttVersion::V311,
+            qos,
+            username: None,
+            password: None,
+        }
+    }
+
+    /// A notification to `endpoint` whose `data` text holds `bytes` characters.
+    fn notification(endpoint: &MqttEndpointConfig, bytes: usize) -> DeliveryRequest {
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::core();
+        let payload = json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification", "data": "x".repeat(bytes)});
+        NotificationDelivery::builder()
+            .endpoint_uri(&endpoint.endpoint_uri)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble(NotificationBody::written(&payload).expect("a written notification"))
+    }
+
+    fn pool(config: MqttPoolConfig) -> Arc<MqttTransportPool> {
+        Arc::new(MqttTransportPool::new(config, Arc::new(RumqttcDialer)))
+    }
+
+    #[tokio::test]
+    async fn a_20_mib_notification_is_acknowledged_at_qos_1_under_the_default_packet_limit() {
+        let (address, received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtLeast);
+        let request = notification(&endpoint, 20 * MIB);
+        let handle = pool(MqttPoolConfig::default()).transport_for(&endpoint);
+
+        let outcome = handle.deliver(&request).await.expect("the notification is acknowledged");
+
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+        let envelope = build_envelope(&request).expect("the envelope is written");
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), envelope.len());
+    }
+
+    #[tokio::test]
+    async fn a_qos_0_notification_is_delivered_once_the_client_has_written_it() {
+        let (address, _received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtMost);
+        let handle = pool(MqttPoolConfig::default()).transport_for(&endpoint);
+
+        let outcome = handle.deliver(&notification(&endpoint, 64)).await.expect("the notification is written");
+
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+    }
+
+    /// The oversized notification is refused before the client sees it, so
+    /// the connection survives and carries the next notification.
+    #[tokio::test]
+    async fn a_qos_0_notification_over_the_packet_limit_is_refused_without_a_retry_and_the_connection_stays_up() {
+        let (address, _received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtMost);
+        let config = MqttPoolConfig {
+            max_packet_size: MqttPacketLimit::try_from(HumanByteSize::mib(1)).expect("a limit within the protocol"),
+            ..MqttPoolConfig::default()
+        };
+        let handle = pool(config).transport_for(&endpoint);
+
+        let refused = handle
+            .deliver(&notification(&endpoint, 2 * MIB))
+            .await
+            .map(drop)
+            .expect_err("the notification is too large");
+        assert!(matches!(refused, TransportError::PayloadTooLarge { limit: MIB, .. }), "{refused:?}");
+        assert!(!refused.is_retryable(), "every attempt would publish the same packet");
+
+        let small = notification(&endpoint, 64);
+        let outcome = handle.deliver(&small).await.expect("the connection still delivers");
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
     }
 }

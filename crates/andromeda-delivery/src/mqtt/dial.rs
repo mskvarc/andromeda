@@ -135,6 +135,16 @@ fn connect_timed_out(label: &BrokerLabel, pool: &MqttPoolConfig) -> TransportErr
     }
 }
 
+/// The largest packet an MQTT 5 server announced it accepts, carried by the
+/// CONNACK that opens the session (MQTT 5.0 section 3.2.2.3.6).
+fn announced_max_packet_size(connected: &EventV5) -> Option<u32> {
+    if let EventV5::Incoming(PacketV5::ConnAck(connack)) = connected {
+        connack.properties.as_ref().and_then(|properties| properties.max_packet_size)
+    } else {
+        None
+    }
+}
+
 /// Open an MQTT 5 connection.
 async fn dial_v5(
     client_id: &str,
@@ -146,6 +156,7 @@ async fn dial_v5(
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let mut options = MqttOptionsV5::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
+    options.set_max_packet_size(Some(pool.max_packet_size.octets()));
     if key.use_tls {
         options.set_transport(Transport::tls_with_default_config());
     }
@@ -156,11 +167,16 @@ async fn dial_v5(
 
     let (client, mut eventloop) = AsyncClientV5::new(options, EVENT_LOOP_CAPACITY);
 
-    match timeout(pool.connect_timeout, eventloop.poll()).await {
-        Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
+    let announced_max_packet_size = match timeout(pool.connect_timeout, eventloop.poll()).await {
+        Ok(Ok(connected)) => {
+            info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected");
+            announced_max_packet_size(&connected)
+        }
         Ok(Err(error)) => return Err(connect_failed(&label, ConnectionFailure::MqttV5Connect(Box::new(error)))),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
-    }
+    };
+    let configured = pool.max_packet_size.octets();
+    let max_packet_size = announced_max_packet_size.map_or(configured, |announced| announced.min(configured));
 
     for sys in SysTopic::iter() {
         if let Err(error) = client.subscribe(sys.topic(), QoSV5::AtMostOnce).await {
@@ -208,7 +224,7 @@ async fn dial_v5(
         }
     });
 
-    Ok((MqttClientVariant::V5 { client }, task))
+    Ok((MqttClientVariant::V5 { client, max_packet_size }, task))
 }
 
 /// Open an MQTT 3.1.1 connection.
@@ -222,6 +238,8 @@ async fn dial_v311(
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let mut options = MqttOptions::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
+    let max_packet_size = pool.max_packet_size.octets();
+    options.set_max_packet_size(max_packet_size as usize, max_packet_size as usize);
     if key.use_tls {
         options.set_transport(Transport::tls_with_default_config());
     }
@@ -283,5 +301,5 @@ async fn dial_v311(
         }
     });
 
-    Ok((MqttClientVariant::V311 { client }, task))
+    Ok((MqttClientVariant::V311 { client, max_packet_size }, task))
 }

@@ -1,22 +1,25 @@
-//! Correlating an outgoing MQTT publish with the broker acknowledgement that
-//! completes it.
+//! Correlating an outgoing MQTT publish with the event that completes it.
 //!
-//! `rumqttc`'s `publish` returns before the packet is even assigned an
-//! identifier, so a caller cannot key on the packet id to await its
-//! acknowledgement. The event loop is the only place that sees both the
-//! `Outgoing::Publish(pkid)` when a publish reaches the wire and the `PubAck`
-//! (`QoS` 1) or `PubComp` (`QoS` 2) that later completes it. Publishes are
-//! registered here in send order (the delivery path holds a lock across
-//! register-and-publish, so the registration order matches the wire order),
-//! assigned their id when the event loop reports the outgoing packet, and
-//! resolved when the matching acknowledgement arrives.
+//! `rumqttc`'s `publish` returns once the publish is queued for the event
+//! loop, before the packet is written or even assigned an identifier, so a
+//! caller cannot key on the packet id to await its acknowledgement. The event
+//! loop is the only place that sees both the `Outgoing::Publish(pkid)` when a
+//! publish is written and the `PubAck` (`QoS` 1) or `PubComp` (`QoS` 2) that
+//! later completes it. Publishes are registered here in send order (the
+//! delivery path holds a lock across register-and-publish, so the registration
+//! order matches the wire order). A `QoS` 0 publish is resolved when it is
+//! written, since nothing acknowledges it; a `QoS` 1 or 2 publish is assigned
+//! its id then, and resolved when the matching acknowledgement arrives.
 
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::oneshot;
 
-/// The acknowledgement packet that completes a publish at its `QoS`.
+/// What completes a publish at its `QoS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AckKind {
+    /// `QoS` 0 completes once the client has written it: a packet the client
+    /// refuses to write, or a connection lost first, fails it instead.
+    Written,
     /// `QoS` 1 completes on `PUBACK`.
     PubAck,
     /// `QoS` 2 completes on `PUBCOMP`, after the `PUBREC`/`PUBREL` handshake.
@@ -26,9 +29,9 @@ pub enum AckKind {
 /// One publish awaiting its broker acknowledgement.
 #[derive(Debug)]
 struct PendingPublish {
-    /// The packet whose arrival completes this publish.
+    /// What completes this publish.
     completes_on: AckKind,
-    /// Resolved once that packet arrives; dropped if the connection fails first,
+    /// Resolved once that happens; dropped if the connection fails first,
     /// which the delivery path reads as a retryable failure.
     sender: oneshot::Sender<()>,
 }
@@ -38,13 +41,14 @@ struct PendingPublish {
 pub struct AckTracker {
     /// Publishes registered but not yet seen on the wire, in send order.
     unassigned: VecDeque<PendingPublish>,
-    /// Publishes on the wire, keyed by the packet id the event loop assigned.
+    /// `QoS` 1 and 2 publishes on the wire, keyed by the packet id the event
+    /// loop assigned.
     in_flight: HashMap<u16, PendingPublish>,
 }
 
 impl AckTracker {
     /// Register a publish about to be sent, returning the receiver that resolves
-    /// when the broker acknowledges it.
+    /// when it completes.
     pub fn register(&mut self, completes_on: AckKind) -> oneshot::Receiver<()> {
         let (sender, receiver) = oneshot::channel();
         self.unassigned.push_back(PendingPublish { completes_on, sender });
@@ -60,18 +64,24 @@ impl AckTracker {
         self.unassigned.pop_back();
     }
 
-    /// Assign the next unsent publish the packet id the event loop reported for
-    /// its `Outgoing::Publish`.
+    /// Take the next unsent publish off the queue once the event loop reports
+    /// its `Outgoing::Publish`: a `QoS` 0 publish is complete, and a `QoS` 1 or
+    /// 2 publish is now in flight under the packet id the event loop assigned.
     ///
-    /// A packet identifier is non-zero (MQTT 3.1.1 section 2.3.1, MQTT 5.0
-    /// section 2.2.1). A `QoS` 0 publish carries none, the client reports it as
-    /// 0, and it is never registered, so it takes no waiter.
+    /// A `QoS` 0 publish carries no packet identifier, and the client reports
+    /// it as 0 (MQTT 3.1.1 section 2.3.1, MQTT 5.0 section 2.2.1).
     pub fn on_outgoing_publish(&mut self, pkid: u16) {
-        if pkid == 0 {
+        let Some(pending) = self.unassigned.pop_front() else {
             return;
-        }
-        if let Some(pending) = self.unassigned.pop_front() {
-            self.in_flight.insert(pkid, pending);
+        };
+        match pending.completes_on {
+            // A dropped receiver means the delivery path already timed out.
+            AckKind::Written => {
+                let _ = pending.sender.send(());
+            }
+            AckKind::PubAck | AckKind::PubComp => {
+                self.in_flight.insert(pkid, pending);
+            }
         }
     }
 
@@ -148,14 +158,37 @@ mod tests {
     }
 
     #[test]
-    fn a_qos0_publish_beside_a_qos1_publish_takes_no_waiter() {
+    fn a_qos0_publish_resolves_once_it_is_written() {
         let mut tracker = AckTracker::default();
-        let mut receiver = tracker.register(AckKind::PubAck);
+        let mut receiver = tracker.register(AckKind::Written);
+        assert!(receiver.try_recv().is_err(), "a queued publish is not yet delivered");
         tracker.on_outgoing_publish(0);
+        assert_eq!(receiver.try_recv(), Ok(()), "the written publish is delivered");
+    }
+
+    #[test]
+    fn qos0_publishes_beside_a_qos1_publish_resolve_in_send_order() {
+        let mut tracker = AckTracker::default();
+        let mut first = tracker.register(AckKind::Written);
+        let mut acknowledged = tracker.register(AckKind::PubAck);
+        let mut last = tracker.register(AckKind::Written);
         tracker.on_outgoing_publish(0);
         tracker.on_outgoing_publish(4);
+        assert_eq!(first.try_recv(), Ok(()), "the first QoS 0 publish is written");
+        assert!(last.try_recv().is_err(), "the last QoS 0 publish is still queued");
+        tracker.on_outgoing_publish(0);
+        assert_eq!(last.try_recv(), Ok(()), "the last QoS 0 publish is written");
+        assert!(acknowledged.try_recv().is_err(), "the QoS 1 publish waits for its PUBACK");
         tracker.on_puback(4);
-        assert_eq!(receiver.try_recv(), Ok(()), "the QoS 1 publish is acknowledged by its own PUBACK");
+        assert_eq!(acknowledged.try_recv(), Ok(()), "the QoS 1 publish is acknowledged by its own PUBACK");
+    }
+
+    #[test]
+    fn a_qos0_publish_the_connection_lost_before_writing_it_fails() {
+        let mut tracker = AckTracker::default();
+        let mut receiver = tracker.register(AckKind::Written);
+        tracker.fail_all();
+        assert!(receiver.try_recv().is_err(), "an unwritten QoS 0 publish is not delivered");
     }
 
     #[test]

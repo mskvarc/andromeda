@@ -24,11 +24,16 @@ pub enum MqttClientVariant {
     V5 {
         /// The client publishes go out on.
         client: AsyncClient,
+        /// The largest packet the client writes: the configured limit, or the
+        /// server's announced maximum when that is smaller.
+        max_packet_size: u32,
     },
     /// An MQTT 3.1.1 client.
     V311 {
         /// The client publishes go out on.
         client: rumqttc::AsyncClient,
+        /// The largest packet the client writes, the configured limit.
+        max_packet_size: u32,
     },
 }
 
@@ -37,8 +42,8 @@ impl MqttClientVariant {
     /// gone.
     pub async fn disconnect(&self) {
         let sent = match self {
-            MqttClientVariant::V5 { client } => client.disconnect().await.is_ok(),
-            MqttClientVariant::V311 { client } => client.disconnect().await.is_ok(),
+            MqttClientVariant::V5 { client, .. } => client.disconnect().await.is_ok(),
+            MqttClientVariant::V311 { client, .. } => client.disconnect().await.is_ok(),
         };
         if !sent {
             tracing::debug!("MQTT disconnect not delivered; the connection was already gone");
@@ -68,7 +73,8 @@ pub struct ConnectionState {
     pub last_healthy: RwLock<Instant>,
     /// Broker metadata collected from `$SYS`.
     pub sys_data: RwLock<SysTopicData>,
-    /// Correlates each outgoing `QoS` 1/2 publish with its broker acknowledgement.
+    /// Correlates each outgoing publish with what completes it: being written
+    /// for `QoS` 0, the broker acknowledgement for `QoS` 1 and 2.
     ///
     /// Written by the delivery path (register) and the event loop (assign,
     /// resolve, fail). A synchronous lock because every critical section is a

@@ -214,11 +214,9 @@ impl HttpTransport {
         // The size limit is checked against the bytes actually sent rather
         // than an estimate.
         let body = req.body.text();
-        if body.len() > self.config.max_payload_size {
-            return Err(TransportError::PayloadTooLarge {
-                size: body.len(),
-                limit: self.config.max_payload_size,
-            });
+        let limit = self.config.max_body.octets();
+        if body.len() > limit {
+            return Err(TransportError::PayloadTooLarge { size: body.len(), limit });
         }
 
         if self.config.private_addresses == PrivateAddresses::Refused {
@@ -327,6 +325,7 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
 )]
 mod tests {
     use crate::{
+        error::TransportError,
         http::{
             config::HttpTransportConfig,
             transport::{HttpTransport, chain_indicates_tls, error_chain_text, notification_headers},
@@ -334,10 +333,10 @@ mod tests {
         notification_body::NotificationBody,
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
-        request::NotificationDelivery,
+        request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
-    use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
+    use andromeda_configuration::{human_byte_size::HumanByteSize, notification_body_limit::NotificationBodyLimit, schema::link_field_layout::LinkFieldLayout};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -443,6 +442,88 @@ mod tests {
         assert!(matches!(first, DeliveryOutcome::Success { .. }), "{first:?}");
         assert!(matches!(second, DeliveryOutcome::Success { .. }), "{second:?}");
         pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 2, "the second notification opened a fresh connection");
+    }
+
+    /// A receiver that reads each request's whole body, answers 204, and
+    /// records the length of the last body it read.
+    async fn receiver_recording_body_lengths() -> (Url, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");
+        let address = listener.local_addr().expect("the listener has an address");
+        let received = Arc::new(AtomicUsize::new(0));
+        let recorder = Arc::clone(&received);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let recorder = Arc::clone(&recorder);
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut buffer = vec![0_u8; 64 * 1024];
+                    let (length, mut read) = loop {
+                        let count = stream.read(&mut buffer).await.expect("the request is readable");
+                        head.extend_from_slice(&buffer[..count]);
+                        if let Some(end) = head.windows(4).position(|window| window == b"\r\n\r\n") {
+                            let length = String::from_utf8_lossy(&head[..end])
+                                .lines()
+                                .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|value| value.trim().to_owned()))
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .expect("a Content-Length");
+                            break (length, head.len() - end - 4);
+                        }
+                    };
+                    while read < length {
+                        read += stream.read(&mut buffer).await.expect("the body is readable");
+                    }
+                    recorder.store(read, Ordering::SeqCst);
+                    let _written = stream.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+                });
+            }
+        });
+        (Url::parse(&format!("http://{address}/notify")).expect("a well-formed endpoint"), received)
+    }
+
+    /// A notification to `endpoint` whose `data` text holds `bytes` characters.
+    fn sized_notification(endpoint: &Url, bytes: usize) -> DeliveryRequest {
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::core();
+        NotificationDelivery::builder()
+            .endpoint_uri(endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble(notification(&json!({"id": "urn:ngsi-ld:Notification:1", "data": "x".repeat(bytes)})))
+    }
+
+    #[tokio::test]
+    async fn a_20_mib_notification_is_delivered_under_the_default_body_limit() {
+        let (endpoint, received) = receiver_recording_body_lengths().await;
+        let transport = HttpTransport::new(HttpTransportConfig::default()).expect("the transport builds");
+        let request = sized_notification(&endpoint, 20 * 1024 * 1024);
+
+        let outcome = transport.deliver(&request).await.expect("the notification is delivered");
+
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), request.body.text().len());
+    }
+
+    /// The limit is checked before the endpoint is contacted, so the
+    /// notification is refused although nothing listens there.
+    #[tokio::test]
+    async fn a_notification_over_the_configured_body_limit_is_refused_without_a_retry() {
+        let limit = NotificationBodyLimit::try_from(HumanByteSize::kib(1)).expect("a positive limit");
+        let transport = HttpTransport::new(HttpTransportConfig {
+            max_body: limit,
+            ..HttpTransportConfig::default()
+        })
+        .expect("the transport builds");
+        let endpoint = Url::parse("http://127.0.0.1:9/notify").expect("a well-formed endpoint");
+        let request = sized_notification(&endpoint, 2048);
+
+        let refused = transport.deliver(&request).await.map(drop).expect_err("the notification is too large");
+
+        assert!(
+            matches!(refused, TransportError::PayloadTooLarge { size, limit: 1024 } if size == request.body.text().len()),
+            "{refused:?}"
+        );
+        assert!(!refused.is_retryable(), "every attempt would send the same body");
     }
 
     /// An error that names only the request, as `reqwest`'s own does.

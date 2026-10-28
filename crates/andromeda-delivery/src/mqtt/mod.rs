@@ -16,5 +16,6 @@ pub mod handle;
 pub mod health;
 pub mod indicator;
 pub mod metadata;
+pub mod outgoing_publish;
 pub mod pool;
 pub mod sys_topics;

@@ -357,7 +357,13 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 let (client, _eventloop) = rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("scripted", "127.0.0.1", 1883), 8);
-                Ok((MqttClientVariant::V311 { client }, tokio::spawn(pending())))
+                Ok((
+                    MqttClientVariant::V311 {
+                        client,
+                        max_packet_size: MqttPoolConfig::default().max_packet_size.octets(),
+                    },
+                    tokio::spawn(pending()),
+                ))
             })
         }
     }
@@ -419,7 +425,10 @@ mod tests {
         // A stand-in event loop that never ends on its own, so only the abort can stop it.
         let event_loop = tokio::spawn(pending::<()>());
         let connection = MqttConnection {
-            client: MqttClientVariant::V311 { client },
+            client: MqttClientVariant::V311 {
+                client,
+                max_packet_size: MqttPoolConfig::default().max_packet_size.octets(),
+            },
             state: Arc::clone(&state),
             key: test_key(),
             event_loop,

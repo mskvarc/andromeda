@@ -10,17 +10,23 @@ use std::sync::Arc;
 /// `delivery.request_timeout` bounds every outbound notification POST; a
 /// subscription's own Table 5.2.15-1 `timeout` may only shorten it.
 /// `delivery.private_addresses` decides whether an endpoint resolving into
-/// private address space is refused. `link_field` lays out the `Link` field
-/// lines of every HTTP notification as it does every response.
+/// private address space is refused. `delivery.max_http_body` and
+/// `delivery.max_mqtt_packet` bound what one notification may weigh on each
+/// transport. `link_field` lays out the `Link` field lines of every HTTP
+/// notification as it does every response.
 pub(super) fn construct_dispatcher(delivery: &DeliveryConfig, link_field: LinkFieldLayout) -> Result<Arc<TransportDispatcher>, TenantAssemblyError> {
     let dispatcher = TransportDispatcher::new(
         HttpTransportConfig {
             timeout: delivery.request_timeout(),
             private_addresses: delivery.private_addresses,
+            max_body: delivery.max_http_body,
             link_field,
             ..HttpTransportConfig::default()
         },
-        MqttPoolConfig::default(),
+        MqttPoolConfig {
+            max_packet_size: delivery.max_mqtt_packet,
+            ..MqttPoolConfig::default()
+        },
     )
     .map_err(AssemblyInvariant::from)?;
     Ok(Arc::new(dispatcher))
