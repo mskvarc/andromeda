@@ -24,7 +24,6 @@ fn metadata_columns(statement: &mut SelectStatement) {
         .column(JsonldContexts::ExpiresAt)
         .column(JsonldContexts::LastUsage)
         .column(JsonldContexts::NumberOfHits)
-        .column(JsonldContexts::ExtraInfo)
         .from(JsonldContexts::Table);
 }
 

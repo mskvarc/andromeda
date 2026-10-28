@@ -33,7 +33,6 @@ create table jsonld_contexts (
     -- has no index, no length bound and no byte-wise collation.
     document_url text compression lz4 collate "C",
     payload json compression lz4 not null,
-    extra_info json compression lz4,
     constraint pk_jsonld_contexts primary key (id),
     constraint uq_jsonld_contexts_url unique (url),
     constraint chk_jsonld_contexts_kind check (kind between 1 and 3),

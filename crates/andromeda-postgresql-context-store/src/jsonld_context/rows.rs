@@ -23,8 +23,6 @@ pub(crate) struct ContextMetadataRow {
     pub last_usage: DateTime<Utc>,
     /// Access counter.
     pub number_of_hits: i64,
-    /// Arbitrary extra info JSON column.
-    pub extra_info: Option<Json<JsonLiteral>>,
 }
 
 /// Summary row (local identifier + url only).

@@ -29,8 +29,6 @@ pub enum JsonldContexts {
     NumberOfHits,
     /// Instant the Context expires, when it has one
     ExpiresAt,
-    /// Optional caller-supplied metadata
-    ExtraInfo,
 }
 
 #[cfg(test)]
@@ -51,6 +49,5 @@ mod tests {
         assert_eq!(JsonldContexts::LastUsage.to_string(), "last_usage");
         assert_eq!(JsonldContexts::NumberOfHits.to_string(), "number_of_hits");
         assert_eq!(JsonldContexts::ExpiresAt.to_string(), "expires_at");
-        assert_eq!(JsonldContexts::ExtraInfo.to_string(), "extra_info");
     }
 }

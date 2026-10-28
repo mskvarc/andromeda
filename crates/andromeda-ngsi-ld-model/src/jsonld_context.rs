@@ -1,6 +1,5 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
-use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::instant_serde};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -56,9 +55,6 @@ pub struct ContextMetadata {
     pub last_usage: DateTime<Utc>,
     /// How many times it has been read.
     pub number_of_hits: u64,
-    /// Implementation-specific extra information (clause 5.13).
-    #[builder(default = Default::default())]
-    pub extra_info: Option<JsonLiteral>,
 }
 
 #[cfg(test)]
@@ -68,7 +64,6 @@ pub struct ContextMetadata {
 )]
 mod tests {
     use crate::jsonld_context::{ContextKind, ContextMetadata};
-    use andromeda_json_literal::JsonLiteral;
     use chrono::{TimeDelta, TimeZone, Utc};
     use serde_json::json;
 
@@ -93,38 +88,30 @@ mod tests {
         }
     }
 
+    /// Clause 5.13.3 makes `extraInfo` optional and implementation specific;
+    /// the broker holds no such information, so the details carry the other
+    /// members alone.
+    #[test]
+    fn context_metadata_writes_no_extra_info_member() {
+        let instant = Utc.with_ymd_and_hms(2026, 10, 28, 9, 0, 0).single().expect("a valid instant");
+        let metadata = ContextMetadata::builder()
+            .url(Some("https://example.org/context.jsonld".parse().expect("a valid URL")))
+            .serving_iri(None)
+            .local_id("urn:ngsi-ld:Context:c1".parse().expect("a valid identifier"))
+            .kind(ContextKind::Cached)
+            .created_at(instant)
+            .expires_at(Some(instant))
+            .last_usage(instant)
+            .number_of_hits(3)
+            .build();
+        let written = serde_json::to_value(&metadata).expect("the metadata serialises");
+        let mut members: Vec<&str> = written.as_object().expect("an object").keys().map(String::as_str).collect();
+        members.sort_unstable();
+        pretty_assertions::assert_eq!(members, ["URL", "createdAt", "expiresAt", "kind", "lastUsage", "localId", "numberOfHits"]);
+    }
+
     #[test]
     fn an_unknown_context_kind_label_is_a_parse_error_not_a_panic() {
         assert!("NotAKind".parse::<ContextKind>().is_err());
-    }
-
-    /// Clause 5.13.2 and 5.13.3: the posted `@context` document is held as the
-    /// JSON it was posted as, and the implementation-specific `extraInfo`
-    /// member is written back exactly as it was held.
-    #[test]
-    fn a_jsonld_context_round_trips_through_its_typed_model() {
-        let document = r#"{"@context":{"Spot":"https://example.org/Spot","speed":{"@id":"https://example.org/speed","@type":"@json"}}}"#;
-        let held: JsonLiteral = serde_json::from_slice(document.as_bytes()).expect("the document is admitted straight from its bytes");
-        pretty_assertions::assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&serde_json::to_string(&held).expect("the document is written back")).expect("written JSON"),
-            serde_json::from_str::<serde_json::Value>(document).expect("posted JSON")
-        );
-        let extra = r#"{"origin":{"mirrored":true},"weights":[1,2.5]}"#;
-        let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant");
-        let metadata = ContextMetadata::builder()
-            .serving_iri(None)
-            .local_id("urn:ngsi-ld:Context:c1".parse().expect("a valid identifier"))
-            .kind(ContextKind::Hosted)
-            .created_at(instant)
-            .last_usage(instant)
-            .number_of_hits(3)
-            .extra_info(Some(JsonLiteral::admit(extra).expect("an admissible literal")))
-            .build();
-        let written = serde_json::to_value(&metadata).expect("the metadata serialises");
-        pretty_assertions::assert_eq!(
-            written["extraInfo"],
-            serde_json::from_str::<serde_json::Value>(extra).expect("parsed extra info")
-        );
-        pretty_assertions::assert_eq!(written["localId"], json!("urn:ngsi-ld:Context:c1"));
     }
 }

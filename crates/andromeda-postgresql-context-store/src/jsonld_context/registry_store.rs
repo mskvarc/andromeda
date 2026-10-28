@@ -61,7 +61,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     let (rows, reach) = query.window.settle(rows);
                     let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     let metadata = rows
-                        .into_iter()
+                        .iter()
                         .map(row_to_metadata)
                         .collect::<Result<Vec<ContextMetadata>, _>>()
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
@@ -105,6 +105,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                         .await
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
                     let metadata = row
+                        .as_ref()
                         .map(row_to_metadata)
                         .transpose()
                         .map_err(|error| persistence_error::<ContextRegistryError>(error))?;
