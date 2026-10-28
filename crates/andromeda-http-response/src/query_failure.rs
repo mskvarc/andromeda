@@ -8,6 +8,13 @@ use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpansionFai
 #[must_use]
 pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
     match error {
+        // Clauses 5.7.2.4, 5.7.3.4 and 5.7.4.4: a query, geoquery or context
+        // source filter that is "not syntactically valid (as per the referred
+        // clauses 4.9 and 4.10)" raises BadRequestData. A type selection, a
+        // projection and a name outside their grammars are answered the same
+        // way, as the query string and the request body that carry them are.
+        // Clause 6.3.20 keeps InvalidRequest for a parameter the operation
+        // does not define, which never reaches this classification.
         QueryError::QEmpty
         | QueryError::QUnterminatedString
         | QueryError::QInvalidStringEscape { .. }
@@ -26,12 +33,8 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::GeoIncomplete
         | QueryError::ProjectionUnbalancedBrace { .. }
         | QueryError::ProjectionEmptyTerm { .. }
-        // A name outside the clause 4.6.2 grammar is a syntactically invalid
-        // request parameter, not a broker fault: every one of these reaches the
-        // parser from `q`, `attrs`, `orderBy`, `pick`/`omit` or `geoproperty`,
-        // all of them client text.
-        | QueryError::AttributeNameInvalid { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
-        QueryError::QInvalidNumber { .. }
+        | QueryError::AttributeNameInvalid { .. }
+        | QueryError::QInvalidNumber { .. }
         | QueryError::QInvalidDateTime { .. }
         | QueryError::QInvalidDate { .. }
         | QueryError::QInvalidTime { .. }
@@ -90,7 +93,9 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         error::QueryError,
         filter::{expression::Expr, language_targeting::LanguageTargeting, target_language::TargetLanguage},
+        projection::grammar::ProjectionList,
         term_expander::TermExpansionFailure,
+        type_selection::grammar::TypeExprRaw,
     };
 
     #[test]
@@ -109,6 +114,40 @@ mod tests {
     fn a_context_that_cannot_be_retrieved_is_ld_context_not_available() {
         let error = QueryError::TermExpansion(TermExpansionFailure::ContextUnavailable);
         pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::LdContextNotAvailable);
+    }
+
+    /// Clause 5.7.2.4 answers a query or geoquery outside the clauses 4.9 and
+    /// 4.10 grammars with `BadRequestData`, wherever the request carries it, and
+    /// a type selection, a projection or a name outside its grammar the same.
+    #[test]
+    fn a_query_geoquery_type_selection_projection_or_name_outside_its_grammar_is_bad_request_data() {
+        let mut failures: Vec<QueryError> = [
+            "",
+            "speed==",
+            "speed==\"open",
+            "speed==@",
+            "(speed>1",
+            "speed>1)",
+            "name==\"\\x\"",
+            "speed-limit>1",
+        ]
+        .into_iter()
+        .map(|q| q.parse::<Expr>().expect_err("outside the clause 4.9 grammar"))
+        .collect();
+        failures.extend(
+            ["", "(Home", "Home)", "Home;Vehicle", "Home||Vehicle"]
+                .into_iter()
+                .map(|selection| selection.parse::<TypeExprRaw>().expect_err("outside the clause 4.17 grammar")),
+        );
+        failures.extend(
+            ["a{b", "a,,b"]
+                .into_iter()
+                .map(|projection| projection.parse::<ProjectionList>().expect_err("outside the projection grammar")),
+        );
+        failures.push(QueryError::GeoIncomplete);
+        for error in failures {
+            pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error:?}");
+        }
     }
 
     /// A bracket member neither a name nor an RFC 5646 tag, and a full tag or

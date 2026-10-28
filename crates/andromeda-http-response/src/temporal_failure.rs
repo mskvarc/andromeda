@@ -109,7 +109,7 @@ mod tests {
                 NgsiLdErrorType::BadRequestData,
                 None,
             ),
-            ("Query", TemporalError::Query(QueryError::QEmpty), NgsiLdErrorType::InvalidRequest, None),
+            ("Query", TemporalError::Query(QueryError::QEmpty), NgsiLdErrorType::BadRequestData, None),
             (
                 "Request",
                 TemporalError::Request(ParameterError::OptionsInvalid(UnsupportedRepresentation::UnknownOptionsToken)),
