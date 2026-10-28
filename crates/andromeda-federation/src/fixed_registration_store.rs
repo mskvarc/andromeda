@@ -172,13 +172,14 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(RegistrationMutation::Missing) })
     }
 
-    fn find_matching<'life0, 'life1, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _entities: ExpandedEntitySpecification<'life1>,
+        _entities: &'life1 [ExpandedEntitySpecification<'life2>],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
     {
         let registrations = self.registrations.clone(); // clone: every query answers its own copy of the fixed list
         Box::pin(async { Ok(registrations) })

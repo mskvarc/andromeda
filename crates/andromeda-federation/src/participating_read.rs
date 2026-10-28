@@ -72,9 +72,7 @@ impl FederationService {
         self.select_read_registrations(
             context,
             ReadSelection {
-                entity_type: read.client_query.entity_type(),
-                entity_ids: read.client_query.entity_ids(),
-                id_pattern: read.client_query.id_pattern(),
+                selectors: &read.client_query.selectors(),
                 exclude_registration: None,
                 csf: None,
                 scope_q: read.client_query.scope_q(),

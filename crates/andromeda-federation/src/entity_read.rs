@@ -25,7 +25,6 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
-use std::slice::from_ref;
 
 /// Whether a registration's mode is admitted by a forwarding phase.
 pub(crate) fn mode_admitted(registration: &ContextSourceRegistration, mode_filter: CsrModeFilter) -> bool {
@@ -111,9 +110,7 @@ impl FederationService {
                 .select_read_registrations(
                     context,
                     ReadSelection {
-                        entity_type: client_query.entity_type(),
-                        entity_ids: client_query.entity_ids(),
-                        id_pattern: client_query.id_pattern(),
+                        selectors: &client_query.selectors(),
                         exclude_registration: None,
                         csf: csf_expr,
                         scope_q: client_query.scope_q(),
@@ -213,9 +210,7 @@ impl FederationService {
                 .select_read_registrations(
                     context,
                     ReadSelection {
-                        entity_type: client_query.entity_type(),
-                        entity_ids: Some(from_ref(entity_id)),
-                        id_pattern: None,
+                        selectors: &client_query.selectors(),
                         exclude_registration,
                         csf: None,
                         scope_q: None,

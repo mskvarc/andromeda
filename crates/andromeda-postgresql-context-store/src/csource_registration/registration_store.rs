@@ -110,7 +110,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_write::update(self, id, values).await
     }
 
-    async fn find_matching(&self, entities: ExpandedEntitySpecification<'_>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_matching(&self, entities: &[ExpandedEntitySpecification<'_>]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         registration_read::find_matching(self, entities).await
     }
 

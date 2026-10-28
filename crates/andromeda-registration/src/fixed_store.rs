@@ -177,13 +177,14 @@ impl RegistrationStore for FixedStore {
         Box::pin(async move { Ok(mutation) })
     }
 
-    fn find_matching<'life0, 'life1, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _entities: ExpandedEntitySpecification<'life1>,
+        _entities: &'life1 [ExpandedEntitySpecification<'life2>],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
     {
         Box::pin(async { Ok(Vec::new()) })
     }

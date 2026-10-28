@@ -38,7 +38,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
-use std::num::NonZeroU32;
+use std::{borrow::Cow, num::NonZeroU32};
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
 ///
@@ -179,6 +179,14 @@ query_parameter_set!(
         + PageParameters
         + OrderingParameters
 );
+
+impl EntityQueryParameters {
+    /// The entity selectors the query is the union of (clause 5.2.33).
+    #[must_use]
+    pub fn selectors(&self) -> Cow<'_, [EntitySelectorParams]> {
+        EntitySelectorParams::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
+    }
+}
 
 impl_shared_query_params!(EntityQueryParameters {
     id: id,

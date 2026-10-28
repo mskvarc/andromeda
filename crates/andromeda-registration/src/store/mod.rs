@@ -172,22 +172,25 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Registrations whose `information` may match `entities` by clause 5.12,
-    /// excluding expired ones (clause 5.9.2.4).
+    /// Registrations whose `information` may match some member of `entities`
+    /// by clause 5.12, excluding expired ones (clause 5.9.2.4).
     ///
-    /// This is the forwarding preselect. Every member of `entities` narrows
-    /// it: the type selector, each of the identifiers and the identifier
-    /// pattern. The result is a superset: callers evaluate the full typed
+    /// This is the forwarding preselect. `entities` is the union of selectors a
+    /// request asks for, and a registration is a candidate when some member
+    /// may match it; within one member the type selector, each of the
+    /// identifiers and the identifier pattern all narrow. An empty slice places
+    /// no constraint. The result is a superset: callers evaluate the full typed
     /// registration to decide actual membership, so returning a registration
     /// that turns out not to serve the request is permitted, while omitting one
     /// that does is a correctness defect.
-    fn find_matching<'life0, 'life1, 'async_trait>(
+    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entities: ExpandedEntitySpecification<'life1>,
+        entities: &'life1 [ExpandedEntitySpecification<'life2>],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
 
     /// Non-expired proxied registrations — mode `exclusive` or `redirect` —

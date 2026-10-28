@@ -26,7 +26,7 @@ pub struct Coverage<'request> {
     pub attributes: &'request [AttributeName],
 }
 
-impl Coverage<'_> {
+impl<'request> Coverage<'request> {
     /// Whether some `registration_information` row of the registration covers
     /// every axis asked about, or `None` when nothing is asked.
     #[must_use]
@@ -37,6 +37,28 @@ impl Coverage<'_> {
         ];
         let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
         (!row.is_empty()).then(|| some_information_row(row))
+    }
+
+    /// Whether the registration covers at least one of `entities` (each a
+    /// clause 5.12 specification of a selector in the union a query asks for)
+    /// together with `attributes`, or `None` when nothing is asked.
+    ///
+    /// A specification that constrains nothing admits every registration, so one
+    /// among the others leaves the whole unconstrained; an empty slice asks
+    /// nothing either.
+    #[must_use]
+    pub fn any_of(entities: &[ExpandedEntitySpecification<'request>], attributes: &'request [AttributeName]) -> Option<SimpleExpr> {
+        let alternatives = entities
+            .iter()
+            .map(|entities| {
+                Coverage {
+                    entities: *entities,
+                    attributes,
+                }
+                .predicate()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (!alternatives.is_empty()).then(|| alternatives.into_iter().fold(Condition::any(), Condition::add).into())
     }
 }
 
@@ -74,6 +96,44 @@ mod tests {
             entities: coverage,
             attributes: &[],
         })
+    }
+
+    #[test]
+    fn any_of_joins_one_row_existence_check_per_specification() {
+        let alpha = TypeExpr::Type(iri("https://example.com/Alpha"));
+        let beta = TypeExpr::Type(iri("https://example.com/Beta"));
+        let specifications = [
+            ExpandedEntitySpecification {
+                entity_type: Some(&alpha),
+                ..ExpandedEntitySpecification::default()
+            },
+            ExpandedEntitySpecification {
+                entity_type: Some(&beta),
+                ..ExpandedEntitySpecification::default()
+            },
+        ];
+        let sql = Query::select()
+            .expr(int_literal(1))
+            .from(sea_query::Alias::new("context_source_registrations"))
+            .and_where(Coverage::any_of(&specifications, &[]).expect("something is asked"))
+            .to_string(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql.matches("EXISTS(").count(), 2, "{sql}");
+        assert!(sql.contains("https://example.com/Alpha") && sql.contains("https://example.com/Beta"), "{sql}");
+        assert!(sql.contains(") OR "), "{sql}");
+    }
+
+    #[test]
+    fn any_of_is_unconstrained_when_one_specification_asks_nothing_or_none_is_given() {
+        let alpha = TypeExpr::Type(iri("https://example.com/Alpha"));
+        let specifications = [
+            ExpandedEntitySpecification {
+                entity_type: Some(&alpha),
+                ..ExpandedEntitySpecification::default()
+            },
+            ExpandedEntitySpecification::default(),
+        ];
+        assert!(Coverage::any_of(&specifications, &[]).is_none());
+        assert!(Coverage::any_of(&[], &[]).is_none());
     }
 
     #[test]

@@ -20,7 +20,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::forwarding_mode::ForwardingMode};
-use std::slice::from_ref;
+use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
 /// The outcome of a temporal read whose request already looped back onto this
 /// broker: no registration is selected, only the warning is reported.
@@ -84,9 +84,7 @@ impl FederationService {
             .select_read_registrations(
                 context,
                 ReadSelection {
-                    entity_type: client.entity_type(),
-                    entity_ids: client.entity_ids(),
-                    id_pattern: client.id_pattern(),
+                    selectors: &client.selectors(),
                     exclude_registration: None,
                     csf: csf_expr,
                     scope_q: client_query.scope_q.as_ref(),
@@ -186,9 +184,10 @@ impl FederationService {
             .select_read_registrations(
                 context,
                 ReadSelection {
-                    entity_type: None,
-                    entity_ids: Some(from_ref(entity_id)),
-                    id_pattern: None,
+                    selectors: &[EntitySelectorParams {
+                        id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
+                        ..EntitySelectorParams::default()
+                    }],
                     exclude_registration,
                     csf: None,
                     scope_q: None,

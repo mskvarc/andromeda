@@ -154,11 +154,11 @@ impl FederationService {
             Some(map) => self.registrations_of_map(map).await?,
             None => {
                 self.csr_repo
-                    .find_matching(ExpandedEntitySpecification {
+                    .find_matching(&[ExpandedEntitySpecification {
                         entity_type: expanded_type.as_ref(),
                         ids: request.entity_ids.unwrap_or_default(),
                         id_pattern: request.id_pattern,
-                    })
+                    }])
                     .await?
             }
         };

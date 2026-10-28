@@ -144,6 +144,8 @@ pub mod remote_answer;
 pub mod request;
 /// The distinct entities and source rows one forwarded query may gather.
 pub mod result_budget;
+/// A query's entity selectors with their type expressions expanded.
+mod selector_expansion;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;
 /// The warnings of a source's answer that is not read in full.

@@ -82,7 +82,7 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(RegistrationMutation::Missing)
     }
 
-    async fn find_matching(&self, _entities: ExpandedEntitySpecification<'_>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn find_matching(&self, _entities: &[ExpandedEntitySpecification<'_>]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         let failing = self
             .failures_left
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))

@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
+use andromeda_ngsi_ld_request::{query::entity_selector::EntitySelectorParams, representation_parameter::WrittenValue};
 use std::num::NonZeroU32;
 use url::form_urlencoded;
 
@@ -78,20 +78,24 @@ impl ForwardedQuery {
         answer: TemporalAnswer,
         names: &ForwardedNames<'_>,
     ) -> Result<Vec<ForwardedQuery>, FederationError> {
+        let selectors = client.selectors();
         let mut queries: Vec<ForwardedQuery> = Vec::new();
         for block in &registration.coverage.information {
-            if let Some(query) = Self::for_block(client, block, split, source_page, answer, names).await?
-                && !queries.contains(&query)
-            {
-                queries.push(query);
+            for selector in selectors.iter() {
+                if let Some(query) = Self::for_block(client, selector, block, split, source_page, answer, names).await?
+                    && !queries.contains(&query)
+                {
+                    queries.push(query);
+                }
             }
         }
         Ok(queries)
     }
 
-    /// The forwarded query one information block produces, or `None` when the
-    /// block covers none of the entities or attributes the client asked for
-    /// (clause 4.3.6.3).
+    /// The forwarded query one information block produces for one selector of
+    /// the client's union (clause 5.2.33), or `None` when the block covers none
+    /// of the entities or attributes that selector asked for (clause 4.3.6.3).
+    /// A retrieval has one selector and takes its entity from the operation.
     ///
     /// # Errors
     ///
@@ -99,6 +103,7 @@ impl ForwardedQuery {
     /// cannot be expanded against the request context.
     async fn for_block(
         client: ClientQuery<'_>,
+        selector: &EntitySelectorParams,
         block: &RegistrationInfo,
         split: SplitEntities,
         source_page: Option<SourcePage>,
@@ -108,7 +113,7 @@ impl ForwardedQuery {
         let mut query = ForwardedQuery::default();
         match client {
             ClientQuery::EntityQuery(params) => {
-                let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
+                let Some(selection) = BlockSelection::of(block, selector.id.as_deref(), selector.id_pattern.as_ref(), selector.type_.as_ref(), names).await?
                 else {
                     return Ok(None);
                 };
@@ -163,7 +168,7 @@ impl ForwardedQuery {
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
             ClientQuery::TemporalQuery(params) => {
-                let Some(selection) = BlockSelection::of(block, params.id.as_deref(), params.id_pattern.as_ref(), params.entity_type.as_ref(), names).await?
+                let Some(selection) = BlockSelection::of(block, selector.id.as_deref(), selector.id_pattern.as_ref(), selector.type_.as_ref(), names).await?
                 else {
                     return Ok(None);
                 };
@@ -357,6 +362,7 @@ mod tests {
         entity::GetEntityParams,
         query::{
             entity::parameters::EntityQueryParameters,
+            entity_selector::EntitySelectorParams,
             temporal::{TemporalQueryParameters, retrieve_parameters::TemporalRetrieveParameters},
         },
     };
@@ -687,6 +693,90 @@ mod tests {
         let reg = registration(&json!([{"entities": [{"type": VEHICLE}]}, {"entities": [{"type": VEHICLE}]}]));
         let forwarded = narrow(ClientQuery::EntityQuery(&entity_query("type=Vehicle")), &reg, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000".to_string()]);
+    }
+
+    /// A POST query naming `selectors`, whose flat members are the flattened
+    /// summary the body conversion leaves.
+    fn union_query(selectors: Vec<EntitySelectorParams>) -> EntityQueryParameters {
+        let mut query = entity_query("");
+        query.entity_selectors = selectors;
+        query
+    }
+
+    fn typed(raw: &str) -> EntitySelectorParams {
+        EntitySelectorParams {
+            type_: Some(raw.parse().expect("valid type expression")),
+            ..EntitySelectorParams::default()
+        }
+    }
+
+    /// Clause 5.2.33: a block is asked only for the selectors of the union it
+    /// covers, so a block registered for `Device` alone yields the `Device`
+    /// query and nothing for `Vehicle`.
+    #[tokio::test]
+    async fn a_block_is_asked_only_for_the_selectors_it_covers() {
+        let reg = registration(&json!([{"entities": [{"type": DEVICE}]}]));
+        let query = union_query(vec![typed("Vehicle"), typed("Device")]);
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Device&limit=1000".to_string()]);
+    }
+
+    /// A block covering both selectors is asked once per selector, since a GET
+    /// cannot express their union.
+    #[tokio::test]
+    async fn a_block_covering_two_selectors_is_asked_once_for_each() {
+        let reg = registration(&json!([{"entities": [{"type": VEHICLE}, {"type": DEVICE}]}]));
+        let query = union_query(vec![typed("Vehicle"), typed("Device")]);
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(
+            strings(&forwarded),
+            vec!["type=Vehicle&limit=1000".to_string(), "type=Device&limit=1000".to_string()]
+        );
+    }
+
+    /// Two selectors that narrow to the same request collapse to one query.
+    #[tokio::test]
+    async fn selectors_narrowing_to_the_same_request_are_asked_once() {
+        let reg = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let query = union_query(vec![typed("Vehicle"), typed("Vehicle")]);
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000".to_string()]);
+    }
+
+    /// A registration matching none of the selectors yields no query, so no
+    /// request is sent to its source.
+    #[tokio::test]
+    async fn a_block_covering_none_of_the_selectors_yields_no_query() {
+        let reg = registration(&json!([{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Other"}]}]));
+        let query = union_query(vec![typed("Vehicle"), typed("Device")]);
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+    }
+
+    /// The identifier and the type of one selector are decided together: a
+    /// block registering the identifier under another type is not asked.
+    #[tokio::test]
+    async fn a_selector_pairs_its_identifier_with_its_own_type() {
+        let reg = registration(&json!([{"entities": [{"type": DEVICE, "id": VEHICLE_X}]}]));
+        let query = union_query(vec![EntitySelectorParams {
+            id: Some(vec![uri(VEHICLE_X)]),
+            ..typed("Vehicle")
+        }]);
+        let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(strings(&forwarded), Vec::<String>::new());
+    }
+
+    /// The union applies to a temporal query as it does to an entity query.
+    #[tokio::test]
+    async fn a_temporal_query_is_asked_only_for_the_selectors_a_block_covers() {
+        let reg = registration(&json!([{"entities": [{"type": DEVICE}]}]));
+        let query = TemporalQueryParameters {
+            entity_selectors: vec![typed("Vehicle"), typed("Device")],
+            ..TemporalQueryParameters::default()
+        };
+        let forwarded = narrow(ClientQuery::TemporalQuery(&query), &reg, SplitEntities::Complete).await;
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+        pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Device"));
     }
 
     /// Clause 5.7.4.4: a split temporal query keeps its temporal window, and a

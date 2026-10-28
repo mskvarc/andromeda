@@ -49,7 +49,6 @@ use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, operation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-use andromeda_ngsi_ld_query::csr::expanded_entity_specification::ExpandedEntitySpecification;
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
@@ -165,7 +164,7 @@ impl FederationService {
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let candidates = self
             .csr_repo
-            .find_matching(ExpandedEntitySpecification::default())
+            .find_matching(&[])
             .await?
             .into_iter()
             .filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary))

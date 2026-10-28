@@ -18,13 +18,12 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
-/// Compile a query's entity selectors against `context`.
+/// Compile a query's effective entity selectors against `context`.
 ///
-/// A GET request, or any whose selection arrived as protocol headers, carries
-/// no structured `entity_selectors`, so its flat `id`/`type`/`idPattern`
-/// describe one implicit selector. A POST `entities[]` body carries one selector
+/// `selectors` is the union the query asks for (see
+/// `EntitySelectorParams::effective`): a POST `entities[]` body contributes one
 /// per array entry, each compiled independently so their union is not flattened
-/// into a cross product.
+/// into a cross product, and a GET request contributes its one implicit selector.
 ///
 /// # Errors
 ///
@@ -33,20 +32,14 @@ use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 pub async fn compile_entity_selectors(
     engine: &JsonLdEngine,
     context: &PreparedTermContext,
-    entity_selectors: &[EntitySelectorParams],
-    flat_ids: Vec<Identifier>,
-    flat_id_pattern: Option<&Pattern>,
-    flat_type: Option<&TypeExprRaw>,
+    selectors: &[EntitySelectorParams],
 ) -> Result<Vec<EntitySelector>, QueryError> {
-    if entity_selectors.is_empty() {
-        return Ok(vec![compile_one(engine, context, flat_ids, flat_id_pattern, flat_type).await?]);
-    }
-    let mut selectors = Vec::with_capacity(entity_selectors.len());
-    for raw in entity_selectors {
+    let mut compiled = Vec::with_capacity(selectors.len());
+    for raw in selectors {
         let ids = raw.id.clone().unwrap_or_default();
-        selectors.push(compile_one(engine, context, ids, raw.id_pattern.as_ref(), raw.type_.as_ref()).await?);
+        compiled.push(compile_one(engine, context, ids, raw.id_pattern.as_ref(), raw.type_.as_ref()).await?);
     }
-    Ok(selectors)
+    Ok(compiled)
 }
 
 /// Compile one selector's identifier list, identifier pattern and type

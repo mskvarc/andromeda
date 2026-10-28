@@ -8,11 +8,12 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
-    query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
+    query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
 };
+use std::borrow::Cow;
 
 /// The query a client sent, as the typed parameters of the operation it is.
 #[derive(Debug, Clone, Copy)]
@@ -60,14 +61,25 @@ pub enum TemporalTraversal {
 }
 
 impl ClientQuery<'_> {
-    /// The clause 4.17 type selector the client wrote, if the operation has one.
+    /// The entity selectors whose union the client asked for (clause 5.2.33).
+    ///
+    /// A query contributes its structured `entities[]` or the one implicit
+    /// selector of its flat parameters. A retrieval is the one selector naming
+    /// the entity of its path and the client's type, if any.
     #[must_use]
-    pub const fn entity_type(&self) -> Option<&TypeExprRaw> {
+    pub fn selectors(&self) -> Cow<'_, [EntitySelectorParams]> {
         match self {
-            ClientQuery::EntityQuery(params) => params.entity_type.as_ref(),
-            ClientQuery::TemporalQuery(params) => params.entity_type.as_ref(),
-            ClientQuery::EntityRetrieve { params, .. } => params.entity_type.as_ref(),
-            ClientQuery::TemporalRetrieve { .. } => None,
+            ClientQuery::EntityQuery(params) => params.selectors(),
+            ClientQuery::TemporalQuery(params) => params.selectors(),
+            ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![EntitySelectorParams {
+                id: Some(vec![(*id).clone()]),     // clone: the selector owns its identifiers
+                type_: params.entity_type.clone(), // clone: the selector owns its type expression
+                id_pattern: None,
+            }]),
+            ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![EntitySelectorParams {
+                id: Some(vec![(*id).clone()]), // clone: the selector owns its identifiers
+                ..EntitySelectorParams::default()
+            }]),
         }
     }
 
@@ -77,16 +89,6 @@ impl ClientQuery<'_> {
         match self {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
             ClientQuery::TemporalQuery(params) => params.id.as_deref(),
-            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
-        }
-    }
-
-    /// The identifier pattern the client selected, if the operation has one.
-    #[must_use]
-    pub const fn id_pattern(&self) -> Option<&Pattern> {
-        match self {
-            ClientQuery::EntityQuery(params) => params.id_pattern.as_ref(),
-            ClientQuery::TemporalQuery(params) => params.id_pattern.as_ref(),
             ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }

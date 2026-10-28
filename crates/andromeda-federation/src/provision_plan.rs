@@ -150,11 +150,11 @@ impl FederationService {
 
         let csrs = self
             .csr_repo
-            .find_matching(ExpandedEntitySpecification {
+            .find_matching(&[ExpandedEntitySpecification {
                 entity_type: coarse_type.as_ref(),
                 ids: from_ref(request.entity_id),
                 id_pattern: None,
-            })
+            }])
             .await?;
 
         let entity = match type_selector.as_ref() {

@@ -138,11 +138,11 @@ impl FederationService {
         let operation = kind.operation();
         let registrations: Vec<_> = self
             .csr_repo
-            .find_matching(ExpandedEntitySpecification {
+            .find_matching(&[ExpandedEntitySpecification {
                 entity_type: expanded_type.as_ref(),
                 ids: entity_ids.unwrap_or_default(),
                 id_pattern,
-            })
+            }])
             .await?
             .into_iter()
             .filter(|csr| operation.matches(csr))

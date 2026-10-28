@@ -59,15 +59,7 @@ impl TemporalService {
         // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
         // selectors, compiled by the same helper the entity path uses so the two
         // cannot disagree on what a selection means.
-        let selectors = compile_entity_selectors(
-            &self.engine,
-            &prepared_context,
-            &params.entity_selectors,
-            params.id.clone().unwrap_or_default(),
-            params.id_pattern.as_ref(),
-            params.entity_type.as_ref(),
-        )
-        .await?;
+        let selectors = compile_entity_selectors(&self.engine, &prepared_context, &params.selectors()).await?;
 
         let attr_filter = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let projection = compile_projection(params, &expander).await?;

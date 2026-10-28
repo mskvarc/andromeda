@@ -53,7 +53,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use std::num::NonZeroU32;
+use std::{borrow::Cow, num::NonZeroU32};
 
 /// Conversion of the canonical clause-5.2.23 body into these parameters.
 pub mod body_conversion;
@@ -277,6 +277,12 @@ impl_shared_query_params!(TemporalQueryParameters {
 });
 
 impl TemporalQueryParameters {
+    /// The entity selectors the query is the union of (clause 5.2.33).
+    #[must_use]
+    pub fn selectors(&self) -> Cow<'_, [EntitySelectorParams]> {
+        EntitySelectorParams::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
+    }
+
     /// Ask the query of `entities` alone, entities its selection has already
     /// matched.
     ///

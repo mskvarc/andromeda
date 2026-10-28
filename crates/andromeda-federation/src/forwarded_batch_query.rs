@@ -73,7 +73,7 @@ mod tests {
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+    use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams};
     use serde_json::{Value, json};
 
     fn registration(information: &Value) -> ContextSourceRegistration {
@@ -151,5 +151,40 @@ mod tests {
         pretty_assertions::assert_eq!(value["entities"].as_array().map(Vec::len), Some(2));
         pretty_assertions::assert_eq!(value["entities"][1]["id"], "urn:ngsi-ld:Vehicle:2");
         pretty_assertions::assert_eq!(value["entities"][1]["type"], "Vehicle");
+    }
+
+    /// Clause 5.2.33: the body sent to a source holds only the selector of the
+    /// client's union that the source's block covers.
+    #[tokio::test]
+    async fn a_union_query_writes_only_the_selector_the_block_covers() {
+        let by_type = registration(&json!([{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Beta"}]}]));
+        let mut params: EntityQueryParameters = serde_urlencoded::from_str("").expect("valid query");
+        params.entity_selectors = ["Alpha", "Beta"]
+            .into_iter()
+            .map(|raw| EntitySelectorParams {
+                type_: Some(raw.parse().expect("valid type expression")),
+                ..EntitySelectorParams::default()
+            })
+            .collect();
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let context = ContextSpec::none();
+        let resolver = TermResolver::new(&engine, &context);
+        let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
+            .await
+            .expect("the forwarding context processes");
+        let forwarded = ForwardedQuery::for_registration(
+            ClientQuery::EntityQuery(&params),
+            &by_type,
+            SplitEntities::Complete,
+            None,
+            TemporalAnswer::AsRequested,
+            &names,
+        )
+        .await
+        .expect("narrowing succeeds");
+        pretty_assertions::assert_eq!(forwarded.len(), 1);
+        let value = serde_json::to_value(batch_query(&forwarded[0]).expect("the query builds")).expect("the query writes");
+        pretty_assertions::assert_eq!(value["entities"].as_array().map(Vec::len), Some(1));
+        pretty_assertions::assert_eq!(value["entities"][0]["type"], "Beta");
     }
 }

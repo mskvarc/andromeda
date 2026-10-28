@@ -210,15 +210,14 @@ pub(super) async fn query_compiled(
     })
 }
 
-/// The unexpired registrations whose `information` may match `entities` (clauses 5.9.2.4, 5.12), a superset decided by the caller.
+/// The unexpired registrations whose `information` may match some of `entities` (clauses 5.9.2.4, 5.12), a superset decided by the caller.
 pub(super) async fn find_matching(
     store: &PostgresRegistrationStore,
-    entities: ExpandedEntitySpecification<'_>,
+    entities: &[ExpandedEntitySpecification<'_>],
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     select.cond_where(not_expired());
-    let coverage = Coverage { entities, attributes: &[] };
-    if let Some(covered) = coverage.predicate() {
+    if let Some(covered) = Coverage::any_of(entities, &[]) {
         select.and_where(covered);
     }
     select.order_by(Csr::CreatedAt, Order::Asc);

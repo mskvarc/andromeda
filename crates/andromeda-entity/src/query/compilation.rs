@@ -85,15 +85,7 @@ impl EntityQueryService {
         language_targeting: LanguageTargeting,
     ) -> Result<CompiledEntityQuery, EntityError> {
         let prepared_context = self.engine().prepare_term_context(context);
-        let selectors = compile_entity_selectors(
-            self.engine(),
-            &prepared_context,
-            &params.entity_selectors,
-            params.id.clone().unwrap_or_default(),
-            params.id_pattern.as_ref(),
-            params.entity_type.as_ref(),
-        )
-        .await?;
+        let selectors = compile_entity_selectors(self.engine(), &prepared_context, &params.selectors()).await?;
 
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
