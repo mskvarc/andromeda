@@ -19,6 +19,7 @@ use crate::temporal::{
         forwarding::{ForwardedHistory, HistoryReach},
         in_effect_gathering::{InEffectGathering, instance_documents},
         merged_history::{MergedTemporalHistory, RemoteParts, merge_forwarded_history},
+        whole_range_join::close_hub_aggregates,
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -248,7 +249,8 @@ pub(crate) async fn merge_with_contributions(
     if let Some(settlement) = settlement {
         retain_settled(&mut merged.entities, merge.contributed, &settlement);
     }
-    if let Some((entities, warnings)) = rendered {
+    if let Some((mut entities, warnings)) = rendered {
+        close_hub_aggregates(merge.params, &mut merged.entities, &mut entities);
         merged.entities.extend(entities);
         merged.warnings.extend(warnings);
     }

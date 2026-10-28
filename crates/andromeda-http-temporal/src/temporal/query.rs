@@ -59,6 +59,8 @@ mod request_entity_map;
 mod response;
 /// The entities a source contributed to a split query, and the filters decided over them.
 mod split_contribution;
+/// Closing the hub-computed aggregates of one response to the same whole-range period.
+mod whole_range_join;
 
 /// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
 /// request, whichever binding decoded it.

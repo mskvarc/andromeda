@@ -170,6 +170,37 @@ fn the_period_span_runs_from_the_first_start_to_the_last_end() {
     pretty_assertions::assert_eq!(entity(&[], &[AggrMethod::TotalCount], 0).period_span(), None);
 }
 
+/// Clause 4.5.19.1: a whole-range aggregation reports one range, so closing an
+/// entity sets every triple's bounds, at whatever depth a grouping nests them.
+#[test]
+fn closing_the_periods_sets_every_bound_at_any_depth() {
+    let start = instant("2026-01-01T00:00:00Z");
+    let end = instant("2026-01-02T00:00:00Z");
+    for depth in [0, 1] {
+        let mut rows = hours(2, 4);
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.group_keys = vec![GroupKeyValue::Value(format!("group-{index}"))];
+        }
+        let mut aggregated = entity(&rows, &[AggrMethod::TotalCount, AggrMethod::Avg], depth);
+        aggregated.close_periods_to(start, end);
+        pretty_assertions::assert_eq!(aggregated.period_span(), Some((start, end)), "depth {depth}");
+        for aggregate in &aggregated.attrs[&weight()][0].aggregates {
+            let triples: Vec<&AggregatedTriple> = match &aggregate.values {
+                AggregatedValues::Triples(triples) => triples.iter().collect(),
+                AggregatedValues::Grouped(groups) => groups
+                    .values()
+                    .flat_map(|values| match values {
+                        AggregatedValues::Triples(triples) => triples.iter(),
+                        AggregatedValues::Grouped(_) => panic!("one grouping term nests one level"),
+                    })
+                    .collect(),
+            };
+            pretty_assertions::assert_eq!(triples.len(), 2);
+            assert!(triples.iter().all(|triple| triple.start == Some(start) && triple.end == Some(end)));
+        }
+    }
+}
+
 /// A merged page complete up to 05:00 keeps the periods lying wholly before
 /// it, at whatever depth a grouping nests them.
 #[test]

@@ -94,6 +94,19 @@ impl AggregatedValues {
             AggregatedValues::Grouped(groups) => groups.values_mut().for_each(|values| values.retain(admits)),
         }
     }
+
+    /// Give every triple the bounds `start` and `end`, at whatever depth.
+    fn close_to(&mut self, start: DateTime<Utc>, end: DateTime<Utc>) {
+        match self {
+            AggregatedValues::Triples(triples) => {
+                for triple in triples {
+                    triple.start = Some(start);
+                    triple.end = Some(end);
+                }
+            }
+            AggregatedValues::Grouped(groups) => groups.values_mut().for_each(|values| values.close_to(start, end)),
+        }
+    }
 }
 
 /// One method of one aggregated attribute and what it aggregates to.
@@ -189,6 +202,17 @@ impl AggregatedTemporalEntity {
             ([start, triple.start].into_iter().flatten().min(), [end, triple.end].into_iter().flatten().max())
         });
         start.zip(end)
+    }
+
+    /// Report `start` and `end` as the bounds of every period the entity holds
+    /// an aggregate of, so a whole-range aggregation names the one range of
+    /// its response.
+    pub fn close_periods_to(&mut self, start: DateTime<Utc>, end: DateTime<Utc>) {
+        for attribute in self.attrs.values_mut().flatten() {
+            for aggregate in &mut attribute.aggregates {
+                aggregate.values.close_to(start, end);
+            }
+        }
     }
 
     /// Keep only the periods both of whose bounds `keep` admits: the periods

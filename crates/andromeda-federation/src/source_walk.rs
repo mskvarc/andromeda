@@ -1101,6 +1101,10 @@ mod tests {
             .flat_map(|answer| answer.warnings.iter().map(ToString::to_string))
             .collect();
         assert!(warnings.iter().any(|warning| warning.contains("cannot be resumed past")), "{warnings:?}");
+        assert!(
+            outcome.results.iter().all(|answer| answer.partial_ranges.len() == 1),
+            "the history is complete only up to the stop it could not be resumed past"
+        );
     }
 
     /// Clause 4.12: once the sources' history holds more instances than the

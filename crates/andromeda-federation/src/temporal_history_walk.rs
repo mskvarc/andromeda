@@ -84,15 +84,17 @@ impl FederationService {
         budget.instances.charge(gathered.instance_count())?;
         let mut resumed_at: Option<DateTime<Utc>> = None;
         while let Some(stopped_at) = least_range_end(&gathered.partial_ranges) {
-            gathered.partial_ranges.clear();
             let resumed = first_url
                 .as_ref()
                 .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
                 .and_then(|url| resumed_window(url, stopped_at));
             let Some(resumed) = resumed else {
+                // The stop stays on the answer: a history that could not be resumed is
+                // complete only up to it (clause 6.3.10).
                 gathered.warnings.push(incomplete_answer(&registration.id, IncompleteReason::HistoryCutShort));
                 break;
             };
+            gathered.partial_ranges.clear();
             // The resumed walk gathers entities the first one already counted,
             // so it is bounded on its own rather than charged to the request's
             // entity budget a second time.
