@@ -1,6 +1,6 @@
 //! The workspace-wide ban on dumping-ground module names.
 
-use crate::source_scan::rust_file_paths;
+use crate::source_scan::source_tree_paths;
 use std::path::Path;
 
 /// Module names that describe no domain concept and are forbidden anywhere.
@@ -14,7 +14,7 @@ const DUMPING_GROUND_NAMES: &[&str] = &["common", "core", "helpers", "misc", "sh
 
 /// Assert that no production module is named after a dumping ground.
 ///
-/// The scan covers every Rust source below `src/`, `crates/`, and `lib/`,
+/// The scan covers every Rust source below `src/`, `crates/`, and `tools/`,
 /// matching both a file stem (`utils.rs`) and a directory that carries the
 /// concept through its `mod.rs` (`utils/mod.rs`). It reads only file names, so
 /// it needs no parse and covers test crates as readily as production ones.
@@ -25,9 +25,8 @@ const DUMPING_GROUND_NAMES: &[&str] = &["common", "core", "helpers", "misc", "sh
 /// cannot be listed.
 pub fn assert_no_dumping_ground_modules(workspace_root: &str) {
     let root = Path::new(workspace_root);
-    let mut violations = ["src", "crates", "lib"]
+    let mut violations = source_tree_paths(root)
         .into_iter()
-        .flat_map(|directory| rust_file_paths(&root.join(directory)))
         .filter_map(|path| {
             let concept = module_concept_name(&path)?;
             DUMPING_GROUND_NAMES.contains(&concept).then(|| {

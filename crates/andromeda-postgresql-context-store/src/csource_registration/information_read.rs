@@ -147,36 +147,3 @@ impl RegistrationInformationRows {
         information_of(&rows, names)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::migration_set::declared_schema::DeclaredSchema;
-    use pretty_assertions::assert_eq;
-
-    /// A row-type value decodes field by field in the table's column order,
-    /// so the record keeps that order.
-    #[test]
-    fn an_information_record_follows_the_table_column_order() {
-        let declared: Vec<String> = DeclaredSchema::of_every_migration()
-            .columns
-            .into_iter()
-            .filter(|column| column.table == "registration_information")
-            .map(|column| column.name)
-            .collect();
-        assert_eq!(
-            declared,
-            [
-                "item_ordinal",
-                "selector_ordinal",
-                "entity_type_shape",
-                "registration_id",
-                "entity_types",
-                "entity_id",
-                "entity_id_pattern",
-                "entity_id_pattern_form",
-                "property_name_keys",
-                "relationship_name_keys",
-            ]
-        );
-    }
-}

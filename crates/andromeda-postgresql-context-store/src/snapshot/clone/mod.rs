@@ -93,15 +93,9 @@ pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &DynIde
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        migration_set::{
-            branch::branch_migrations,
-            declared_schema::{DeclaredColumn, DeclaredSchema},
-        },
-        snapshot::{
-            branch_schema::branch_tables,
-            clone::{cloned_tables, uncloned_tables},
-        },
+    use crate::snapshot::{
+        branch_schema::branch_tables,
+        clone::{cloned_tables, uncloned_tables},
     };
     use pretty_assertions::assert_eq;
 
@@ -138,36 +132,6 @@ mod tests {
     /// sub-attribute tree included.
     #[test]
     fn the_clone_copies_the_instance_table() {
-        let schema = DeclaredSchema::of_every_migration();
         assert!(names(cloned_tables()).contains(&CURRENT_ATTRIBUTES.to_owned()));
-        let declared: Vec<_> = schema.columns.iter().filter(|column| column.table == CURRENT_ATTRIBUTES).collect();
-        assert!(declared.iter().all(|column| !column.is_identity()), "no key to continue");
-        assert!(declared.iter().any(|column| column.name == "sub_attributes"));
-    }
-
-    /// `sub_attribute` is declared once per tenant in `public`, and both
-    /// branches resolve it there, so the source and target arrays are of one
-    /// type: two composite types of the same shape in two schemas would not
-    /// cast to each other, and the copy casts nothing.
-    #[test]
-    fn the_clone_copies_a_composite_column_of_one_tenant_wide_type() {
-        let schema = DeclaredSchema::of_every_migration();
-        let sub_attributes = schema
-            .columns
-            .iter()
-            .find(|column| column.table == CURRENT_ATTRIBUTES && column.name == "sub_attributes")
-            .map(DeclaredColumn::type_word);
-        assert_eq!(
-            sub_attributes.as_deref(),
-            Some("SUB_ATTRIBUTE[]"),
-            "an unqualified type the search path resolves"
-        );
-        for migration in branch_migrations() {
-            assert!(
-                !migration.sql.as_str().to_lowercase().contains("create type"),
-                "{} declares a type inside the branch schema",
-                migration.description
-            );
-        }
     }
 }

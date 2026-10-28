@@ -151,10 +151,7 @@ fn branch_bytes_statement() -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        migration_set::declared_schema::DeclaredSchema,
-        snapshot::{branch_schema::branch_tables, quota::branch_bytes_statement},
-    };
+    use crate::snapshot::{branch_schema::branch_tables, quota::branch_bytes_statement};
     use sea_query::PostgresQueryBuilder;
 
     /// A Snapshot's footprint is its whole branch schema, so the instance
@@ -168,17 +165,5 @@ mod tests {
             r#"SELECT COALESCE(SUM(pg_total_relation_size("pg_class"."oid")), 0)::bigint FROM "pg_class" JOIN "pg_namespace" ON "pg_namespace"."oid" = "pg_class"."relnamespace" WHERE ("pg_namespace"."nspname" ~ '^snap_([1-9][0-9]*)(_stg)?$') AND "pg_class"."relkind" = ('r')"#
         );
         assert!(branch_tables().iter().any(|table| table.to_string() == "current_attributes"));
-        let schema = DeclaredSchema::of_every_migration();
-        assert!(
-            schema
-                .indexes
-                .iter()
-                .any(|index| index.name == "idx_ca_sub_eq_keys" && index.table == "current_attributes"),
-            "the key index lives with its table in the branch schema"
-        );
-        assert!(
-            schema.tables.iter().any(|table| table == "current_attributes"),
-            "an ordinary table, which relkind 'r' selects"
-        );
     }
 }

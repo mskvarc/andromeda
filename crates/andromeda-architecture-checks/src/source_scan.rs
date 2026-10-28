@@ -6,6 +6,14 @@ use std::{
 };
 use syn::{Attribute, File, Item, UseTree};
 
+/// The directories holding one workspace package per subdirectory: the broker
+/// crates and the tooling packages.
+pub(crate) const PACKAGE_DIRECTORIES: [&str; 2] = ["crates", "tools"];
+
+/// The directories holding the workspace's Rust sources: the root package's
+/// `src/` and every package directory.
+const SOURCE_DIRECTORIES: [&str; 3] = ["src", PACKAGE_DIRECTORIES[0], PACKAGE_DIRECTORIES[1]];
+
 /// A parsed Rust source file and its workspace-relative path.
 pub(crate) struct RustSource {
     /// Absolute path used to resolve external modules.
@@ -26,11 +34,7 @@ pub(crate) struct RustSource {
 ///
 /// Panics when a discovered source cannot be read or does not parse as Rust.
 pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
-    let mut paths = ["src", "crates", "lib"]
-        .into_iter()
-        .flat_map(|root| rust_file_paths(&workspace_root.join(root)))
-        .collect::<Vec<_>>();
-    paths.sort();
+    let paths = source_tree_paths(workspace_root);
     let mut unreadable = Vec::new();
     let mut sources = Vec::new();
     for path in &paths {
@@ -59,8 +63,9 @@ pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
 ///
 /// Panics when a discovered source cannot be read or does not parse as Rust.
 pub(crate) fn every_workspace_source(workspace_root: &Path) -> Vec<RustSource> {
-    let mut paths = ["build.rs", "src", "tests", "crates", "lib"]
+    let mut paths = ["build.rs", "tests"]
         .into_iter()
+        .chain(SOURCE_DIRECTORIES)
         .flat_map(|root| {
             let path = workspace_root.join(root);
             if path.is_file() { vec![path] } else { rust_file_paths(&path) }
@@ -74,6 +79,21 @@ pub(crate) fn every_workspace_source(workspace_root: &Path) -> Vec<RustSource> {
         .collect::<Vec<_>>();
     assert!(unreadable.is_empty(), "workspace sources could not be scanned:\n{}", unreadable.join("\n"));
     sources
+}
+
+/// Every Rust source below `src/` and the package directories, ordered by
+/// path, test code included.
+///
+/// # Panics
+///
+/// Panics when a directory below one of them cannot be listed.
+pub(crate) fn source_tree_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut paths = SOURCE_DIRECTORIES
+        .into_iter()
+        .flat_map(|directory| rust_file_paths(&workspace_root.join(directory)))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 /// Recursively discover every Rust source below one directory, ordered by path.

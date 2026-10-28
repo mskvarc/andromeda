@@ -18,8 +18,36 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  # A stable tag needs its own ledger section, last, over a tree where every
+  # migration is sealed; a pre-release needs only an unbroken seal. Nothing is
+  # built before this passes.
+  seal:
+    name: seal
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history and its tags, so the ledger can be read at the previous release.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # Via env: never parsed as shell.
+      - name: Verify the seal for the tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          against=()
+          if previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${TAG}^" 2>/dev/null)"; then
+            against=(--against "$previous")
+          fi
+          cargo run --package andromeda-sql --locked -- verify --release "$TAG" "${against[@]}"
+
   binaries:
     name: binary (${{ matrix.target }})
+    needs: seal
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -93,6 +121,7 @@ jobs:
 
   image:
     name: image (${{ matrix.platform }})
+    needs: seal
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read

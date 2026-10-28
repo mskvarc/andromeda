@@ -1,5 +1,6 @@
 //! Which crates a layer may name, read from a crate's own manifest.
 
+use crate::source_scan::PACKAGE_DIRECTORIES;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -169,7 +170,8 @@ pub fn assert_development_only(crate_root: &str, dependency: &str) {
     }
 }
 
-/// Discover root and crate manifests without walking generated output.
+/// Discover the root manifest and the manifest of every package below the
+/// package directories, without walking generated output.
 ///
 /// A package directory that cannot be listed hides every manifest below it, so
 /// the walk fails rather than reporting a boundary it could not see.
@@ -180,7 +182,7 @@ pub fn assert_development_only(crate_root: &str, dependency: &str) {
 pub(crate) fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.join("Cargo.toml")];
     let mut unreadable = Vec::new();
-    for parent in [root.join("crates"), root.join("lib")] {
+    for parent in PACKAGE_DIRECTORIES.map(|directory| root.join(directory)) {
         if !parent.exists() {
             continue;
         }

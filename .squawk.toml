@@ -1,0 +1,30 @@
+# Squawk configuration for the migrations, read by `andromeda-sql lint`.
+# The PostgreSQL version is passed on the command line: the oldest release the broker supports.
+
+# Every migration runs inside the transaction the migrator opens.
+assume_in_transaction = true
+
+excluded_rules = [
+    # A migration runs exactly once, inside a transaction, so IF NOT EXISTS guards add nothing.
+    "prefer-robust-stmts",
+    # Indexes are created with their table, before any row or reader exists.
+    "require-concurrent-index-creation",
+    # Statement and lock timeouts are the migration runner's to set, not each file's.
+    "require-statement-timeout",
+    "require-lock-timeout",
+    # Integer width is decided by andromeda-sql's integer-width rule, which knows the keys, ordinals and bounded counters a 32-bit or checked 16-bit integer suffices for.
+    "prefer-bigint-over-int",
+    "prefer-bigint-over-smallint",
+    # These cannot tell a table created earlier in the same unreleased migration set, empty when it deploys, from a live one, and no migration may switch a rule off inline to tell them. andromeda-sql's constraint-on-sealed-table rule reads the seal ledger and checks the foreign keys and checks added to a sealed table instead.
+    "adding-foreign-key-constraint",
+    "constraint-missing-not-valid",
+]
+
+included_rules = [
+    # Server, database and role settings belong to the operator, never to a migration.
+    "ban-alter-system-options",
+    "ban-alter-database-options",
+    "ban-alter-role-options",
+    # A disabled trigger silently drops the invariant it enforces.
+    "ban-disable-trigger",
+]
