@@ -55,7 +55,7 @@ impl MqttTransportPool {
             connections: DashMap::new(),
             reconnect: DashMap::new(),
             dial_locks: DashMap::new(),
-            guard: PrivateIpGuard::new(config.private_addresses),
+            guard: PrivateIpGuard::new(config.addresses.clone()), // clone: the config keeps its copy
             config,
             dialer,
         }

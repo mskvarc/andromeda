@@ -8,8 +8,7 @@
 //! ones this resolver vetted, and a resolution containing any private or
 //! reserved address is refused outright.
 
-use crate::address_class::is_private_ip;
-use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
+use crate::address_policy::AddressPolicy;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::{
     error::Error,
@@ -21,53 +20,50 @@ use tokio::net::lookup_host;
 /// boxed error that fails the connection.
 type ResolveResult = Result<Addrs, Box<dyn Error + Send + Sync>>;
 
-/// A resolution the guard refused because it reached private or reserved
-/// address space.
+/// A resolution the guard refused because it reached an address the policy
+/// does not admit.
 ///
 /// Handed back to `reqwest` inside its boxed resolver error, which fails the
 /// connection; the host is the one `reqwest` asked to resolve and is named by
 /// the request error that wraps this one.
 #[derive(Debug, thiserror::Error)]
-#[error("resolution blocked: resolves to private/reserved IP {ip}")]
+#[error("resolution blocked: resolves to refused IP {ip}")]
 struct PrivateAddressResolved {
-    /// The first resolved address that triggered the guard.
+    /// The first resolved address the policy refused.
     ip: IpAddr,
 }
 
-/// Resolver that blocks any resolution reaching private or reserved address
-/// space.
+/// Resolver that blocks any resolution reaching an address the policy refuses.
 #[derive(Debug)]
 pub struct PrivateIpResolver {
-    /// Whether the guard is armed. When allowed this resolver is a plain
-    /// system-resolver passthrough.
-    blocking: PrivateIpBlocking,
+    /// The rules a resolved address is judged by. A policy that refuses
+    /// nothing makes this resolver a plain system-resolver passthrough.
+    policy: AddressPolicy,
 }
 
 impl PrivateIpResolver {
     /// A resolver enforcing the given policy.
     #[must_use]
-    pub const fn new(blocking: PrivateIpBlocking) -> PrivateIpResolver {
-        PrivateIpResolver { blocking }
+    pub const fn new(policy: AddressPolicy) -> PrivateIpResolver {
+        PrivateIpResolver { policy }
     }
 }
 
 impl Resolve for PrivateIpResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        Box::pin(vetted_addrs(name.as_str().to_owned(), self.blocking))
+        // clone: the future outlives the borrow of the resolver
+        Box::pin(vetted_addrs(name.as_str().to_owned(), self.policy.clone()))
     }
 }
 
-/// Resolve a host and, when the guard is armed, refuse it if any resolved
-/// address is private or reserved.
-async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResult {
+/// Resolve a host and refuse it if the policy refuses any resolved address.
+async fn vetted_addrs(host: String, policy: AddressPolicy) -> ResolveResult {
     // Port 0: `reqwest` overrides it with the URL's port (or the scheme default)
     // per the `Resolve` contract, so only the address is significant here.
     let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), 0)).await?.collect();
 
-    if blocking == PrivateIpBlocking::Refused
-        && let Some(private) = resolved.iter().find(|addr| is_private_ip(&addr.ip()))
-    {
-        return Err(Box::new(PrivateAddressResolved { ip: private.ip() }));
+    if let Some(refused) = resolved.iter().find(|addr| policy.vet(addr.ip()).is_err()) {
+        return Err(Box::new(PrivateAddressResolved { ip: refused.ip() }));
     }
 
     Ok(Box::new(resolved.into_iter()))
@@ -79,12 +75,19 @@ async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResul
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::resolver::{PrivateAddressResolved, vetted_addrs};
-    use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
+    use crate::{
+        address_policy::AddressPolicy,
+        resolver::{PrivateAddressResolved, vetted_addrs},
+    };
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+
+    fn loopback_rules() -> Vec<AddressRule> {
+        ["127.0.0.0/8", "::1"].iter().filter_map(|entry| entry.parse().ok()).collect()
+    }
 
     #[tokio::test]
     async fn a_loopback_resolution_is_refused_when_the_guard_is_armed() {
-        let refused = vetted_addrs("localhost".to_string(), PrivateIpBlocking::Refused).await;
+        let refused = vetted_addrs("localhost".to_string(), AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new())).await;
         let Err(error) = refused else {
             panic!("localhost resolves to loopback and must be refused");
         };
@@ -93,7 +96,22 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_loopback_resolution_is_allowed_when_the_guard_is_off() {
-        let allowed = vetted_addrs("localhost".to_string(), PrivateIpBlocking::Allowed).await;
+        let allowed = vetted_addrs("localhost".to_string(), AddressPolicy::default()).await;
         assert!(allowed.is_ok(), "with the guard off, any resolvable host is requested");
+    }
+
+    #[tokio::test]
+    async fn a_loopback_resolution_is_refused_when_the_address_is_denied_though_private_addresses_are_allowed() {
+        let denying = AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rules());
+        let Err(error) = vetted_addrs("localhost".to_string(), denying).await else {
+            panic!("localhost resolves to a denied address and must be refused");
+        };
+        assert!(error.is::<PrivateAddressResolved>(), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_loopback_resolution_is_admitted_when_its_subnet_is_allowed() {
+        let allowing = AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rules(), Vec::new());
+        assert!(vetted_addrs("localhost".to_string(), allowing).await.is_ok());
     }
 }

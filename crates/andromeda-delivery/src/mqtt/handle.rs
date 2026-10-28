@@ -154,8 +154,14 @@ mod tests {
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
-    use andromeda_configuration::{human_byte_size::HumanByteSize, mqtt_packet_limit::MqttPacketLimit, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{
+        address_rule::AddressRule,
+        human_byte_size::HumanByteSize,
+        mqtt_packet_limit::MqttPacketLimit,
+        schema::private_ip_blocking::PrivateIpBlocking,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_outbound_http::address_policy::AddressPolicy;
     use bytes::BytesMut;
     use rumqttc::{ConnAck, ConnectReturnCode, Packet, PubAck, QoS, SubAck, SubscribeReasonCode, mqttbytes::Error as PacketError};
     use serde_json::json;
@@ -327,7 +333,7 @@ mod tests {
         let (address, received) = broker().await;
         let endpoint = endpoint(address, MqttQoS::AtLeast);
         let config = MqttPoolConfig {
-            private_addresses: PrivateIpBlocking::Refused,
+            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new()),
             ..MqttPoolConfig::default()
         };
         let handle = pool(config).transport_for(&endpoint);
@@ -341,5 +347,49 @@ mod tests {
         assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
         assert!(!refused.is_retryable());
         pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the refused broker");
+    }
+
+    fn loopback_rule() -> Vec<AddressRule> {
+        vec!["127.0.0.0/8".parse().expect("a well-formed rule")]
+    }
+
+    #[tokio::test]
+    async fn a_loopback_broker_is_published_to_when_its_subnet_is_allowed_though_private_addresses_are_refused() {
+        let (address, received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtLeast);
+        let config = MqttPoolConfig {
+            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rule(), Vec::new()),
+            ..MqttPoolConfig::default()
+        };
+        let handle = pool(config).transport_for(&endpoint);
+
+        let request = notification(&endpoint, 64);
+        let outcome = handle.deliver(&request).await.expect("an allowed broker is published to");
+
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+        pretty_assertions::assert_eq!(
+            received.load(Ordering::SeqCst),
+            build_envelope(&request).expect("the envelope is written").len()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_loopback_broker_is_refused_when_its_subnet_is_denied_though_private_addresses_are_allowed() {
+        let (address, received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtLeast);
+        let config = MqttPoolConfig {
+            addresses: AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rule()),
+            ..MqttPoolConfig::default()
+        };
+        let handle = pool(config).transport_for(&endpoint);
+
+        let refused = handle
+            .deliver(&notification(&endpoint, 64))
+            .await
+            .map(drop)
+            .expect_err("a denied broker is refused");
+
+        assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the denied broker");
     }
 }

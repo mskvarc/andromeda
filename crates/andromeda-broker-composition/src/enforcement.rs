@@ -60,6 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
+        "andromeda-outbound-http",
         "andromeda-persistence-failure",
         "andromeda-postgresql-atomic-write",
         "andromeda-postgresql-context-query",

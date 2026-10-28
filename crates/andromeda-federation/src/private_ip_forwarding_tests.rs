@@ -10,7 +10,13 @@ use crate::{
     request::TriggeringRequest,
     source_read::SourceRead,
 };
-use andromeda_configuration::schema::{federation::FederationConfig, private_ip_blocking::PrivateIpBlocking};
+use andromeda_configuration::{
+    address_rule::AddressRule,
+    schema::{
+        federation::{FederationConfig, forwarding::ForwardingConfig},
+        private_ip_blocking::PrivateIpBlocking,
+    },
+};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -41,9 +47,23 @@ fn registration(source: &MockServer) -> ContextSourceRegistration {
     .expect("a valid registration")
 }
 
+fn loopback_rules() -> Vec<AddressRule> {
+    ["127.0.0.0/8", "::1"].iter().map(|entry| entry.parse().expect("a well-formed rule")).collect()
+}
+
 async fn read(registration: &ContextSourceRegistration, blocking: PrivateIpBlocking, url: Url) -> ForwardGetOutcome {
-    let mut config = FederationConfig::default();
-    config.forwarding.private_ip_blocking = blocking;
+    let forwarding = ForwardingConfig {
+        private_ip_blocking: blocking,
+        ..ForwardingConfig::default()
+    };
+    read_under(registration, forwarding, url).await
+}
+
+async fn read_under(registration: &ContextSourceRegistration, forwarding: ForwardingConfig, url: Url) -> ForwardGetOutcome {
+    let config = FederationConfig {
+        forwarding,
+        ..FederationConfig::default()
+    };
     let service = FederationService::new(
         Arc::new(FixedRegistrationStore::new(vec![registration.clone()])), // clone: the store owns its registrations
         Arc::new(NoLocalEntities),
@@ -132,4 +152,53 @@ async fn a_redirect_from_a_source_is_not_followed_and_fails_that_source() {
 
     assert!(matches!(outcome, ForwardGetOutcome::ErrorStatus(_)));
     pretty_assertions::assert_eq!(received(&target).await.len(), 0);
+}
+
+#[tokio::test]
+async fn a_source_in_an_allowed_subnet_is_contacted_though_private_addresses_are_refused() {
+    let source = answering_source().await;
+    let registration = registration(&source);
+    let url = Url::parse(&format!("{}{READ_PATH}", source.uri())).expect("a valid URL");
+    let forwarding = ForwardingConfig {
+        private_ip_blocking: PrivateIpBlocking::Refused,
+        allowed_addresses: loopback_rules(),
+        ..ForwardingConfig::default()
+    };
+
+    let outcome = read_under(&registration, forwarding, url).await;
+
+    assert!(matches!(outcome, ForwardGetOutcome::Success(_)));
+}
+
+#[tokio::test]
+async fn a_source_in_a_denied_subnet_is_not_contacted_though_private_addresses_are_allowed() {
+    let source = answering_source().await;
+    let registration = registration(&source);
+    let url = Url::parse(&format!("{}{READ_PATH}", source.uri())).expect("a valid URL");
+    let forwarding = ForwardingConfig {
+        denied_addresses: loopback_rules(),
+        ..ForwardingConfig::default()
+    };
+
+    let outcome = read_under(&registration, forwarding, url).await;
+
+    assert!(matches!(outcome, ForwardGetOutcome::Transport(TransportFailure::Refused(_))));
+    pretty_assertions::assert_eq!(received(&source).await.len(), 0);
+}
+
+#[tokio::test]
+async fn a_source_named_by_a_host_resolving_into_a_denied_subnet_is_not_contacted() {
+    let source = answering_source().await;
+    let registration = registration(&source);
+    let port = Url::parse(&source.uri()).expect("a valid URI").port().expect("a mock port");
+    let url = Url::parse(&format!("http://localhost:{port}{READ_PATH}")).expect("a valid URL");
+    let forwarding = ForwardingConfig {
+        denied_addresses: loopback_rules(),
+        ..ForwardingConfig::default()
+    };
+
+    let outcome = read_under(&registration, forwarding, url).await;
+
+    assert!(matches!(outcome, ForwardGetOutcome::Transport(TransportFailure::Refused(_))));
+    pretty_assertions::assert_eq!(received(&source).await.len(), 0);
 }

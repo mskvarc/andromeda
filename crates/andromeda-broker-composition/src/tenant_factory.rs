@@ -131,7 +131,7 @@ impl From<&BrokerConfig> for TenantFactoryConfig {
             entity: config.entity.clone(),
             federation: config.federation.clone(),
             jsonld: config.jsonld.clone(),
-            notifications: config.notifications,
+            notifications: config.notifications.clone(),
             snapshot: config.snapshot,
             temporal: config.temporal,
             tenancy: config.tenancy.clone(),

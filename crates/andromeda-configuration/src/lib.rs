@@ -10,6 +10,7 @@
 //! in the spelling a human writes (`"30s"`, `"7days"`, `"64 MiB"`) rather than
 //! a bare integer whose unit lives only in the field name.
 
+pub mod address_rule;
 pub mod broker_config;
 pub mod comma_list;
 pub mod header_section_limit;

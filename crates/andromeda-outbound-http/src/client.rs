@@ -1,7 +1,6 @@
 //! The client policy every outbound HTTP client is built from.
 
-use crate::{endpoint_guard::PrivateIpGuard, resolver::PrivateIpResolver};
-use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
+use crate::{address_policy::AddressPolicy, endpoint_guard::PrivateIpGuard, resolver::PrivateIpResolver};
 use reqwest::{ClientBuilder, redirect::Policy};
 use std::time::Duration;
 
@@ -17,15 +16,14 @@ pub const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// How an outbound client behaves, from which both the client and the pre-send
 /// guard are built so the two cannot disagree.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct OutboundHttpPolicy {
     /// The longest a whole request may take, unless the request sets its own.
     pub timeout: Duration,
     /// How long an idle pooled connection is kept for reuse.
     pub pool_idle_timeout: Duration,
-    /// Whether an endpoint resolving into private or reserved address space is
-    /// refused.
-    pub blocking: PrivateIpBlocking,
+    /// Which resolved addresses a request may be made to.
+    pub addresses: AddressPolicy,
 }
 
 impl OutboundHttpPolicy {
@@ -44,13 +42,13 @@ impl OutboundHttpPolicy {
             .timeout(self.timeout)
             .pool_idle_timeout(self.pool_idle_timeout)
             .redirect(Policy::none())
-            .dns_resolver(PrivateIpResolver::new(self.blocking))
+            .dns_resolver(PrivateIpResolver::new(self.addresses.clone())) // clone: shares the lists with the resolver
     }
 
     /// The pre-send guard matching this policy.
     #[must_use]
     pub fn guard(&self) -> PrivateIpGuard {
-        PrivateIpGuard::new(self.blocking)
+        PrivateIpGuard::new(self.addresses.clone()) // clone: shares the lists with the guard
     }
 }
 
@@ -60,8 +58,10 @@ impl OutboundHttpPolicy {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy};
-    use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
+    use crate::{
+        address_policy::AddressPolicy,
+        client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy},
+    };
     use std::time::Duration;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -84,7 +84,7 @@ mod tests {
         let policy = OutboundHttpPolicy {
             timeout: Duration::from_secs(5),
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
-            blocking: PrivateIpBlocking::Allowed,
+            addresses: AddressPolicy::default(),
         };
         let client = policy.client_builder().build().expect("a buildable client");
 

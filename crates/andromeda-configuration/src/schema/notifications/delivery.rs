@@ -3,6 +3,7 @@
 //! delivery is kept.
 
 use crate::{
+    address_rule::AddressRule,
     human_duration::HumanDuration,
     mqtt_packet_limit::MqttPacketLimit,
     notification_body_limit::NotificationBodyLimit,
@@ -85,7 +86,7 @@ impl Default for DeliveryRetentionConfig {
 /// sharing it, or this broker before it was switched to live delivery, may
 /// have queued deliveries that are still due. `request_timeout` bounds every
 /// outbound notification, queued or live.
-#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema, Debug, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[schemars(
     description = "How notifications reach their subscribers. The queue and its retention govern the delivery drain, which runs under either mode: a tenant database can still hold deliveries queued by a durable broker, or by this one before it was switched to live delivery."
@@ -115,9 +116,20 @@ pub struct DeliveryConfig {
     /// reserved address space is `allowed` or `refused`. Checked against the
     /// address actually resolved.
     #[schemars(
-        description = "Whether a notification endpoint, an HTTP URL or an MQTT broker, resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
+        description = "Whether a notification endpoint, an HTTP URL or an MQTT broker, resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name. `allowed_addresses` exempts addresses from a `refused`, and `denied_addresses` refuses addresses whatever this is set to."
     )]
     pub private_addresses: PrivateIpBlocking,
+    /// Addresses and subnets a notification endpoint may resolve into even
+    /// when `private_addresses` is `refused`.
+    #[schemars(
+        description = "IP addresses and subnets (`\"10.2.0.0/24\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a notification endpoint, an HTTP URL or an MQTT broker, may resolve into even though `private_addresses` is `refused`. Empty by default. An entry in `denied_addresses` takes precedence."
+    )]
+    pub allowed_addresses: Vec<AddressRule>,
+    /// Addresses and subnets a notification endpoint is never notified at.
+    #[schemars(
+        description = "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a notification endpoint, an HTTP URL or an MQTT broker, must not resolve into, public ones included and whatever `private_addresses` is set to. Empty by default. Takes precedence over `allowed_addresses`."
+    )]
+    pub denied_addresses: Vec<AddressRule>,
     /// The largest notification body an HTTP delivery sends, in human-readable
     /// form (`"128 MiB"`). A larger notification fails without a retry.
     #[schemars(
@@ -154,6 +166,8 @@ impl Default for DeliveryConfig {
             max_concurrent: NonZeroU32::MIN.saturating_add(19),
             max_error_length: NonZeroU32::MIN.saturating_add(1023),
             private_addresses: PrivateIpBlocking::Allowed,
+            allowed_addresses: Vec::new(),
+            denied_addresses: Vec::new(),
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
             queue: DurableQueue {

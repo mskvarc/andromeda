@@ -49,7 +49,7 @@ impl HttpTransport {
         let policy = OutboundHttpPolicy {
             timeout: config.timeout,
             pool_idle_timeout: config.pool_idle_timeout,
-            blocking: config.private_addresses,
+            addresses: config.addresses.clone(), // clone: the config keeps its copy
         };
         let client = policy.client_builder().build().map_err(TransportError::ClientInitializationFailed)?;
         Ok(HttpTransport {
@@ -279,6 +279,7 @@ mod tests {
         transport::NotificationTransport,
     };
     use andromeda_configuration::{
+        address_rule::AddressRule,
         human_byte_size::HumanByteSize,
         notification_body_limit::NotificationBodyLimit,
         schema::{link_field_layout::LinkFieldLayout, private_ip_blocking::PrivateIpBlocking},
@@ -286,6 +287,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_outbound_http::address_policy::AddressPolicy;
     use reqwest::header::LINK;
     use serde_json::json;
     use std::{
@@ -394,7 +396,7 @@ mod tests {
     async fn a_loopback_literal_endpoint_is_refused_when_private_addresses_are_refused() {
         let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
         let transport = HttpTransport::new(HttpTransportConfig {
-            private_addresses: PrivateIpBlocking::Refused,
+            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new()),
             ..HttpTransportConfig::default()
         })
         .expect("the transport builds");
@@ -411,6 +413,48 @@ mod tests {
 
         assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
         pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 0, "nothing connected to the refused endpoint");
+    }
+
+    fn loopback_rule() -> Vec<AddressRule> {
+        vec!["127.0.0.0/8".parse().expect("a well-formed rule")]
+    }
+
+    #[tokio::test]
+    async fn a_loopback_endpoint_is_notified_when_its_subnet_is_allowed_though_private_addresses_are_refused() {
+        let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
+        let transport = HttpTransport::new(HttpTransportConfig {
+            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rule(), Vec::new()),
+            ..HttpTransportConfig::default()
+        })
+        .expect("the transport builds");
+
+        let outcome = deliver(&transport, &endpoint).await;
+
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+        pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_loopback_endpoint_is_refused_when_its_subnet_is_denied_though_private_addresses_are_allowed() {
+        let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
+        let transport = HttpTransport::new(HttpTransportConfig {
+            addresses: AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rule()),
+            ..HttpTransportConfig::default()
+        })
+        .expect("the transport builds");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::core();
+        let request = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble(notification(&json!({"id": "urn:ngsi-ld:Notification:1"})));
+
+        let refused = transport.deliver(&request).await.expect_err("a denied endpoint is refused");
+
+        assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
+        pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 0, "nothing connected to the denied endpoint");
     }
 
     /// A receiver that reads each request's whole body, answers 204, and

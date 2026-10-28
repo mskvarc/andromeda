@@ -74,7 +74,7 @@ impl Default for PeriodicConfig {
 }
 
 /// How notifications are delivered, evaluated and scheduled.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[schemars(description = "How notifications are delivered, evaluated and scheduled.")]
 pub struct NotificationsConfig {

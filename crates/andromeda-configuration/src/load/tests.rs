@@ -520,6 +520,48 @@ fn federation_forwarding_private_ip_blocking_reads_refused_and_refuses_any_other
     load_file("[federation.forwarding]\nprivate_ip_blocking = \"bogus\"\n").expect_err("bogus is not a defined value");
 }
 
+#[test]
+#[serial]
+fn the_address_lists_of_both_outbound_surfaces_read_mixed_entries_and_default_to_empty() {
+    let defaults = load_file("").expect("an empty file loads");
+    assert_eq!(defaults.notifications.delivery.allowed_addresses, Vec::new());
+    assert_eq!(defaults.notifications.delivery.denied_addresses, Vec::new());
+    assert_eq!(defaults.federation.forwarding.allowed_addresses, Vec::new());
+    assert_eq!(defaults.federation.forwarding.denied_addresses, Vec::new());
+
+    let config = load_file(concat!(
+        "[notifications.delivery]\n",
+        "private_addresses = \"refused\"\n",
+        "allowed_addresses = [\"10.2.0.0/24\", \"10.3.0.17\", \"fd00:1234::/48\"]\n",
+        "denied_addresses = [\"203.0.113.0/24\", \"198.51.100.9\"]\n",
+        "[federation.forwarding]\n",
+        "private_ip_blocking = \"refused\"\n",
+        "allowed_addresses = [\"10.8.0.0/16\"]\n",
+    ))
+    .expect("addresses and subnets, IPv4 and IPv6, are entries");
+    assert_eq!(config.notifications.delivery.allowed_addresses.len(), 3);
+    assert_eq!(config.notifications.delivery.denied_addresses.len(), 2);
+    assert_eq!(config.federation.forwarding.allowed_addresses.len(), 1);
+}
+
+#[test]
+#[serial]
+fn an_address_list_entry_that_is_not_an_address_or_a_subnet_is_refused_with_its_key() {
+    for (table, key) in [
+        ("notifications.delivery", "allowed_addresses"),
+        ("notifications.delivery", "denied_addresses"),
+        ("federation.forwarding", "allowed_addresses"),
+        ("federation.forwarding", "denied_addresses"),
+    ] {
+        for entry in ["example.org", "10.0.0.1:8080", "10.2.0.0/33", "not an address"] {
+            let message = load_file(&format!("[{table}]\n{key} = [\"10.2.0.0/24\", \"{entry}\"]\n"))
+                .expect_err("a bad entry must fail loading")
+                .to_string();
+            assert!(message.contains(key) && message.contains(entry), "{table}.{key} {entry}: {message}");
+        }
+    }
+}
+
 macro_rules! zero_batch_size_is_refused_with_its_path {
     ($($name:ident: $table:literal,)+) => {
         $(

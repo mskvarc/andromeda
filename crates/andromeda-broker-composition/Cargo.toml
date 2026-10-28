@@ -51,6 +51,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-notification.workspace = true
+andromeda-outbound-http.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-context-store.workspace = true

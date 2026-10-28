@@ -207,6 +207,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_outbound_http::{
+    address_policy::AddressPolicy,
     client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy},
     endpoint_guard::PrivateIpGuard,
 };
@@ -284,7 +285,11 @@ impl FederationService {
         let policy = OutboundHttpPolicy {
             timeout: config.forwarding.request_timeout(),
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
-            blocking: config.forwarding.private_ip_blocking,
+            addresses: AddressPolicy::new(
+                config.forwarding.private_ip_blocking,
+                config.forwarding.allowed_addresses.clone(), // clone: the configuration keeps its lists
+                config.forwarding.denied_addresses.clone(),  // clone: the configuration keeps its lists
+            ),
         };
         let http_client = policy
             .client_builder()

@@ -11,10 +11,11 @@ pub enum EndpointRefusal {
     /// The endpoint URL names no host.
     #[error("endpoint names no host")]
     NoHost,
-    /// The host resolved to a private or reserved address.
-    #[error("resolves to private/reserved IP {ip}")]
+    /// The host resolved to an address the policy refuses: one on the deny
+    /// list, or a private or reserved one that the allow list does not exempt.
+    #[error("resolves to refused IP {ip}")]
     Blocked {
-        /// The address that triggered the guard.
+        /// The address the policy refused.
         ip: IpAddr,
     },
     /// The host could not be resolved.
