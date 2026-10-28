@@ -255,19 +255,24 @@ fn a_member_reported_by_the_bare_null_is_written_bare() {
     }
 }
 
-/// Clause 4.21 narrows `type` and `scope` of a notified entity; clause 5.8.6
-/// keeps its `id`, without which an Entity is not actionable.
+/// Clause 5.8.6 applies `pick` to each notified entity, so `id` and `type` go
+/// unless the list names them.
 #[test]
-fn a_projection_narrows_the_structural_members_but_never_the_id() {
+fn a_pick_naming_an_attribute_or_scope_leaves_the_id_and_type_out() {
     let notified = every_family();
-    let projection = Projection {
-        pick: vec![ProjectionTerm::Scope],
-        omit: Vec::new(),
-    };
     let stamped = StampedInstants::default();
-    let written = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized).with_projection(StructuralProjection::from(&projection));
-    let document = serde_json::to_value(written).expect("the walk writes it");
-    assert_eq!(document["id"], json!("urn:ngsi-ld:Vehicle:1"));
-    assert!(document.get("type").is_none(), "{document}");
-    assert_eq!(document["scope"], json!("/Madrid"));
+    let written = |pick: Vec<ProjectionTerm>| {
+        let projection = Projection { pick, omit: Vec::new() };
+        let entity = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized).with_projection(StructuralProjection::from(&projection));
+        serde_json::to_value(entity).expect("the walk writes it")
+    };
+    let scope_only = written(vec![ProjectionTerm::Scope]);
+    assert!(scope_only.get("id").is_none() && scope_only.get("type").is_none(), "{scope_only}");
+    assert_eq!(scope_only["scope"], json!("/Madrid"));
+    let id_only = written(vec![ProjectionTerm::Id]);
+    assert_eq!(id_only["id"], json!("urn:ngsi-ld:Vehicle:1"));
+    assert!(id_only.get("type").is_none(), "{id_only}");
+    let id_and_type = written(vec![ProjectionTerm::Id, ProjectionTerm::Type]);
+    assert_eq!(id_and_type["id"], json!("urn:ngsi-ld:Vehicle:1"));
+    assert!(id_and_type.get("type").is_some(), "{id_and_type}");
 }

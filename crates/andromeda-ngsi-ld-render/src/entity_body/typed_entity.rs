@@ -43,10 +43,6 @@ pub(crate) enum IdentifierMember {
     /// The `id` is a member, as clause 5.2.4 places it, unless the clause 4.21
     /// rule leaves it out.
     Written,
-    /// The `id` is a member whatever the clause 4.21 rule says: a notification
-    /// carries Entities, and an Entity is only actionable with its `id`
-    /// (clauses 4.5.1 and 5.8.6).
-    Mandatory,
     /// The `id` stands outside the members written.
     Promoted,
 }
@@ -94,7 +90,6 @@ impl Serialize for TypedEntity<'_> {
         let mut object = open_object(serializer, self.context, None)?;
         let writes_id = match self.identifier {
             IdentifierMember::Written => self.keeps(Keyword::Id),
-            IdentifierMember::Mandatory => true,
             IdentifierMember::Promoted => false,
         };
         if writes_id {

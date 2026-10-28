@@ -73,10 +73,8 @@ pub struct NotificationEntity<'a> {
     /// What the notification reports of the change beside the entity's state.
     changes: Option<NotifiedChanges<'a>>,
     /// The clause 4.21 rule the subscription's `pick` and `omit` state for
-    /// `type` and `scope`; `id` is written whatever it says (clause 5.8.6).
+    /// `id`, `type` and `scope` (clause 5.8.6).
     projection: Option<StructuralProjection<'a>>,
-    /// Whether `id` is written whatever the rule says.
-    identifier: IdentifierMember,
     /// The rule a flat Linked Entity's members are written by, if it narrows
     /// anything.
     narrowing: Option<MemberRule<'a>>,
@@ -100,7 +98,6 @@ impl<'a> NotificationEntity<'a> {
             join: None,
             changes: None,
             projection: None,
-            identifier: IdentifierMember::Mandatory,
             narrowing: None,
             fallback: None,
             language: None,
@@ -110,9 +107,8 @@ impl<'a> NotificationEntity<'a> {
     /// One Linked Entity a flat join appends (clause 4.5.23.3), in `format`,
     /// written by the rule its first encounter decided.
     ///
-    /// The clause 5.8.6 exemption of `id` is the notified entity's: a Linked
-    /// Entity keeps its `id` only where its list does (clause 5.7.1.5), as in
-    /// a query response.
+    /// A Linked Entity keeps its `id` only where its list does (clause
+    /// 5.7.1.5), as in a query response.
     #[must_use]
     pub const fn linked(linked: &FlatEntity<'a, TypedEntities>, format: ResponseFormat) -> NotificationEntity<'a> {
         NotificationEntity {
@@ -122,7 +118,6 @@ impl<'a> NotificationEntity<'a> {
             join: None,
             changes: None,
             projection: None,
-            identifier: IdentifierMember::Written,
             narrowing: linked.rule.restricting(),
             fallback: None,
             language: None,
@@ -131,9 +126,8 @@ impl<'a> NotificationEntity<'a> {
 
     /// One entity a notification relays from its source, re-assembled for
     /// the local subscription (clause 5.8.6), written as a notification of
-    /// that subscription writes a local entity: in `format`, `type` and
-    /// `scope` under the subscription's `projection`, and `id` written
-    /// whatever that rule says; its top-level
+    /// that subscription writes a local entity: in `format`, `id`, `type` and
+    /// `scope` under the subscription's `projection`; its top-level
     /// `LanguageProperty` attributes are reduced under the subscription's
     /// `lang` when it names one (Table 5.2.12-1, clause 4.15).
     ///
@@ -152,7 +146,6 @@ impl<'a> NotificationEntity<'a> {
             join: None,
             changes: None,
             projection: Some(projection),
-            identifier: IdentifierMember::Mandatory,
             narrowing: None,
             fallback: None,
             language,
@@ -176,7 +169,7 @@ impl<'a> NotificationEntity<'a> {
         }
     }
 
-    /// The entity, its `type` and `scope` narrowed by the clause 4.21 rule
+    /// The entity, its `id`, `type` and `scope` narrowed by the clause 4.21 rule
     /// `projection` states.
     #[must_use]
     pub const fn with_projection(self, projection: StructuralProjection<'a>) -> NotificationEntity<'a> {
@@ -209,7 +202,7 @@ impl<'a> NotificationEntity<'a> {
             format: self.format,
             walk: MemberWalk::new(self.language.map(NotificationLanguage::filter), self.fallback),
             projection: self.projection,
-            identifier: self.identifier,
+            identifier: IdentifierMember::Written,
             context,
             stamped: self.stamped,
             join: self.join,

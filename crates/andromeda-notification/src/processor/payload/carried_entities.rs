@@ -291,8 +291,7 @@ mod tests {
     }
 
     /// Clause 4.21 with clause 5.8.6: `omit` of `type` and `id` removes both
-    /// from every entity of the payload, except the notified entities' `id`,
-    /// which clause 5.8.6 holds back from the rule.
+    /// from every entity of the payload.
     #[test]
     fn the_structural_projection_narrows_every_entity_of_the_payload() {
         let projection = Projection {
@@ -304,7 +303,7 @@ mod tests {
         let index = index();
         let payload = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection));
         assert!(payload[0].get("type").is_none() && payload[1].get("type").is_none());
-        assert_eq!(payload[0]["id"], json!("urn:ngsi-ld:Building:1"));
+        assert!(payload[0].get("id").is_none() && payload[1].get("id").is_none());
         assert_eq!(
             payload[2],
             json!({"name": {"type": "Property", "value": "Paris"}, "mayor": {"type": "Property", "value": "someone"}})
