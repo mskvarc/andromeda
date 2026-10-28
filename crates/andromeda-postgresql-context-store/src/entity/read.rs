@@ -6,8 +6,8 @@
 //! attributes, or without one the read selects, still reads back, and nothing
 //! is sorted, since assembly orders the rows by ordinal. A retrieval narrowed
 //! by `attrs` or a clause 4.21 projection reads the rows of the Attributes it
-//! can return and no other. The compare-and-set token a read-modify-write
-//! states its precondition against is the head's `modified_at`.
+//! can return and no other. The version a read-modify-write states its
+//! precondition against is the head's key and write count.
 //!
 //! A read by identifier is a read request's (a retrieval, or the Entities a
 //! query page reads by identifier) or a write's (the state a mutation starts
@@ -15,7 +15,12 @@
 
 use crate::{
     current_attribute::read::{RowSelection, Rows, select_row_columns},
-    entity::{entity_types::Search, mapper::stored_uri, repo::EntityRepository, stored_entities::GatheredEntities},
+    entity::{
+        entity_types::Search,
+        mapper::stored_uri,
+        repo::EntityRepository,
+        stored_entities::{GatheredEntities, VersionedEntity},
+    },
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -75,20 +80,19 @@ impl EntityRepository {
         Ok(retrieved.into_iter().map(|entity| (entity.state.id().clone(), entity)).collect())
     }
 
-    /// Retrieve an entity's stored state together with its `modified_at`.
+    /// Retrieve an entity's stored state together with the version its row
+    /// stands at.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as an entity state.
     pub async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, ContextStoreError> {
-        Ok(self
-            .get_with_sys_attrs(PoolLane::Whole, target, id, &ReturnedAttributes::Every)
-            .await?
-            .map(snapshot_of))
+        let statement = entities_query(target, Expr::val(id.as_str()), &RowSelection::Every);
+        Ok(self.read_versioned(PoolLane::Whole, statement).await?.pop().map(VersionedEntity::into_snapshot))
     }
 
-    /// Retrieve stored states and `modified_at` for several entities in one
+    /// Retrieve stored states and versions for several entities in one
     /// statement.
     ///
     /// # Errors
@@ -96,11 +100,17 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as entity states.
     pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, ContextStoreError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
+        let statement = entities_query(target, any(text_array(&id_strs)), &RowSelection::Every);
         Ok(self
-            .get_batch(PoolLane::Whole, target, ids)
+            .read_versioned(PoolLane::Whole, statement)
             .await?
             .into_iter()
-            .map(|(id, retrieved)| (id, snapshot_of(retrieved)))
+            // clone: the identifier keys the map and stays in the state it names
+            .map(|entity| (entity.retrieved.state.id().clone(), entity.into_snapshot()))
             .collect())
     }
 
@@ -173,13 +183,12 @@ impl EntityRepository {
         let rows = self.fetch_on(lane, &statement).await?;
         self.assembled(GatheredEntities::of_joined(&rows)?).await
     }
-}
 
-/// The snapshot a read-modify-write states its precondition against.
-fn snapshot_of(retrieved: RetrievedEntity) -> EntitySnapshot {
-    EntitySnapshot {
-        state: retrieved.state,
-        modified_at: retrieved.sys_attrs.modified_at,
+    /// [`read_joined`](EntityRepository::read_joined), each Entity with the
+    /// version its row stood at.
+    async fn read_versioned(&self, lane: PoolLane, statement: SelectStatement) -> Result<Vec<VersionedEntity>, ContextStoreError> {
+        let rows = self.fetch_on(lane, &statement).await?;
+        self.versioned(GatheredEntities::of_joined(&rows)?).await
     }
 }
 

@@ -20,13 +20,13 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
     committer::ContextCommitter,
+    entity_version::EntityVersion,
     history_record::HistoryRecord,
     precondition::Precondition,
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity};
-use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -114,7 +114,7 @@ pub(crate) fn tombstoned_terms(write: &AtomicWrite) -> Vec<String> {
 }
 
 /// The version `write` held against.
-pub(crate) fn held_version(write: &AtomicWrite) -> DateTime<Utc> {
+pub(crate) fn held_version(write: &AtomicWrite) -> EntityVersion {
     match write.precondition {
         Precondition::UnchangedSince(version) => version,
         other @ (Precondition::None | Precondition::MustExist | Precondition::MustNotExist) => {
@@ -125,7 +125,7 @@ pub(crate) fn held_version(write: &AtomicWrite) -> DateTime<Utc> {
 
 /// A writer that adds the Property `attribute` to the Building `id` just
 /// before the next commit, and records the version it left the Building at.
-pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<DateTime<Utc>>>>) -> ConcurrentWriter {
+pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<EntityVersion>>>) -> ConcurrentWriter {
     let id = id.clone(); // clone: the writer outlives the borrow
     let member: AttributeName = term(attribute).parse().expect("a valid attribute name");
     let addition = building_with(&id, &[attribute], 2);

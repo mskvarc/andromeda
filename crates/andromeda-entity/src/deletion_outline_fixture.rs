@@ -5,12 +5,11 @@ use crate::{
     error::EntityError,
     port::deletion_outline::DeletionOutlineReader,
 };
-use andromeda_context_commit::scope_presence::ScopePresence;
+use andromeda_context_commit::{entity_version::EntityVersion, scope_presence::ScopePresence};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 /// What the deletion-watcher probe answers.
@@ -27,13 +26,13 @@ pub(crate) struct PayloadOutline {
     /// The state the outline is read from.
     pub(crate) state: Arc<EntityState>,
     /// The version the state is outlined at.
-    pub(crate) modified_at: DateTime<Utc>,
+    pub(crate) version: EntityVersion,
     /// What the watcher probe answers.
     pub(crate) probe: ProbeAnswer,
 }
 
-/// The outline a store keeps for `state`, stored at `modified_at`.
-pub(crate) fn outline_of(state: &EntityState, modified_at: DateTime<Utc>) -> DeletionOutline {
+/// The outline a store keeps for `state`, stored at `version`.
+pub(crate) fn outline_of(state: &EntityState, version: EntityVersion) -> DeletionOutline {
     let mut instances: Vec<_> = state
         .instance_families()
         .map(|(attr, dataset_id, family)| {
@@ -55,14 +54,14 @@ pub(crate) fn outline_of(state: &EntityState, modified_at: DateTime<Utc>) -> Del
         } else {
             ScopePresence::Absent
         },
-        modified_at,
+        version,
     }
 }
 
 #[async_trait]
 impl DeletionOutlineReader for PayloadOutline {
     async fn deletion_outline(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<DeletionOutline>, EntityError> {
-        Ok(Some(outline_of(&self.state, self.modified_at)))
+        Ok(Some(outline_of(&self.state, self.version)))
     }
 
     async fn deletion_watchers(&self, _target: &ContextTarget) -> Result<DeletionWatchers, EntityError> {

@@ -31,13 +31,12 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
+use andromeda_context_commit::{atomic_write::AtomicWrite, entity_version::EntityVersion, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{instance::Instance, operation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::Entity};
-use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{
@@ -55,7 +54,7 @@ fn property(name: &str) -> Value {
 
 /// A service whose store holds the Building `a` with `seed`, and the version
 /// it holds it at.
-async fn seeded() -> (ContendedService, Identifier, DateTime<Utc>) {
+async fn seeded() -> (ContendedService, Identifier, EntityVersion) {
     let contended = contended_service(Watchers::None).await;
     let id = building_id("a");
     contended.store.seed(&id, stored_building(&id, &["seed"]));
@@ -65,14 +64,14 @@ async fn seeded() -> (ContendedService, Identifier, DateTime<Utc>) {
 
 /// Have another writer add `other` to the Building `id` before the next
 /// commit, answering the version it leaves the Building at once it has run.
-fn another_writer_adds_other(contended: &ContendedService, id: &Identifier) -> Arc<Mutex<Option<DateTime<Utc>>>> {
+fn another_writer_adds_other(contended: &ContendedService, id: &Identifier) -> Arc<Mutex<Option<EntityVersion>>> {
     let version = Arc::new(Mutex::new(None));
     contended.store.interfere(adds_attribute(id, "other", &version));
     version
 }
 
 /// The version the concurrent writer left behind.
-fn concurrent_version(version: &Arc<Mutex<Option<DateTime<Utc>>>>) -> DateTime<Utc> {
+fn concurrent_version(version: &Arc<Mutex<Option<EntityVersion>>>) -> EntityVersion {
     version.lock().expect("the version lock is not poisoned").expect("the concurrent writer ran")
 }
 

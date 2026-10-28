@@ -35,7 +35,13 @@ use crate::{
     recording_ports::{ImmediateRetry, RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
 use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
-use andromeda_context_commit::{atomic_write::AtomicWrite, change_event::ChangeEvent, committer::ContextCommitter, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    change_event::ChangeEvent,
+    committer::ContextCommitter,
+    context_change_event::ContextChangeEvent,
+    entity_version::EntityVersion,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
@@ -241,12 +247,14 @@ fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: 
     let (committer, recorded) = RecordingCommitter::new();
     let payload_reads = Arc::new(AtomicUsize::new(0));
     let modified_at = Utc::now();
+    let version = EntityVersion::new(1, 1);
     let building = Arc::new(building_snapshot());
     let service = EntityService::new(
         EntityServicePorts {
             reader: Arc::new(SnapshotReader {
                 state: Arc::clone(&building), // clone: the reader and the outline serve the one fixture
                 modified_at,
+                version,
                 payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
             }) as Arc<dyn EntityReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
@@ -255,7 +263,7 @@ fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: 
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
             deletion_outline: Arc::new(PayloadOutline {
                 state: building,
-                modified_at,
+                version,
                 probe,
             }) as Arc<dyn DeletionOutlineReader>,
         },

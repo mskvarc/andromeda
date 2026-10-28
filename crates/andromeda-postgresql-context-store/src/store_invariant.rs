@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use strum::Display;
 use thiserror::Error;
 
-/// A guarded entity write that takes one `modifiedAt` expectation per row.
+/// A guarded entity write that takes one version expectation per row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum GuardedEntityWrite {

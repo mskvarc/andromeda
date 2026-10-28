@@ -24,12 +24,11 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
 };
-use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
@@ -81,7 +80,7 @@ fn stamped_building(id: &Identifier) -> EntityState {
 
 /// A service whose store holds the Building `a` with a `seed` Property, and
 /// the version it holds it at.
-async fn seeded() -> (ContendedService, Identifier, DateTime<Utc>) {
+async fn seeded() -> (ContendedService, Identifier, EntityVersion) {
     let contended = contended_service(Watchers::None).await;
     let id = building_id("a");
     contended.store.seed(&id, stamped_building(&id));
@@ -127,7 +126,7 @@ async fn batch_upsert(contended: &ContendedService, id: &Identifier, fragment: &
 
 /// Assert the batch stored nothing for `id`: no write reached the store, the
 /// entity kept its version and no change was published.
-fn assert_nothing_stored(contended: &ContendedService, id: &Identifier, version: DateTime<Utc>) {
+fn assert_nothing_stored(contended: &ContendedService, id: &Identifier, version: EntityVersion) {
     let submitted = contended.store.submitted_for(id);
     assert!(submitted.is_empty(), "{submitted:?}");
     assert_eq!(
@@ -164,11 +163,11 @@ fn assert_sole_success(result: &BatchResult, id: &Identifier) {
 }
 
 /// Assert the batch stored exactly one write for `id`, which added `fresh`.
-fn assert_fresh_attribute_stored(contended: &ContendedService, id: &Identifier, version: DateTime<Utc>) {
+fn assert_fresh_attribute_stored(contended: &ContendedService, id: &Identifier, version: EntityVersion) {
     assert_eq!(contended.store.submitted_for(id).len(), 1);
     let (state, stored_version) = contended.store.stored(id).expect("the Building is stored");
     assert_eq!(attribute_terms(&state), vec!["fresh".to_owned(), "seed".to_owned()]);
-    assert!(stored_version > version, "modifiedAt moves with a real change");
+    assert!(stored_version != version, "the version moves with a real change");
 }
 
 /// Clause 5.6.9.4: an overwriting update whose fragment names no member
@@ -306,7 +305,7 @@ async fn a_batch_upsert_update_that_adds_an_attribute_still_writes() {
     assert_sole_success(&result, &id);
     assert!(created.is_empty(), "{created:?}");
     assert_eq!(contended.store.submitted_for(&id).len(), 1);
-    assert!(contended.store.stored(&id).expect("the Building is stored").1 > version);
+    assert_ne!(contended.store.stored(&id).expect("the Building is stored").1, version);
 }
 
 /// Clause 5.6.8.4 replace mode runs the Replace Entity of clause 5.6.18: a
@@ -332,8 +331,8 @@ async fn a_batch_upsert_replace_observes_only_the_attribute_it_modified() {
     assert_sole_success(&result, &id);
     assert_eq!(observed_terms(&contended, &id), vec![vec!["fresh".to_owned()]]);
     assert!(
-        contended.store.stored(&id).expect("the Building is stored").1 > version,
-        "modifiedAt moves with a real change"
+        contended.store.stored(&id).expect("the Building is stored").1 != version,
+        "the version moves with a real change"
     );
 }
 
@@ -349,8 +348,8 @@ async fn a_batch_upsert_restating_a_value_at_a_new_observed_at_records_it() {
         assert_sole_success(&result, &id);
         assert_eq!(observed_terms(&contended, &id), vec![vec!["seed".to_owned()]]);
         assert!(
-            contended.store.stored(&id).expect("the Building is stored").1 > version,
-            "modifiedAt moves with a real change"
+            contended.store.stored(&id).expect("the Building is stored").1 != version,
+            "the version moves with a real change"
         );
     }
 }

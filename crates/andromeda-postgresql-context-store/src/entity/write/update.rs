@@ -27,9 +27,10 @@ use crate::{
                 Proj,
                 ProjectedWrite,
                 Srch,
-                StagedColumn,
                 entity_arrays,
                 expectation,
+                expectation_arrays,
+                next_write_count,
                 projected,
                 projection_cte,
                 update_staging_columns,
@@ -41,6 +42,7 @@ use crate::{
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
+use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
@@ -49,7 +51,6 @@ use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     external_arguments::{ExternalArguments, ExternallyBound},
-    pg_array::nullable_array,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     returning_image::{New, Old},
@@ -65,16 +66,17 @@ use sqlx::{Postgres, Transaction};
 const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 
 /// Build the batch update of `entities`, each held to its entry of
-/// `expected_modified_at` and modified at `accepted_at`, with the attribute
+/// `expected` and modified at `accepted_at`, with the attribute
 /// instance rows `rows` and the grains `grains` stage for them.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $13::timestamptz[]) AS d(…)),
-///      ents AS (UPDATE entities SET modified_at = $accepted_at, expires_at = proj.expires_at,
-///                                   min_attribute_expires_at = proj.min_attribute_expires_at
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $14::bigint[]) AS d(…)),
+///      ents AS (UPDATE entities SET write_count = entities.write_count + 1, modified_at = $accepted_at,
+///                                   expires_at = proj.expires_at, min_attribute_expires_at = proj.min_attribute_expires_at
 ///               FROM proj
 ///               WHERE entities.id = proj.id
-///                 AND (proj.expected_modified_at IS NULL OR entities.modified_at = proj.expected_modified_at)
+///                 AND (proj.expected_entity_key IS NULL
+///                      OR (entities.entity_key = proj.expected_entity_key AND entities.write_count = proj.expected_write_count))
 ///               RETURNING entities.entity_key, entities.id),
 ///      srch(entity_key, id, old_types, new_types, old_instance_names, …) AS
 ///              (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …,
@@ -87,9 +89,9 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///      strays AS (DELETE FROM entity_type_members WHERE (entity_type_name_key, id) IN
 ///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
 ///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
-///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($14::text[], …) AS r(…)),
-///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($41::text[], …) AS g(…)),
-///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($45::text[]))
+///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($15::text[], …) AS r(…)),
+///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($42::text[], …) AS g(…)),
+///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($46::text[]))
 ///               AND NOT EXISTS (<a staged row of the same grain>)),
 ///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND EXISTS (<a removed grain of the row>)),
 ///      moved AS (UPDATE current_attributes SET ordinal = grains.ordinal FROM ents, grains WHERE grains.ordinal IS NOT NULL AND <the row's grain>),
@@ -101,11 +103,11 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 /// SELECT id FROM ents
 /// ```
 ///
-/// The identity row is the anchor ([`entity_write`]): it stamps the clause
-/// 4.8 `modifiedAt` and replaces both expiries, which are derived from the
-/// state just written: an entity whose new state no longer carries `expiresAt`
-/// (clause 4.22) must not keep an expiry instant that would later delete it.
-/// Its expectation column is nullable so one statement carries both an
+/// The identity row is the anchor ([`entity_write`]): it counts the write,
+/// stamps the clause 4.8 `modifiedAt` and replaces both expiries, which are
+/// derived from the state just written: an entity whose new state no longer
+/// carries `expiresAt` (clause 4.22) must not keep an expiry instant that would
+/// later delete it. Its expectation columns are nullable so one statement carries both an
 /// unconditional overwrite and a compare-and-set in the same batch: a null
 /// expectation matches whatever is there, a non-null one matches only an
 /// untouched row. An identifier that does not come back therefore means
@@ -143,14 +145,14 @@ pub(super) fn entity_update_statement<'entities>(
     entities: &'entities PreparedEntityColumns,
     rows: StagedRows<'_>,
     grains: StagedGrains<'_>,
-    expected_modified_at: &[Option<DateTime<Utc>>],
+    expected: &[Option<EntityVersion>],
     accepted_at: DateTime<Utc>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
     let mut external = ExternalArguments::default();
     let mut staged_entities = entity_arrays(entities, staged_column(&entities.locations), &mut external);
     staged_entities.push(Expr::val(kept_column(&entities.locations)));
-    staged_entities.push(nullable_array(expected_modified_at.iter().copied()));
+    staged_entities.extend(expectation_arrays(expected));
     let instance_arrays = rows.into_arrays(&mut external);
     let GrainArrays {
         grains: grain_arrays,
@@ -246,6 +248,7 @@ pub(super) fn entity_update_statement<'entities>(
 fn entity_write(target: &ContextTarget, accepted_at: DateTime<Utc>) -> UpdateStatement {
     Query::update()
         .table(table_of(target, Entities::Table))
+        .value(Entities::WriteCount, next_write_count(Entities::Table))
         .value(Entities::ModifiedAt, Expr::val(accepted_at))
         .value(Entities::ExpiresAt, projected(Entities::ExpiresAt))
         .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
@@ -254,7 +257,7 @@ fn entity_write(target: &ContextTarget, accepted_at: DateTime<Utc>) -> UpdateSta
             Cond::all()
                 .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
                 .add(holds_current_state(Entities::Table))
-                .add(expectation(Expr::col((Proj, StagedColumn::ExpectedModifiedAt)), Entities::Table)),
+                .add(expectation(Proj, Entities::Table)),
         )
         .returning(Query::returning().exprs([Expr::col((Entities::Table, Entities::EntityKey)), Expr::col((Entities::Table, Entities::Id))]))
         .take()
@@ -300,7 +303,7 @@ impl EntityRepository {
     /// attribute instances edited as `rows` and `grains` stage it, returning
     /// the entities actually written.
     ///
-    /// `expected_modified_at` is positionally aligned with `entities`; a `None`
+    /// `expected` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
     ///
     /// # Errors
@@ -315,23 +318,23 @@ impl EntityRepository {
         entities: &PreparedEntityColumns,
         rows: StagedRows<'_>,
         grains: StagedGrains<'_>,
-        expected_modified_at: &[Option<DateTime<Utc>>],
+        expected: &[Option<EntityVersion>],
         accepted_at: DateTime<Utc>,
     ) -> Result<Vec<Identifier>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
-        if expected_modified_at.len() != entities.ids.len() {
+        if expected.len() != entities.ids.len() {
             return Err(StoreInvariant::ExpectationCount {
                 write: GuardedEntityWrite::Update,
-                expectations: expected_modified_at.len(),
+                expectations: expected.len(),
                 rows: entities.ids.len(),
             }
             .into());
         }
         types_present(entities)?;
 
-        let rows = entity_update_statement(target, entities, rows, grains, expected_modified_at, accepted_at)?
+        let rows = entity_update_statement(target, entities, rows, grains, expected, accepted_at)?
             .into_query_as::<(String,)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
@@ -398,7 +401,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, expected_modified_at)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, expected_entity_key, expected_write_count)"
             ),
             "{sql}"
         );
@@ -408,20 +411,23 @@ mod tests {
         );
     }
 
-    /// Clause 4.8: the compare-and-set token is the entity's `modifiedAt`, which
-    /// the anchor compares with what the caller read and stamps with the
-    /// instant the commit was accepted at, the one its attributes carry.
+    /// The compare-and-set version is the row's key and write count, which
+    /// the anchor compares with what the caller read and moves by one; the
+    /// clause 4.8 `modifiedAt` is stamped with the instant the commit was
+    /// accepted at, the one its attributes carry, and compared with nothing,
+    /// since two writes accepted in the same microsecond stamp the same one.
     #[test]
-    fn a_compare_and_set_write_states_the_read_token() {
+    fn a_compare_and_set_write_states_the_read_version() {
         let sql = update();
         assert!(
-            sql.contains(r#""ents" AS (UPDATE "entities" SET "modified_at" = $12, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
+            sql.contains(r#""ents" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "modified_at" = $13, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#""proj"."expected_modified_at" IS NULL OR "entities"."modified_at" = "proj"."expected_modified_at""#),
+            sql.contains(r#""proj"."expected_entity_key" IS NULL OR ("entities"."entity_key" = "proj"."expected_entity_key" AND "entities"."write_count" = "proj"."expected_write_count")"#),
             "{sql}"
         );
+        assert!(!sql.contains(r#""entities"."modified_at" ="#), "{sql}");
         assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
         assert!(sql.ends_with(r#"SELECT "id" FROM "ents""#), "{sql}");
     }
@@ -452,11 +458,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($41::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($42::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$37::text[], $38::integer[], $39::text[], $40::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$38::text[], $39::integer[], $40::text[], $41::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }

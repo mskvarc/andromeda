@@ -1,7 +1,6 @@
 //! Entity mutation preconditions and retry classification.
 
-use crate::write_outcome::WriteOutcome;
-use chrono::{DateTime, Utc};
+use crate::{entity_version::EntityVersion, write_outcome::WriteOutcome};
 use derive_more::IsVariant;
 
 /// Assumption an atomic write makes about current entity state.
@@ -14,16 +13,16 @@ pub enum Precondition {
     MustNotExist,
     /// The entity must exist.
     MustExist,
-    /// The entity must retain the observed modification timestamp.
-    UnchangedSince(DateTime<Utc>),
+    /// The entity must still stand at the version it was read at.
+    UnchangedSince(EntityVersion),
 }
 
 impl Precondition {
-    /// Return the compare-and-set timestamp, when this is a version condition.
+    /// Return the compare-and-set version, when this is a version condition.
     #[must_use]
-    pub const fn expected_modified_at(self) -> Option<DateTime<Utc>> {
+    pub const fn expected_version(self) -> Option<EntityVersion> {
         match self {
-            Precondition::UnchangedSince(modified_at) => Some(modified_at),
+            Precondition::UnchangedSince(version) => Some(version),
             Precondition::None | Precondition::MustNotExist | Precondition::MustExist => None,
         }
     }

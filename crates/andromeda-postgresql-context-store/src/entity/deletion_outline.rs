@@ -17,7 +17,7 @@ use crate::{
     error::ContextStoreError,
     subscription_store::trigger_code::stored_trigger,
 };
-use andromeda_context_commit::scope_presence::ScopePresence;
+use andromeda_context_commit::{entity_version::EntityVersion, scope_presence::ScopePresence};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::deletion_outline::{DeletionOutline, DeletionWatchers};
 use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
@@ -31,7 +31,6 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{pg_operator::PgBinaryOperator, statement::Statement};
-use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
 use strum::IntoEnumIterator;
@@ -52,10 +51,10 @@ struct Scoped;
 struct Watched;
 
 /// One row per type the entity carries, each naming whether it held a Scope
-/// and the clause 4.8 `modifiedAt` a deletion compares against: the
+/// and the version a deletion compares against: the
 /// [`entity_types_statement`] with the columns
-/// `(s.scope_paths IS NOT NULL) AS scoped` and `e.modified_at` beside the
-/// name.
+/// `(s.scope_paths IS NOT NULL) AS scoped`, `e.entity_key` and
+/// `e.write_count` beside the name.
 ///
 /// The version is read by the first statement of the outline and the instances
 /// by the second, so an instance a concurrent write adds in between moves the
@@ -65,7 +64,8 @@ fn outline_types_statement(target: &ContextTarget, id: &str) -> SelectStatement 
     let mut statement = entity_types_statement(target, id);
     statement
         .expr_as(Expr::col((Search, EntitySearch::ScopePaths)).is_not_null(), Scoped)
-        .column((E, Entities::ModifiedAt));
+        .column((E, Entities::EntityKey))
+        .column((E, Entities::WriteCount));
     statement
 }
 
@@ -156,7 +156,10 @@ impl EntityRepository {
         } else {
             ScopePresence::Absent
         };
-        let modified_at = first.try_get::<DateTime<Utc>, _>(Entities::ModifiedAt.to_string().as_str())?;
+        let version = EntityVersion::new(
+            first.try_get(Entities::EntityKey.to_string().as_str())?,
+            first.try_get(Entities::WriteCount.to_string().as_str())?,
+        );
         let types = type_rows
             .iter()
             .map(|row| stored_type_name(row.try_get::<&str, _>(0)?))
@@ -177,7 +180,7 @@ impl EntityRepository {
             types,
             instances,
             scope,
-            modified_at,
+            version,
         }))
     }
 
@@ -244,7 +247,7 @@ mod tests {
         let types = outline_types_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(types.contains(r#""n"."entity_type_name_key" = ANY("s"."entity_type_name_keys")"#), "{types}");
         assert!(types.contains(r#""e"."id" = 'urn:ngsi-ld:T:1'"#), "{types}");
-        assert!(types.contains(r#""e"."modified_at""#), "{types}");
+        assert!(types.contains(r#""e"."entity_key", "e"."write_count""#), "{types}");
         let instances = outline_instances_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(instances.contains(r#""current_attributes" AS "ca""#), "{instances}");
         assert!(instances.contains(r#""an"."attribute_name_key" = "ca"."attribute_name_key""#), "{instances}");

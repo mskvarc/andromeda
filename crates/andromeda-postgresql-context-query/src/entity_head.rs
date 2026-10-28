@@ -1,11 +1,11 @@
 //! The members of an Entity that are not its attributes, and the names a
 //! statement reads them under.
 //!
-//! The identifier and the clause 4.8 and 4.22 instants live on `entities`; the
-//! types, in the order the Entity wrote them, and its Scopes as written
-//! (clause 4.18) on `entity_search`. A `current_attributes` row read beside
-//! them carries system instants of its own, so the Entity's are read under
-//! names of their own.
+//! The identifier, the write count and the clause 4.8 and 4.22 instants live
+//! on `entities`; the types, in the order the Entity wrote them, and its
+//! Scopes as written (clause 4.18) on `entity_search`. A `current_attributes`
+//! row read beside them carries system instants of its own, so the Entity's
+//! are read under names of their own.
 
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use sea_query::{DynIden, Expr, Iden, IntoIden, SelectStatement, SimpleExpr};
@@ -22,10 +22,13 @@ pub enum EntityHead {
     /// `entities.created_at` (clause 4.8).
     #[iden = "entity_created_at"]
     CreatedAt,
-    /// `entities.modified_at` (clause 4.8), which is also the compare-and-set
-    /// token a read-modify-write states its precondition against.
+    /// `entities.modified_at` (clause 4.8).
     #[iden = "entity_modified_at"]
     ModifiedAt,
+    /// `entities.write_count`, which with the key is the version a
+    /// read-modify-write states its precondition against.
+    #[iden = "entity_write_count"]
+    WriteCount,
     /// `entities.expires_at` (clause 4.22).
     #[iden = "entity_expires_at"]
     ExpiresAt,
@@ -39,11 +42,12 @@ pub enum EntityHead {
 
 impl EntityHead {
     /// Every member, in the order a statement projects them.
-    pub const ALL: [EntityHead; 7] = [
+    pub const ALL: [EntityHead; 8] = [
         EntityHead::EntityKey,
         EntityHead::Id,
         EntityHead::CreatedAt,
         EntityHead::ModifiedAt,
+        EntityHead::WriteCount,
         EntityHead::ExpiresAt,
         EntityHead::EntityTypeNameKeys,
         EntityHead::VerbatimScopePaths,
@@ -61,6 +65,7 @@ impl EntityHead {
             EntityHead::Id => entities(Entities::Id),
             EntityHead::CreatedAt => entities(Entities::CreatedAt),
             EntityHead::ModifiedAt => entities(Entities::ModifiedAt),
+            EntityHead::WriteCount => entities(Entities::WriteCount),
             EntityHead::ExpiresAt => entities(Entities::ExpiresAt),
             EntityHead::EntityTypeNameKeys => search(EntitySearch::EntityTypeNameKeys),
             EntityHead::VerbatimScopePaths => search(EntitySearch::VerbatimScopePaths),
@@ -94,7 +99,7 @@ mod tests {
             select.to_string(PostgresQueryBuilder),
             concat!(
                 r#"SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
-                r#""e"."modified_at" AS "entity_modified_at", "e"."expires_at" AS "entity_expires_at", "#,
+                r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
                 r#""entity_search"."entity_type_name_keys" AS "entity_type_name_keys", "entity_search"."verbatim_scope_paths" AS "verbatim_scope_paths""#
             )
         );

@@ -127,7 +127,7 @@ impl EntityService {
             types,
             instances,
             scope,
-            modified_at,
+            version,
         } = outline;
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(id.clone())) // clone: the delete write owns its validated identifier.
@@ -136,7 +136,7 @@ impl EntityService {
             // Evolution standing, so every instance the entity still held is
             // recorded as ended rather than being deleted with it.
             .history(deletion_tombstones(instances, scope))
-            .precondition(Precondition::UnchangedSince(modified_at))
+            .precondition(Precondition::UnchangedSince(version))
             .build();
         let now = SystemInstant::new(Utc::now());
         let next = after_attempt(&single(self.writes.commit(target, now, vec![write]).await?)?);
@@ -160,7 +160,7 @@ impl EntityService {
     /// reading the state it removes for the notification.
     async fn delete_removed_state(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
         let id = entity.id;
-        let Some(EntitySnapshot { state: removed, modified_at }) = self.reader.get_snapshot(target, id).await? else {
+        let Some(EntitySnapshot { state: removed, version }) = self.reader.get_snapshot(target, id).await? else {
             return Ok(AfterAttempt::Vanished);
         };
         if !entity.selects(removed.types().as_slice()) {
@@ -212,7 +212,7 @@ impl EntityService {
             // recorded as ended rather than being deleted with it.
             .history(deletion_history(&removed))
             .subscription_matches(subscription_matches)
-            .precondition(Precondition::UnchangedSince(modified_at))
+            .precondition(Precondition::UnchangedSince(version))
             .build();
 
         let now = SystemInstant::new(Utc::now());

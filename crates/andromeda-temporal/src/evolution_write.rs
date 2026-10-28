@@ -135,7 +135,7 @@ fn evolution_write(
         (Some(snapshot), None) => Ok(EvolutionWrite {
             write: builder
                 .entity(EntityMutation::None)
-                .precondition(Precondition::UnchangedSince(snapshot.modified_at))
+                .precondition(Precondition::UnchangedSince(snapshot.version))
                 .build(),
             events: Vec::new(),
         }),
@@ -155,7 +155,7 @@ fn evolution_write(
             };
             let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&state), previous);
             let (entity, precondition) = match current {
-                Some(snapshot) => (EntityMutation::Update(record), Precondition::UnchangedSince(snapshot.modified_at)),
+                Some(snapshot) => (EntityMutation::Update(record), Precondition::UnchangedSince(snapshot.version)),
                 None => (EntityMutation::Insert(record), Precondition::MustNotExist),
             };
             Ok(EvolutionWrite {
@@ -189,7 +189,7 @@ mod tests {
         evolution_write::{EvolutionWrite, evolution_write},
         written_evolution::WrittenEvolution,
     };
-    use andromeda_context_commit::{entity_mutation::EntityMutation, precondition::Precondition};
+    use andromeda_context_commit::{entity_mutation::EntityMutation, entity_version::EntityVersion, precondition::Precondition};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         change_notifier::{ChangeNotifier, SubscriptionMatching},
@@ -241,7 +241,7 @@ mod tests {
         let stored = vehicle(&json!({SPEED: [instance(1, "2024-01-01T00:00:00Z")]}));
         EntitySnapshot {
             state: Arc::new(EntityState::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a stored entity decodes")),
-            modified_at: Utc::now(),
+            version: EntityVersion::new(1, 1),
         }
     }
 
@@ -395,7 +395,7 @@ mod tests {
         let write = written(&evolution, Some(&current));
 
         assert!(matches!(write.write.entity, EntityMutation::None), "{:?}", write.write.entity);
-        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(at) if at == current.modified_at));
+        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(version) if version == current.version));
         assert!(write.write.subscription_matches.is_empty());
         assert!(write.events.is_empty());
     }
@@ -413,7 +413,7 @@ mod tests {
         let write = written(&evolution, Some(&current));
 
         assert!(matches!(write.write.entity, EntityMutation::None), "{:?}", write.write.entity);
-        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(at) if at == current.modified_at));
+        assert!(matches!(write.write.precondition, Precondition::UnchangedSince(version) if version == current.version));
         assert!(!write.write.history.is_empty(), "the deletion is still recorded in the Temporal Evolution");
         assert!(write.events.is_empty());
     }

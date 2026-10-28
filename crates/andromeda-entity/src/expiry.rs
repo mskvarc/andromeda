@@ -10,7 +10,7 @@ use crate::{
 };
 #[cfg(test)]
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
-use andromeda_context_commit::{history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
+use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::expiry_removal::InstanceExpiry, reads::removed_instance::removed_attribute_instances};
 #[cfg(test)]
@@ -131,7 +131,7 @@ impl EntityService {
                 continue;
             };
             let ModificationWrite { mut write, events } = self.modification_write(target, &identifier, &purged.previous, purged.current, purged.history)?;
-            write.precondition = Precondition::UnchangedSince(purged.modified_at);
+            write.precondition = Precondition::UnchangedSince(purged.version);
             writes.push(write);
             pending.push((identifier, events));
         }
@@ -177,7 +177,7 @@ struct PurgedState {
     /// The state without its expired instances.
     current: Arc<EntityState>,
     /// The version the state was read at.
-    modified_at: DateTime<Utc>,
+    version: EntityVersion,
     /// A tombstone for every instance that went.
     history: Vec<HistoryRecord>,
 }
@@ -185,7 +185,7 @@ struct PurgedState {
 /// The entity `snapshot` becomes once every instance expired at `cutoff` is
 /// gone (clause 4.22), or `None` when it held no such instance.
 fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
-    let EntitySnapshot { state: previous, modified_at } = snapshot;
+    let EntitySnapshot { state: previous, version } = snapshot;
     let mut purged = EntityState::clone(&previous); // clone: shares every attribute holding no expired instance
     match purged.remove_expired_instances(cutoff) {
         InstanceExpiry::NoneExpired => None,
@@ -197,7 +197,7 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Purge
             Some(PurgedState {
                 previous,
                 current: Arc::new(purged),
-                modified_at,
+                version,
                 history,
             })
         }
@@ -218,7 +218,7 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
                 EntityRecord::replacing(&purged.previous, purged.current).expect("a projectable state"),
             ))
             .history(purged.history)
-            .precondition(Precondition::UnchangedSince(purged.modified_at))
+            .precondition(Precondition::UnchangedSince(purged.version))
             .build(),
     )
 }
@@ -233,7 +233,7 @@ mod tests {
         entity_snapshot::EntitySnapshot,
         expiry::{EntityExpiryBatchSize, landed_ids, purge_write},
     };
-    use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
+    use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use chrono::{DateTime, Utc};
@@ -251,7 +251,7 @@ mod tests {
     fn snapshot(payload: &Value) -> EntitySnapshot {
         EntitySnapshot {
             state: Arc::new(EntityState::from_slice(&serde_json::to_vec(payload).expect("JSON")).expect("a stored entity")),
-            modified_at: cutoff(),
+            version: EntityVersion::new(1, 1),
         }
     }
 

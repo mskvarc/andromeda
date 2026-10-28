@@ -162,7 +162,7 @@ impl EntityService {
             let snapshot = snapshots.remove(R::id(&entry));
             match rewrite.build(entry, snapshot.as_ref(), &reads, now) {
                 Ok(PlannedWrite { entry, write: Some(write) }) => {
-                    let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.modified_at));
+                    let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.version));
                     writes.push(GuardedWrite { write, precondition });
                     built.push(entry);
                 }

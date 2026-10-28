@@ -54,20 +54,11 @@ impl EntityRepository {
             .fetch_all(&self.pool)
             .await?;
         Ok(self
-            .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
+            .versioned_entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
             .into_iter()
-            .map(|retrieved| {
-                // clone: the identifier keys the candidate and stays in the state it names
-                let id = retrieved.state.id().clone();
-                (
-                    id,
-                    EntitySnapshot {
-                        state: retrieved.state,
-                        modified_at: retrieved.sys_attrs.modified_at,
-                    },
-                )
-            })
+            // clone: the identifier keys the candidate and stays in the state it names
+            .map(|entity| (entity.retrieved.state.id().clone(), entity.into_snapshot()))
             .collect())
     }
 }
@@ -89,7 +80,7 @@ fn entities_due_for_expiry_statement(target: &ContextTarget, cutoff: DateTime<Ut
 }
 
 /// Build the select of the heads of every entity holding a past-due attribute
-/// instance, whose `modified_at` is the version token needed to rewrite it
+/// instance, whose key and write count are the version needed to rewrite it
 /// under a precondition; its rows are read afterwards by key.
 ///
 /// ```sql

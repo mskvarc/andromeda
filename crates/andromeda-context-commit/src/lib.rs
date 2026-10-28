@@ -30,6 +30,8 @@ pub mod deleted_entity;
 pub mod entity_mutation;
 /// The current-state row an atomic write stores for one entity.
 pub mod entity_record;
+/// The version token a compare-and-set entity write states.
+pub mod entity_version;
 /// Failures reported by the atomic commit boundary.
 pub mod error;
 /// The bound every claimable queue holds a recorded failure to.

@@ -5,6 +5,7 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_invariant::{CommitInvariant, NameDictionary},
     entity_mutation::EntityMutation,
+    entity_version::EntityVersion,
     error::CommitError,
     hoisted_location::GeometryChange,
     precondition::Precondition,
@@ -18,7 +19,6 @@ use andromeda_postgresql_context_store::{
     entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry, staged_scopes::StagedScopes},
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-use chrono::{DateTime, Utc};
 
 /// The binds of one fused entity statement: one entry per entity, and the
 /// `current_attributes` rows and grains each entity's edit writes.
@@ -151,8 +151,8 @@ fn instance_keys(attributes: &ProjectedAttributes, keys: &[AttributeNameKey]) ->
 }
 
 /// Return update/delete version expectations aligned with grouped writes.
-pub(crate) fn expectations(writes: &[IndexedWrite<'_>]) -> Vec<Option<DateTime<Utc>>> {
-    writes.iter().map(|(_, write)| write.precondition.expected_modified_at()).collect()
+pub(crate) fn expectations(writes: &[IndexedWrite<'_>]) -> Vec<Option<EntityVersion>> {
+    writes.iter().map(|(_, write)| write.precondition.expected_version()).collect()
 }
 
 #[cfg(test)]
@@ -166,6 +166,7 @@ mod tests {
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
         entity_record::{EntityRecord, SearchProjection},
+        entity_version::EntityVersion,
         error::CommitError,
         precondition::Precondition,
         projected_attributes::ProjectedAttributes,
@@ -444,7 +445,7 @@ mod tests {
     /// EWKB is encoded or bound, so the statement never re-projects it.
     #[test]
     fn an_update_holding_against_its_read_keeps_an_unchanged_geometry() {
-        let writes = [update_sharing_the_location(Precondition::UnchangedSince(Utc::now()))];
+        let writes = [update_sharing_the_location(Precondition::UnchangedSince(EntityVersion::new(1, 1)))];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
         pretty_assertions::assert_eq!(columns.entities.locations, vec![StagedGeometry::Kept]);
@@ -464,7 +465,7 @@ mod tests {
     /// it: restating that state stages no row and no grain.
     #[test]
     fn an_update_of_the_state_it_read_stages_no_row() {
-        let writes = [update_sharing_the_location(Precondition::UnchangedSince(Utc::now()))];
+        let writes = [update_sharing_the_location(Precondition::UnchangedSince(EntityVersion::new(1, 1)))];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
         assert!(columns.rows.is_empty(), "{:?}", columns.rows);
@@ -480,7 +481,7 @@ mod tests {
         let writes = [AtomicWrite::builder()
             .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
             .entity(EntityMutation::Update(EntityRecord::replacing(&previous, current).expect("a projection")))
-            .precondition(Precondition::UnchangedSince(Utc::now()))
+            .precondition(Precondition::UnchangedSince(EntityVersion::new(1, 1)))
             .build()];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
@@ -497,13 +498,13 @@ mod tests {
     }
 
     #[test]
-    fn only_versioned_preconditions_bind_an_expected_timestamp() {
-        let now = Utc::now();
+    fn only_versioned_preconditions_bind_an_expected_version() {
+        let read = EntityVersion::new(3, 7);
         let writes = [
             AtomicWrite::builder()
                 .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
                 .entity(EntityMutation::Delete)
-                .precondition(Precondition::UnchangedSince(now))
+                .precondition(Precondition::UnchangedSince(read))
                 .build(),
             AtomicWrite::builder()
                 .entity_id(Arc::new("urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI")))
@@ -512,6 +513,6 @@ mod tests {
                 .build(),
         ];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
-        pretty_assertions::assert_eq!(expectations(&indexed), vec![Some(now), None]);
+        pretty_assertions::assert_eq!(expectations(&indexed), vec![Some(read), None]);
     }
 }

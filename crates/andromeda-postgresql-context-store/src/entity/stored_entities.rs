@@ -21,8 +21,9 @@ use crate::{
     entity_state_record::stored_state::StoredState,
     error::ContextStoreError,
 };
+use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::port::retrieved_entity::RetrievedEntity;
+use andromeda_entity::{entity_snapshot::EntitySnapshot, port::retrieved_entity::RetrievedEntity};
 use andromeda_ngsi_ld_entity::scopes::Scopes;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
@@ -53,6 +54,8 @@ pub struct StoredHead {
     scope: Option<Scopes>,
     /// The clause 4.8 and 4.22 instants.
     sys_attrs: SysAttrsSnapshot,
+    /// The version the row stood at when it was read.
+    version: EntityVersion,
 }
 
 impl StoredHead {
@@ -73,8 +76,9 @@ impl StoredHead {
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoredEntityError::Scope)?;
         let types: Vec<i32> = row.try_get(EntityHead::EntityTypeNameKeys.unquoted())?;
+        let key = stored_entity_key(row.try_get(EntityHead::EntityKey.unquoted())?)?;
         Ok(StoredHead {
-            key: stored_entity_key(row.try_get(EntityHead::EntityKey.unquoted())?)?,
+            key,
             id: stored_uri(row.try_get(EntityHead::Id.unquoted())?)?,
             types: types.into_iter().map(EntityTypeNameKey::from).collect(),
             scope: Scopes::try_from_paths(paths).ok(),
@@ -83,7 +87,27 @@ impl StoredHead {
                 modified_at: row.try_get(EntityHead::ModifiedAt.unquoted())?,
                 expires_at: row.try_get(EntityHead::ExpiresAt.unquoted())?,
             },
+            version: EntityVersion::new(key.get(), row.try_get(EntityHead::WriteCount.unquoted())?),
         })
+    }
+}
+
+/// An Entity as read, with the version its row stood at.
+#[derive(Debug)]
+pub(crate) struct VersionedEntity {
+    /// The state and its system times.
+    pub(crate) retrieved: RetrievedEntity,
+    /// The version a write computed from this read states.
+    pub(crate) version: EntityVersion,
+}
+
+impl VersionedEntity {
+    /// The snapshot a read-modify-write states its precondition against.
+    pub(crate) fn into_snapshot(self) -> EntitySnapshot {
+        EntitySnapshot {
+            state: self.retrieved.state,
+            version: self.version,
+        }
     }
 }
 
@@ -173,14 +197,14 @@ impl GatheredEntities {
         held.distinct()
     }
 
-    /// The states of the gathered Entities, in the order their heads were
-    /// read, every key read back through `names`.
+    /// The states of the gathered Entities with their versions, in the order
+    /// their heads were read, every key read back through `names`.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError::StoredEntity`] when a type key has no name,
     /// when an Entity carries no type, or when its rows do not assemble.
-    fn assemble(mut self, names: &KeyNames) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+    fn assemble(mut self, names: &KeyNames) -> Result<Vec<VersionedEntity>, ContextStoreError> {
         self.heads
             .into_iter()
             .map(|head| {
@@ -190,9 +214,12 @@ impl GatheredEntities {
                     expires_at: head.sys_attrs.expires_at,
                     rows: self.rows.remove(&head.key).unwrap_or_default(),
                 };
-                Ok(RetrievedEntity {
-                    state: Arc::new(stored.assemble(head.id, names)?),
-                    sys_attrs: head.sys_attrs,
+                Ok(VersionedEntity {
+                    retrieved: RetrievedEntity {
+                        state: Arc::new(stored.assemble(head.id, names)?),
+                        sys_attrs: head.sys_attrs,
+                    },
+                    version: head.version,
                 })
             })
             .collect()
@@ -234,12 +261,28 @@ impl EntityRepository {
         heads: &[PgRow],
         selection: &RowSelection,
     ) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+        Ok(retrieved(self.versioned_entities_of_heads(lane, target, heads, selection).await?))
+    }
+
+    /// [`entities_of_heads`](EntityRepository::entities_of_heads), each
+    /// Entity with the version its row stood at.
+    ///
+    /// # Errors
+    ///
+    /// As [`entities_of_heads`](EntityRepository::entities_of_heads).
+    pub(crate) async fn versioned_entities_of_heads(
+        &self,
+        lane: PoolLane,
+        target: &ContextTarget,
+        heads: &[PgRow],
+        selection: &RowSelection,
+    ) -> Result<Vec<VersionedEntity>, ContextStoreError> {
         let mut gathered = GatheredEntities::of_heads(heads)?;
         if !gathered.is_empty() && !selection.takes_none() {
             let rows = self.fetch_on(lane, &rows_of(target, &gathered.keys(), selection)).await?;
             gathered.add_rows(&rows)?;
         }
-        self.assembled(gathered).await
+        self.versioned(gathered).await
     }
 
     /// The states of the Entities `gathered` holds, in the order their heads
@@ -250,9 +293,24 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when a dictionary lookup fails, or when a
     /// head or the rows of an Entity do not read back.
     pub(crate) async fn assembled(&self, gathered: GatheredEntities) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+        Ok(retrieved(self.versioned(gathered).await?))
+    }
+
+    /// [`assembled`](EntityRepository::assembled), each Entity with the
+    /// version its row stood at.
+    ///
+    /// # Errors
+    ///
+    /// As [`assembled`](EntityRepository::assembled).
+    pub(crate) async fn versioned(&self, gathered: GatheredEntities) -> Result<Vec<VersionedEntity>, ContextStoreError> {
         let names = names_of(&gathered.held_keys(), self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
         gathered.assemble(&names)
     }
+}
+
+/// The states of `entities`, their versions dropped.
+fn retrieved(entities: Vec<VersionedEntity>) -> Vec<RetrievedEntity> {
+    entities.into_iter().map(|entity| entity.retrieved).collect()
 }
 
 #[cfg(test)]
@@ -265,6 +323,7 @@ mod tests {
         current_attribute::{flatten::flatten, row::CurrentAttributeRow},
         entity::stored_entities::{GatheredEntities, StoredHead},
     };
+    use andromeda_context_commit::entity_version::EntityVersion;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -338,6 +397,7 @@ mod tests {
                 modified_at: instant,
                 expires_at: None,
             },
+            version: EntityVersion::new(key, 1),
         }
     }
 
@@ -365,10 +425,11 @@ mod tests {
         }
 
         let assembled = gathered.assemble(&names).expect("the rows assemble");
-        let ids: Vec<&str> = assembled.iter().map(|entity| entity.state.id().as_str()).collect();
+        let ids: Vec<&str> = assembled.iter().map(|entity| entity.retrieved.state.id().as_str()).collect();
         assert_eq!(ids, vec!["urn:ngsi-ld:Building:c", "urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:b"]);
-        for ((_, id, seed), entity) in page.iter().zip(&assembled) {
-            assert_eq!(entity.state.as_ref(), &committed(id, *seed));
+        for ((key, id, seed), entity) in page.iter().zip(&assembled) {
+            assert_eq!(entity.retrieved.state.as_ref(), &committed(id, *seed));
+            assert_eq!(entity.version, EntityVersion::new(*key, 1));
         }
     }
 
@@ -380,7 +441,7 @@ mod tests {
         let mut gathered = GatheredEntities::default();
         gathered.heads.push(head(1, "urn:ngsi-ld:Building:a"));
         let assembled = gathered.assemble(&names).expect("the head assembles");
-        assert!(assembled.first().is_some_and(|entity| entity.state.attributes().is_empty()));
+        assert!(assembled.first().is_some_and(|entity| entity.retrieved.state.attributes().is_empty()));
     }
 
     /// A type key the dictionary has no name for is a store fault, never an

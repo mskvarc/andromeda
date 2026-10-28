@@ -18,6 +18,7 @@ use andromeda_context_commit::{
     committer::{CommitFuture, ContextCommitter},
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
+    entity_version::EntityVersion,
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -124,6 +125,8 @@ pub(crate) struct SnapshotReader {
     pub(crate) state: Arc<EntityState>,
     /// The modification instant every read serves.
     pub(crate) modified_at: DateTime<Utc>,
+    /// The version every snapshot serves.
+    pub(crate) version: EntityVersion,
     /// How many whole states were read, which a deletion reads only when a
     /// subscription may be owed its notification.
     pub(crate) payload_reads: Arc<AtomicUsize>,
@@ -164,7 +167,7 @@ impl EntityReader for SnapshotReader {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         Ok(Some(EntitySnapshot {
             state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes.
-            modified_at: self.modified_at,
+            version: self.version,
         }))
     }
 
@@ -177,7 +180,7 @@ impl EntityReader for SnapshotReader {
                     id.clone(), // clone: the map owns each requested id
                     EntitySnapshot {
                         state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes
-                        modified_at: self.modified_at,
+                        version: self.version,
                     },
                 )
             })

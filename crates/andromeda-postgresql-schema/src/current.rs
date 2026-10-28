@@ -10,7 +10,7 @@ use sea_query::Iden;
 ///
 /// The three relations `entities`, `current_attributes` and `entity_search`
 /// together hold one Entity's current state, split by write pattern: identity,
-/// expiry and the version token here, one row per attribute instance in
+/// expiry and the write count here, one row per attribute instance in
 /// `current_attributes`, the indexed query axes in `entity_search`. All three
 /// share `entity_key`.
 #[derive(Iden, Clone, Copy)]
@@ -19,6 +19,11 @@ pub enum Entities {
     Table,
     /// Surrogate primary key every owned child relation references
     EntityKey,
+    /// How many writes of the current state the row has taken, starting at
+    /// one; with `entity_key`, the compare-and-set token an optimistic
+    /// overwrite states. Not indexed, so its per-write update stays a
+    /// heap-only-tuple update.
+    WriteCount,
     /// Entity URN identifier, the external identity of the row, shared by
     /// the current state and the Temporal Evolution
     Id,
@@ -30,10 +35,9 @@ pub enum Entities {
     /// Earliest `expiresAt` any attribute instance of the Entity carries, when
     /// one does (clause 4.22); what the attribute-expiry sweep ranges over.
     MinAttributeExpiresAt,
-    /// Instant the entity was last modified (clause 4.8 `modifiedAt`), the
-    /// compare-and-set token an optimistic overwrite states; not indexed, so
-    /// its per-write update stays a heap-only-tuple update. NULL while the
-    /// Entity has no current state.
+    /// Instant the entity was last modified (clause 4.8 `modifiedAt`); not
+    /// indexed, so its per-write update stays a heap-only-tuple update. NULL
+    /// while the Entity has no current state.
     ModifiedAt,
     /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never
     /// moved; NULL while the Entity has no Temporal Evolution
@@ -289,6 +293,7 @@ mod tests {
     #[test]
     fn entities_column_names() {
         assert_eq!(Entities::EntityKey.to_string(), "entity_key");
+        assert_eq!(Entities::WriteCount.to_string(), "write_count");
         assert_eq!(Entities::Id.to_string(), "id");
         assert_eq!(Entities::CreatedAt.to_string(), "created_at");
         assert_eq!(Entities::ExpiresAt.to_string(), "expires_at");
@@ -324,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn entities_carries_the_modified_at_token() {
+    fn entities_carries_the_modified_at_instant() {
         assert_eq!(Entities::ModifiedAt.to_string(), "modified_at");
     }
 

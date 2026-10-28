@@ -25,6 +25,7 @@ use crate::{
                 entity_arrays,
                 from_inserted,
                 insert_staging_columns,
+                next_write_count,
                 projected,
                 projection_cte,
                 with_staged_alias,
@@ -56,8 +57,8 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
 ///      ins AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at)
-///              SELECT proj.id, $accepted_at, $accepted_at, … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …
-///              WHERE entities.created_at IS NULL RETURNING entity_key, id),
+///              SELECT proj.id, $accepted_at, $accepted_at, … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …,
+///              write_count = entities.write_count + 1 WHERE entities.created_at IS NULL RETURNING entity_key, id),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
 ///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
@@ -90,7 +91,9 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// Clause 5.6.1 creates the Entity anew under the same identifier, so the
 /// conflict action gives that row its current state and returns it: its
 /// Temporal Evolution continues under the same key, and its type memberships
-/// gain the current flag.
+/// gain the current flag. It counts the creation as a write rather than
+/// starting the count over, so a version read before the deletion never
+/// matches the Entity created anew; a new row starts at one.
 ///
 /// Every attribute instance is one row, whatever the nesting of its
 /// sub-attributes, so one insert lands every instance of every entity, paired
@@ -130,6 +133,7 @@ pub(super) fn entity_insert_statement<'entities>(
         .on_conflict(
             OnConflict::column(Entities::Id)
                 .update_columns(current_state)
+                .value(Entities::WriteCount, next_write_count(Entities::Table))
                 .action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null())
                 .to_owned(),
         )
@@ -386,7 +390,7 @@ mod tests {
     /// 5.5.11.0). An identity row holding a current state is left alone, and
     /// one holding the Temporal Evolution alone (clause 5.6.6 deleted its
     /// current state) is given one and returned, so clause 5.6.1 creates the
-    /// Entity anew under the same key.
+    /// Entity anew under the same key, one write count past the deletion.
     #[test]
     fn the_insert_keeps_its_conflict_clause_and_revives_an_evolution_alone() {
         let sql = insert();
@@ -394,8 +398,8 @@ mod tests {
             sql.contains(concat!(
                 r#"SELECT "proj"."id", $10, $11, "proj"."expires_at", "proj"."min_attribute_expires_at" FROM "proj" "#,
                 r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
-                r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at" "#,
-                r#"WHERE "entities"."created_at" IS NULL RETURNING "entity_key", "id""#
+                r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at", "#,
+                r#""write_count" = "entities"."write_count" + 1 WHERE "entities"."created_at" IS NULL RETURNING "entity_key", "id""#
             )),
             "{sql}"
         );

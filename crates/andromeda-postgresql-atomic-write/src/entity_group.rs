@@ -88,10 +88,15 @@ pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<Deleted
 )]
 mod tests {
     use crate::entity_group::{RowReturned, delete_outcome, group, insert_outcome, update_outcome};
-    use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, precondition::Precondition};
+    use andromeda_context_commit::{
+        atomic_write::AtomicWrite,
+        entity_mutation::EntityMutation,
+        entity_record::EntityRecord,
+        entity_version::EntityVersion,
+        precondition::Precondition,
+    };
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use chrono::Utc;
     use std::sync::Arc;
 
     fn record() -> EntityRecord {
@@ -114,7 +119,7 @@ mod tests {
         assert!(insert_outcome(Precondition::MustNotExist, RowReturned::Yes).is_created());
         assert!(insert_outcome(Precondition::MustNotExist, RowReturned::No).is_already_exists());
         assert!(update_outcome(Precondition::MustExist, RowReturned::No).is_not_found());
-        assert!(update_outcome(Precondition::UnchangedSince(Utc::now()), RowReturned::No).is_superseded());
+        assert!(update_outcome(Precondition::UnchangedSince(EntityVersion::new(1, 1)), RowReturned::No).is_superseded());
         assert!(delete_outcome(Precondition::MustExist, None).is_not_found());
     }
 

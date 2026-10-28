@@ -433,12 +433,12 @@ mod tests {
         assert_eq!(
             built.sql,
             concat!(
-                r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_expires_at", "#,
+                r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_write_count", "stored"."entity_expires_at", "#,
                 r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
                 r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL "#,
                 r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
                 r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
-                r#""e"."modified_at" AS "entity_modified_at", "e"."expires_at" AS "entity_expires_at", "#,
+                r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
                 r#""s"."entity_type_name_keys" AS "entity_type_name_keys", "s"."verbatim_scope_paths" AS "verbatim_scope_paths" "#,
                 r#"FROM "entities" AS "e" INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key" "#,
                 r#"WHERE "e"."entity_key" = "page"."entity_key" LIMIT $3) AS "stored" ON TRUE "#,

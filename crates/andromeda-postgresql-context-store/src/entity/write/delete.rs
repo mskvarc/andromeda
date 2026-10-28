@@ -8,13 +8,24 @@ use crate::{
         repo::EntityRepository,
         write::{
             search_image::SearchImage,
-            staging::{Doomed, Srch, Staged, StagedColumn, delete_staging_columns, expectation, staged, staging_source, with_staged_alias},
+            staging::{
+                Doomed,
+                Srch,
+                Staged,
+                StagedColumn,
+                delete_staging_columns,
+                expectation,
+                expectation_arrays,
+                next_write_count,
+                staging_source,
+                with_staged_alias,
+            },
         },
     },
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
-use andromeda_context_commit::deleted_entity::DeletedEntity;
+use andromeda_context_commit::{deleted_entity::DeletedEntity, entity_version::EntityVersion};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::{schema_iden, table_of};
@@ -27,13 +38,8 @@ use andromeda_postgresql_schema::{
     current::{CurrentAttributes, E, Entities, EntitySearch},
     type_membership::MembershipSide,
 };
-use andromeda_postgresql_seaquery::{
-    pg_array::{nullable_array, text_array},
-    statement::Statement,
-    unnest::UnnestAliased,
-};
+use andromeda_postgresql_seaquery::{pg_array::text_array, statement::Statement, unnest::UnnestAliased};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Postgres, Row, Transaction};
 
@@ -75,23 +81,23 @@ struct Unflagged;
 #[iden = "strays"]
 struct Strays;
 
-/// Build the batch delete of `ids`, each held to its entry of
-/// `expected_modified_at`.
+/// Build the batch delete of `ids`, each held to its entry of `expected`.
 ///
 /// ```sql
 /// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at,
 ///                        e.evolution_created_at IS NOT NULL AS kept
-///                 FROM UNNEST(…) AS d(id, expected_modified_at)
+///                 FROM UNNEST(…) AS d(id, expected_entity_key, expected_write_count)
 ///                 JOIN entities e ON e.id = d.id
 ///                 WHERE e.created_at IS NOT NULL
-///                   AND (d.expected_modified_at IS NULL OR e.modified_at = d.expected_modified_at)
+///                   AND (d.expected_entity_key IS NULL
+///                        OR (e.entity_key = d.expected_entity_key AND e.write_count = d.expected_write_count))
 ///                 FOR UPDATE OF e),
 ///      srch(entity_key, old_types, old_instance_names, old_instance_kinds) AS
 ///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed)
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
 ///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT kept)),
-///      retired AS (UPDATE entities SET created_at = NULL, modified_at = NULL, expires_at = NULL,
-///                  min_attribute_expires_at = NULL WHERE entity_key IN (SELECT entity_key FROM doomed WHERE kept)),
+///      retired AS (UPDATE entities SET write_count = entities.write_count + 1, created_at = NULL, modified_at = NULL,
+///                  expires_at = NULL, min_attribute_expires_at = NULL WHERE entity_key IN (SELECT entity_key FROM doomed WHERE kept)),
 ///      retired_attributes AS (DELETE FROM current_attributes WHERE entity_key IN (… WHERE kept)),
 ///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… WHERE kept) AND is_evolution_member),
 ///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… WHERE kept) AND NOT is_evolution_member),
@@ -104,7 +110,9 @@ struct Strays;
 /// read-modify-write like any other, and one that removed a state its author
 /// never saw would be a lost update. The candidates are locked before the
 /// delete so a concurrent write cannot slip between the expectation check and
-/// the removal.
+/// the removal. An identity row the Temporal Evolution keeps counts the
+/// deletion as a write, so a version read before it never matches the Entity
+/// clause 5.6.1 creates anew on the same row.
 ///
 /// The search row is deleted by name so that the rows it held come back: the
 /// discovery census counts every one of their types and attribute instances
@@ -129,11 +137,12 @@ struct Strays;
 pub(super) fn entity_delete_statement(
     target: &ContextTarget,
     ids: &[Identifier],
-    expected_modified_at: &[Option<DateTime<Utc>>],
+    expected: &[Option<EntityVersion>],
 ) -> Result<UnnestAliased<WithQuery>, ContextStoreError> {
     let columns = delete_staging_columns();
     let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
-    let arrays = vec![text_array(&ids), nullable_array(expected_modified_at.iter().copied())];
+    let mut arrays = vec![text_array(&ids)];
+    arrays.extend(expectation_arrays(expected));
 
     let mut doomed = Query::select();
     doomed
@@ -151,7 +160,7 @@ pub(super) fn entity_delete_statement(
             Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
         )
         .and_where(holds_current_state(E))
-        .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), E))
+        .cond_where(expectation(Staged, E))
         .lock_with_tables(LockType::Update, [E.into_iden()]);
 
     let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).take();
@@ -175,6 +184,7 @@ pub(super) fn entity_delete_statement(
     let retired = Query::update()
         .table(table_of(target, Entities::Table))
         .values([
+            (Entities::WriteCount, next_write_count(Entities::Table)),
             (Entities::CreatedAt, Keyword::Null.into()),
             (Entities::ModifiedAt, Keyword::Null.into()),
             (Entities::ExpiresAt, Keyword::Null.into()),
@@ -243,7 +253,7 @@ impl EntityRepository {
     /// clause 5.6.6 deletes the Entity, and only clause 5.6.16 deletes its
     /// history.
     ///
-    /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
+    /// `expected` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
     ///
     /// # Errors
@@ -256,21 +266,21 @@ impl EntityRepository {
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         ids: &[Identifier],
-        expected_modified_at: &[Option<DateTime<Utc>>],
+        expected: &[Option<EntityVersion>],
     ) -> Result<Vec<DeletedEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        if expected_modified_at.len() != ids.len() {
+        if expected.len() != ids.len() {
             return Err(StoreInvariant::ExpectationCount {
                 write: GuardedEntityWrite::Delete,
-                expectations: expected_modified_at.len(),
+                expectations: expected.len(),
                 rows: ids.len(),
             }
             .into());
         }
 
-        let rows = entity_delete_statement(target, ids, expected_modified_at)?.to_query().fetch_all(&mut **tx);
+        let rows = entity_delete_statement(target, ids, expected)?.to_query().fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_DELETE, rows).await?;
 
         rows.into_iter()
@@ -303,18 +313,20 @@ mod tests {
     #[test]
     fn the_delete_locks_its_candidates_and_honours_the_expectation() {
         let sql = entity_delete_sql(&ContextTarget::Live);
-        assert!(sql.contains("UNNEST($1::text[], $2::timestamptz[])"), "{sql}");
+        assert!(sql.contains("UNNEST($1::text[], $2::bigint[], $3::bigint[])"), "{sql}");
         assert!(
             sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "e"."evolution_created_at" IS NOT NULL AS "kept" FROM UNNEST("#),
             "{sql}"
         );
-        assert!(sql.contains("AS d(id, expected_modified_at)"), "{sql}");
+        assert!(sql.contains("AS d(id, expected_entity_key, expected_write_count)"), "{sql}");
         assert!(
             sql.contains(r#"JOIN "entities" AS "e" ON "e"."id" = "d"."id" WHERE "e"."created_at" IS NOT NULL AND"#),
             "an Entity without a current state is no candidate: {sql}"
         );
         assert!(
-            sql.contains(r#""d"."expected_modified_at" IS NULL OR "e"."modified_at" = "d"."expected_modified_at""#),
+            sql.contains(
+                r#""d"."expected_entity_key" IS NULL OR ("e"."entity_key" = "d"."expected_entity_key" AND "e"."write_count" = "d"."expected_write_count")"#
+            ),
             "{sql}"
         );
         assert!(sql.contains(r#"FOR UPDATE OF "e")"#), "{sql}");
@@ -336,14 +348,16 @@ mod tests {
     /// Clause 5.6.6 leaves the Temporal Evolution standing: an Entity holding
     /// one keeps its identity row with the current state taken off, its
     /// attribute instances removed and its memberships kept for the
-    /// Evolution alone. No history relation is touched.
+    /// Evolution alone. No history relation is touched. The deletion moves the
+    /// row's write count, so a version read before it never matches the Entity
+    /// clause 5.6.1 creates anew on the same row.
     #[test]
     fn an_entity_with_a_temporal_evolution_keeps_its_identity_row() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         let kept = r#"(SELECT "entity_key" FROM "doomed" WHERE "kept")"#;
         assert!(
             sql.contains(&format!(
-                r#""retired" AS (UPDATE "entities" SET "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {kept})"#
+                r#""retired" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {kept})"#
             )),
             "{sql}"
         );

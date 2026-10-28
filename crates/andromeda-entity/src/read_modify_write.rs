@@ -83,7 +83,7 @@ impl EntityService {
             let Some(mut write) = build(&snapshot.state, now)? else {
                 return Ok(None);
             };
-            write.precondition = Precondition::UnchangedSince(snapshot.modified_at);
+            write.precondition = Precondition::UnchangedSince(snapshot.version);
 
             let committed = self.writes.commit(target, now, vec![write]).await.map_err(EntityError::from)?;
             let outcome = single(committed).map_err(EntityError::from)?;

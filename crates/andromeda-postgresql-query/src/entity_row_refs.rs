@@ -108,6 +108,7 @@ impl EntityRowRefs {
         let relation = match column {
             Entities::EntityKey | Entities::Id => &self.keys,
             Entities::Table
+            | Entities::WriteCount
             | Entities::CreatedAt
             | Entities::ExpiresAt
             | Entities::MinAttributeExpiresAt

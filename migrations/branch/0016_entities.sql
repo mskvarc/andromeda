@@ -8,9 +8,10 @@
 -- membership row per type the Entity carries, sharing `entity_key`. The
 -- attribute instances live in `current_attributes`. The split follows the
 -- write pattern, not the data model: an attribute write stamps only the
--- identity row's `modified_at`, which no index covers, so it stays a
--- heap-only update while its page has room; almost no write changes the
--- Entity's types, scopes or geometries, and its identity never changes.
+-- identity row's `write_count` and `modified_at`, which no index covers, so
+-- it stays a heap-only update while its page has room; almost no write
+-- changes the Entity's types, scopes or geometries, and its identity never
+-- changes.
 --
 -- One identity row serves the Entity's current state and its Temporal
 -- Evolution (clause 4.5.6), each of which may exist without the other: a
@@ -22,16 +23,21 @@
 -- the two each type belongs to.
 -- ============================================================================
 -- Identity and lifecycle. The fillfactor leaves the room on each page that
--- keeps the `modified_at` update of every core write and the
+-- keeps the `write_count` and `modified_at` update of every core write and the
 -- `evolution_modified_at` update of every recording write heap-only.
 create table entities (
     entity_key bigint generated always as identity (cache 32),
+    -- How many writes of the current state the row has taken. Every core
+    -- write, deletion and re-creation moves it, and with `entity_key` it is
+    -- the compare-and-set token an optimistic overwrite states: two writes
+    -- stamping the same `modified_at` still leave different counts, and an
+    -- Entity re-created after a deletion that removed the row gets a new key.
+    write_count bigint not null default 1,
     -- Clause 4.8 `createdAt` of the current state, NULL while the Entity has
     -- none. Every core read reaches an Entity through a row whose current
     -- state exists.
     created_at timestamptz,
-    -- Clause 4.8 `modifiedAt`, stamped by every write of the Entity: the
-    -- compare-and-set token an optimistic overwrite states.
+    -- Clause 4.8 `modifiedAt`, stamped by every write of the Entity.
     modified_at timestamptz,
     expires_at timestamptz,
     -- The earliest `expiresAt` any attribute instance of the Entity carries,
@@ -53,6 +59,7 @@ create table entities (
     constraint pk_entities primary key (entity_key),
     constraint uq_entities_id unique (id),
     constraint chk_entities_id_length check (octet_length(id) <= 1024),
+    constraint chk_entities_write_count check (write_count > 0),
     constraint chk_entities_current_state check ((created_at is null) = (modified_at is null) and (created_at is not null or (expires_at is null and min_attribute_expires_at is null))),
     constraint chk_entities_evolution check ((evolution_created_at is null) = (evolution_modified_at is null) and (evolution_created_at is null) = (evolution_type_name_keys is null) and (evolution_type_name_keys is null or cardinality(evolution_type_name_keys) > 0)),
     constraint chk_entities_held check (created_at is not null or evolution_created_at is not null)
