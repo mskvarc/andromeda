@@ -752,7 +752,7 @@ mod tests {
     fn a_target_language_compiles_a_language_map_reading_beside_the_member_reading() {
         let (sql, _) = render("\"https://example.com/color\"[en]==\"red\"");
         assert!(
-            sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER("#),
+            sql.contains(r#"LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER("#),
             "the languageMap reading: {sql}"
         );
         assert!(sql.contains(r#"jsonb_path_query("ca"."value_object""#), "the compound-value reading: {sql}");
@@ -811,7 +811,7 @@ mod tests {
     #[test]
     fn a_bare_existence_of_a_target_language_probes_the_language_key() {
         let (sql, _) = render("\"https://example.com/color\"[en]");
-        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language'))"#), "{sql}");
+        assert!(sql.contains(r#"LOWER(("ls"."value" ->> ('@language')) COLLATE "C")"#), "{sql}");
         assert!(!sql.contains(r#""ls"."value" ->> ('@value')"#), "existence says nothing about the value: {sql}");
         assert!(
             sql.contains(r#"jsonb_path_query("ca"."value_object""#),
@@ -1259,7 +1259,7 @@ mod tests {
     #[test]
     fn a_hyphenated_tag_compiles_the_language_map_reading_alone() {
         let (sql, binds) = render("\"https://example.com/color\"[en-GB]==\"red\"");
-        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER("#), "{sql}");
+        assert!(sql.contains(r#"LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER("#), "{sql}");
         assert!(!sql.contains("jsonb_path_query"), "no compound-member reading: {sql}");
         assert!(!sql.contains(" @> "), "no containment: {sql}");
         assert!(
@@ -1288,7 +1288,7 @@ mod tests {
             ("\"https://example.com/color\"[de-*-DE]==\"red\"", "^de(-[a-z0-9]{2,8})*-de(-[a-z0-9]{1,8})*$"),
         ] {
             let (sql, binds) = render_under(expression, &names(), &EntityRowRefs::unaliased(None), LanguageMatching::ExtendedFiltering);
-            assert!(sql.contains(r#""ls"."value" ->> ('@language')) ~* ("#), "{expression}: {sql}");
+            assert!(sql.contains(r#"(("ls"."value" ->> ('@language')) COLLATE "C") ~* ("#), "{expression}: {sql}");
             assert!(!sql.contains("LOWER"), "{expression}: {sql}");
             assert!(
                 binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == pattern)),

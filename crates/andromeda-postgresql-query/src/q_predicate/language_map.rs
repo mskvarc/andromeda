@@ -18,12 +18,17 @@
 //! map is unnested and every comparison runs against one entry's `@value`
 //! text.
 
-use crate::q_predicate::{extended_filter_pattern::extended_filter_pattern, instance_row::InstanceRow, value_column::ValueColumn};
+use crate::q_predicate::{
+    extended_filter_pattern::{CaseFolding, extended_filter_pattern},
+    instance_row::InstanceRow,
+    value_column::ValueColumn,
+};
 use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::cast,
+    collation::{PostgresCollation, collate},
     jsonb::jsonb_array_elements,
     literal::{int_literal, text_literal},
     pg_operator::PgBinaryOperator,
@@ -123,16 +128,26 @@ impl LanguageMap {
 ///
 /// The target language is the client's own text, so it reaches the statement
 /// as a parameter: the tag itself, or the pattern restating the range.
+///
+/// The stored tag is collated under the byte-wise `C` collation, and so is the
+/// parameter of the equality: RFC 5646 section 2.1.1 folds tags ASCII-only
+/// and RFC 4647 section 3.3.2 compares subtags the same way, while under a
+/// database whose default locale folds case Turkish-style the `lower()` of
+/// `lower(tag) = lower(target)` and the case fold of `~*` would map `it-IT`
+/// to `it-ıt` and lose it against `it-it`.
 fn selects_entry(language: LanguageSelector<'_>, matching: LanguageMatching) -> SimpleExpr {
-    let tag = entry_text(keyword::LANGUAGE);
+    let byte_order = PostgresCollation::byte_order();
+    let tag = collate(entry_text(keyword::LANGUAGE), &byte_order);
     match (language, matching) {
         (LanguageSelector::Tag(wanted), LanguageMatching::TagEquality) => {
-            SimpleExpr::from(Func::lower(tag)).eq(Func::lower(cast(SeaExpr::val(wanted.as_str()), PostgresType::Text)))
+            let wanted = collate(cast(SeaExpr::val(wanted.as_str()), PostgresType::Text), &byte_order);
+            Func::lower(tag).eq(Func::lower(wanted))
         }
         (LanguageSelector::Tag(_) | LanguageSelector::Range(_), LanguageMatching::ExtendedFiltering)
-        | (LanguageSelector::Range(_), LanguageMatching::TagEquality) => {
-            tag.posix_matches_ignoring_case(cast(SeaExpr::val(extended_filter_pattern(language)), PostgresType::Text))
-        }
+        | (LanguageSelector::Range(_), LanguageMatching::TagEquality) => tag.posix_matches_ignoring_case(cast(
+            SeaExpr::val(extended_filter_pattern(language, CaseFolding::InTheOperator)),
+            PostgresType::Text,
+        )),
     }
 }
 
@@ -186,18 +201,26 @@ mod tests {
 
     /// Clause 4.9: with a target language the target value is the string of
     /// that language's key-value pair, the tag compared case-insensitively
-    /// (RFC 5646 section 2.1.1).
+    /// (RFC 5646 section 2.1.1). Both sides of the equality fold under the
+    /// `C` collation, so the fold is ASCII-only whatever locale the database
+    /// defaults to.
     #[test]
     fn tag_equality_pins_the_language_of_the_string_it_reads_ignoring_case() {
         let tag = language("en-GB");
         let (sql, binds) = render(column_map().some_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
-        assert!(sql.contains(r#"LOWER("ls"."value" ->> ('@language')) = LOWER($1::text)"#), "{sql}");
+        assert!(
+            sql.contains(r#"LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($1::text) COLLATE "C")"#),
+            "{sql}"
+        );
         assert!(sql.contains(r#"("ls"."value" ->> ('@value')) = ('Door')"#), "{sql}");
         assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "en-GB"), "{binds:?}");
     }
 
     /// RFC 4647 section 3.3.2: under extended filtering the entry's tag is
-    /// matched against the range's pattern, bound as a parameter.
+    /// matched against the range's pattern, bound as a parameter. The `~*`
+    /// case fold reads the collation of the stored tag, so that collation is
+    /// `C` and the fold stays ASCII-only whatever locale the database
+    /// defaults to.
     #[test]
     fn extended_filtering_matches_the_tag_against_the_range_pattern() {
         for (text, matching) in [
@@ -207,11 +230,28 @@ mod tests {
         ] {
             let target = language(text);
             let (sql, binds) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), matching)));
-            assert!(sql.contains(r#"("ls"."value" ->> ('@language')) ~* ($1::text)"#), "{text}: {sql}");
+            assert!(sql.contains(r#"(("ls"."value" ->> ('@language')) COLLATE "C") ~* ($1::text)"#), "{text}: {sql}");
             assert!(!sql.contains("LOWER"), "{text}: {sql}");
             assert!(
                 matches!(&binds[0], Value::String(Some(pattern)) if pattern.starts_with('^')),
                 "{text}: {binds:?}"
+            );
+        }
+    }
+
+    /// The two comparisons a target language runs both fold the case of the
+    /// stored tag, and both pin the fold to the `C` collation: a database
+    /// whose default locale folds `I` Turkish-style must not turn `it-IT`
+    /// into `it-ıt` before the comparison.
+    #[test]
+    fn both_comparisons_collate_the_stored_tag_under_the_byte_order() {
+        let target = language("it-IT");
+        let (equality, _) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::TagEquality)));
+        let (filtering, _) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::ExtendedFiltering)));
+        for (sql, comparison) in [(equality, "equality"), (filtering, "extended filtering")] {
+            assert!(
+                sql.contains(r#"("ls"."value" ->> ('@language')) COLLATE "C""#),
+                "{comparison} leaves the stored tag under the database locale: {sql}"
             );
         }
     }

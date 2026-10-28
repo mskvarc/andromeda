@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_vocabulary::{
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::q_predicate::{
-    extended_filter_pattern::extended_filter_pattern,
+    extended_filter_pattern::{CaseFolding, exact_tag_pattern, extended_filter_pattern},
     sub_attribute::{element_path::ElementPath, member_field::MemberField},
     value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
 };
@@ -188,19 +188,17 @@ impl Holder {
 ///
 /// An ordering reads a tag by tag equality, compared case-insensitively as RFC
 /// 5646 section 2.1.1 requires; an extended range has no equality reading and
-/// filters (RFC 4647 section 3.3.2). A validated tag or range holds letters,
-/// digits and `-` only, none of which a jsonpath string or a regular
-/// expression reads as syntax.
+/// filters (RFC 4647 section 3.3.2). The case fold is carried by the pattern
+/// ([`CaseFolding::InThePattern`]) because jsonpath's `like_regex` takes no
+/// collation: `flag "i"` would fold under the database's own locale, and a
+/// database whose default folds case Turkish-style would turn `it-IT` into
+/// `it-ıt` before the match.
 fn target_language_jsonpath(language: LanguageSelector<'_>) -> String {
     let pattern = match language {
-        LanguageSelector::Tag(tag) => format!("^{}$", tag.as_str()),
-        LanguageSelector::Range(_) => extended_filter_pattern(language),
+        LanguageSelector::Tag(tag) => exact_tag_pattern(tag.as_str(), CaseFolding::InThePattern),
+        LanguageSelector::Range(_) => extended_filter_pattern(language, CaseFolding::InThePattern),
     };
-    format!(
-        "$[*] ? (@.\"{}\" like_regex \"{pattern}\" flag \"i\").\"{}\"",
-        keyword::LANGUAGE,
-        keyword::VALUE
-    )
+    format!("$[*] ? (@.\"{}\" like_regex \"{pattern}\").\"{}\"", keyword::LANGUAGE, keyword::VALUE)
 }
 
 /// `json` read as a number when it is a JSON number.

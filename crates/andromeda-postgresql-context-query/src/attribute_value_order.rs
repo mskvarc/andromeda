@@ -309,7 +309,7 @@ mod tests {
         let sql = lateral("\"https://example.com/address\"[city]");
         assert!(sql.contains(r#"'$."city"[*]."@value"'"#), "{sql}");
         assert!(sql.contains(r#"'$."city"'"#), "{sql}");
-        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^city$" flag "i")."@value"'"#), "{sql}");
+        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^[Cc][Ii][Tt][Yy]$")."@value"'"#), "{sql}");
     }
 
     /// Annex C.5.13.2: `orderBy=name[en-GB]` orders by the string of that
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn a_hyphenated_target_language_orders_by_that_languages_string_alone() {
         let sql = lateral("\"https://example.com/name\"[en-GB]");
-        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^en-GB$" flag "i")."@value"'"#), "{sql}");
+        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^[Ee][Nn]-[Gg][Bb]$")."@value"'"#), "{sql}");
         assert!(!sql.contains(r#"[*]."@value"'"#), "no compound-member reading: {sql}");
     }
 
