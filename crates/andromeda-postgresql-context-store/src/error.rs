@@ -6,7 +6,6 @@ use crate::{
     entity_map::mapper::StoredEntityMapError,
     entity_state_record::state_record::StateRecordError,
     jsonld_context::mapper::ContextMapperError,
-    migration_set::branch::BranchVersionError,
     pending_side_effects::change_event_record::ChangeEventRecordError,
     schema_contract::error::SchemaContractError,
     snapshot::{stored_snapshot_error::StoredSnapshotError, unencodable_snapshot_error::UnencodableSnapshotError},
@@ -27,6 +26,7 @@ use andromeda_postgresql_pool::{
     transaction_rollback::is_transaction_rolled_back,
 };
 use andromeda_postgresql_query::error::RenderError;
+use andromeda_postgresql_schema::branch_schema_version::BranchVersionError;
 use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;
 

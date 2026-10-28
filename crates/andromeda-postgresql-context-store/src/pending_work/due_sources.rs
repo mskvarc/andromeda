@@ -6,8 +6,7 @@
 //! pages of the largest backlog it ever held.
 
 use crate::{
-    migration_set::branch::BranchSchemaVersion,
-    snapshot::{branch_version::branch_is_current, reap::orphan_branch_keys_statement, status_code::stored_status as stored_snapshot_status},
+    snapshot::{reap::orphan_branch_keys_statement, status_code::stored_status as stored_snapshot_status},
     subscription_store::status_code::status_is_not,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -15,13 +14,14 @@ use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::Subscripti
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::{
+    branch_schema_version::BranchSchemaVersion,
     csr::Csr,
     current::Entities,
     entity_map::EntityMaps,
     jsonld::JsonldContexts,
     notification::NotificationDeliveries,
     queue::{PendingSideEffects, TemporalAppendIntents},
-    snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
+    snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots, branch_is_current},
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
@@ -254,9 +254,10 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{migration_set::branch::BranchSchemaVersion, pending_work::due_sources::least_due_select};
+    use crate::pending_work::due_sources::least_due_select;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use sea_query::PostgresQueryBuilder;
 
     fn least_sql() -> String {

@@ -17,6 +17,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod branch_schema_version;
 pub mod census;
 pub mod context_source_change_clock;
 pub mod csr;

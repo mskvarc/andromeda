@@ -3,10 +3,9 @@
 //! a clone copy holds on its claimed preparation.
 
 use crate::{
-    migration_set::branch::BranchSchemaVersion,
     snapshot::{
         branch_schema::truncate_branch_schema,
-        branch_version::{branch_is_current, current_version},
+        branch_version::current_version,
         mapper::{row_query_context, row_to_snapshot},
         record::{snapshot_select, status_is_preparing},
     },
@@ -16,7 +15,10 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
-use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_schema::{
+    branch_schema_version::BranchSchemaVersion,
+    snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
+};
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_snapshot::{error::SnapshotError, store::SnapshotPreparationJob};
 use chrono::{DateTime, Utc};
@@ -295,12 +297,16 @@ pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        migration_set::branch::BranchSchemaVersion,
-        snapshot::preparation_claim::{claim_statement, claimed_preparation_statement, next_preparing_statement, release_statement, shared_claim_statement},
+    use crate::snapshot::preparation_claim::{
+        claim_statement,
+        claimed_preparation_statement,
+        next_preparing_statement,
+        release_statement,
+        shared_claim_statement,
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;

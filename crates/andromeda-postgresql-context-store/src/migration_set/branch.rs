@@ -11,6 +11,7 @@
 //! a transaction -- the branch migrator runs inside the Snapshot's creation
 //! transaction, where a `-- no-transaction` migration could not.
 
+use andromeda_postgresql_schema::branch_schema_version::{BranchSchemaVersion, BranchVersionError};
 use sqlx::migrate::{Migration, Migrator};
 use std::borrow::Cow;
 
@@ -118,55 +119,9 @@ pub fn current_branch_version() -> Result<BranchSchemaVersion, BranchVersionErro
     BranchMigrationSet::embedded().version()
 }
 
-/// The highest branch migration a Snapshot's schemas carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
-pub struct BranchSchemaVersion(i32);
-
-impl BranchSchemaVersion {
-    /// The value as the `snapshot_preparation.branch_schema_version` column stores it.
-    #[must_use]
-    pub const fn get(self) -> i32 {
-        self.0
-    }
-}
-
-impl TryFrom<i64> for BranchSchemaVersion {
-    type Error = BranchVersionError;
-
-    /// Accept a migration version as a branch schema version: positive and
-    /// within the stored `INTEGER` range.
-    fn try_from(version: i64) -> Result<BranchSchemaVersion, BranchVersionError> {
-        i32::try_from(version)
-            .ok()
-            .filter(|version| *version > 0)
-            .map(BranchSchemaVersion)
-            .ok_or(BranchVersionError::OutOfRange(version))
-    }
-}
-
-impl TryFrom<i32> for BranchSchemaVersion {
-    type Error = BranchVersionError;
-
-    /// Read back what `snapshot_preparation.branch_schema_version` stores.
-    fn try_from(stored: i32) -> Result<BranchSchemaVersion, BranchVersionError> {
-        BranchSchemaVersion::try_from(i64::from(stored))
-    }
-}
-
-/// Why a branch schema version could not be established.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum BranchVersionError {
-    /// The binary embeds no branch migration.
-    #[error("the embedded branch migration set is empty")]
-    NoMigrations,
-    /// A version is not a positive `INTEGER`.
-    #[error("branch schema version {0} is not a positive 32-bit integer")]
-    OutOfRange(i64),
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::migration_set::branch::{BranchMigrationSet, BranchSchemaVersion, BranchVersionError, branch_ledger, branch_migrations, current_branch_version};
+    use crate::migration_set::branch::{BranchMigrationSet, branch_ledger, branch_migrations, current_branch_version};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -264,16 +219,5 @@ mod tests {
     fn the_current_branch_version_is_the_highest_embedded_branch_migration() {
         let highest = branch_migrations().iter().map(|migration| migration.version).max();
         assert_eq!(current_branch_version().map(|version| i64::from(version.get())).ok(), highest);
-    }
-
-    #[test]
-    fn a_branch_schema_version_is_a_positive_integer() {
-        assert_eq!(BranchSchemaVersion::try_from(0_i64), Err(BranchVersionError::OutOfRange(0)));
-        assert_eq!(BranchSchemaVersion::try_from(-3_i32), Err(BranchVersionError::OutOfRange(-3)));
-        assert_eq!(
-            BranchSchemaVersion::try_from(i64::from(i32::MAX) + 1),
-            Err(BranchVersionError::OutOfRange(i64::from(i32::MAX) + 1))
-        );
-        assert_eq!(BranchSchemaVersion::try_from(21_i64).map(BranchSchemaVersion::get), Ok(21));
     }
 }

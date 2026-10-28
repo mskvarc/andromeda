@@ -6,7 +6,8 @@
 //! rewrites. Captured data lives in the Snapshot's own branch schema named after
 //! its `snapshot_key`, not in these tables.
 
-use sea_query::Iden;
+use crate::branch_schema_version::BranchSchemaVersion;
+use sea_query::{Expr, ExprTrait, Iden, SimpleExpr};
 
 /// The `snapshots` table - the immutable control record of one Snapshot.
 #[derive(Iden, Clone, Copy)]
@@ -69,6 +70,14 @@ pub enum SnapshotPreparation {
     TemporalQueriesDetails,
 }
 
+/// `snapshot_preparation.branch_schema_version >= current`: the Snapshot's
+/// branch schemas carry every branch migration this binary embeds. A Snapshot
+/// that fails it is quarantined.
+#[must_use]
+pub fn branch_is_current(current: BranchSchemaVersion) -> SimpleExpr {
+    Expr::col((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion)).gte(current.get())
+}
+
 /// The durable Snapshot lifecycle-notification delivery queue.
 #[derive(Iden, Clone, Copy)]
 pub enum SnapshotNotificationOutbox {
@@ -106,9 +115,19 @@ pub enum SnapshotNotificationOutbox {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots};
+    use crate::{
+        branch_schema_version::BranchSchemaVersion,
+        snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots, branch_is_current},
+    };
     use pretty_assertions::assert_eq;
-    use sea_query::Iden;
+    use sea_query::{Iden, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn the_current_predicate_compares_the_preparation_rows_branch_version() {
+        let version = BranchSchemaVersion::try_from(21_i64).map_err(|error| error.to_string());
+        let sql = version.map(|current| Query::select().expr(branch_is_current(current)).to_string(PostgresQueryBuilder));
+        assert_eq!(sql, Ok("SELECT \"snapshot_preparation\".\"branch_schema_version\" >= 21".to_owned()));
+    }
 
     #[test]
     fn snapshot_relation_names() {

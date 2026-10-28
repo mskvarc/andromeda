@@ -5,23 +5,16 @@
 //! and is quarantined: it is refused for scoping, clone and notification
 //! delivery, and is still reaped by expiry, deletion and quota eviction.
 
-use crate::{
-    error::ContextStoreError,
-    migration_set::branch::{BranchSchemaVersion, current_branch_version},
-    store_fault::persistence_error,
-};
+use crate::{error::ContextStoreError, migration_set::branch::current_branch_version, store_fault::persistence_error};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_schema::{
+    branch_schema_version::BranchSchemaVersion,
+    snapshot::{SnapshotPreparation, Snapshots},
+};
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError};
-use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement};
 use sqlx::PgPool;
-
-/// `snapshot_preparation.branch_schema_version >= current`: the Snapshot's
-/// branch schemas carry every branch migration this binary embeds.
-pub(crate) fn branch_is_current(current: BranchSchemaVersion) -> SimpleExpr {
-    Expr::col((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion)).gte(current.get())
-}
 
 /// The binary's current branch version, as a Snapshot-policy failure.
 pub(crate) fn current_version() -> Result<BranchSchemaVersion, SnapshotError> {
@@ -69,14 +62,12 @@ pub(crate) const fn condition_of(stored: i32, current: BranchSchemaVersion) -> B
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        migration_set::branch::BranchSchemaVersion,
-        snapshot::branch_version::{branch_is_current, branch_version_statement, condition_of},
-    };
+    use crate::snapshot::branch_version::{branch_version_statement, condition_of};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use andromeda_snapshot::branch_condition::BranchCondition;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::PostgresQueryBuilder;
 
     fn version(value: i64) -> BranchSchemaVersion {
         BranchSchemaVersion::try_from(value).expect("a positive version")
@@ -86,12 +77,6 @@ mod tests {
     fn a_branch_behind_the_binary_is_quarantined_and_one_at_it_is_current() {
         assert_eq!(condition_of(20, version(21)), BranchCondition::Quarantined);
         assert_eq!(condition_of(21, version(21)), BranchCondition::Current);
-    }
-
-    #[test]
-    fn the_current_predicate_compares_the_preparation_rows_branch_version() {
-        let sql = Query::select().expr(branch_is_current(version(21))).to_string(PostgresQueryBuilder);
-        assert_eq!(sql, "SELECT \"snapshot_preparation\".\"branch_schema_version\" >= 21");
     }
 
     #[test]

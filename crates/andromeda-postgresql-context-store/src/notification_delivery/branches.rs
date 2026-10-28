@@ -14,12 +14,15 @@
 
 use crate::{
     error::ContextStoreError,
-    migration_set::branch::{BranchSchemaVersion, current_branch_version},
-    snapshot::{branch_version::branch_is_current, record::status_is_preparing, stored_snapshot_error::StoredSnapshotError},
+    migration_set::branch::current_branch_version,
+    snapshot::{record::status_is_preparing, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_postgresql_pool::sql_state::SqlState;
-use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_schema::{
+    branch_schema_version::BranchSchemaVersion,
+    snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
+};
 use andromeda_postgresql_seaquery::statement::Statement;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgPool};
@@ -86,7 +89,8 @@ pub(crate) fn is_reaped_branch(error: &ContextStoreError) -> bool {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{migration_set::branch::BranchSchemaVersion, notification_delivery::branches::drainable_snapshots_statement};
+    use crate::notification_delivery::branches::drainable_snapshots_statement;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use sea_query::PostgresQueryBuilder;
 
     #[test]

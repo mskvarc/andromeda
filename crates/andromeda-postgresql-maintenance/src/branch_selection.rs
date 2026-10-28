@@ -3,7 +3,9 @@
 //!
 //! A visit works in a Snapshot branch only when the Snapshot is published and
 //! outlives the maintenance statement timeout, so no statement of the visit
-//! outlives the branch. Of those branches it works in the ones whose tables saw
+//! outlives the branch, and whose schemas carry the binary's branch version: a
+//! quarantined branch is behind the binary and may lack a relation a statement
+//! of the visit names. Of those branches it works in the ones whose tables saw
 //! updates or deletes, the most churned first: a branch only ever inserted into
 //! (a capture or a clone nobody wrote to since) has nothing to reclaim.
 //!
@@ -24,7 +26,10 @@ use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_branch::{PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key};
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_context_store::snapshot::branch_lock::branch_lock_key;
-use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_schema::{
+    branch_schema_version::BranchSchemaVersion,
+    snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
+};
 use andromeda_postgresql_seaquery::{
     advisory_lock::{advisory_unlock, try_advisory_lock},
     cast::cast,
@@ -94,7 +99,8 @@ struct BranchChurn {
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 #[strum(serialize_all = "kebab-case")]
 enum BranchDecline {
-    /// The Snapshot was reaped after the eligibility read.
+    /// The Snapshot was reaped after the eligibility read, or fell behind the
+    /// binary's branch version.
     SnapshotReaped,
     /// The Snapshot became ineligible after the eligibility read.
     SnapshotIneligible,
@@ -110,9 +116,10 @@ pub(crate) async fn lock_branches(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     mutation: MutationPrivilege,
+    current: BranchSchemaVersion,
 ) -> Result<Vec<SnapshotKey>, MaintenanceError> {
     let now = Utc::now();
-    let eligible = snapshot_records(connection, None)
+    let eligible = snapshot_records(connection, None, current)
         .await?
         .into_iter()
         .filter(|record| record.eligibility(now) == BranchEligibility::Eligible)
@@ -121,7 +128,7 @@ pub(crate) async fn lock_branches(
     let churn = branch_churn(connection).await?;
     let mut locked = Vec::new();
     for key in churn_order(&eligible, &churn) {
-        if lock_branch(connection, tenant, key, mutation).await? {
+        if lock_branch(connection, tenant, key, mutation, current).await? {
             locked.push(key);
         }
     }
@@ -148,6 +155,7 @@ async fn lock_branch(
     tenant: &RegisteredTenant,
     key: SnapshotKey,
     mutation: MutationPrivilege,
+    current: BranchSchemaVersion,
 ) -> Result<bool, MaintenanceError> {
     let acquired = Query::select()
         .expr(try_advisory_lock(branch_lock_key(key)))
@@ -159,7 +167,7 @@ async fn lock_branch(
         info!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "deferred", reason = "branch-locked", "PostgreSQL maintenance skipped a Snapshot branch another session holds");
         return Ok(false);
     }
-    let Some(decline) = decline(connection, key, mutation).await? else {
+    let Some(decline) = decline(connection, key, mutation, current).await? else {
         return Ok(true);
     };
     release_branch_lock(connection, key).await?;
@@ -176,8 +184,13 @@ async fn lock_branch(
 
 /// Why a visit holding `key`'s branch lock declines the branch, `None` when
 /// it works in it.
-async fn decline(connection: &mut PgConnection, key: SnapshotKey, mutation: MutationPrivilege) -> Result<Option<BranchDecline>, MaintenanceError> {
-    let record = snapshot_records(connection, Some(key)).await?.into_iter().next();
+async fn decline(
+    connection: &mut PgConnection,
+    key: SnapshotKey,
+    mutation: MutationPrivilege,
+    current: BranchSchemaVersion,
+) -> Result<Option<BranchDecline>, MaintenanceError> {
+    let record = snapshot_records(connection, Some(key), current).await?.into_iter().next();
     Ok(match record.map(|record| record.eligibility(Utc::now())) {
         None => Some(BranchDecline::SnapshotReaped),
         Some(BranchEligibility::Preparing | BranchEligibility::Expiring) => Some(BranchDecline::SnapshotIneligible),
@@ -205,9 +218,14 @@ async fn release_branch_lock(connection: &mut PgConnection, key: SnapshotKey) ->
     }
 }
 
-/// Read the control records of every Snapshot, or of `only` that one.
-async fn snapshot_records(connection: &mut PgConnection, only: Option<SnapshotKey>) -> Result<Vec<SnapshotRecord>, MaintenanceError> {
-    let rows = snapshot_records_statement(only).to_query().fetch_all(connection).await?;
+/// Read the control records of every Snapshot whose branch schemas are
+/// current, or of `only` that one.
+async fn snapshot_records(
+    connection: &mut PgConnection,
+    only: Option<SnapshotKey>,
+    current: BranchSchemaVersion,
+) -> Result<Vec<SnapshotRecord>, MaintenanceError> {
+    let rows = snapshot_records_statement(only, current).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             let status = row.try_get::<i16, _>(SnapshotPreparation::Status.to_string().as_str())?;
@@ -220,8 +238,9 @@ async fn snapshot_records(connection: &mut PgConnection, only: Option<SnapshotKe
         .collect()
 }
 
-/// Each Snapshot's key, expiry and preparation status, or `only` that one's.
-fn snapshot_records_statement(only: Option<SnapshotKey>) -> SelectStatement {
+/// The key, expiry and preparation status of each Snapshot whose branch
+/// schemas carry `current`, or of `only` that one.
+fn snapshot_records_statement(only: Option<SnapshotKey>, current: BranchSchemaVersion) -> SelectStatement {
     let mut statement = Query::select();
     statement
         .column((Snapshots::Table, Snapshots::SnapshotKey))
@@ -232,7 +251,8 @@ fn snapshot_records_statement(only: Option<SnapshotKey>) -> SelectStatement {
             JoinType::InnerJoin,
             SnapshotPreparation::Table,
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
-        );
+        )
+        .and_where(branch_is_current(current));
     if let Some(key) = only {
         statement.and_where(Expr::col((Snapshots::Table, Snapshots::SnapshotKey)).eq(key.as_i64()));
     }
@@ -284,12 +304,17 @@ mod tests {
     use crate::branch_selection::{BranchChurn, BranchEligibility, SnapshotRecord, branch_churn_statement, churn_order, snapshot_records_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn key(raw: i64) -> SnapshotKey {
         SnapshotKey::try_from(raw).expect("positive snapshot key")
+    }
+
+    fn version(raw: i64) -> BranchSchemaVersion {
+        BranchSchemaVersion::try_from(raw).expect("a positive version")
     }
 
     #[test]
@@ -337,12 +362,20 @@ mod tests {
 
     #[test]
     fn the_control_record_is_read_again_for_one_snapshot() {
-        let every = snapshot_records_statement(None).to_string(PostgresQueryBuilder);
+        let every = snapshot_records_statement(None, version(21)).to_string(PostgresQueryBuilder);
         assert_eq!(
             every,
-            r#"SELECT "snapshots"."snapshot_key", "snapshots"."expires_at", "snapshot_preparation"."status" FROM "snapshots" INNER JOIN "snapshot_preparation" ON "snapshot_preparation"."snapshot_key" = "snapshots"."snapshot_key""#
+            r#"SELECT "snapshots"."snapshot_key", "snapshots"."expires_at", "snapshot_preparation"."status" FROM "snapshots" INNER JOIN "snapshot_preparation" ON "snapshot_preparation"."snapshot_key" = "snapshots"."snapshot_key" WHERE "snapshot_preparation"."branch_schema_version" >= 21"#
         );
-        let one = snapshot_records_statement(Some(key(42))).to_string(PostgresQueryBuilder);
-        assert_eq!(one, format!(r#"{every} WHERE "snapshots"."snapshot_key" = 42"#));
+        let one = snapshot_records_statement(Some(key(42)), version(21)).to_string(PostgresQueryBuilder);
+        assert_eq!(one, format!(r#"{every} AND "snapshots"."snapshot_key" = 42"#));
+    }
+
+    #[test]
+    fn a_snapshot_behind_the_binary_is_left_out_of_the_eligibility_read() {
+        let behind = snapshot_records_statement(None, version(22)).to_string(PostgresQueryBuilder);
+        let at = snapshot_records_statement(None, version(21)).to_string(PostgresQueryBuilder);
+        assert!(behind.ends_with(r#""snapshot_preparation"."branch_schema_version" >= 22"#), "{behind}");
+        assert!(at.ends_with(r#""snapshot_preparation"."branch_schema_version" >= 21"#), "{at}");
     }
 }

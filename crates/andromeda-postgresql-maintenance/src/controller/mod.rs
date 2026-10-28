@@ -32,6 +32,7 @@ use andromeda_postgresql_context_store::{
     tenant_database::DatabaseUrl,
 };
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
+use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::Utc;
 use sqlx::{PgConnection, PgPool, Postgres, pool::PoolConnection};
@@ -90,6 +91,9 @@ pub struct MaintenanceController {
     acquire_timeout: Duration,
     /// What the observations compare the cluster against.
     expected: ExpectedDeployment,
+    /// The highest branch migration this binary embeds. A Snapshot branch
+    /// behind it is quarantined and left out of every visit.
+    branch_version: BranchSchemaVersion,
 }
 
 impl MaintenanceController {
@@ -101,6 +105,7 @@ impl MaintenanceController {
         config: MaintenanceConfig,
         acquire_timeout: Duration,
         expected: ExpectedDeployment,
+        branch_version: BranchSchemaVersion,
     ) -> MaintenanceController {
         MaintenanceController {
             platform_pool,
@@ -108,6 +113,7 @@ impl MaintenanceController {
             config,
             acquire_timeout,
             expected,
+            branch_version,
         }
     }
 
@@ -196,7 +202,7 @@ impl MaintenanceController {
         let profile = PolicyProfile::from_profile(self.config.profile);
         let published = inspection::published_branches(&mut connection).await?;
         branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
-        let snapshots = branch_selection::lock_branches(&mut connection, tenant, mutation).await?;
+        let snapshots = branch_selection::lock_branches(&mut connection, tenant, mutation, self.branch_version).await?;
         let branches = iter::once(Branch::Live).chain(snapshots.into_iter().map(Branch::Snapshot)).collect::<Vec<_>>();
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         let pending_before_sampling = pending_action::first_branch_action(platform, tenant, &branches).await?;

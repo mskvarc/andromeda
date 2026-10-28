@@ -11,7 +11,7 @@
 
 use crate::{
     error::ContextStoreError,
-    migration_set::branch::{BranchMigrationSet, BranchSchemaVersion, current_branch_version},
+    migration_set::branch::{BranchMigrationSet, current_branch_version},
     snapshot::{
         branch_schema::{branch_search_path, steer_search_path},
         stored_snapshot_error::StoredSnapshotError,
@@ -20,7 +20,7 @@ use crate::{
 use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_postgresql_branch::snapshot_schema_name;
-use andromeda_postgresql_schema::snapshot::SnapshotPreparation;
+use andromeda_postgresql_schema::{branch_schema_version::BranchSchemaVersion, snapshot::SnapshotPreparation};
 use andromeda_postgresql_seaquery::{introspection::schema_exists, setting::SettingScope, statement::Statement};
 use sea_query::{Expr, ExprTrait, Keyword, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Connection, PgConnection, PgPool};
@@ -165,11 +165,9 @@ fn quarantined_statement(key: SnapshotKey, error: &str) -> UpdateStatement {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        migration_set::branch::BranchSchemaVersion,
-        snapshot::branch_upgrade::{behind_statement, quarantined_statement, upgraded_statement},
-    };
+    use crate::snapshot::branch_upgrade::{behind_statement, quarantined_statement, upgraded_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 

@@ -1,7 +1,7 @@
 //! Process-scoped PostgreSQL maintenance task registration.
 
 use andromeda_configuration::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode};
-use andromeda_postgresql_context_store::{error::ContextStoreError, tenant_database::DatabaseUrl};
+use andromeda_postgresql_context_store::{error::ContextStoreError, migration_set::branch::current_branch_version, tenant_database::DatabaseUrl};
 use andromeda_postgresql_maintenance::{
     controller::MaintenanceController,
     error::MaintenanceError,
@@ -37,6 +37,9 @@ pub(crate) enum MaintenanceRegistrationError {
     /// A process task already owns the fixed name.
     #[error("PostgreSQL maintenance task registration failed: {0}")]
     Registration(#[from] TaskRegistrationError),
+    /// The binary's branch schema version could not be established.
+    #[error("PostgreSQL maintenance branch schema version: {0}")]
+    BranchVersion(#[source] ContextStoreError),
 }
 
 /// Register the one process-scoped controller unless maintenance is disabled.
@@ -59,7 +62,15 @@ pub(crate) fn register_postgresql_maintenance(
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(profile.cadence)),
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
-    let controller = Arc::new(MaintenanceController::new(platform_pool, direct_url, config, acquire_timeout, expected));
+    let branch_version = current_branch_version().map_err(|error| MaintenanceRegistrationError::BranchVersion(ContextStoreError::BranchVersion(error)))?;
+    let controller = Arc::new(MaintenanceController::new(
+        platform_pool,
+        direct_url,
+        config,
+        acquire_timeout,
+        expected,
+        branch_version,
+    ));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let controller = Arc::clone(&controller); // clone: each bounded pass owns the process controller while executing
         async move {
