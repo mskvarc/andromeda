@@ -313,7 +313,11 @@ mod tests {
         },
         test_history::held_history,
     };
-    use andromeda_federation::{entity_budget::EntityBudget, outcome::ForwardedTemporalEntities, split_entities::SplitEntities};
+    use andromeda_federation::{
+        outcome::ForwardedTemporalEntities,
+        result_budget::{ResultBudget, ResultLimits},
+        split_entities::SplitEntities,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
     use andromeda_ngsi_ld_query::{
@@ -384,7 +388,10 @@ mod tests {
     async fn probe_answers_join_the_contributed_set() {
         let forwarded = ForwardedHistory {
             sources: vec![answered_by_source(vec![history("urn:ngsi-ld:Vehicle:1").await])],
-            budget: EntityBudget::new(NonZeroU32::MIN),
+            budget: ResultBudget::new(ResultLimits {
+                distinct_entities: NonZeroU32::MIN,
+                source_rows: NonZeroU32::MIN,
+            }),
         };
         let gathering = InEffectGathering {
             sources: vec![answered_by_source(vec![history("urn:ngsi-ld:Vehicle:2").await])],

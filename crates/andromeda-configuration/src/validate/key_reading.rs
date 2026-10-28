@@ -82,6 +82,8 @@ impl ConfigKey {
             ConfigKey::NotificationsPeriodicMaxPollInterval => Some(span(config.notifications.periodic.max_poll_interval)),
             ConfigKey::FederationForwardingConnectTimeout => Some(span(config.federation.forwarding.connect_timeout)),
             ConfigKey::FederationForwardingRequestTimeout => Some(span(config.federation.forwarding.request_timeout)),
+            ConfigKey::FederationForwardingMaxQueryEntities => Some(count(config.federation.forwarding.max_query_entities.get())),
+            ConfigKey::FederationForwardingMaxQuerySourceRows => Some(count(config.federation.forwarding.max_query_source_rows.get())),
             ConfigKey::SnapshotDefaultLifetime => Some(span(config.snapshot.default_lifetime)),
             ConfigKey::SnapshotMaxLifetime => Some(span(config.snapshot.max_lifetime)),
             ConfigKey::SnapshotMaxStoragePerTenant => config.snapshot.quota.max_storage_per_tenant.map(size),

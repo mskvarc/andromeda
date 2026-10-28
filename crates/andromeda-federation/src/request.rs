@@ -1,10 +1,10 @@
 //! Typed inputs for context-source federation operations.
 
 use crate::{
-    entity_budget::EntityBudget,
     forwarded_query::client_query::ClientQuery,
     instance_budget::InstanceBudget,
     operation::{ForwardingOperation, ProvisionResource},
+    result_budget::ResultBudget,
     split_entities::SplitEntities,
 };
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -37,7 +37,7 @@ pub enum SourcePaging<'a> {
     /// Every page each source links with `next` (clauses 4.3.6.7 and
     /// 5.5.9.1), gathered under the request's budget (clause 4.12), so the
     /// client's page is cut from the whole merge.
-    Walk(&'a EntityBudget),
+    Walk(&'a ResultBudget),
     /// One explicit page from every source, for a consumer that pages through
     /// the sources itself.
     Page(SourcePage),
@@ -58,7 +58,7 @@ pub enum SourcePaging<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryBudget<'a> {
     /// The most entities the sources may answer with together.
-    pub entities: &'a EntityBudget,
+    pub entities: &'a ResultBudget,
     /// The most attribute instances the sources may answer with together.
     pub instances: &'a InstanceBudget,
 }
@@ -247,7 +247,7 @@ pub struct ForwardQueryRequest<'a> {
     pub entity_map: EntityMapInUse<'a>,
     /// The entities the request may gather from every source it contacts,
     /// shared by all its forwarding phases (clause 4.12).
-    pub budget: &'a EntityBudget,
+    pub budget: &'a ResultBudget,
 }
 
 /// Parameters for forwarding a single-entity retrieval, current or temporal.

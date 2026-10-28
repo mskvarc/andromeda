@@ -94,7 +94,7 @@ pub(crate) fn merge_forwarded_history(
     };
     if contributed {
         budget
-            .admits(u64::try_from(entities.len()).unwrap_or(u64::MAX))
+            .admit_collection(u64::try_from(entities.len()).unwrap_or(u64::MAX))
             .map_err(|exceeded| too_many_results(exceeded, instance))?;
     }
     Ok(MergedTemporalHistory {

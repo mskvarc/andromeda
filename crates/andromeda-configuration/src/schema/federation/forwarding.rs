@@ -14,6 +14,10 @@ use std::{
 /// federated collection of that size.
 pub const DEFAULT_MAX_QUERY_ENTITIES: NonZeroU32 = NonZeroU32::MIN.saturating_add(9_999);
 
+/// The default of [`ForwardingConfig::max_query_source_rows`]: three times the
+/// default entity limit, so three sources may each answer every entity of it.
+pub const DEFAULT_MAX_QUERY_SOURCE_ROWS: NonZeroU32 = NonZeroU32::MIN.saturating_add(29_999);
+
 /// The default of [`ForwardingConfig::max_query_instances`]: ten instances per
 /// entity of the default entity budget.
 pub const DEFAULT_MAX_QUERY_INSTANCES: NonZeroU32 = NonZeroU32::MIN.saturating_add(99_999);
@@ -54,14 +58,24 @@ pub struct ForwardingConfig {
     /// unset (clauses 4.3.6.7, 5.2.12, 5.8.6, 5.14.4.4): `complete` or `split`.
     #[schemars(description = "What `splitEntities` means when a request or subscription leaves it unset.")]
     pub split_entities: SplitEntitiesDefault,
-    /// The most entities one federated Query Entities gathers from the local
-    /// store and every Context Source it walks together; a query whose
-    /// answers exceed it is refused with `TooManyResults` (403, clause 4.12)
-    /// rather than answered with a truncated collection.
+    /// The most distinct entities one federated query gathers from the local
+    /// store and every Context Source it walks together, an entity several
+    /// sources answer counting once and one only an auxiliary source answers
+    /// not counting; a query whose answers exceed it is refused with
+    /// `TooManyResults` (403, clause 4.12) rather than answered with a
+    /// truncated collection.
     #[schemars(
-        description = "The most entities one federated Query Entities gathers from the local store and every context source together. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection. Zero is refused."
+        description = "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers does not count. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection. Zero is refused."
     )]
     pub max_query_entities: NonZeroU32,
+    /// The most entities the Context Sources of one federated query send
+    /// together, every source's copy of an entity counting, auxiliary sources
+    /// included; a query whose sources send more is refused with
+    /// `TooManyResults` (403, clause 4.12). At least `max_query_entities`.
+    #[schemars(
+        description = "The most entities the context sources of one federated query send together, duplicates included: an entity three sources answer counts three times, and auxiliary sources count too. A query whose sources send more is refused with `403` `TooManyResults`."
+    )]
+    pub max_query_source_rows: NonZeroU32,
     /// The most attribute instances one federated temporal query gathers from
     /// the Context Sources whose history it reads to the end, which an
     /// aggregated representation of an entity held in several parts needs
@@ -81,6 +95,7 @@ impl Default for ForwardingConfig {
             request_timeout: HumanDuration::from_secs(5),
             split_entities: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
+            max_query_source_rows: DEFAULT_MAX_QUERY_SOURCE_ROWS,
             max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
         }
     }
@@ -106,9 +121,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn the_query_budgets_default_to_ten_thousand_entities_and_a_hundred_thousand_instances() {
+    fn the_query_budgets_default_to_ten_thousand_entities_thirty_thousand_rows_and_a_hundred_thousand_instances() {
         let config = ForwardingConfig::default();
         assert_eq!(config.max_query_entities.get(), 10_000);
+        assert_eq!(config.max_query_source_rows.get(), 30_000);
         assert_eq!(config.max_query_instances.get(), 100_000);
     }
 }

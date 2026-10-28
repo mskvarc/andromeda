@@ -29,7 +29,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
-    entity_budget::{EntityBudget, EntityBudgetExceeded},
     entity_result::collect_warnings,
     error::FederationError,
     forwarded_query::client_query::ClientQuery,
@@ -37,6 +36,7 @@ use andromeda_federation::{
     outcome::ForwardedEntities,
     query_forwarding_error::QueryForwardingError,
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
+    result_budget::{ResultBudget, ResultBudgetExceeded},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -59,8 +59,9 @@ enum WalkedSources {
     Answered(PendingSources),
     /// The forwarding could not run at all.
     Unreachable(FederationError),
-    /// The sources answered with more entities than one query gathers.
-    TooManyResults(EntityBudgetExceeded),
+    /// The sources answered with more distinct entities, or more rows, than
+    /// one query gathers.
+    TooManyResults(ResultBudgetExceeded),
     /// The sources answered with more attribute instances than one query
     /// gathers.
     TooManyInstances(InstanceBudgetExceeded),
@@ -235,7 +236,7 @@ impl SnapshotExecutor {
     /// Walk every matching Context Source to the end of its answer (clause
     /// 5.16.1.4).
     async fn walk_sources(&self, params: &EntityQueryParameters, context: &ContextSpec) -> WalkedSources {
-        let budget = EntityBudget::new(self.sources.forwarding.max_query_entities());
+        let budget = ResultBudget::new(self.sources.forwarding.result_limits());
         let forwarded = self
             .sources
             .forwarding

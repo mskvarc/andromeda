@@ -16,12 +16,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::{
     FederationService,
-    entity_budget::{EntityBudget, EntityBudgetExceeded},
     in_effect_probe::InEffectProbe,
     instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, HistoryBudget, SourcePaging, TriggeringRequest},
+    result_budget::{ResultBudget, ResultBudgetExceeded},
     split_entities::SplitEntities,
 };
 use andromeda_http_response::{
@@ -139,7 +139,7 @@ pub(crate) struct ForwardedHistory {
     pub(crate) sources: Vec<ForwardedTemporalEntities>,
     /// The budget the sources were walked under, which bounds the merged
     /// collection and the local rows read for it too (clause 4.12).
-    pub(crate) budget: EntityBudget,
+    pub(crate) budget: ResultBudget,
 }
 
 impl ForwardedHistory {
@@ -149,16 +149,16 @@ impl ForwardedHistory {
         self.sources.iter().any(|source| !source.entities.is_empty())
     }
 
-    /// How many local rows the merge needs at most: one past the budget, which
-    /// is all it takes to tell that the merged collection exceeds it.
+    /// How many local rows the merge needs at most: one past the entity limit,
+    /// which is all it takes to tell that the merged collection exceeds it.
     pub(crate) const fn local_row_limit(&self) -> u32 {
-        self.budget.maximum().get().saturating_add(1)
+        self.budget.limits().distinct_entities.get().saturating_add(1)
     }
 }
 
 /// The clause 4.12 `TooManyResults` refusal of a query whose sources, or whose
 /// merged collection, exceed what one request gathers.
-pub(crate) fn too_many_results(exceeded: EntityBudgetExceeded, instance: &Uri) -> ProblemResponse {
+pub(crate) fn too_many_results(exceeded: ResultBudgetExceeded, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone())
 }
 
@@ -202,7 +202,7 @@ pub(crate) async fn forward_temporal_history(
         return Ok(None);
     }
     let csf_expr = expanded_csf(engine, params, context, instance).await?;
-    let budget = EntityBudget::new(forwarding.max_query_entities());
+    let budget = ResultBudget::new(forwarding.result_limits());
     let instances = InstanceBudget::new(forwarding.max_query_instances());
     let paging = match reach {
         HistoryReach::AsAnswered => SourcePaging::Walk(&budget),
@@ -334,7 +334,7 @@ pub(crate) async fn forward_in_effect_probes(
     let csf_expr = expanded_csf(engine, params, context, instance).await?;
     let mut answers = Vec::new();
     for probe in probes {
-        let budget = EntityBudget::new(forwarding.max_query_entities());
+        let budget = ResultBudget::new(forwarding.result_limits());
         let forwarded = forwarding
             .forward_in_effect_probe(
                 target,
@@ -382,11 +382,12 @@ mod tests {
     use crate::temporal::query::forwarding::{QueryScope, forwarding_outcome};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_federation::{
-        entity_budget::EntityBudget,
         outcome::ForwardReadOutcome,
         query_forwarding_error::QueryForwardingError,
+        result_budget::ResultBudgetExceeded,
         split_entities::SplitEntities,
     };
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use axum::{
         http::{StatusCode, Uri},
@@ -431,18 +432,24 @@ mod tests {
         pretty_assertions::assert_eq!(QueryScope::Distributed.splitting(SplitEntities::Complete), SplitEntities::Complete);
     }
 
-    /// Clause 4.12: a probe whose sources answer more entities than one
-    /// request gathers refuses the query as the window query does, with
-    /// `TooManyResults` (403).
+    /// Clause 4.12: sources answering more than one request gathers refuse the
+    /// query with `TooManyResults` (403), whichever bound they passed, and the
+    /// detail names the setting that bound it.
     #[test]
-    fn a_probe_over_its_budget_is_too_many_results() {
-        let budget = EntityBudget::new(NonZeroU32::MIN);
-        let exceeded = budget.charge(2).expect_err("two entities exceed a budget of one");
+    fn each_exceeded_bound_is_too_many_results_naming_its_setting() {
         let instance: Uri = "/ngsi-ld/v1/temporal/entities".parse().expect("a valid URI");
-        let Err(refusal) = forwarding_outcome(Err(QueryForwardingError::TooManyResults(exceeded)), &instance) else {
-            panic!("a probe over its budget is refused");
-        };
-        pretty_assertions::assert_eq!(refusal.into_response().status(), StatusCode::FORBIDDEN);
+        let bounds = [
+            (ResultBudgetExceeded::DistinctEntities { maximum: NonZeroU32::MIN }, "max_query_entities"),
+            (ResultBudgetExceeded::SourceRows { maximum: NonZeroU32::MIN }, "max_query_source_rows"),
+        ];
+        for (exceeded, setting) in bounds {
+            let Err(refusal) = forwarding_outcome(Err(QueryForwardingError::TooManyResults(exceeded)), &instance) else {
+                panic!("an answer over its budget is refused");
+            };
+            pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::TooManyResults);
+            assert!(refusal.problem().detail().contains(setting), "{}", refusal.problem().detail());
+            pretty_assertions::assert_eq!(refusal.into_response().status(), StatusCode::FORBIDDEN);
+        }
     }
 
     /// A forwarding that succeeded hands its outcome on unchanged.

@@ -30,8 +30,6 @@ pub mod discovery;
 mod discovery_answer_failure;
 /// Discovery response merging.
 pub mod discovery_result;
-/// The entities one forwarded query may gather from its sources.
-pub mod entity_budget;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
 pub mod entity_map;
 /// Current-entity query and retrieve execution.
@@ -144,6 +142,8 @@ mod registration_payload;
 pub mod remote_answer;
 /// Typed forwarding inputs.
 pub mod request;
+/// The distinct entities and source rows one forwarded query may gather.
+pub mod result_budget;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;
 /// The warnings of a source's answer that is not read in full.
@@ -187,6 +187,7 @@ use crate::{
     error::FederationError,
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
+    result_budget::ResultLimits,
     source_identity::SourceIdentityCache,
     split_entities::{SplitEntities, resolve_split_entities},
 };
@@ -239,8 +240,9 @@ pub struct FederationService {
     source_identities: SourceIdentityCache,
     /// What an unset `splitEntities` means in this deployment.
     split_entities_default: SplitEntitiesDefault,
-    /// Most entities one federated query gathers (clause 4.12).
-    max_query_entities: NonZeroU32,
+    /// Most distinct entities, and most source rows, one federated query
+    /// gathers (clause 4.12).
+    result_limits: ResultLimits,
     /// Most attribute instances one federated temporal query gathers when it
     /// reads its sources' history to the end (clause 4.12).
     max_query_instances: NonZeroU32,
@@ -287,17 +289,21 @@ impl FederationService {
             cache: ForwardedGetCache::new(config.response_cache.max_entries.get()),
             source_identities: SourceIdentityCache::default(),
             split_entities_default: config.forwarding.split_entities,
-            max_query_entities: config.forwarding.max_query_entities,
+            result_limits: ResultLimits {
+                distinct_entities: config.forwarding.max_query_entities,
+                source_rows: config.forwarding.max_query_source_rows,
+            },
             max_query_instances: config.forwarding.max_query_instances,
         })
     }
 
-    /// Most entities one federated Query Entities gathers from the local store
-    /// and its context sources together before it is refused with
-    /// `TooManyResults` (clause 4.12).
+    /// The limits one federated query is held to before it is refused with
+    /// `TooManyResults` (clause 4.12): the distinct entities it gathers from
+    /// the local store and its context sources together, and the rows its
+    /// sources send, duplicates included.
     #[must_use]
-    pub const fn max_query_entities(&self) -> NonZeroU32 {
-        self.max_query_entities
+    pub const fn result_limits(&self) -> ResultLimits {
+        self.result_limits
     }
 
     /// Most attribute instances one federated temporal query gathers from the

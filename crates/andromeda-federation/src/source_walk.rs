@@ -16,8 +16,11 @@
 //! members. A page that fails, and a pointer that cannot be followed, end the
 //! walk with what was gathered so far and a clause 6.3.17 warning, exactly as a
 //! source failing its first page contributes only its warning. What bounds the
-//! walk is the request's [`EntityBudget`]: once every source together has
-//! gathered more than it allows, the query is refused with `TooManyResults`.
+//! walk is the request's [`ResultBudget`], which every walk of the request
+//! shares: once the sources together have answered more distinct entities, or
+//! sent more elements, than it allows, the query is refused with
+//! `TooManyResults`. The entities a walk keeps per source only end that walk;
+//! the budget tells one entity several sources answer from several entities.
 //!
 //! The POST binding of clause 6.23 carries its query in the body, so a source
 //! can hand back no pointer a client could dereference to the next page; that
@@ -31,12 +34,12 @@
 
 use crate::{
     FederationService,
-    entity_budget::{EntityBudget, EntityBudgetExceeded},
     error::FederationError,
     forwarding_url::with_offset,
     incomplete_answer::{IncompleteReason, incomplete_answer},
     outcome::ForwardGetOutcome,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
+    result_budget::{ResultBudget, ResultBudgetExceeded},
     source_continuation::SourceContinuation,
     source_read::SourceRead,
 };
@@ -190,14 +193,15 @@ impl FederationService {
     ///
     /// # Errors
     ///
-    /// Returns [`EntityBudgetExceeded`] once the targets together have
-    /// gathered more entities than `budget` allows.
+    /// Returns [`ResultBudgetExceeded`] once the targets together have
+    /// answered more distinct entities, or sent more elements, than `budget`
+    /// allows.
     pub(crate) async fn fan_out_walk<A: WalkedAnswer>(
         &self,
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         conditions: ForwardedGetConditions<'_>,
-        budget: &EntityBudget,
-    ) -> Result<Vec<SourceAnswer<A>>, EntityBudgetExceeded> {
+        budget: &ResultBudget,
+    ) -> Result<Vec<SourceAnswer<A>>, ResultBudgetExceeded> {
         stream::iter(targets)
             .map(|(registration, first)| async move { self.walk_source::<A>(&registration, first, conditions, budget).await })
             .buffer_unordered(self.csr_concurrency)
@@ -207,19 +211,21 @@ impl FederationService {
             .collect()
     }
 
-    /// Walk one source's answer from `first` to its last page.
+    /// Walk one source's answer from `first` to its last page, charging each
+    /// page to `budget`: every element the source sent as a row, and the
+    /// entities the walk kept as entities unless the source is auxiliary.
     ///
     /// # Errors
     ///
-    /// Returns [`EntityBudgetExceeded`] once everything gathered under
-    /// `budget` exceeds it.
+    /// Returns [`ResultBudgetExceeded`] once everything charged to `budget`,
+    /// by this walk and every other one sharing it, exceeds it.
     pub(crate) async fn walk_source<A: WalkedAnswer>(
         &self,
         registration: &ContextSourceRegistration,
         first: ForwardedRead,
         conditions: ForwardedGetConditions<'_>,
-        budget: &EntityBudget,
-    ) -> Result<SourceAnswer<A>, EntityBudgetExceeded> {
+        budget: &ResultBudget,
+    ) -> Result<SourceAnswer<A>, ResultBudgetExceeded> {
         let mode = registration.access.mode.unwrap_or_default();
         let (outcome, mut next) = match first {
             ForwardedRead::Get(url) => {
@@ -247,7 +253,7 @@ impl FederationService {
         };
         let first_page = mem::take(gathered.elements());
         *gathered.elements() = position.fresh::<A>(first_page);
-        budget.charge(gathered.elements().len())?;
+        budget.charge_page(mode, first_sent, gathered.elements().iter().map(A::identifier))?;
         // The offset walk of the POST binding ends on the first empty page.
         if first_sent == 0 && matches!(next, PageEnd::Continue(NextPage::Offset { .. })) {
             next = PageEnd::Stop(None);
@@ -295,7 +301,7 @@ impl FederationService {
                 break;
             };
             let fresh = position.fresh::<A>(mem::take(page.elements()));
-            budget.charge(fresh.len())?;
+            budget.charge_page(mode, sent, fresh.iter().map(A::identifier))?;
             let progressed = !fresh.is_empty();
             gathered.elements().extend(fresh);
             gathered.absorb(page);
@@ -359,7 +365,6 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
 mod tests {
     use crate::{
         FederationService,
-        entity_budget::{EntityBudget, EntityBudgetExceeded},
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
         instance_budget::{InstanceBudget, InstanceBudgetExceeded},
@@ -377,6 +382,7 @@ mod tests {
             SourcePaging,
             TriggeringRequest,
         },
+        result_budget::{ResultBudget, ResultBudgetExceeded, ResultLimits},
         split_entities::SplitEntities,
     };
     use andromeda_configuration::schema::federation::FederationConfig;
@@ -412,11 +418,17 @@ mod tests {
     /// An inclusive registration of `Vehicle` pointing at `source`, advertising
     /// `operations`.
     fn registration(source: &MockServer, operations: &[&str]) -> ContextSourceRegistration {
+        registration_of(source, "urn:ngsi-ld:ContextSourceRegistration:walk", "inclusive", operations)
+    }
+
+    /// The registration `id` of `Vehicle` under `mode` pointing at `source`,
+    /// advertising `operations`.
+    fn registration_of(source: &MockServer, id: &str, mode: &str, operations: &[&str]) -> ContextSourceRegistration {
         serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:ContextSourceRegistration:walk",
+            "id": id,
             "type": "ContextSourceRegistration",
             "endpoint": endpoint(source),
-            "mode": "inclusive",
+            "mode": mode,
             "operations": operations,
             "information": [{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}]}],
             "status": "ok",
@@ -455,14 +467,41 @@ mod tests {
         }
     }
 
+    /// One page holding the Vehicles `numbers` names, in that order.
+    fn listed_page(numbers: &[usize]) -> ResponseTemplate {
+        let entities: Vec<serde_json::Value> = numbers
+            .iter()
+            .map(|number| json!({"id": format!("urn:ngsi-ld:Vehicle:{number:04}"), "type": "Vehicle"}))
+            .collect();
+        ResponseTemplate::new(StatusCode::OK).set_body_raw(serde_json::to_vec(&entities).expect("the page serializes"), "application/json")
+    }
+
     fn failure(status: StatusCode) -> ResponseTemplate {
         ResponseTemplate::new(status)
     }
 
-    /// Forward `type=Vehicle` through `delivery` under a budget of `maximum`.
+    /// Limits of `entities` distinct entities and `rows` source rows.
+    fn limits(entities: u32, rows: u32) -> ResultLimits {
+        ResultLimits {
+            distinct_entities: NonZeroU32::new(entities).expect("a positive entity limit"),
+            source_rows: NonZeroU32::new(rows).expect("a positive row limit"),
+        }
+    }
+
+    /// Forward `type=Vehicle` through `delivery` under an entity limit of
+    /// `maximum` and no row ceiling it could reach.
     async fn walk(service: &FederationService, delivery: QueryDelivery, maximum: u32) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
+        walk_under(service, delivery, limits(maximum, u32::MAX)).await
+    }
+
+    /// Forward `type=Vehicle` through `delivery` under `limits`.
+    async fn walk_under(
+        service: &FederationService,
+        delivery: QueryDelivery,
+        limits: ResultLimits,
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
         let query: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle").expect("a valid query");
-        let budget = EntityBudget::new(NonZeroU32::new(maximum).expect("a positive budget"));
+        let budget = ResultBudget::new(limits);
         let context = ContextSpec::none();
         service
             .forward_query(
@@ -507,11 +546,20 @@ mod tests {
     }
 
     /// Forward a temporal `type=Vehicle` query walking every source page under
-    /// a budget of `maximum`.
+    /// an entity limit of `maximum` and no row ceiling it could reach.
     async fn temporal_walk(service: &FederationService, maximum: u32) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
+        temporal_walk_under(service, limits(maximum, u32::MAX)).await
+    }
+
+    /// Forward a temporal `type=Vehicle` query walking every source page under
+    /// `limits`.
+    async fn temporal_walk_under(
+        service: &FederationService,
+        limits: ResultLimits,
+    ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
         let query: TemporalQueryParameters =
             serde_urlencoded::from_str("type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z").expect("a valid temporal query");
-        let budget = EntityBudget::new(NonZeroU32::new(maximum).expect("a positive budget"));
+        let budget = ResultBudget::new(limits);
         let context = ContextSpec::none();
         service
             .forward_temporal_query(
@@ -559,6 +607,20 @@ mod tests {
         warnings(outcome)
             .iter()
             .any(|warning| warning.code() == code && warning.text().as_str().contains(text))
+    }
+
+    fn positive(value: u32) -> NonZeroU32 {
+        NonZeroU32::new(value).expect("a positive limit")
+    }
+
+    /// The bound a forwarded query was refused for.
+    fn refusal<T>(outcome: Result<ForwardReadOutcome<T>, QueryForwardingError>) -> ResultBudgetExceeded {
+        match outcome {
+            Err(QueryForwardingError::TooManyResults(exceeded)) => exceeded,
+            Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
+            Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("the walk must be refused for its entities: {exceeded}"),
+            Ok(outcome) => panic!("the walk must be refused, it gathered {} answers", outcome.results.len()),
+        }
     }
 
     fn numbered(range: Range<usize>) -> Vec<String> {
@@ -764,14 +826,9 @@ mod tests {
         .await;
         let service = service(registration(&source, &["queryEntity"]));
 
-        let refused = walk(&service, QueryDelivery::Query, 3).await;
+        let refused = refusal(walk(&service, QueryDelivery::Query, 3).await);
 
-        match refused {
-            Err(QueryForwardingError::TooManyResults(EntityBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 3),
-            Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
-            Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("an entity query has no instance budget: {exceeded}"),
-            Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", gathered(&outcome)),
-        }
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(3) });
     }
 
     /// A budget the answer fits into exactly is not exceeded.
@@ -945,14 +1002,106 @@ mod tests {
         .await;
         let service = service(registration(&source, &["queryTemporal"]));
 
-        let refused = temporal_walk(&service, 3).await;
+        let refused = refusal(temporal_walk(&service, 3).await);
 
-        match refused {
-            Err(QueryForwardingError::TooManyResults(EntityBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 3),
-            Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
-            Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("the walk must be refused for its entities: {exceeded}"),
-            Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", temporal_gathered(&outcome)),
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(3) });
+    }
+
+    /// Three sources answering the same Vehicles `0000` to `0004`, each under
+    /// an inclusive registration advertising `operation`, answering `answer`
+    /// on `path`.
+    async fn three_overlapping_sources(path: &str, operation: &str, answer: impl Fn() -> ResponseTemplate) -> (Vec<MockServer>, FederationService) {
+        let mut sources = Vec::new();
+        let mut registrations = Vec::new();
+        for index in 0..3 {
+            let source = source().await;
+            answer_in_turn(&source, "GET", path, [answer()]).await;
+            registrations.push(registration_of(
+                &source,
+                &format!("urn:ngsi-ld:ContextSourceRegistration:overlap-{index}"),
+                "inclusive",
+                &[operation],
+            ));
+            sources.push(source);
         }
+        (sources, service_over(Arc::new(FixedRegistrationStore::new(registrations))))
+    }
+
+    /// Clause 5.7.2.4 merges the sources' answers into one entity each, so
+    /// three sources holding the same five entities answer five entities: the
+    /// entity limit counts them once, and only the row ceiling sees all
+    /// fifteen elements.
+    #[tokio::test]
+    async fn three_sources_holding_the_same_entities_are_gathered_under_the_entity_limit() {
+        let (_sources, service) = three_overlapping_sources(QUERY_PATH, "queryEntity", || page(0, 5, None)).await;
+
+        let outcome = walk_under(&service, QueryDelivery::Query, limits(5, 15))
+            .await
+            .expect("the walk fits its limits");
+
+        pretty_assertions::assert_eq!(outcome.results.len(), 3);
+        for answer in &outcome.results {
+            let ids: Vec<String> = answer.entities.iter().map(|received| received.state.id().as_str().to_owned()).collect();
+            pretty_assertions::assert_eq!(ids, numbered(0..5));
+        }
+    }
+
+    /// Clause 4.12: the elements every source sends, duplicates included, are
+    /// bounded too, and the refusal names that bound.
+    #[tokio::test]
+    async fn sources_fetching_past_the_row_ceiling_are_refused_naming_source_rows() {
+        let (_sources, service) = three_overlapping_sources(QUERY_PATH, "queryEntity", || page(0, 5, None)).await;
+
+        let refused = refusal(walk_under(&service, QueryDelivery::Query, limits(5, 14)).await);
+
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::SourceRows { maximum: positive(14) });
+    }
+
+    /// Clause 4.3.6.2: an auxiliary source only supplements what the other
+    /// sources answer, so the entities only it answers are not charged as
+    /// entities; every element it sends is still a row.
+    #[tokio::test]
+    async fn an_auxiliary_source_adds_rows_but_no_entities() {
+        let mut registrations = Vec::new();
+        let mut sources = Vec::new();
+        for index in 0..2 {
+            let inclusive = source().await;
+            answer_in_turn(&inclusive, "GET", QUERY_PATH, [page(0, 5, None)]).await;
+            registrations.push(registration_of(
+                &inclusive,
+                &format!("urn:ngsi-ld:ContextSourceRegistration:inclusive-{index}"),
+                "inclusive",
+                &["queryEntity"],
+            ));
+            sources.push(inclusive);
+        }
+        let auxiliary = source().await;
+        answer_in_turn(&auxiliary, "GET", QUERY_PATH, [listed_page(&[0, 1, 2, 100, 101])]).await;
+        registrations.push(registration_of(
+            &auxiliary,
+            "urn:ngsi-ld:ContextSourceRegistration:auxiliary",
+            "auxiliary",
+            &["queryEntity"],
+        ));
+        let service = service_over(Arc::new(FixedRegistrationStore::new(registrations)));
+
+        let outcome = walk_under(&service, QueryDelivery::Query, limits(5, 15))
+            .await
+            .expect("the walk fits its limits");
+
+        pretty_assertions::assert_eq!(gathered(&outcome).len(), 15);
+        pretty_assertions::assert_eq!(received(&auxiliary).await.len(), 1);
+    }
+
+    /// The temporal walk shares the request's budget the same way: three
+    /// sources answering the same three entities charge each once.
+    #[tokio::test]
+    async fn a_temporal_walk_over_overlapping_sources_charges_each_entity_once() {
+        let (_sources, service) = three_overlapping_sources(TEMPORAL_PATH, "queryTemporal", || temporal_page(0, 3, StatusCode::OK, None, None)).await;
+
+        let outcome = temporal_walk_under(&service, limits(3, 9)).await.expect("the walk fits its limits");
+
+        pretty_assertions::assert_eq!(temporal_gathered(&outcome).len(), 9);
     }
 
     /// Clause 6.23 carries the query in the body, so the POST binding walks by
@@ -994,7 +1143,7 @@ mod tests {
         let query: TemporalQueryParameters =
             serde_urlencoded::from_str("type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z&format=aggregatedValues&aggrMethods=avg")
                 .expect("a valid temporal query");
-        let entities = EntityBudget::new(NonZeroU32::new(100).expect("a positive budget"));
+        let entities = ResultBudget::new(limits(100, u32::MAX));
         let instances = InstanceBudget::new(NonZeroU32::new(instances).expect("a positive budget"));
         let context = ContextSpec::none();
         service

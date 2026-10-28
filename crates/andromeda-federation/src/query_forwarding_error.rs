@@ -1,6 +1,6 @@
 //! Why a forwarded entity or temporal query produced no answer.
 
-use crate::{entity_budget::EntityBudgetExceeded, error::FederationError, instance_budget::InstanceBudgetExceeded};
+use crate::{error::FederationError, instance_budget::InstanceBudgetExceeded, result_budget::ResultBudgetExceeded};
 use thiserror::Error;
 
 /// A forwarded Query Entities (clause 5.7.2.4) or Query Temporal Evolution of
@@ -18,7 +18,7 @@ pub enum QueryForwardingError {
     Federation(#[from] FederationError),
     /// The sources' answers exceed what one request gathers.
     #[error(transparent)]
-    TooManyResults(#[from] EntityBudgetExceeded),
+    TooManyResults(#[from] ResultBudgetExceeded),
     /// The sources' history, read to the end, exceeds the attribute instances
     /// one request gathers.
     #[error(transparent)]

@@ -13,12 +13,12 @@
 
 use crate::{
     FederationService,
-    entity_budget::EntityBudget,
     incomplete_answer::{IncompleteReason, incomplete_answer},
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     received_temporal_answer::ReceivedTemporalAnswer,
     request::HistoryBudget,
+    result_budget::ResultBudget,
     temporal_answer_reading::ReadTemporalEntity,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
@@ -97,8 +97,8 @@ impl FederationService {
             gathered.partial_ranges.clear();
             // The resumed walk gathers entities the first one already counted,
             // so it is bounded on its own rather than charged to the request's
-            // entity budget a second time.
-            let resumed_budget = EntityBudget::new(budget.entities.maximum());
+            // budget a second time.
+            let resumed_budget = ResultBudget::new(budget.entities.limits());
             let page = self
                 .walk_source::<ReceivedTemporalAnswer<ContextualEntity>>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
                 .await?;

@@ -20,11 +20,11 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
-    entity_budget::{EntityBudget, EntityBudgetExceeded},
     forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
+    result_budget::{ResultBudget, ResultBudgetExceeded},
     split_entities::SplitEntities,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -50,14 +50,14 @@ pub(crate) struct ForwardedQueryResults {
     pub(crate) contributions: Vec<SourceContribution>,
     /// The budget the sources were walked under, which bounds the merged
     /// collection and the local rows read for it too (clause 4.12).
-    pub(crate) budget: EntityBudget,
+    pub(crate) budget: ResultBudget,
 }
 
 impl ForwardedQueryResults {
-    /// How many local rows the merge needs at most: one past the budget, which
-    /// is all it takes to tell that the merged collection exceeds it.
+    /// How many local rows the merge needs at most: one past the entity limit,
+    /// which is all it takes to tell that the merged collection exceeds it.
     pub(crate) const fn local_row_limit(&self) -> u32 {
-        self.budget.maximum().get().saturating_add(1)
+        self.budget.limits().distinct_entities.get().saturating_add(1)
     }
 
     /// Whether any source returned an entity, which is what makes the local
@@ -74,11 +74,11 @@ impl ForwardedQueryResults {
     ///
     /// # Errors
     ///
-    /// Returns [`EntityBudgetExceeded`] when the merged collection exceeds the
+    /// Returns [`ResultBudgetExceeded`] when the merged collection exceeds the
     /// budget the sources were walked under: the local rows were read one past
     /// it, so a larger collection is refused rather than paged from a
     /// truncation (clause 4.12).
-    pub(crate) fn merge_onto(self, local_entities: Vec<ReceivedState>, attrs: &[IriBuf]) -> Result<MergedEntities, EntityBudgetExceeded> {
+    pub(crate) fn merge_onto(self, local_entities: Vec<ReceivedState>, attrs: &[IriBuf]) -> Result<MergedEntities, ResultBudgetExceeded> {
         let merged = if self.primary.is_empty() {
             local_entities
         } else {
@@ -89,7 +89,7 @@ impl ForwardedQueryResults {
         } else {
             EntityQueryService::merge_with_forwarded(merged, self.auxiliary, attrs)
         };
-        self.budget.admits(u64::try_from(merged.len()).unwrap_or(u64::MAX))?;
+        self.budget.admit_collection(u64::try_from(merged.len()).unwrap_or(u64::MAX))?;
         Ok(MergedEntities {
             entities: merged,
             warnings: self.warnings,
@@ -176,7 +176,7 @@ impl QueryForwarding<'_> {
         };
         // Clause 4.12: one budget bounds everything the query gathers, from
         // both phases' sources and, once they have answered, the local store.
-        let budget = EntityBudget::new(self.forwarding.max_query_entities());
+        let budget = ResultBudget::new(self.forwarding.result_limits());
         let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr.as_ref(), &budget).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));
@@ -211,7 +211,7 @@ impl QueryForwarding<'_> {
         &self,
         mode_filter: CsrModeFilter,
         csf_expr: Option<&Expr>,
-        budget: &EntityBudget,
+        budget: &ResultBudget,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
         let forwarded = self
             .forwarding

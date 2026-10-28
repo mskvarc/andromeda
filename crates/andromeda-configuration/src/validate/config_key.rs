@@ -201,6 +201,12 @@ pub enum ConfigKey {
     /// `federation.forwarding.request_timeout`.
     #[display("federation.forwarding.request_timeout")]
     FederationForwardingRequestTimeout,
+    /// `federation.forwarding.max_query_entities`.
+    #[display("federation.forwarding.max_query_entities")]
+    FederationForwardingMaxQueryEntities,
+    /// `federation.forwarding.max_query_source_rows`.
+    #[display("federation.forwarding.max_query_source_rows")]
+    FederationForwardingMaxQuerySourceRows,
     /// `snapshot.default_lifetime`.
     #[display("snapshot.default_lifetime")]
     SnapshotDefaultLifetime,
