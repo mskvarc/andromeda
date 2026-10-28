@@ -6,14 +6,13 @@ use crate::{
     artifact::RecoveryArtifact,
     branch::{Branch, BranchTarget},
     candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
-    columnstore_partiality::ChunkPartiality,
     controller::PassOutcome,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     gin_density::{self, Density, DensityReading},
     inspection,
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
-    prepared_action::{prepare_action, read_comparison},
+    prepared_action::{Preparation, prepare_action, read_comparison},
     safety_gate_inspection::{self, GateScope},
     state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
@@ -87,8 +86,9 @@ pub(crate) async fn execute_pending(
 ) -> Result<PassOutcome, MaintenanceError> {
     let (branch, target) = (row.branch(), row.target());
     let action = target_action(target);
-    let Some(prepared) = prepare_action(tenant_connection, row).await? else {
-        return complete_without_subject(platform, tenant, row, profile).await;
+    let prepared = match prepare_action(tenant_connection, row, profile).await? {
+        Preparation::Ready(prepared) => prepared,
+        Preparation::Lapsed(reason) => return drop_lapsed(platform, tenant, row, reason).await,
     };
     let gates = prepared.gates;
     let target_state = target_record::load_target_state(platform, tenant, row).await?;
@@ -230,22 +230,19 @@ async fn report_horizon_holders(connection: &mut PgConnection, tenant: &Register
     Ok(())
 }
 
-/// Settle a pending columnstore action that finds no partial chunk left:
-/// nothing remains to recompress, so it completes as effective with nothing
-/// executed.
-async fn complete_without_subject(
+/// Drop a pending action whose live reading no longer meets the threshold
+/// that queued it: nothing runs, and a later sample queues it again if it
+/// qualifies again.
+async fn drop_lapsed(
     platform: &mut PgConnection,
     tenant: &RegisteredTenant,
     row: BranchTarget,
-    profile: PolicyProfile,
+    reason: DeferralReason,
 ) -> Result<PassOutcome, MaintenanceError> {
     let target = row.target();
-    let comparison = ActionComparison::Columnstore { after: ChunkPartiality::Whole };
-    let verdict = action_verdict(profile, target, comparison);
-    let cooldown_until = cooldown_after(profile, target, ActionEnding::Completed(verdict), Utc::now());
-    target_record::record_action_completion(platform, tenant, row, verdict, cooldown_until, comparison).await?;
+    target_record::record_lapsed_action(platform, tenant, row, reason).await?;
     tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Idle).await?;
-    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?row.branch(), target = target.relation_name(), decision = "nothing-left", "PostgreSQL maintenance pending action found nothing left to do");
+    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?row.branch(), target = target.relation_name(), action = ?target_action(target), reason = ?reason, decision = "no-longer-qualifies", "PostgreSQL maintenance pending action dropped");
     Ok(PassOutcome::Idle)
 }
 

@@ -17,7 +17,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
 };
 use sea_query::{Alias, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, extension::postgres::PgBinOper};
-use sqlx::{PgConnection, Row};
+use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 
 /// An allowlisted index's cheap catalog size.
@@ -36,6 +36,8 @@ pub(crate) struct IndexSize {
 pub(crate) struct HeapSample {
     /// Compile-time heap target.
     pub(crate) target: HeapTarget,
+    /// The dead and live tuple counts the estimate is derived from.
+    pub(crate) counts: TupleCounts,
     /// Threshold-ready degradation sample.
     pub(crate) degradation: DegradationSample,
 }
@@ -95,25 +97,42 @@ pub(crate) async fn index_sizes(connection: &mut PgConnection, branch: Branch) -
 /// from cheap statistics.
 pub(crate) async fn heap_samples(connection: &mut PgConnection, branch: Branch, profile: PolicyProfile) -> Result<Vec<HeapSample>, MaintenanceError> {
     let rows = heap_samples_statement(branch).to_query().fetch_all(connection).await?;
-    rows.into_iter()
-        .map(|row| {
-            let name = row.try_get::<String, _>(CatalogColumn::Relname.as_str())?;
-            let target = HeapTarget::from_str(&name).map_err(MaintenanceError::UnknownTarget)?;
-            let live = non_negative(row.try_get(CatalogColumn::LiveTuples.as_str())?, CatalogCounter::LiveTuples)?;
-            let dead = non_negative(row.try_get(CatalogColumn::DeadTuples.as_str())?, CatalogCounter::DeadTuples)?;
-            let bytes = non_negative(row.try_get(CatalogColumn::Bytes.as_str())?, CatalogCounter::HeapBytes)?;
-            let counts = TupleCounts { dead, live };
-            Ok(HeapSample {
-                target,
-                degradation: DegradationSample {
-                    relation_bytes: bytes,
-                    reclaimable_bytes: bytes.saturating_mul(dead).checked_div(live.saturating_add(dead)).unwrap_or_default(),
-                    degraded_percent: counts.dead_percent().unwrap_or_default(),
-                    threshold_percent: profile.heap_dead_percent,
-                },
-            })
-        })
-        .collect()
+    rows.iter().map(|row| heap_sample_of(row, profile)).collect()
+}
+
+/// Read one heap's cheap dead-tuple estimate in `branch`, as
+/// [`heap_samples`] reads every heap's.
+pub(crate) async fn heap_sample(
+    connection: &mut PgConnection,
+    branch: Branch,
+    heap: HeapTarget,
+    profile: PolicyProfile,
+) -> Result<HeapSample, MaintenanceError> {
+    let statement = heap_samples_statement(branch)
+        .and_where(Expr::col(Alias::new("relname")).eq(heap.relation_name()))
+        .to_owned();
+    let row = statement.to_query().fetch_one(connection).await?;
+    heap_sample_of(&row, profile)
+}
+
+/// Decode one heap sample row against the profile's dead-space threshold.
+fn heap_sample_of(row: &PgRow, profile: PolicyProfile) -> Result<HeapSample, MaintenanceError> {
+    let name = row.try_get::<String, _>(CatalogColumn::Relname.as_str())?;
+    let target = HeapTarget::from_str(&name).map_err(MaintenanceError::UnknownTarget)?;
+    let live = non_negative(row.try_get(CatalogColumn::LiveTuples.as_str())?, CatalogCounter::LiveTuples)?;
+    let dead = non_negative(row.try_get(CatalogColumn::DeadTuples.as_str())?, CatalogCounter::DeadTuples)?;
+    let bytes = non_negative(row.try_get(CatalogColumn::Bytes.as_str())?, CatalogCounter::HeapBytes)?;
+    let counts = TupleCounts { dead, live };
+    Ok(HeapSample {
+        target,
+        counts,
+        degradation: DegradationSample {
+            relation_bytes: bytes,
+            reclaimable_bytes: bytes.saturating_mul(dead).checked_div(live.saturating_add(dead)).unwrap_or_default(),
+            degraded_percent: counts.dead_percent().unwrap_or_default(),
+            threshold_percent: profile.heap_dead_percent,
+        },
+    })
 }
 
 /// Perform the one detailed physical probe allowed in a pass.

@@ -89,13 +89,14 @@ pub(crate) async fn heap_statistics(connection: &mut PgConnection, branch: Branc
     rows.iter().map(heap_statistics_of).collect()
 }
 
-/// Read the tuples one heap of `branch` modified since its last analyze.
-pub(crate) async fn modified_since_analyze(connection: &mut PgConnection, branch: Branch, heap: HeapTarget) -> Result<u64, MaintenanceError> {
+/// Read one heap of `branch` against its analyze trigger, as
+/// [`heap_statistics`] reads every watched heap.
+pub(crate) async fn heap_statistics_of_target(connection: &mut PgConnection, branch: Branch, heap: HeapTarget) -> Result<HeapStatistics, MaintenanceError> {
     let statement = heap_statistics_statement(branch)
         .and_where(statistics_column("relname").eq(heap.relation_name()))
         .to_owned();
     let row = statement.to_query().fetch_one(connection).await?;
-    Ok(heap_statistics_of(&row)?.modified_since_analyze)
+    heap_statistics_of(&row)
 }
 
 /// The columns the freshness statement projects besides the triggers.

@@ -12,7 +12,7 @@ use crate::{
         recorded_decision::RecordedDecision,
         target_code::{stored_target, target_of},
     },
-    policy::{BreachRun, DegradationSample, PolicyDecision, TargetState, breach_after},
+    policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, TargetState, breach_after},
     state::{
         RegisteredTenant,
         TenantKey,
@@ -256,6 +256,39 @@ fn action_completion_update(
         .to_owned())
 }
 
+/// Drop a pending action whose live reading no longer qualifies, recording
+/// `reason` as the decision. Nothing ran, so the cooldown and the last action
+/// stay as they were; the sample under the threshold closes the breach run,
+/// and the failures of the dropped action no longer count against a future
+/// one.
+pub(crate) async fn record_lapsed_action(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    target: BranchTarget,
+    reason: DeferralReason,
+) -> Result<(), MaintenanceError> {
+    lapsed_action_update(tenant.key, target, reason).to_query().execute(connection).await?;
+    Ok(())
+}
+
+/// Build the update dropping a lapsed pending action.
+fn lapsed_action_update(tenant: TenantKey, target: BranchTarget, reason: DeferralReason) -> UpdateStatement {
+    Query::update()
+        .table(PostgresqlMaintenanceTargets::Table)
+        .value(PostgresqlMaintenanceTargets::IsActionPending, false)
+        .value(
+            PostgresqlMaintenanceTargets::LastDecision,
+            RecordedDecision::Policy(PolicyDecision::Deferred(reason)).code().code(),
+        )
+        .value(PostgresqlMaintenanceTargets::FirstBreachAt, Option::<DateTime<Utc>>::None)
+        .value(PostgresqlMaintenanceTargets::BreachSamples, 0)
+        .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.0))
+        .and_where(branch_rows(target.branch()))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
+        .to_owned()
+}
+
 /// Persist a failed action while keeping it pending for a retry once its
 /// backoff ends.
 pub(crate) async fn record_action_failure(
@@ -314,9 +347,10 @@ mod tests {
         branch::{Branch, BranchTarget},
         candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         error::MaintenanceError,
+        policy::DeferralReason,
         state::{
             TenantKey,
-            target_record::{action_completion_update, target_state_insert},
+            target_record::{action_completion_update, lapsed_action_update, target_state_insert},
         },
     };
     use chrono::Utc;
@@ -391,6 +425,24 @@ mod tests {
         assert!(sql.contains(r#""first_breach_at" = NULL"#), "{sql}");
         assert!(sql.contains(r#""breach_samples" = 0"#), "{sql}");
         Ok(())
+    }
+
+    #[test]
+    fn a_lapsed_action_is_no_longer_pending_and_keeps_its_cooldown_and_last_action() {
+        let sql = lapsed_action_update(
+            TenantKey(7),
+            live(MaintenanceTarget::Statistics(HeapTarget::Entities)),
+            DeferralReason::BelowThreshold,
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""is_action_pending" = FALSE"#), "{sql}");
+        assert!(sql.contains(r#""first_breach_at" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""breach_samples" = 0"#), "{sql}");
+        assert!(sql.contains(r#""consecutive_failures" = 0"#), "{sql}");
+        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" IS NULL"#), "{sql}");
+        for untouched in ["cooldown_until", "last_action_at", "last_action_result"] {
+            assert!(!sql.contains(untouched), "{untouched} is left as it was: {sql}");
+        }
     }
 
     #[test]
