@@ -12,7 +12,7 @@ use crate::{
 use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use andromeda_http_headers::link::field_layout::apply_link_field_layout;
 use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
-use andromeda_outbound_http::{client::OutboundHttpPolicy, endpoint_guard::PrivateIpGuard, endpoint_refusal::EndpointRefusal};
+use andromeda_outbound_http::{client::OutboundHttpPolicy, endpoint_guard::PrivateIpGuard};
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use headers::HeaderMapExt;
@@ -62,17 +62,10 @@ impl HttpTransport {
     /// Refuse delivery when the endpoint host resolves into address space the
     /// broker will not reach on a client's behalf.
     async fn check_private_ip(&self, endpoint_uri: &Url) -> Result<(), TransportError> {
-        self.guard.check(endpoint_uri).await.map_err(|refusal| {
-            let endpoint = endpoint_uri.clone(); // clone: the error owns the endpoint it names
-            match refusal {
-                EndpointRefusal::NoHost => TransportError::ConnectionFailed {
-                    endpoint,
-                    cause: ConnectionFailure::NoHost,
-                },
-                EndpointRefusal::Blocked { ip } => TransportError::PrivateIpBlocked { endpoint, ip },
-                EndpointRefusal::DnsFailed { source } => TransportError::DnsResolutionFailed { endpoint, source },
-            }
-        })
+        self.guard
+            .check(endpoint_uri)
+            .await
+            .map_err(|refusal| TransportError::refused(endpoint_uri.clone(), refusal)) // clone: the error owns the endpoint it names
     }
 }
 

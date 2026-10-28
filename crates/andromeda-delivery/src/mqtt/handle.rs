@@ -73,6 +73,7 @@ impl NotificationTransport for MqttTransportHandle {
 impl MqttTransportHandle {
     /// The delivery body itself, wrapped by [`MqttTransportHandle::deliver`] for timing.
     async fn deliver_inner(&self, request: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
+        self.pool.check_broker(&self.config).await?;
         let connection = self.pool.get_or_create_connection(&self.config).await?;
         let start = Instant::now();
         let envelope = build_envelope(request)?;
@@ -153,7 +154,7 @@ mod tests {
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
-    use andromeda_configuration::{human_byte_size::HumanByteSize, mqtt_packet_limit::MqttPacketLimit};
+    use andromeda_configuration::{human_byte_size::HumanByteSize, mqtt_packet_limit::MqttPacketLimit, schema::private_ip_blocking::PrivateIpBlocking};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use bytes::BytesMut;
     use rumqttc::{ConnAck, ConnectReturnCode, Packet, PubAck, QoS, SubAck, SubscribeReasonCode, mqttbytes::Error as PacketError};
@@ -319,5 +320,26 @@ mod tests {
         let small = notification(&endpoint, 64);
         let outcome = handle.deliver(&small).await.expect("the connection still delivers");
         assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn a_loopback_broker_is_refused_before_it_is_dialled_when_private_addresses_are_refused() {
+        let (address, received) = broker().await;
+        let endpoint = endpoint(address, MqttQoS::AtLeast);
+        let config = MqttPoolConfig {
+            private_addresses: PrivateIpBlocking::Refused,
+            ..MqttPoolConfig::default()
+        };
+        let handle = pool(config).transport_for(&endpoint);
+
+        let refused = handle
+            .deliver(&notification(&endpoint, 64))
+            .await
+            .map(drop)
+            .expect_err("a loopback broker is refused");
+
+        assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
+        assert!(!refused.is_retryable());
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the refused broker");
     }
 }

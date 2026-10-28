@@ -13,6 +13,7 @@ use crate::{
         health::MqttConnectionHealthSummary,
     },
 };
+use andromeda_outbound_http::endpoint_guard::PrivateIpGuard;
 use andromeda_retry::cursor::BackoffCursor;
 use dashmap::DashMap;
 use std::{sync::Arc, time::Duration};
@@ -42,6 +43,9 @@ pub struct MqttTransportPool {
     config: MqttPoolConfig,
     /// Capability that opens a broker session.
     dialer: Arc<dyn MqttDialer>,
+    /// Refuses a broker resolving into address space the broker will not reach
+    /// on a client's behalf.
+    guard: PrivateIpGuard,
 }
 
 impl MqttTransportPool {
@@ -51,9 +55,23 @@ impl MqttTransportPool {
             connections: DashMap::new(),
             reconnect: DashMap::new(),
             dial_locks: DashMap::new(),
+            guard: PrivateIpGuard::new(config.private_addresses),
             config,
             dialer,
         }
+    }
+
+    /// Refuse a broker the private-address policy does not admit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::PrivateIpBlocked`] or
+    /// [`TransportError::DnsResolutionFailed`] when the broker host is refused.
+    pub async fn check_broker(&self, endpoint: &MqttEndpointConfig) -> Result<(), TransportError> {
+        self.guard
+            .check_authority(endpoint.authority.host(), endpoint.authority.port())
+            .await
+            .map_err(|refusal| TransportError::refused(endpoint.endpoint_uri.clone(), refusal)) // clone: the error owns the endpoint it names
     }
 
     /// A transport handle bound to one MQTT endpoint.

@@ -1,6 +1,7 @@
 //! What can go wrong between this broker and a notification endpoint.
 
 use crate::{connection_failure::ConnectionFailure, http::transport::error_chain_text};
+use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use humantime::format_duration;
 use std::{io, net::IpAddr, sync::Arc, time::Duration};
 use url::Url;
@@ -91,6 +92,19 @@ pub enum TransportError {
 }
 
 impl TransportError {
+    /// The failure for an endpoint the private-address guard refused.
+    #[must_use]
+    pub fn refused(endpoint: Url, refusal: EndpointRefusal) -> TransportError {
+        match refusal {
+            EndpointRefusal::NoHost => TransportError::ConnectionFailed {
+                endpoint,
+                cause: ConnectionFailure::NoHost,
+            },
+            EndpointRefusal::Blocked { ip } => TransportError::PrivateIpBlocked { endpoint, ip },
+            EndpointRefusal::DnsFailed { source } => TransportError::DnsResolutionFailed { endpoint, source },
+        }
+    }
+
     /// Whether reattempting the delivery could succeed.
     ///
     /// Reaching the endpoint failed transiently for connection, timeout, TLS and

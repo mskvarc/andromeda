@@ -111,10 +111,11 @@ pub struct DeliveryConfig {
         description = "The most characters of a failure diagnostic kept with a failed delivery attempt. Between 1 and 2048, the longest failure summary the store keeps."
     )]
     pub max_error_length: NonZeroU32,
-    /// Whether an endpoint resolving into private or reserved address space is
-    /// `allowed` or `refused`. Checked against the address actually resolved.
+    /// Whether an HTTP endpoint or an MQTT broker resolving into private or
+    /// reserved address space is `allowed` or `refused`. Checked against the
+    /// address actually resolved.
     #[schemars(
-        description = "Whether a notification endpoint resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
+        description = "Whether a notification endpoint, an HTTP URL or an MQTT broker, resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
     )]
     pub private_addresses: PrivateIpBlocking,
     /// The largest notification body an HTTP delivery sends, in human-readable

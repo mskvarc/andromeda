@@ -64,13 +64,23 @@ impl PrivateIpGuard {
     ///
     /// Returns the [`EndpointRefusal`] naming why the endpoint is refused.
     pub async fn check(&self, endpoint: &Url) -> Result<(), EndpointRefusal> {
+        let host = endpoint.host().ok_or(EndpointRefusal::NoHost)?;
+        let port = endpoint.port_or_known_default().unwrap_or(DEFAULT_PORT);
+        self.check_authority(&host.to_owned(), port).await
+    }
+
+    /// Refuse a host and port under the same rule as [`PrivateIpGuard::check`],
+    /// for a protocol whose endpoint is not an HTTP URL, such as an MQTT broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`EndpointRefusal`] naming why the host is refused.
+    pub async fn check_authority(&self, host: &Host, port: u16) -> Result<(), EndpointRefusal> {
         match self.blocking {
             PrivateIpBlocking::Allowed => return Ok(()),
             PrivateIpBlocking::Refused => {}
         }
-        let host = endpoint.host().ok_or(EndpointRefusal::NoHost)?.to_owned();
-        let port = endpoint.port_or_known_default().unwrap_or(DEFAULT_PORT);
-        let authority = Authority { host, port };
+        let authority = Authority { host: host.clone(), port }; // clone: the cache key owns the host it is looked up by
         if let Some(cached) = self.outcomes.get(&authority).await {
             return cached;
         }
@@ -107,7 +117,8 @@ fn refuse_if_private(ip: IpAddr) -> Result<(), EndpointRefusal> {
 mod tests {
     use crate::{endpoint_guard::PrivateIpGuard, endpoint_refusal::EndpointRefusal};
     use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
-    use url::Url;
+    use std::net::Ipv4Addr;
+    use url::{Host, Url};
 
     fn endpoint(text: &str) -> Url {
         Url::parse(text).expect("a well-formed endpoint")
@@ -116,7 +127,7 @@ mod tests {
     #[tokio::test]
     async fn loopback_and_link_local_literals_are_refused_when_armed() {
         let guard = PrivateIpGuard::new(PrivateIpBlocking::Refused);
-        for text in ["http://127.0.0.1:1/", "http://[::1]/", "http://169.254.169.254/latest"] {
+        for text in ["http://127.0.0.1:1/", "http://10.0.0.1/", "http://[::1]/", "http://169.254.169.254/latest"] {
             let refusal = guard.check(&endpoint(text)).await.expect_err(text);
             assert!(matches!(refusal, EndpointRefusal::Blocked { .. }), "{text}: {refusal}");
         }
@@ -130,6 +141,15 @@ mod tests {
             let refusal = guard.check(&target).await.expect_err("localhost is loopback");
             assert!(matches!(refusal, EndpointRefusal::Blocked { .. }), "{refusal}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_broker_authority_is_vetted_like_an_endpoint() {
+        let armed = PrivateIpGuard::new(PrivateIpBlocking::Refused);
+        let refusal = armed.check_authority(&Host::Ipv4(Ipv4Addr::LOCALHOST), 1883).await.expect_err("loopback");
+        assert!(matches!(refusal, EndpointRefusal::Blocked { .. }), "{refusal}");
+        let off = PrivateIpGuard::new(PrivateIpBlocking::Allowed);
+        assert!(off.check_authority(&Host::Ipv4(Ipv4Addr::LOCALHOST), 1883).await.is_ok());
     }
 
     #[tokio::test]

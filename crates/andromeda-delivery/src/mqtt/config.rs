@@ -1,6 +1,6 @@
 //! How the MQTT connection pool is tuned.
 
-use andromeda_configuration::mqtt_packet_limit::MqttPacketLimit;
+use andromeda_configuration::{mqtt_packet_limit::MqttPacketLimit, schema::private_ip_blocking::PrivateIpBlocking};
 use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule};
 use std::time::Duration;
 
@@ -50,6 +50,9 @@ pub struct MqttPoolConfig {
     /// The largest packet a connection writes or reads. An MQTT 5 server that
     /// announces a smaller maximum lowers what is written to it.
     pub max_packet_size: MqttPacketLimit,
+    /// Whether a broker resolving into private or reserved address space is
+    /// refused before it is dialled.
+    pub private_addresses: PrivateIpBlocking,
 }
 
 impl Default for MqttPoolConfig {
@@ -62,6 +65,7 @@ impl Default for MqttPoolConfig {
             health_probe_interval: DEFAULT_HEALTH_PROBE_INTERVAL,
             publish_ack_timeout: DEFAULT_PUBLISH_ACK_TIMEOUT,
             max_packet_size: MqttPacketLimit::DEFAULT,
+            private_addresses: PrivateIpBlocking::Allowed,
         }
     }
 }
