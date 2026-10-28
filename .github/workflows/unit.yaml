@@ -25,9 +25,9 @@ jobs:
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
-      # Covered by architecture.yaml; andromeda-sql shells out to pg_format and is tested by sql.yaml.
+      # Covered by architecture.yaml; andromeda-sql shells out to pg_format and is tested by sql.yaml; andromeda-test-suite needs a live stack.
       - name: Workspace crates
-        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --lib --bins --tests --all-features --locked -- --skip architecture
+        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked -- --skip architecture
       # Root tests/ need a live stack.
       - name: Broker binary
         run: cargo test --package andromeda --bins --all-features --locked

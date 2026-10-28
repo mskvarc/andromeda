@@ -1,0 +1,22 @@
+# The default profile is nextest's own; the profiles below belong to andromeda-test-suite.
+
+# Every test runs in a process of its own beside every other, against the stack its test target uses. A failure is
+# never retried: an intermittent failure is a defect to find, in the test's isolation or in the broker.
+[profile.suite]
+retries = 0
+fail-fast = false
+# The tests wait on the network, not the CPU.
+test-threads = 64
+# The longest test waits two periodic notifications ten seconds apart; a test still running after two minutes hangs.
+slow-timeout = { period = "30s", terminate-after = 4 }
+status-level = "fail"
+final-status-level = "fail"
+
+[profile.suite-verdict]
+retries = 0
+fail-fast = false
+test-threads = 64
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.suite-verdict.junit]
+path = "junit.xml"

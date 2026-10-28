@@ -1,0 +1,43 @@
+[package]
+name = "andromeda-test-suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Black-box tests of the Andromeda NGSI-LD context broker, written against the ngsi-ld client"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = "1.12.1"
+cefact-units = "1.0.0"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+figment2 = { version = "0.11.5", features = ["env"] }
+googletest = "0.14.3"
+http = "1.5.0"
+indexmap = "2.14.2"
+iri-rs = { version = "3.4.1", features = ["static", "serde"] }
+ngsi-ld = { version = "1.1.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
+percent-encoding = "2.3.2"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["http2", "rustls"] }
+rumqttc = { version = "0.25.1", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_json_path = "0.7.2"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+url = { version = "2.5.8", features = ["serde"] }
+uuid = { version = "1.29.0", features = ["v4"] }
+wiremock = "0.6.5"
+x509-parser = "0.18.1"
+
+[[test]]
+name = "etsi"
+path = "tests/etsi/main.rs"
+
+[[test]]
+name = "annex_c"
+path = "tests/annex_c/main.rs"

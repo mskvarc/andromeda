@@ -1,4 +1,5 @@
 absolute-paths-allowed-crates = ["typed_builder"]
+doc-valid-idents = ["DeepDiff", "AnyCoreContextVersion", "StringOrSingleList", "ProblemDetails", "WireMock", "HttpCtrl", "RequestsLibrary", "DeepHash", "QoS", ".."]
 
 disallowed-methods = [
     { path = "sqlx::Row::get", reason = "it panics on a missing or undecodable column; decode with `try_get` and propagate the failure" },
