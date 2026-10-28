@@ -476,6 +476,44 @@ mod tests {
         }
     }
 
+    /// Clause 5.7.3: `format` wins over `options`, so a request whose `format`
+    /// is temporalValues is answered as temporal values and its aggregation
+    /// parameters are ignored, while `options=aggregatedValues` still counts as
+    /// naming aggregated values for the Tables 6.18.3.2-1 and 6.19.3.1-1 rule.
+    #[test]
+    fn a_winning_format_ignores_the_aggregation_parameters_that_options_admits() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        let ignored = params_from_query(&format!(
+            "{WINDOW}&format=temporalValues&options=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=PT1H"
+        ));
+        pretty_assertions::assert_eq!(ignored.selected_format(), TemporalFormat::TemporalValues);
+        let aggregated = params_from_query(&format!("{WINDOW}&format=aggregatedValues&options=temporalValues&aggrMethods=sum"));
+        pretty_assertions::assert_eq!(aggregated.selected_format(), TemporalFormat::AggregatedValues);
+    }
+
+    #[test]
+    fn options_naming_aggregated_values_under_a_winning_format_do_not_require_methods() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        let admitted = params_from_query(&format!("{WINDOW}&format=temporalValues&options=aggregatedValues"));
+        assert!(admitted.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok());
+        let required = params_from_query(&format!("{WINDOW}&format=aggregatedValues"));
+        let error = required
+            .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+            .expect_err("methods are required");
+        assert!(matches!(error, ParameterError::AggrMethodsRequired), "{error:?}");
+    }
+
+    #[test]
+    fn a_period_origin_without_a_period_is_refused_whatever_options_name() {
+        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
+        let mut p = params_from_query(&format!("{WINDOW}&format=temporalValues&options=aggregatedValues"));
+        p.aggr_period_origin = Some("2024-01-01T00:00:00Z".parse().expect("a valid instant"));
+        let error = p
+            .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+            .expect_err("an origin needs periods");
+        assert!(matches!(error, ParameterError::AggrPeriodOriginWithoutPeriods), "{error:?}");
+    }
+
     /// Either spelling of `aggregatedValues` admits both aggregation
     /// parameters.
     #[test]
@@ -485,6 +523,9 @@ mod tests {
             "options=aggregatedValues&aggrMethods=sum",
             "format=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
             "options=aggregatedValues,sysAttrs&aggrMethods=sum,avg&aggrPeriodDuration=P1D",
+            "format=temporalValues&options=aggregatedValues&aggrMethods=sum",
+            "format=temporalValues&options=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
+            "format=aggregatedValues&options=temporalValues&aggrMethods=sum",
         ] {
             let p = params_from_query(&format!("{WINDOW}&{aggregation}"));
             for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {

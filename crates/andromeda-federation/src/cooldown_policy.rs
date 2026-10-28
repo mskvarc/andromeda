@@ -162,10 +162,17 @@ mod tests {
     #[test]
     fn an_exponential_cap_below_its_first_window_is_rejected() {
         let config = CooldownConfig {
+            mode: CooldownMode::Exponential,
             retry_interval: HumanDuration::from_secs(10),
             max_retry_interval: HumanDuration::from_secs(5),
-            ..CooldownConfig::default()
         };
         pretty_assertions::assert_eq!(cooldown_schedule(&config).map(drop), Err(BackoffScheduleError::CeilingBelowFirst));
+    }
+
+    #[test]
+    fn the_default_configuration_arms_no_window() {
+        let policy = CooldownPolicy::try_from(&CooldownConfig::default()).expect("the default validates");
+        assert!(matches!(policy, CooldownPolicy::Off));
+        assert!(policy.first_episode().is_none());
     }
 }

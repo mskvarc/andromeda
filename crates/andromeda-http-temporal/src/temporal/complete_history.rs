@@ -185,6 +185,7 @@ impl HistoryCompleteness {
         };
         let period_origin = params
             .aggr_period_duration
+            .filter(|_| params.selected_format().is_aggregated())
             .filter(|period| period.grid() == PeriodGrid::Calendar)
             .and(params.aggr_period_origin.or(interval.reference().copied()).or(local_origin));
         Ok(HistoryCompleteness::UpTo(HistoryBound {

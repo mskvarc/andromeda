@@ -212,12 +212,16 @@ const fn compile_instance_page(
 /// methods and period, the extension grouping, and whether system attributes
 /// survive.
 fn compile_representation(params: &TemporalQueryParameters, format: TemporalFormat, grouping: Option<AggregationGrouping>) -> Representation {
+    // Tables 6.18.3.2-1 and 6.19.3.1-1 apply the aggregation parameters to
+    // aggregated values only; a winning non-aggregated format ignores them
+    // even when `options` names `aggregatedValues`.
+    let aggregation = format.is_aggregated();
     Representation::builder()
         .format(format)
         // clone: the compiled representation owns its methods independently of the reusable request parameters.
-        .aggr_methods(params.aggr_methods.clone().unwrap_or_default())
-        .aggr_period_duration(params.aggr_period_duration)
-        .period_origin(params.aggr_period_origin)
+        .aggr_methods(params.aggr_methods.clone().filter(|_| aggregation).unwrap_or_default())
+        .aggr_period_duration(params.aggr_period_duration.filter(|_| aggregation))
+        .period_origin(params.aggr_period_origin.filter(|_| aggregation))
         .grouping(grouping)
         .sys_attrs(params.sys_attrs())
         .build()
@@ -276,11 +280,11 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
 )]
 mod tests {
     use crate::{
-        compilation::{compile_grouping, compile_instance_page},
+        compilation::{compile_grouping, compile_instance_page, compile_representation},
         instance_limits::TemporalInstanceLimits,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-    use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
     use andromeda_ngsi_ld_query::{
         filter::expansion::expand_json_keys,
         temporal::{aggregation_period::AggregationPeriod, grouping::group_key::GroupKey, instance_page::InstancePage, period_budget::PeriodBudget},
@@ -328,6 +332,27 @@ mod tests {
     #[tokio::test]
     async fn a_grouping_member_under_an_undeclared_attribute_expands() {
         pretty_assertions::assert_eq!(grouped_members("other").await, vec!["https://uri.etsi.org/ngsi-ld/hasValue"]);
+    }
+
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1: a winning non-aggregated format leaves
+    /// the aggregation parameters out of the compiled representation, and a
+    /// winning aggregated one keeps them.
+    #[test]
+    fn the_aggregation_parameters_compile_only_under_an_aggregated_format() {
+        let params = TemporalQueryParameters {
+            aggr_methods: Some(vec![AggrMethod::Sum]),
+            aggr_period_duration: hourly(),
+            aggr_period_origin: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),
+            ..TemporalQueryParameters::default()
+        };
+        let ignored = compile_representation(&params, TemporalFormat::TemporalValues, None);
+        pretty_assertions::assert_eq!(
+            (ignored.aggr_methods, ignored.aggr_period_duration, ignored.period_origin),
+            (Vec::new(), None, None)
+        );
+        let kept = compile_representation(&params, TemporalFormat::AggregatedValues, None);
+        pretty_assertions::assert_eq!(kept.aggr_methods, vec![AggrMethod::Sum]);
+        assert!(kept.aggr_period_duration.is_some() && kept.period_origin.is_some());
     }
 
     /// `n` as a client `lastN`.

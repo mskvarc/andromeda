@@ -248,6 +248,24 @@ mod tests {
         assert!(query.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec).is_ok());
     }
 
+    /// Clause 5.7.3 and Tables 6.19.3.1-1: a winning `temporalValues` format
+    /// ignores the aggregation parameters `options=aggregatedValues` admits,
+    /// and without `aggregatedValues` anywhere they are refused.
+    #[test]
+    fn a_retrieval_applies_aggregation_when_format_or_options_names_aggregated_values() {
+        let admitted = TemporalQueryParameters::from(params(
+            "timerel=after&timeAt=2024-01-01T00:00:00Z&format=temporalValues&options=aggregatedValues&aggrMethods=sum",
+        ));
+        assert!(admitted.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec).is_ok());
+        let refused = TemporalQueryParameters::from(params(
+            "timerel=after&timeAt=2024-01-01T00:00:00Z&format=temporalValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
+        ));
+        let error = refused
+            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec)
+            .expect_err("no aggregated values named");
+        assert!(matches!(error, ParameterError::AggregationWithoutAggregatedValues), "{error:?}");
+    }
+
     /// An origin lays periods, so without a non-zero period there is nothing
     /// for it to lay (clause 6.3.20).
     #[test]

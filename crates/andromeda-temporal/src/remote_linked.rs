@@ -65,15 +65,17 @@ impl TemporalLinkedWindow {
     /// the remote broker compiles it itself, against its own context.
     #[must_use]
     pub fn of_request(params: &TemporalQueryParameters) -> TemporalLinkedWindow {
+        let format = params.selected_format();
+        let aggregation = format.is_aggregated();
         TemporalLinkedWindow {
             timerel: params.timerel,
             time_at: params.time_at,
             end_time_at: params.end_time_at,
             timeproperty: params.timeproperty_or_default(),
             last_n: params.last_n,
-            format: params.selected_format(),
-            aggr_methods: params.aggr_methods.clone(), // clone: the window outlives the borrowed request
-            aggr_period_duration: params.aggr_period_duration,
+            format,
+            aggr_methods: params.aggr_methods.clone().filter(|_| aggregation), // clone: the window outlives the borrowed request
+            aggr_period_duration: params.aggr_period_duration.filter(|_| aggregation),
         }
     }
 

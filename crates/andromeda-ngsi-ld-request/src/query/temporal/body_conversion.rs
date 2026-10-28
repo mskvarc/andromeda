@@ -103,7 +103,8 @@ impl TryFrom<Query> for TemporalQueryParameters {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::query::temporal::TemporalQueryParameters;
+    use crate::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, post_parameters::TemporalPostQueryParams};
+    use andromeda_linked_retrieval::admission::TemporalJoin;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -176,5 +177,19 @@ mod tests {
         let request = canonical(r#"{"type":"Query","csf":"tier==\"gold\"","temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
         let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
         pretty_assertions::assert_eq!(params.csf.as_ref().map(ToString::to_string).as_deref(), Some("tier==\"gold\""));
+    }
+
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1 through the POST binding: `format` and
+    /// `options` come off the URL, the aggregation members out of the body.
+    #[test]
+    fn a_post_query_with_options_naming_aggregated_values_under_a_winning_format_validates() {
+        let request = canonical(
+            r#"{"type":"Query","entities":[{"type":"Vehicle"}],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z","aggrMethods":"sum","aggrPeriodDuration":"PT1H"}}"#,
+        );
+        let mut params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
+        serde_urlencoded::from_str::<TemporalPostQueryParams>("format=temporalValues&options=aggregatedValues")
+            .expect("query parses")
+            .apply_to(&mut params);
+        assert!(params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok());
     }
 }

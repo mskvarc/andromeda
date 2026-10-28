@@ -11,7 +11,7 @@ use crate::{
     error::ParameterError,
     query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
-    representation_parameter::{WrittenValue, resolve_representation, selected_representation},
+    representation_parameter::{SelectedRepresentation, WrittenValue, resolve_representation, selected_representation},
 };
 use andromeda_linked_retrieval::admission::{LinkedRequest, TemporalJoin, admit_request};
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
@@ -227,34 +227,63 @@ impl TemporalQueryParameters {
         self.validate_grouping()
     }
 
+    /// Whether `aggregatedValues` is named by the supported `format` or by the
+    /// supported `options`, whichever of them wins the representation.
+    ///
+    /// Tables 6.18.3.2-1 and 6.19.3.1-1 apply `aggrPeriodDuration` "only if
+    /// aggregatedValues is present in the format or options parameter", and
+    /// clause 5.7.3 lets `format` take precedence over `options`. A request
+    /// whose `format` wins with another representation therefore still names
+    /// aggregated values, and its aggregation parameters are ignored rather
+    /// than refused.
+    fn names_aggregated_values(&self) -> bool {
+        let in_format = self
+            .format
+            .as_ref()
+            .and_then(WrittenValue::if_supported)
+            .is_some_and(TemporalFormat::is_aggregated);
+        let in_options = self
+            .options
+            .as_ref()
+            .and_then(WrittenValue::if_supported)
+            .and_then(SelectedRepresentation::representation)
+            .is_some_and(|format| format.is_aggregated());
+        in_format || in_options
+    }
+
     /// Validate the clause 4.5.19 aggregation parameters against the format.
     ///
     /// Tables 6.18.3.2-1 and 6.19.3.1-1 make `aggrMethods` mandatory and
     /// `aggrPeriodDuration` applicable "only if aggregatedValues is present in
     /// the format or options parameter". Both the standard aggregated format
     /// and the grouped extension format apply the methods, so both require
-    /// them, and any other format has no use for either.
+    /// them when they win the representation. When another format wins but
+    /// `options` still names aggregated values, the parameters are admitted
+    /// and ignored. Without aggregated values named anywhere they have no use.
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::AggrMethodsRequired`] when an aggregated
-    /// format carries no methods,
+    /// Returns [`ParameterError::AggrMethodsRequired`] when a winning
+    /// aggregated format carries no methods,
     /// [`ParameterError::AggregationWithoutAggregatedValues`] when
-    /// `aggrMethods` or `aggrPeriodDuration` meets any other format, and
+    /// `aggrMethods` or `aggrPeriodDuration` meets a request that names no
+    /// aggregated values, and
     /// [`ParameterError::AggrPeriodOriginWithoutPeriods`] when
     /// `aggrPeriodOrigin` has no periods to lay.
     fn validate_aggregation(&self) -> Result<(), ParameterError> {
         if self.aggr_period_origin.is_some() && self.aggr_period_duration.is_none() {
             return Err(ParameterError::AggrPeriodOriginWithoutPeriods);
         }
+        let effective_aggregated = self.parse_format()?.is_aggregated();
         match (
-            self.parse_format()?.is_aggregated(),
+            effective_aggregated,
+            self.names_aggregated_values(),
             self.aggr_methods.is_some(),
             self.aggr_period_duration.is_some(),
         ) {
-            (true, false, _) => Err(ParameterError::AggrMethodsRequired),
-            (false, true, _) | (false, _, true) => Err(ParameterError::AggregationWithoutAggregatedValues),
-            (true, true, _) | (false, false, false) => Ok(()),
+            (true, _, false, _) => Err(ParameterError::AggrMethodsRequired),
+            (false, false, true, _) | (false, false, _, true) => Err(ParameterError::AggregationWithoutAggregatedValues),
+            (true, _, true, _) | (false, true, _, _) | (false, false, false, false) => Ok(()),
         }
     }
 

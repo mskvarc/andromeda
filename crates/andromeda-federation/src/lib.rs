@@ -15,6 +15,13 @@ pub mod cache;
 /// Federation operation configuration.
 /// Cooldown windows after failed forwarded requests, by endpoint and by registration (Table 5.2.34-1).
 pub mod cooldown;
+/// A failed read's cooldown, seen by the write that follows it.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod cooldown_forwarding_tests;
 /// The broker's own cooldown after a failed forwarded request (Table 5.2.34-1, clause 6.3.17).
 pub mod cooldown_policy;
 /// Context-source discovery request execution.

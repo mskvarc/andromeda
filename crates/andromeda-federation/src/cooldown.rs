@@ -224,6 +224,15 @@ mod tests {
     }
 
     #[test]
+    fn a_registration_without_a_cooldown_is_never_held_back_by_an_error_status_when_the_policy_is_off() {
+        let registry = CooldownRegistry::new(CooldownPolicy::Off);
+        let registration = a(None);
+        registry.record_answer(&registration, AnswerKind::ErrorStatus);
+        registry.record_failure(&registration, FailureScope::Registration);
+        assert!(registry.remaining(&registration).is_none());
+    }
+
+    #[test]
     fn a_failure_opens_the_window_and_a_success_closes_it() {
         let registry = CooldownRegistry::new(CooldownPolicy::Off);
         let registration = a(Some(60_000));

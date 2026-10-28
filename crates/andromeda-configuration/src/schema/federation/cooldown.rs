@@ -40,7 +40,9 @@ pub struct CooldownConfig {
     /// How a source is held back after a failed forwarded request:
     /// `disabled` (only the registration's own cooldown), `constant` or
     /// `exponential`.
-    #[schemars(description = "How a source is held back after a failed forwarded request.")]
+    #[schemars(
+        description = "How a source is held back after a failed forwarded request. The default, `\"disabled\"`, holds back only registrations that set `management.cooldown`."
+    )]
     pub mode: CooldownMode,
     /// How long a source is held back after a failure, or after the first
     /// failure of an `exponential` episode, in human-readable form (`"1s"`).
@@ -57,7 +59,7 @@ pub struct CooldownConfig {
 impl Default for CooldownConfig {
     fn default() -> CooldownConfig {
         CooldownConfig {
-            mode: CooldownMode::Exponential,
+            mode: CooldownMode::Disabled,
             retry_interval: HumanDuration::from_secs(1),
             max_retry_interval: HumanDuration::from_days(1),
         }
@@ -74,9 +76,9 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn the_default_cooldown_is_exponential_from_one_second_to_a_day() {
+    fn the_default_cooldown_holds_back_only_registrations_that_set_one() {
         let config = CooldownConfig::default();
-        pretty_assertions::assert_eq!(config.mode, CooldownMode::Exponential);
+        pretty_assertions::assert_eq!(config.mode, CooldownMode::Disabled);
         pretty_assertions::assert_eq!(config.retry_interval.duration(), Duration::from_secs(1));
         pretty_assertions::assert_eq!(config.max_retry_interval.duration(), Duration::from_hours(24));
     }
