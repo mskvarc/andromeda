@@ -132,6 +132,18 @@ fn temporal_values_pair_by_the_timeproperty() {
     }
 }
 
+/// Clause 4.5.9 with clause 4.5.7: a removed Scope has no `observedAt`, so its
+/// pair carries the `deletedAt` it was removed at as its instant.
+#[test]
+fn a_removed_scope_pair_carries_its_deleted_at_as_the_instant() {
+    let body = evolution(json!({"scope": [
+        {"type": "Property", "value": ["/Madrid"], "observedAt": "2025-01-01T00:00:00Z"},
+        {"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "2025-01-02T00:00:00Z"}
+    ]}));
+    let result = written(&body, VALUES, None, None);
+    assert_eq!(result["scope"]["values"][1][1], json!("2025-01-02T00:00:00Z"));
+}
+
 /// Clause 4.5.9: one object per `datasetId`, the `datasetId` on the named one.
 #[test]
 fn temporal_values_split_by_dataset() {

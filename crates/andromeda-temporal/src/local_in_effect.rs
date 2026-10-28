@@ -119,6 +119,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
     use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 
     /// A window on `createdAt` or `modifiedAt` places the local part's
     /// instances by their system times, so the document keeps them, and a
@@ -166,5 +167,35 @@ mod tests {
         let deletion = instances.get(1).expect("the deletion");
         pretty_assertions::assert_eq!(deletion.instant_on(TimeProp::Deleted), Some(at("2020-08-01T11:30:00Z")));
         pretty_assertions::assert_eq!(part.id(), Some(&entity));
+    }
+
+    /// The split-query placement reads a deletion's own `observedAt`, so the
+    /// part keeps it on a removed Scope; only the response drops it.
+    #[test]
+    fn the_part_keeps_the_observed_at_of_a_removed_scope() {
+        let at = |raw: &str| raw.parse::<NgsiLdDateTime>().expect("a valid instant").get();
+        let entity: Identifier = "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier");
+        let scope = expanded_properties::SCOPE.as_str();
+        let row = TemporalHistoryRow {
+            attribute_name: scope.parse::<AttributeName>().expect("a valid attribute IRI"),
+            attribute_type: AttributeType::Property,
+            dataset_id: None,
+            value: TemporalValue::Tombstone {
+                deleted_at: at("2020-08-01T11:30:00Z"),
+            },
+            observed_at: Some(at("2020-08-01T11:00:00Z")),
+            recorded_at: at("2020-08-01T11:30:00Z"),
+            created_at: Some(at("2020-08-01T10:00:00Z")),
+            modified_at: Some(at("2020-08-01T11:30:00Z")),
+            instance: EvolutionInstance::Attribute(InstanceIdentity::Verbatim("urn:ngsi-ld:Instance:1".parse().expect("a valid URI"))),
+            metadata: None,
+            stream_extent: StreamExtent::Whole,
+        };
+        let part = part_document(&entity, vec![row]).expect("the row reads as an instance");
+        let removed = part.entity().attributes().get(scope).expect("scope").instances();
+        pretty_assertions::assert_eq!(
+            removed.first().expect("the removal").instant_on(TimeProp::Observed),
+            Some(at("2020-08-01T11:00:00Z"))
+        );
     }
 }

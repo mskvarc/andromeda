@@ -113,7 +113,7 @@ impl TemporalEntityRenderer<'_> {
         let mut max_time: Option<DateTime<Utc>> = None;
         let timestamps = rendered_timestamps(compiled);
 
-        for row in rows {
+        for mut row in rows {
             let kept = cut.is_none_or(|cut| cut.keeps(&row, timeproperty));
             // The reified Scope has no position on the requested axis. Clause
             // 4.5.6 names it beside "each Property and Relationship" rather
@@ -134,6 +134,7 @@ impl TemporalEntityRenderer<'_> {
             // clone: the attribute map owns the name the row is consumed with.
             let (_, instances) = attrs.entry(row.attribute_name.clone()).or_insert_with(|| (family, Vec::new()));
             if kept {
+                leave_deleted_scope_unobserved(&mut row);
                 instances.push(neutral_row_to_instance(row, timestamps)?);
             }
         }
@@ -211,6 +212,19 @@ fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
     });
 }
 
+/// Drop the `observedAt` of a removed reified Scope instance.
+///
+/// Clause 4.5.7 gives a deleted instance the instant of its `deletedAt`, and
+/// clause 4.18 makes a Scope valid from when it is set until it is removed, so
+/// a removed Scope has no observation of its own to render. The stored
+/// `observedAt` stays: `scopeQ` and the temporal windows read it. Any other
+/// row, a deleted attribute instance included, renders what it declared.
+fn leave_deleted_scope_unobserved(row: &mut TemporalHistoryRow) {
+    if is_scope_attribute(&row.attribute_name) && row.value.deleted_at().is_some() {
+        row.observed_at = None;
+    }
+}
+
 /// Whether `attr_name` is the clause 4.21 `scope` keyword's attribute row.
 pub(crate) fn is_scope_attribute(attr_name: &AttributeName) -> bool {
     attr_name.as_str() == expanded_properties::SCOPE.as_str()
@@ -223,7 +237,7 @@ pub(crate) fn is_scope_attribute(attr_name: &AttributeName) -> bool {
 )]
 mod tests {
     use crate::temporal::{entity::TemporalEntityRenderer, page_cut::PageCut};
-    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember};
+    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -231,6 +245,7 @@ mod tests {
         identifier::Identifier,
         instance_identity::InstanceIdentity,
         temporal_format::TemporalFormat,
+        time::date_time::NgsiLdDateTime,
         time_prop::TimeProp,
     };
     use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
@@ -425,6 +440,97 @@ mod tests {
         let entity = assembled(vec![row("speed", 0), row("fuel", 1)], Projection::default());
         assert!(carries(&entity, "https://example.com/speed"));
         assert!(carries(&entity, "https://example.com/fuel"));
+    }
+
+    /// A reified Scope row holding `value`, observed at the fixture instant.
+    fn scope_row(instance: u32, value: TemporalValue) -> TemporalHistoryRow {
+        let mut scope = row("speed", instance);
+        scope.attribute_name = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
+        scope.value = value;
+        scope
+    }
+
+    fn removed() -> TemporalValue {
+        TemporalValue::Tombstone { deleted_at: instant() }
+    }
+
+    fn set_scope() -> TemporalValue {
+        TemporalValue::Scopes(vec!["/Madrid".parse().expect("a scope path")])
+    }
+
+    /// The instances `name` of the assembled entity carries.
+    fn instance_documents(entity: &EntityDocument, name: &str) -> Vec<InstanceDocument> {
+        match entity.attributes().get(name) {
+            Some(AttributeMember::Instances(instances)) => instances.clone(),
+            Some(AttributeMember::Remove) | None => Vec::new(),
+        }
+    }
+
+    /// The `observedAt` an instance renders, when it renders one.
+    fn observed(instance: &InstanceDocument) -> Option<DateTime<Utc>> {
+        instance.observed_at().and_then(Slot::as_set).map(|observed| observed.get())
+    }
+
+    /// Clause 4.5.7: a removed Scope instance is placed by `deletedAt` alone.
+    #[test]
+    fn a_removed_scope_renders_without_observed_at() {
+        let mut tombstone = scope_row(0, removed());
+        tombstone.observed_at = Some(instant());
+        let entity = assembled(vec![tombstone], Projection::default());
+        let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(observed(&rendered[0]), None);
+        assert_eq!(rendered[0].deleted_at().map(NgsiLdDateTime::get), Some(instant()));
+    }
+
+    #[test]
+    fn a_set_scope_keeps_its_observed_at() {
+        let entity = assembled(vec![scope_row(0, set_scope())], Projection::default());
+        let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
+        assert_eq!(observed(&rendered[0]), Some(instant()));
+    }
+
+    #[test]
+    fn a_scope_removed_then_set_again_renders_the_removal_without_observed_at_and_the_set_with_it() {
+        let later = instant() + Duration::minutes(5);
+        let mut set_again = scope_row(1, set_scope());
+        set_again.observed_at = Some(later);
+        let entity = assembled(vec![scope_row(0, removed()), set_again], Projection::default());
+        let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
+        assert_eq!(rendered.len(), 2);
+        assert_eq!((observed(&rendered[0]), rendered[0].deleted_at().is_some()), (None, true));
+        assert_eq!(observed(&rendered[1]), Some(later));
+    }
+
+    /// The removal of an ordinary attribute keeps the `observedAt` it declared.
+    #[test]
+    fn a_removed_attribute_instance_keeps_its_declared_observed_at() {
+        let mut tombstone = row("speed", 0);
+        tombstone.value = removed();
+        let entity = assembled(vec![tombstone], Projection::default());
+        let rendered = instance_documents(&entity, "https://example.com/speed");
+        assert_eq!(observed(&rendered[0]), Some(instant()));
+    }
+
+    /// Scope history is kept whatever its instant and takes no part in the
+    /// reported range, with or without the `observedAt` the strip removes
+    /// after the cut and the range have read it.
+    #[test]
+    fn a_removed_scope_stays_whatever_the_cut_and_its_range_ignores_it() {
+        let mut inside = scope_row(0, removed());
+        inside.observed_at = Some(instant() + Duration::minutes(1));
+        let mut beyond = scope_row(1, removed());
+        beyond.observed_at = Some(instant() + Duration::minutes(9));
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: instant() + Duration::minutes(2),
+        };
+        let compiled = compiled(Projection::default());
+        let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), vec![inside, beyond], &compiled, Some(cut))
+            .render()
+            .expect("the rows render");
+        assert_eq!(instances(built.document.entity(), expanded_properties::SCOPE.as_str()), Some(2));
+        assert_eq!(built.time_range, None);
     }
 
     /// A row observed `minutes` after the fixture instant.
