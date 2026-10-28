@@ -234,15 +234,19 @@ fn register_snapshot_status_delivery(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
-                    let delivered = drain
+                    let outcome = drain
                         .execute(DateTime::<Utc>::from(execution.cutoff()))
                         .await
                         .map_err(classify_snapshot_failure)?;
-                    if delivered > 0 {
-                        tracing::info!(claimed = delivered, "snapshot status notification delivery completed");
+                    if outcome.claimed > 0 {
+                        tracing::info!(
+                            claimed = outcome.claimed,
+                            lease_lost = outcome.lease_lost,
+                            "snapshot status notification delivery completed"
+                        );
                     }
                     // A full batch may leave more waiting, so drain again immediately.
-                    if usize::try_from(drain.batch_size().get()).is_ok_and(|batch_size| delivered >= batch_size) {
+                    if usize::try_from(drain.batch_size().get()).is_ok_and(|batch_size| outcome.claimed >= batch_size) {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
                         Ok(DrainPassOutcome::Idle)

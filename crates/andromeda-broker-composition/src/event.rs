@@ -9,5 +9,6 @@
 pub mod entity_change_sink;
 pub mod registration_change_sink;
 pub mod snapshot_notification_sink;
+pub mod snapshot_status_queue;
 pub mod subscription_change_sink;
 pub mod subscription_endpoint_validator;

@@ -6,14 +6,14 @@ use crate::{
     snapshot::{json_value::optional_json, mapper::row_to_snapshot, record::snapshot_select, unencodable_snapshot_error::UnencodableSnapshotError},
     store_fault::{persistence_error, undecodable},
 };
-use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at, statement::Statement};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query, UpdateStatement};
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use std::num::NonZeroU32;
@@ -132,12 +132,30 @@ impl SnapshotStatusOutbox {
         rows.iter().map(map_delivery).collect()
     }
 
-    /// Mark a leased event delivered.
+    /// Extend the lease a worker holds on one claimed event.
+    ///
+    /// The guard is the one every acknowledgement carries: the row must still be
+    /// claimed by `worker` and neither delivered nor dead-lettered, so a row
+    /// another worker reclaimed after its lease lapsed is never extended back.
     ///
     /// # Errors
     ///
     /// Returns [`SnapshotError::persistence`] when the update fails.
-    pub async fn acknowledge(&self, id: Uuid, worker: LeaseHolder) -> Result<bool, SnapshotError> {
+    pub async fn renew(&self, id: Uuid, worker: LeaseHolder, lease_until: DateTime<Utc>) -> Result<LeaseAcknowledgement, SnapshotError> {
+        let result = renew_statement(id, worker, lease_until)
+            .to_query()
+            .execute(&self.pool)
+            .await
+            .map_err(|error| persistence_error::<SnapshotError>(error))?;
+        Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
+    }
+
+    /// Mark a leased event delivered, reporting whether the worker still held it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::persistence`] when the update fails.
+    pub async fn acknowledge(&self, id: Uuid, worker: LeaseHolder) -> Result<LeaseAcknowledgement, SnapshotError> {
         let statement = Query::update()
             .table(SnapshotNotificationOutbox::Table)
             .value(SnapshotNotificationOutbox::DeliveredAt, now())
@@ -155,10 +173,11 @@ impl SnapshotStatusOutbox {
             .execute(&self.pool)
             .await
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
-        Ok(result.rows_affected() == 1)
+        Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
     }
 
-    /// Record a failed attempt, scheduling retry or dead-lettering it.
+    /// Record a failed attempt, scheduling retry or dead-lettering it, and
+    /// report whether the worker still held the event.
     ///
     /// # Errors
     ///
@@ -171,7 +190,7 @@ impl SnapshotStatusOutbox {
         max_attempts: i32,
         retry_at: DateTime<Utc>,
         detail: &str,
-    ) -> Result<bool, SnapshotError> {
+    ) -> Result<LeaseAcknowledgement, SnapshotError> {
         let max_attempts = <i32 as Ord>::max(max_attempts, 1);
         let retry_due =
             || Expr::val(failure == SnapshotDeliveryFailure::Retryable).and(Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1).lt(max_attempts));
@@ -203,7 +222,7 @@ impl SnapshotStatusOutbox {
             .execute(&self.pool)
             .await
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
-        Ok(result.rows_affected() == 1)
+        Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
     }
 
     /// Remove old delivered and dead-lettered rows.
@@ -227,6 +246,18 @@ impl SnapshotStatusOutbox {
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
         Ok(result.rows_affected())
     }
+}
+
+/// The lease extension of one claimed event, guarded like its acknowledgement.
+fn renew_statement(id: Uuid, worker: LeaseHolder, lease_until: DateTime<Utc>) -> UpdateStatement {
+    Query::update()
+        .table(SnapshotNotificationOutbox::Table)
+        .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
+        .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
+        .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
+        .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
+        .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
+        .to_owned()
 }
 
 /// Queue the current terminal representation inside its lifecycle transaction.
@@ -310,11 +341,26 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::snapshot::status_outbox::outbox_insert;
+    use crate::snapshot::status_outbox::{outbox_insert, renew_statement};
+    use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use url::Url;
+    use uuid::Uuid;
+
+    #[test]
+    fn a_lease_renewal_reaches_only_an_undelivered_event_the_worker_still_claims() {
+        let worker = LeaseHolder::from(Uuid::nil());
+        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("a valid lease instant");
+        let sql = renew_statement(Uuid::nil(), worker, lease_until).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"SET "lease_until" = '2026-01-01 00:00:30.000000 +00:00'"#), "{sql}");
+        assert!(sql.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
+        assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
+    }
 
     #[test]
     fn the_outbox_payload_and_receiver_info_are_bound_as_json() {

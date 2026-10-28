@@ -1,7 +1,8 @@
 //! Delivery binding for snapshot status notifications.
 
+use crate::event::snapshot_status_queue::SnapshotStatusQueue;
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
-use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
@@ -15,9 +16,10 @@ use andromeda_notification::{
     delivery_error_bound::DeliveryErrorBound,
     delivery_policy::{error_bound, retry_schedule},
 };
-use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
+use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use futures::{StreamExt, stream};
 use std::{num::NonZeroU32, sync::Arc};
@@ -27,10 +29,27 @@ pub struct DeliverySnapshotNotificationSink {
     transport: Arc<TransportDispatcher>,
 }
 
+/// Sends one leased Snapshot status notification.
+#[async_trait]
+pub trait SnapshotStatusTransport: Send + Sync + 'static {
+    /// Send the notification of one claimed delivery and classify the answer.
+    async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult;
+}
+
+/// What one pass over the Snapshot status outbox did.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SnapshotStatusPassOutcome {
+    /// Number of deliveries claimed during the pass.
+    pub claimed: usize,
+    /// Number of claimed deliveries another worker owned by the time this one
+    /// acted on them, so this pass sent nothing for them or recorded no outcome.
+    pub lease_lost: usize,
+}
+
 /// Bounded, leased delivery pass over one tenant's Snapshot status outbox.
 pub struct SnapshotStatusDeliveryDrain {
-    outbox: Arc<SnapshotStatusOutbox>,
-    transport: Arc<DeliverySnapshotNotificationSink>,
+    outbox: Arc<dyn SnapshotStatusQueue>,
+    transport: Arc<dyn SnapshotStatusTransport>,
     worker: LeaseHolder,
     lease: Duration,
     max_attempts: i32,
@@ -46,8 +65,8 @@ pub struct SnapshotStatusDeliveryDrain {
 impl SnapshotStatusDeliveryDrain {
     /// Construct a drain from the same durable-delivery policy subscriptions use.
     pub fn new(
-        outbox: Arc<SnapshotStatusOutbox>,
-        transport: Arc<DeliverySnapshotNotificationSink>,
+        outbox: Arc<dyn SnapshotStatusQueue>,
+        transport: Arc<dyn SnapshotStatusTransport>,
         config: &DeliveryConfig,
     ) -> Result<SnapshotStatusDeliveryDrain, SnapshotError> {
         Ok(SnapshotStatusDeliveryDrain {
@@ -71,25 +90,42 @@ impl SnapshotStatusDeliveryDrain {
         })
     }
 
-    /// Claim, deliver and acknowledge one bounded batch, reporting how many were
-    /// claimed.
+    /// Claim, deliver and acknowledge one bounded batch.
+    ///
+    /// The whole batch is claimed under one lease, but deliveries run only
+    /// `max_concurrent` at a time, so a later delivery can wait out that lease
+    /// before its turn. Each delivery therefore renews its own lease when its
+    /// turn comes, and `request_timeout` plus the lease margin the
+    /// configuration enforces keeps that lease alive through the attempt. A
+    /// delivery whose renewal finds another worker holding it is not sent,
+    /// because the worker that reclaimed it sends it.
     ///
     /// Retention cleanup is a separate concern on its own cadence
     /// ([`cleanup`](Self::cleanup)), so a wake-driven delivery pass issues no
     /// `DELETE`: it does only the work its wake announced.
-    pub async fn execute(&self, now: DateTime<Utc>) -> Result<usize, SnapshotError> {
-        let lease_until = now.checked_add_signed(self.lease).ok_or(SnapshotInvariant::LeaseDeadlineOverflow)?;
-        let entries = self.outbox.claim(self.worker, lease_until, self.batch_size).await?;
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SnapshotError`] the claim, a renewal or an
+    /// acknowledgement reports, after every claimed delivery has been settled.
+    /// A lease another worker took over is counted in
+    /// [`SnapshotStatusPassOutcome::lease_lost`] rather than surfaced as an error.
+    pub async fn execute(&self, now: DateTime<Utc>) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
+        let clock = LeasePassClock::starting_at(now);
+        let entries = self.outbox.claim(self.worker, self.lease_deadline(clock.now())?, self.batch_size).await?;
         let claimed = entries.len();
         let results = stream::iter(entries)
-            .map(|entry| async move { self.deliver_one(entry, now).await })
+            .map(|entry| async move { self.deliver_one(entry, &clock).await })
             .buffer_unordered(self.concurrency)
             .collect::<Vec<_>>()
             .await;
+        let mut lease_lost = 0;
         for result in results {
-            result?;
+            if result? == LeaseAcknowledgement::Lost {
+                lease_lost += 1;
+            }
         }
-        Ok(claimed)
+        Ok(SnapshotStatusPassOutcome { claimed, lease_lost })
     }
 
     /// The batch size one [`execute`](Self::execute) pass claims at most.
@@ -112,12 +148,24 @@ impl SnapshotStatusDeliveryDrain {
         Ok(())
     }
 
-    async fn deliver_one(&self, entry: SnapshotStatusDelivery, now: DateTime<Utc>) -> Result<(), SnapshotError> {
-        let outcome = self.transport.deliver_status(&entry).await;
-        match outcome {
-            DeliveryResult::Delivered => {
-                self.outbox.acknowledge(entry.id, self.worker).await?;
-            }
+    /// The instant a lease taken at `from` runs out.
+    fn lease_deadline(&self, from: DateTime<Utc>) -> Result<DateTime<Utc>, SnapshotError> {
+        Ok(from.checked_add_signed(self.lease).ok_or(SnapshotInvariant::LeaseDeadlineOverflow)?)
+    }
+
+    /// Renew one claimed delivery's lease, send it, and record the outcome.
+    ///
+    /// The outcome is [`LeaseAcknowledgement::Lost`] when another worker owned
+    /// the delivery at the renewal, which sends nothing, or at the recording of
+    /// its outcome.
+    async fn deliver_one(&self, entry: SnapshotStatusDelivery, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, SnapshotError> {
+        let renewal = self.outbox.renew(&entry, self.worker, self.lease_deadline(clock.now())?).await?;
+        if renewal == LeaseAcknowledgement::Lost {
+            Self::report_lease_lost(&entry);
+            return Ok(LeaseAcknowledgement::Lost);
+        }
+        let acknowledgement = match self.transport.deliver_status(&entry).await {
+            DeliveryResult::Delivered => self.outbox.acknowledge(&entry, self.worker).await?,
             failure @ (DeliveryResult::RetryableFailure | DeliveryResult::TerminalFailure) => {
                 let retryable = failure.should_retry();
                 let failure = if retryable {
@@ -125,17 +173,30 @@ impl SnapshotStatusDeliveryDrain {
                 } else {
                     SnapshotDeliveryFailure::Terminal
                 };
-                let retry_at = retry_due_at(&self.retry_schedule, entry.attempt_count, now).map_err(SnapshotInvariant::NotificationAttemptCount)?;
+                let retry_at = retry_due_at(&self.retry_schedule, entry.attempt_count, clock.now()).map_err(SnapshotInvariant::NotificationAttemptCount)?;
                 let detail = if retryable {
                     "Snapshot notification delivery failed transiently"
                 } else {
                     "Snapshot notification delivery failed terminally"
                 };
                 let detail = self.error_bound.truncate(detail);
-                self.outbox.fail(entry.id, self.worker, failure, self.max_attempts, retry_at, &detail).await?;
+                self.outbox.fail(&entry, self.worker, failure, self.max_attempts, retry_at, &detail).await?
             }
+        };
+        if acknowledgement == LeaseAcknowledgement::Lost {
+            Self::report_lease_lost(&entry);
         }
-        Ok(())
+        Ok(acknowledgement)
+    }
+
+    /// Log a delivery that another worker took over.
+    fn report_lease_lost(entry: &SnapshotStatusDelivery) {
+        tracing::warn!(
+            snapshot_id = %entry.snapshot_id,
+            outbox_id = %entry.id,
+            event = "snapshot_status_delivery_lease_lost",
+            "another worker took over a Snapshot status delivery"
+        );
     }
 }
 
@@ -144,9 +205,12 @@ impl DeliverySnapshotNotificationSink {
     pub const fn new(transport: Arc<TransportDispatcher>) -> DeliverySnapshotNotificationSink {
         DeliverySnapshotNotificationSink { transport }
     }
+}
 
+#[async_trait]
+impl SnapshotStatusTransport for DeliverySnapshotNotificationSink {
     /// Deliver one durably leased Snapshot lifecycle event over HTTP.
-    pub async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult {
+    async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult {
         let request = DeliveryRequest {
             // clone: the leased outbox row remains available to record the result after transport completes
             body: NotificationBody::new(delivery.notification.clone()),
@@ -172,19 +236,4 @@ impl DeliverySnapshotNotificationSink {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn a_delivery_pass_issues_no_cleanup() -> Result<(), &'static str> {
-        // The drain is database-backed, so this guards the split structurally:
-        // the delivery pass is defined before the cleanup pass, and the only
-        // outbox cleanup call sits inside the cleanup pass, so a wake-driven
-        // delivery pass issues no retention DELETE.
-        let source = include_str!("snapshot_notification_sink.rs");
-        let execute = source.find("pub async fn execute").ok_or("delivery pass missing")?;
-        let cleanup_fn = source.find("pub async fn cleanup").ok_or("cleanup pass missing")?;
-        let cleanup_call = source.find("self.outbox.cleanup(").ok_or("outbox cleanup call missing")?;
-        assert!(execute < cleanup_fn, "the delivery pass is defined before the cleanup pass");
-        assert!(cleanup_call > cleanup_fn, "the outbox cleanup is issued only from the cleanup pass");
-        Ok(())
-    }
-}
+mod tests;

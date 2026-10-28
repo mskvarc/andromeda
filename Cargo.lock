@@ -181,6 +181,7 @@ dependencies = [
  "quinn",
  "reqwest",
  "rustls",
+ "serde_json",
  "serial_test",
  "shadow-rs",
  "sqlx",
@@ -194,6 +195,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
