@@ -6,7 +6,7 @@ use crate::{
     human_duration::HumanDuration,
     mqtt_packet_limit::MqttPacketLimit,
     notification_body_limit::NotificationBodyLimit,
-    schema::durable_queue::DurableQueue,
+    schema::{durable_queue::DurableQueue, private_ip_blocking::PrivateIpBlocking},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,26 +39,6 @@ pub enum DeliveryMode {
         description = "Every notification is written to the durable queue in the transaction that raised it, and sent by a worker with retry, leasing and dead-lettering."
     )]
     Durable,
-}
-
-/// Whether a notification may be sent to an endpoint that resolves into
-/// private or reserved address space.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "Whether a notification may be sent to an endpoint that resolves into private or reserved address space.")]
-pub enum PrivateAddresses {
-    /// Any endpoint the broker's network reaches is notified.
-    #[default]
-    #[schemars(description = "Any endpoint the broker's network reaches is notified.")]
-    Allowed,
-    /// An HTTP endpoint whose resolved address is loopback, private or
-    /// reserved is refused, so a client-supplied subscription cannot aim the
-    /// broker at internal infrastructure.
-    #[schemars(
-        description = "An HTTP endpoint whose resolved address is loopback, private or reserved is refused, so a client-supplied subscription cannot aim the broker at internal hosts. The refusal is recorded as a failed delivery."
-    )]
-    Refused,
 }
 
 /// How long a finished delivery is kept.
@@ -136,7 +116,7 @@ pub struct DeliveryConfig {
     #[schemars(
         description = "Whether a notification endpoint resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name."
     )]
-    pub private_addresses: PrivateAddresses,
+    pub private_addresses: PrivateIpBlocking,
     /// The largest notification body an HTTP delivery sends, in human-readable
     /// form (`"128 MiB"`). A larger notification fails without a retry.
     #[schemars(
@@ -172,7 +152,7 @@ impl Default for DeliveryConfig {
             request_timeout: HumanDuration::from_secs(10),
             max_concurrent: NonZeroU32::MIN.saturating_add(19),
             max_error_length: NonZeroU32::MIN.saturating_add(1023),
-            private_addresses: PrivateAddresses::Allowed,
+            private_addresses: PrivateIpBlocking::Allowed,
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
             queue: DurableQueue {
@@ -201,15 +181,17 @@ impl DeliveryConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::notifications::delivery::{DeliveryConfig, DeliveryMode, PrivateAddresses};
+    use crate::schema::{
+        notifications::delivery::{DeliveryConfig, DeliveryMode},
+        private_ip_blocking::PrivateIpBlocking,
+    };
     use pretty_assertions::assert_eq;
-    use std::str::FromStr;
 
     #[test]
     fn the_defaults_deliver_live_to_any_address() {
         let config = DeliveryConfig::default();
         assert_eq!(config.mode, DeliveryMode::Live);
-        assert_eq!(config.private_addresses, PrivateAddresses::Allowed);
+        assert_eq!(config.private_addresses, PrivateIpBlocking::Allowed);
         assert_eq!(config.queue.batch_size.get(), 50);
     }
 
@@ -218,12 +200,5 @@ mod tests {
         let config = DeliveryConfig::default();
         assert_eq!(config.max_http_body.octets(), 134_217_728);
         assert_eq!(config.max_mqtt_packet.octets(), 134_217_728);
-    }
-
-    #[test]
-    fn private_addresses_read_their_two_values_and_refuse_any_other() {
-        assert_eq!(PrivateAddresses::from_str("refused"), Ok(PrivateAddresses::Refused));
-        assert_eq!(PrivateAddresses::from_str("allowed"), Ok(PrivateAddresses::Allowed));
-        assert!(PrivateAddresses::from_str("enabled").is_err());
     }
 }

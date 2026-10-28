@@ -15,6 +15,7 @@ use crate::{
             compression::CompressionQuality,
             cors::{CorsMode, MethodRule},
         },
+        private_ip_blocking::PrivateIpBlocking,
     },
     validate::{
         bound::{Bound, Quantity, Relation},
@@ -509,6 +510,14 @@ fn a_source_id_that_is_not_an_iri_is_refused_at_load() {
         .expect_err("a source_id that is not an IRI must fail loading")
         .to_string();
     assert!(message.contains("source_id is not an IRI"), "{message}");
+}
+
+#[test]
+#[serial]
+fn federation_forwarding_private_ip_blocking_reads_refused_and_refuses_any_other_value() {
+    let config = load_file("[federation.forwarding]\nprivate_ip_blocking = \"refused\"\n").expect("refused is a defined value");
+    assert_eq!(config.federation.forwarding.private_ip_blocking, PrivateIpBlocking::Refused);
+    load_file("[federation.forwarding]\nprivate_ip_blocking = \"bogus\"\n").expect_err("bogus is not a defined value");
 }
 
 macro_rules! zero_batch_size_is_refused_with_its_path {

@@ -2,22 +2,13 @@
 
 use andromeda_configuration::{
     notification_body_limit::NotificationBodyLimit,
-    schema::{link_field_layout::LinkFieldLayout, notifications::delivery::PrivateAddresses},
+    schema::{link_field_layout::LinkFieldLayout, private_ip_blocking::PrivateIpBlocking},
 };
+use andromeda_outbound_http::client::DEFAULT_POOL_IDLE_TIMEOUT;
 use std::time::Duration;
 
 /// Default per-delivery timeout.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Default time an idle pooled connection is kept for reuse.
-///
-/// Shorter than the keep-alive timeout of common notification receivers (five
-/// seconds for Node.js), so the broker retires an idle connection before the
-/// receiver closes it. A POST written onto a connection the peer has already
-/// abandoned fails without a response and is not resent, since a POST is not
-/// idempotent; retiring the connection first avoids that failure instead of
-/// retrying into a possible duplicate.
-const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Configuration for the HTTP notification transport.
 #[derive(Debug, Clone)]
@@ -30,7 +21,7 @@ pub struct HttpTransportConfig {
     /// space is refused. A subscription's endpoint is client-supplied, so an
     /// unguarded broker POSTs to anything its network reaches; allowed by
     /// default, since a single-network deployment notifies internal hosts.
-    pub private_addresses: PrivateAddresses,
+    pub private_addresses: PrivateIpBlocking,
     /// How long an idle pooled connection is kept for reuse.
     pub pool_idle_timeout: Duration,
     /// How a notification's link-values are laid out over `Link` field lines.
@@ -42,7 +33,7 @@ impl Default for HttpTransportConfig {
         HttpTransportConfig {
             timeout: DEFAULT_TIMEOUT,
             max_body: NotificationBodyLimit::DEFAULT,
-            private_addresses: PrivateAddresses::Allowed,
+            private_addresses: PrivateIpBlocking::Allowed,
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
             link_field: LinkFieldLayout::Combined,
         }

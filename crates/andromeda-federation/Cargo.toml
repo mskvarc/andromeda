@@ -26,6 +26,7 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-outbound-http.workspace = true
 andromeda-registration.workspace = true
 andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true

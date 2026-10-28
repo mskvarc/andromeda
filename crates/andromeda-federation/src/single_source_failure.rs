@@ -44,7 +44,9 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
                 timeout: *timeout,
             })
         }
-        ForwardedWriteOutcome::Transport(failure @ (TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Unreadable(_))) => {
+        ForwardedWriteOutcome::Transport(
+            failure @ (TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Refused(_) | TransportFailure::Unreadable(_)),
+        ) => {
             Some(FederationError::BadGateway {
                 registration,
                 cause: Box::new(GatewayFailure::Transport(failure.clone())), // clone: the error owns the failure the result keeps reporting

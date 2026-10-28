@@ -1,53 +1,9 @@
-//! Refusing to deliver into address space a client should not be able to reach.
-//!
-//! A subscription names its own endpoint, so without this guard a client can
-//! point the broker at anything the broker's network can see and read the
-//! result from the delivery log. The check is on resolved addresses rather
-//! than on the hostname, because a name a client controls can resolve
-//! anywhere.
+//! Which IP addresses an outbound request must not reach.
 
-use crate::host_port::HostPort;
 use ip_network::{Ipv4Network, Ipv6Network};
-use std::{
-    io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
-};
-use tokio::net::lookup_host;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// Outcome of a private-IP guard lookup, cached short-term for hot endpoints.
-#[derive(Debug, Clone)]
-pub enum PrivateIpCheck {
-    /// The host resolved to only public, non-reserved addresses.
-    Allowed,
-    /// The host resolved to a private or reserved address.
-    Blocked {
-        /// The address that triggered the guard.
-        ip: IpAddr,
-    },
-    /// The host could not be resolved.
-    DnsFailed {
-        /// What the resolver reported, shared because the outcome is cached.
-        source: Arc<io::Error>,
-    },
-}
-
-/// Resolve an authority and decide whether delivery may proceed.
-pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck {
-    match lookup_host(authority.to_string()).await {
-        Ok(addrs) => {
-            for resolved in addrs {
-                if is_private_ip(&resolved.ip()) {
-                    return PrivateIpCheck::Blocked { ip: resolved.ip() };
-                }
-            }
-            PrivateIpCheck::Allowed
-        }
-        Err(error) => PrivateIpCheck::DnsFailed { source: Arc::new(error) },
-    }
-}
-
-/// Whether the address is one delivery must not be made to: anything that is not
+/// Whether the address is one an outbound request must not be made to: anything that is not
 /// a globally-routable unicast address.
 ///
 /// The classification is delegated to `ip_network`'s reserved-range predicates
@@ -80,7 +36,7 @@ pub fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// Whether an IPv4 address must not be delivered to.
+/// Whether an IPv4 address must not be requested.
 fn is_blocked_v4(v4: Ipv4Addr) -> bool {
     v4.is_multicast() || !Ipv4Network::from(v4).is_global()
 }
@@ -95,7 +51,7 @@ const fn is_nat64(v6: &Ipv6Addr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::http::private_ip::is_private_ip;
+    use crate::address_class::is_private_ip;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]

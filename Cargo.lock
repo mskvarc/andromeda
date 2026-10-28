@@ -308,6 +308,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-outbound-http",
  "andromeda-retry",
  "andromeda-telemetry",
  "async-trait",
@@ -317,9 +318,7 @@ dependencies = [
  "derive_more",
  "headers",
  "humantime",
- "ip_network",
  "iri-rs",
- "moka",
  "pretty_assertions",
  "reqwest",
  "rumqttc",
@@ -443,6 +442,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-outbound-http",
  "andromeda-registration",
  "andromeda-retry",
  "andromeda-telemetry",
@@ -1523,6 +1523,21 @@ dependencies = [
  "typed-builder",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-outbound-http"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-configuration",
+ "ip_network",
+ "moka",
+ "pretty_assertions",
+ "reqwest",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
 ]
 
 [[package]]

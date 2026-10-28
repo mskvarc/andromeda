@@ -1,6 +1,6 @@
 //! A connect-time DNS resolver that refuses private and reserved addresses.
 //!
-//! The pre-send guard in [`crate::http::transport`] resolves and vets an
+//! The pre-send guard in [`crate::endpoint_guard`] resolves and vets an
 //! endpoint's host, but `reqwest` resolves independently when it connects, so a
 //! name a client controls could resolve to a public address for the guard and to
 //! a private one for the connection (DNS rebinding). Installing this resolver on
@@ -8,8 +8,8 @@
 //! ones this resolver vetted, and a resolution containing any private or
 //! reserved address is refused outright.
 
-use crate::http::private_ip::is_private_ip;
-use andromeda_configuration::schema::notifications::delivery::PrivateAddresses;
+use crate::address_class::is_private_ip;
+use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::{
     error::Error,
@@ -38,15 +38,15 @@ struct PrivateAddressResolved {
 /// space.
 #[derive(Debug)]
 pub struct PrivateIpResolver {
-    /// Whether the SSRF guard is armed. When disabled this resolver is a plain
+    /// Whether the guard is armed. When allowed this resolver is a plain
     /// system-resolver passthrough.
-    blocking: PrivateAddresses,
+    blocking: PrivateIpBlocking,
 }
 
 impl PrivateIpResolver {
     /// A resolver enforcing the given policy.
     #[must_use]
-    pub const fn new(blocking: PrivateAddresses) -> PrivateIpResolver {
+    pub const fn new(blocking: PrivateIpBlocking) -> PrivateIpResolver {
         PrivateIpResolver { blocking }
     }
 }
@@ -59,12 +59,12 @@ impl Resolve for PrivateIpResolver {
 
 /// Resolve a host and, when the guard is armed, refuse it if any resolved
 /// address is private or reserved.
-async fn vetted_addrs(host: String, blocking: PrivateAddresses) -> ResolveResult {
+async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResult {
     // Port 0: `reqwest` overrides it with the URL's port (or the scheme default)
     // per the `Resolve` contract, so only the address is significant here.
     let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), 0)).await?.collect();
 
-    if blocking == PrivateAddresses::Refused
+    if blocking == PrivateIpBlocking::Refused
         && let Some(private) = resolved.iter().find(|addr| is_private_ip(&addr.ip()))
     {
         return Err(Box::new(PrivateAddressResolved { ip: private.ip() }));
@@ -79,12 +79,12 @@ async fn vetted_addrs(host: String, blocking: PrivateAddresses) -> ResolveResult
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::http::resolver::{PrivateAddressResolved, vetted_addrs};
-    use andromeda_configuration::schema::notifications::delivery::PrivateAddresses;
+    use crate::resolver::{PrivateAddressResolved, vetted_addrs};
+    use andromeda_configuration::schema::private_ip_blocking::PrivateIpBlocking;
 
     #[tokio::test]
     async fn a_loopback_resolution_is_refused_when_the_guard_is_armed() {
-        let refused = vetted_addrs("localhost".to_string(), PrivateAddresses::Refused).await;
+        let refused = vetted_addrs("localhost".to_string(), PrivateIpBlocking::Refused).await;
         let Err(error) = refused else {
             panic!("localhost resolves to loopback and must be refused");
         };
@@ -93,7 +93,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_loopback_resolution_is_allowed_when_the_guard_is_off() {
-        let allowed = vetted_addrs("localhost".to_string(), PrivateAddresses::Allowed).await;
-        assert!(allowed.is_ok(), "with the guard off, any resolvable host is delivered to");
+        let allowed = vetted_addrs("localhost".to_string(), PrivateIpBlocking::Allowed).await;
+        assert!(allowed.is_ok(), "with the guard off, any resolvable host is requested");
     }
 }

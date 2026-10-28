@@ -13,6 +13,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
+use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
@@ -44,6 +45,13 @@ pub enum TransportFailure {
     /// TLS failure.
     #[error("the forwarded request could not be delivered: {0}")]
     Undelivered(Arc<reqwest::Error>),
+    /// The endpoint is refused before anything is sent to it: it names no
+    /// host, cannot be resolved, or resolves into private or reserved address
+    /// space while `federation.forwarding.private_ip_blocking` is `refused`.
+    /// The cause is not part of the message, since a warning reaches the client
+    /// and the address belongs to the broker's network.
+    #[error("the forwarded request was refused before it was sent")]
+    Refused(#[source] EndpointRefusal),
     /// The source answered, but names in its answer do not expand against the
     /// context the request was written in, so the answer cannot be read in
     /// Fully Qualified Names (clauses 4.3.6.6 and 6.3.6).
@@ -320,7 +328,9 @@ impl ForwardedWriteResult {
         match &self.outcome {
             ForwardedWriteOutcome::Completed { status, .. } | ForwardedWriteOutcome::RemoteHttpFailure { status, .. } => *status,
             ForwardedWriteOutcome::Transport(TransportFailure::TimedOut { .. } | TransportFailure::CoolingDown { .. }) => 504,
-            ForwardedWriteOutcome::Transport(TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Unreadable(_)) => 502,
+            ForwardedWriteOutcome::Transport(
+                TransportFailure::Unprepared(_) | TransportFailure::Undelivered(_) | TransportFailure::Refused(_) | TransportFailure::Unreadable(_),
+            ) => 502,
             ForwardedWriteOutcome::LoopDetected => 508,
             ForwardedWriteOutcome::NotAdvertised => 409,
             ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => 422,

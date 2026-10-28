@@ -4,24 +4,19 @@ use crate::{
     connection_failure::ConnectionFailure,
     delivery_deadline::delivery_deadline,
     error::TransportError,
-    host_port::HostPort,
-    http::{
-        config::HttpTransportConfig,
-        private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
-        resolver::PrivateIpResolver,
-    },
+    http::config::HttpTransportConfig,
     outcome::{DeliveryOutcome, EndpointRejection, delivery_metric_outcome},
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
-use andromeda_configuration::schema::{link_field_layout::LinkFieldLayout, notifications::delivery::PrivateAddresses};
+use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use andromeda_http_headers::link::field_layout::apply_link_field_layout;
 use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
+use andromeda_outbound_http::{client::OutboundHttpPolicy, endpoint_guard::PrivateIpGuard, endpoint_refusal::EndpointRefusal};
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use headers::HeaderMapExt;
-use moka::future::Cache;
-use reqwest::{header::HeaderMap, redirect::Policy};
+use reqwest::header::HeaderMap;
 use std::{
     error::Error,
     iter,
@@ -30,20 +25,6 @@ use std::{
 use tracing::{debug, warn};
 use url::Url;
 
-/// TTL for the DNS private-IP check cache.
-///
-/// Short by design: keeps the SSRF guard effective against DNS rebinding while
-/// still eliminating the per-delivery `lookup_host` round trip for hot
-/// notification endpoints.
-const DNS_CHECK_TTL: Duration = Duration::from_secs(60);
-
-/// Maximum entries in the DNS check cache.
-const DNS_CHECK_CAPACITY: u64 = 1024;
-
-/// Default port assumed when an endpoint URI names neither one nor a scheme
-/// with a known default.
-const DEFAULT_HTTP_PORT: u16 = 80;
-
 /// HTTP notification transport backed by `reqwest::Client`.
 pub struct HttpTransport {
     /// The client every delivery goes out on, pooling connections across
@@ -51,12 +32,9 @@ pub struct HttpTransport {
     client: reqwest::Client,
     /// Timeout, size limit and SSRF policy.
     config: HttpTransportConfig,
-    /// Short-TTL cache of private-IP guard outcomes keyed by the endpoint
-    /// [`HostPort`].
-    ///
-    /// Collapses repeated `lookup_host` round trips for fan-out deliveries
-    /// without undermining the guard.
-    dns_cache: Cache<HostPort, PrivateIpCheck>,
+    /// Refuses an endpoint resolving into address space the broker will not
+    /// reach on a client's behalf, under the configured policy.
+    guard: PrivateIpGuard,
 }
 
 impl HttpTransport {
@@ -68,60 +46,33 @@ impl HttpTransport {
     /// refuses the client configuration, such as a TLS backend that cannot be
     /// initialised or a resolver the runtime will not accept.
     pub fn new(config: HttpTransportConfig) -> Result<HttpTransport, TransportError> {
-        let client = reqwest::ClientBuilder::new()
-            .http1_title_case_headers()
-            .timeout(config.timeout)
-            .pool_idle_timeout(config.pool_idle_timeout)
-            // A notification POST has no business following redirects: a public
-            // endpoint answering `302 Location: http://169.254.169.254/…` would
-            // otherwise walk the delivery straight past the SSRF guard, which
-            // only vets the original URI.
-            .redirect(Policy::none())
-            // Vet the addresses the client actually connects to, closing the
-            // DNS-rebinding window between the pre-send guard's resolution and
-            // reqwest's own.
-            .dns_resolver(PrivateIpResolver::new(config.private_addresses))
-            .build()
-            .map_err(TransportError::ClientInitializationFailed)?;
-        let dns_cache = Cache::builder().max_capacity(DNS_CHECK_CAPACITY).time_to_live(DNS_CHECK_TTL).build();
-        Ok(HttpTransport { client, config, dns_cache })
+        let policy = OutboundHttpPolicy {
+            timeout: config.timeout,
+            pool_idle_timeout: config.pool_idle_timeout,
+            blocking: config.private_addresses,
+        };
+        let client = policy.client_builder().build().map_err(TransportError::ClientInitializationFailed)?;
+        Ok(HttpTransport {
+            client,
+            config,
+            guard: policy.guard(),
+        })
     }
 
     /// Refuse delivery when the endpoint host resolves into address space the
     /// broker will not reach on a client's behalf.
-    ///
-    /// Results are cached for [`DNS_CHECK_TTL`] per endpoint [`HostPort`] so a
-    /// fan-out to the same endpoint skips the DNS round trip.
     async fn check_private_ip(&self, endpoint_uri: &Url) -> Result<(), TransportError> {
-        let host = endpoint_uri
-            .host()
-            .ok_or_else(|| TransportError::ConnectionFailed {
-                endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                cause: ConnectionFailure::NoHost,
-            })?
-            .to_owned();
-        let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
-        let authority = HostPort::new(host, port);
-
-        let outcome = if let Some(cached) = self.dns_cache.get(&authority).await {
-            cached
-        } else {
-            let computed = resolve_private_ip_outcome(&authority).await;
-            self.dns_cache.insert(authority, computed.clone()).await; // clone: the cache takes one and the caller reads the other
-            computed
-        };
-
-        match outcome {
-            PrivateIpCheck::Allowed => Ok(()),
-            PrivateIpCheck::Blocked { ip } => Err(TransportError::PrivateIpBlocked {
-                endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
-                ip,
-            }),
-            PrivateIpCheck::DnsFailed { source } => Err(TransportError::DnsResolutionFailed {
-                endpoint: endpoint_uri.clone(), // clone: same
-                source,
-            }),
-        }
+        self.guard.check(endpoint_uri).await.map_err(|refusal| {
+            let endpoint = endpoint_uri.clone(); // clone: the error owns the endpoint it names
+            match refusal {
+                EndpointRefusal::NoHost => TransportError::ConnectionFailed {
+                    endpoint,
+                    cause: ConnectionFailure::NoHost,
+                },
+                EndpointRefusal::Blocked { ip } => TransportError::PrivateIpBlocked { endpoint, ip },
+                EndpointRefusal::DnsFailed { source } => TransportError::DnsResolutionFailed { endpoint, source },
+            }
+        })
     }
 }
 
@@ -219,9 +170,7 @@ impl HttpTransport {
             return Err(TransportError::PayloadTooLarge { size: body.len(), limit });
         }
 
-        if self.config.private_addresses == PrivateAddresses::Refused {
-            self.check_private_ip(&req.endpoint_uri).await?;
-        }
+        self.check_private_ip(&req.endpoint_uri).await?;
 
         debug!(
             endpoint = %req.endpoint_uri,
@@ -336,7 +285,11 @@ mod tests {
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
-    use andromeda_configuration::{human_byte_size::HumanByteSize, notification_body_limit::NotificationBodyLimit, schema::link_field_layout::LinkFieldLayout};
+    use andromeda_configuration::{
+        human_byte_size::HumanByteSize,
+        notification_body_limit::NotificationBodyLimit,
+        schema::{link_field_layout::LinkFieldLayout, private_ip_blocking::PrivateIpBlocking},
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -442,6 +395,29 @@ mod tests {
         assert!(matches!(first, DeliveryOutcome::Success { .. }), "{first:?}");
         assert!(matches!(second, DeliveryOutcome::Success { .. }), "{second:?}");
         pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 2, "the second notification opened a fresh connection");
+    }
+
+    #[tokio::test]
+    async fn a_loopback_literal_endpoint_is_refused_when_private_addresses_are_refused() {
+        let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
+        let transport = HttpTransport::new(HttpTransportConfig {
+            private_addresses: PrivateIpBlocking::Refused,
+            ..HttpTransportConfig::default()
+        })
+        .expect("the transport builds");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::core();
+        let request = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .assemble(notification(&json!({"id": "urn:ngsi-ld:Notification:1"})));
+
+        let refused = transport.deliver(&request).await.expect_err("a loopback endpoint is refused");
+
+        assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
+        pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 0, "nothing connected to the refused endpoint");
     }
 
     /// A receiver that reads each request's whole body, answers 204, and

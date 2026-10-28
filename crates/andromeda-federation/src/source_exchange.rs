@@ -4,6 +4,7 @@
 use crate::{
     FederationService,
     cooldown::{AnswerKind, FailureScope},
+    guarded_send::GuardedSendError,
     outcome::TransportFailure,
 };
 use andromeda_http_headers::{
@@ -82,7 +83,7 @@ impl FederationService {
         request: reqwest::RequestBuilder,
     ) -> Result<SentResponse, TransportFailure> {
         let timeout = self.timeout_for(registration);
-        let outcome = match request.timeout(timeout).send().await {
+        let outcome = match self.send_guarded(request.timeout(timeout)).await {
             Ok(response) => {
                 let status = response.status();
                 record_upstream_status(status.as_u16());
@@ -111,7 +112,8 @@ impl FederationService {
                     Err(error) => Err(classify_transport_failure(error, timeout)),
                 }
             }
-            Err(error) => Err(classify_transport_failure(error, timeout)),
+            Err(GuardedSendError::Refused(refusal)) => Err(TransportFailure::Refused(refusal)),
+            Err(GuardedSendError::Send(error)) => Err(classify_transport_failure(error, timeout)),
         };
         let health = match registry_effect(&outcome) {
             RegistryEffect::Answered(AnswerKind::Succeeded) => {

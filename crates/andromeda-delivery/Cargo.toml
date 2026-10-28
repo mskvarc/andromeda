@@ -17,6 +17,7 @@ andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-outbound-http.workspace = true
 andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true
 async-trait = "0.1.92"
@@ -25,9 +26,7 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display"] }
 headers = "0.4.2"
 humantime = "2.4.0"
-ip_network = "0.4.1"
 iri-rs = "3.4.1"
-moka = { version = "0.12.16", features = ["future"] }
 reqwest = { version = "0.13.5", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 rustls = { version = "0.23.46", default-features = false, features = ["std"] }

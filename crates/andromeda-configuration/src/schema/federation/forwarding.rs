@@ -1,7 +1,7 @@
 //! The `[federation.forwarding]` table: how requests are forwarded to Context
 //! Sources.
 
-use crate::human_duration::HumanDuration;
+use crate::{human_duration::HumanDuration, schema::private_ip_blocking::PrivateIpBlocking};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -52,8 +52,17 @@ pub struct ForwardingConfig {
     /// How long a forwarded request may take before it is taken to have
     /// failed, unless the registration's `management.timeout` says otherwise
     /// (clause 5.2.34), in human-readable form (`"5s"`).
-    #[schemars(description = "How long a forwarded request may take before it counts as failed. A registration's own `management.timeout` takes precedence.")]
+    #[schemars(
+        description = "How long a forwarded request may take before it counts as failed, connecting and reading the answer included. A registration's own `management.timeout` takes precedence."
+    )]
     pub request_timeout: HumanDuration,
+    /// Whether a Context Source whose endpoint resolves into private or
+    /// reserved address space is `allowed` or `refused`. Checked against the
+    /// address actually resolved. Redirects are never followed.
+    #[schemars(
+        description = "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. A redirect from a context source is never followed, whatever this is set to."
+    )]
+    pub private_ip_blocking: PrivateIpBlocking,
     /// What `splitEntities` means when a request or subscription leaves it
     /// unset (clauses 4.3.6.7, 5.2.12, 5.8.6, 5.14.4.4): `complete` or `split`.
     #[schemars(description = "What `splitEntities` means when a request or subscription leaves it unset.")]
@@ -93,6 +102,7 @@ impl Default for ForwardingConfig {
             max_concurrent: NonZeroUsize::MIN.saturating_add(15),
             connect_timeout: HumanDuration::from_secs(3),
             request_timeout: HumanDuration::from_secs(5),
+            private_ip_blocking: PrivateIpBlocking::Allowed,
             split_entities: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
             max_query_source_rows: DEFAULT_MAX_QUERY_SOURCE_ROWS,

@@ -1,0 +1,23 @@
+[package]
+name = "andromeda-outbound-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-configuration.workspace = true
+ip_network = "0.4.1"
+moka = { version = "0.12.16", features = ["future"] }
+reqwest = "0.13.5"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["net"] }
+url = "2.5.8"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.54.1", features = ["io-util", "macros", "rt-multi-thread"] }

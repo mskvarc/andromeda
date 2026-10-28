@@ -241,7 +241,7 @@ impl FederationService {
                 return SourceConfiguration::Undescribed;
             }
         };
-        let response = match request.send().await {
+        let response = match self.send_guarded(request).await {
             Ok(response) if response.status().is_success() => response,
             Ok(response) => {
                 debug!(registration = %registration.id, status = %response.status(), "the context source answered no identity");

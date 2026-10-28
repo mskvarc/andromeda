@@ -78,6 +78,8 @@ mod forwarding_context;
 pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
 pub mod gateway_failure;
+/// Sending a built request through the pre-send guard.
+mod guarded_send;
 /// Asking a source for the instances a split temporal query's filters read
 /// when its window opens.
 pub mod in_effect_probe;
@@ -104,6 +106,12 @@ pub mod ordering_admission;
 pub mod outcome;
 /// Which registrations take part in a read.
 pub mod participating_read;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod private_ip_forwarding_tests;
 /// Single-entity provision forwarding.
 pub mod provision;
 /// Batch provision forwarding.
@@ -198,6 +206,10 @@ use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_outbound_http::{
+    client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy},
+    endpoint_guard::PrivateIpGuard,
+};
 use andromeda_registration::store::RegistrationStore;
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
@@ -220,6 +232,9 @@ fn registration_loops(registration: &ContextSourceRegistration, incoming_via: Op
 /// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct FederationService {
     http_client: reqwest::Client,
+    /// Refuses a Context Source endpoint resolving into address space the
+    /// broker will not reach on a client's behalf.
+    guard: PrivateIpGuard,
     csr_repo: Arc<dyn RegistrationStore>,
     /// Resolves a locally-held entity's type so an attribute-level write whose
     /// request carries no `type` is matched against registrations by the type
@@ -266,8 +281,13 @@ impl FederationService {
         source_alias: ContextSourcePseudonym,
         config: &FederationConfig,
     ) -> Result<FederationService, FederationError> {
-        let http_client = reqwest::ClientBuilder::new()
-            .http1_title_case_headers()
+        let policy = OutboundHttpPolicy {
+            timeout: config.forwarding.request_timeout(),
+            pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
+            blocking: config.forwarding.private_ip_blocking,
+        };
+        let http_client = policy
+            .client_builder()
             .no_gzip()
             .no_brotli()
             .no_deflate()
@@ -278,6 +298,7 @@ impl FederationService {
         let received_protocol = ReceivedProtocol::try_from("1.1").map_err(|error| FederationError::from(FederationInvariant::ForwardingProtocol(error)))?;
         Ok(FederationService {
             http_client,
+            guard: policy.guard(),
             csr_repo,
             local_entity_types,
             engine,
@@ -387,6 +408,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-outbound-http",
         "andromeda-registration",
         "andromeda-retry",
         "andromeda-telemetry",

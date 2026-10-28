@@ -32,8 +32,8 @@ use syn::{
 /// Neither can be a typed enum without abandoning the upstream trait, so both
 /// are tolerated here rather than papered over with an `#[allow]`.
 pub const TYPE_ERASED_ERROR_BASELINE: &[&str] = &[
-    "crates/andromeda-delivery/src/http/resolver.rs",
     "crates/andromeda-delivery/src/http/transport.rs",
+    "crates/andromeda-outbound-http/src/resolver.rs",
 ];
 
 /// Every production source that names a `dyn …Error` trait object, sorted.
