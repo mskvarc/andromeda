@@ -511,4 +511,46 @@ mod tests {
             vec!["urn:ngsi-ld:Vehicle:2"]
         );
     }
+
+    /// Clause 5.6.7.4: an entity holding a value the broker cannot store is
+    /// refused against its own identifier, and its neighbour is admitted.
+    #[tokio::test]
+    async fn the_batch_admission_refuses_only_the_entity_holding_nul() {
+        let (service, _recorded) = recording_service().await;
+        let unstorable = entity(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "brandName": {"type": "Property", "value": "nul\u{0}here"}}));
+        let entities = vec![unstorable, vehicle("urn:ngsi-ld:Vehicle:2")];
+
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
+
+        let [(id, refusal)] = refused.as_slice() else {
+            panic!("exactly the entity holding U+0000 is refused: {refused:?}");
+        };
+        pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        assert!(matches!(refusal, EntityError::Validation(_)), "{refusal:?}");
+        pretty_assertions::assert_eq!(
+            admitted.forwardable().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2"]
+        );
+    }
+
+    /// Clause 5.6.7.4 with every entity refused: each refusal is reported and
+    /// nothing is left to write.
+    #[tokio::test]
+    async fn a_batch_whose_every_entity_holds_nul_admits_nothing() {
+        let (service, _recorded) = recording_service().await;
+        let unstorable = |id: &str| entity(&json!({"id": id, "type": "Vehicle", "brandName": {"type": "Property", "value": {"model": "\u{0}"}}}));
+        let entities = vec![unstorable("urn:ngsi-ld:Vehicle:1"), unstorable("urn:ngsi-ld:Vehicle:2")];
+
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
+
+        pretty_assertions::assert_eq!(
+            refused.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+        );
+        pretty_assertions::assert_eq!(admitted.forwardable().count(), 0);
+    }
 }

@@ -39,13 +39,31 @@ pub fn quoted(text: &str) -> String {
     written
 }
 
+/// Whether the well-formed JSON text `text` holds U+0000 in one of its
+/// strings or member names.
+///
+/// IETF RFC 8259 section 7 admits the character in a string only as the
+/// escape `\u0000`, and every reverse solidus of a well-formed text opens an
+/// escape, so reading the escapes in turn finds it without decoding a string.
+#[must_use]
+pub fn holds_nul_character(text: &str) -> bool {
+    let mut rest = text;
+    while let Some((_, escape)) = rest.split_once('\\') {
+        if escape.starts_with("u0000") {
+            return true;
+        }
+        rest = escape.get(1..).unwrap_or_default();
+    }
+    false
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::json_text::quoted;
+    use crate::json_text::{holds_nul_character, quoted};
 
     #[test]
     fn plain_text_is_only_quoted() {
@@ -64,5 +82,18 @@ mod tests {
         let text = "tab\there \"quoted\" \u{07} é";
         let read: String = serde_json::from_str(&quoted(text)).expect("the quoted text is a JSON string");
         pretty_assertions::assert_eq!(read, text);
+    }
+
+    #[test]
+    fn a_nul_escape_in_a_string_or_a_member_name_is_found() {
+        assert!(holds_nul_character(r#"{"a":"x\u0000y"}"#));
+        assert!(holds_nul_character(r#"{"a\u0000":1}"#));
+        assert!(holds_nul_character(&quoted("nul\u{0}here")));
+    }
+
+    #[test]
+    fn an_escaped_reverse_solidus_before_u0000_is_no_nul() {
+        assert!(!holds_nul_character(r#"["\\u0000", "\u0001", "\"u0000"]"#));
+        assert!(!holds_nul_character(r#"{"a":[1,true,null]}"#));
     }
 }

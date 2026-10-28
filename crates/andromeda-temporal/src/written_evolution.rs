@@ -64,8 +64,8 @@ impl WrittenEvolution {
     /// Returns [`TemporalError::JsonLd`] when the context does not resolve or
     /// the processor refuses the payload, and [`TemporalError::Validation`]
     /// when the payload is no Temporal Evolution the model admits, puts a
-    /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
-    /// under a key of a Property value.
+    /// `unitCode` on a family defined without one, holds U+0000 in a text, or
+    /// holds the NGSI-LD Null under a key of a Property value.
     pub(crate) async fn expand(expansion: &EntityExpansion<'_>, written: WrittenTemporalEntity) -> Result<WrittenEvolution, TemporalError> {
         let (fragment, reified) = written.into_fragment();
         let document = expansion.entity_patch(&fragment, Normalization::Entity).await?;
@@ -75,6 +75,7 @@ impl WrittenEvolution {
         };
         admit_document_unit_codes(&document)?;
         document.admit_datatypes()?;
+        document.admit_stored_text()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }
@@ -87,8 +88,8 @@ impl WrittenEvolution {
     /// # Errors
     ///
     /// Returns [`TemporalError::Validation`] when an instance puts a
-    /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
-    /// under a key of a Property value.
+    /// `unitCode` on a family defined without one, holds U+0000 in a text, or
+    /// holds the NGSI-LD Null under a key of a Property value.
     pub(crate) fn of_history(history: TemporalDocument) -> Result<WrittenEvolution, TemporalError> {
         let (entity, _system_times, _emptied) = history.into_parts();
         let EntityDocumentParts {
@@ -104,6 +105,7 @@ impl WrittenEvolution {
         let document = EntityDocument::new(id, types, scope, expires_at, attributes);
         admit_document_unit_codes(&document)?;
         document.admit_datatypes()?;
+        document.admit_stored_text()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }

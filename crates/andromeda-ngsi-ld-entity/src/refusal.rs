@@ -126,6 +126,13 @@ pub enum EntityRefusal {
         #[source]
         source: DatatypeError,
     },
+    /// A text of an instance, at any depth, holds U+0000, which the broker
+    /// cannot store.
+    #[error("attribute '{attribute}': a value holds the character U+0000, which this broker cannot store")]
+    NulCharacter {
+        /// The attribute or sub-attribute whose value holds it.
+        attribute: AttributeName,
+    },
     /// A `valueType`, `objectType` or `vocab` entry is not a name.
     #[error("attribute '{attribute}': the member '{member}' is not a valid name: {source}")]
     Reference {
