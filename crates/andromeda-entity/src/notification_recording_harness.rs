@@ -147,6 +147,16 @@ pub(crate) fn budgeted_recording_service(budget: EntityPayloadBudget) -> EntityS
     service
 }
 
+/// [`budgeted_recording_service`], returning the writes it commits.
+pub(crate) fn budgeted_recording_service_with_writes(budget: EntityPayloadBudget) -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
+    let (service, RecordedCommits { writes, .. }, _payload_reads) = recording_service_with(
+        ChangeNotifier::new(None, SubscriptionMatching::Absent),
+        ProbeAnswer::Answers(DeletionWatchers::Possible),
+        budget,
+    );
+    (service, writes)
+}
+
 /// An entity service under observation: what it committed, how many whole
 /// states it read, and every change it published.
 pub(crate) struct ObservedService {

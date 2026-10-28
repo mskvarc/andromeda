@@ -32,9 +32,11 @@ use andromeda_entity::{
     change_notifier::ChangeNotifier,
     entity_snapshot::EntitySnapshot,
     notification_plan::{creation, modification},
+    stored_census::admit_stored_entity,
 };
 use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_state;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use chrono::Utc;
 use derive_more::{From, IsVariant};
 use std::sync::Arc;
@@ -68,7 +70,15 @@ impl TemporalService {
                         .await
                         .map_err(TemporalError::from_entity_failure)?;
                     let now = SystemInstant::new(Utc::now());
-                    let EvolutionWrite { write, events } = evolution_write(&self.notifier, target, entity_id, evolution, current.as_ref(), now)?;
+                    let EvolutionWrite { write, events } = evolution_write(
+                        &self.notifier,
+                        target,
+                        entity_id,
+                        evolution,
+                        current.as_ref(),
+                        now,
+                        self.limits.payload_budget.json_values,
+                    )?;
                     let committed = self.writes.commit(target, now, vec![write]).await.map_err(TemporalError::from)?;
                     let outcome = single(committed).map_err(TemporalError::from)?;
                     match after_attempt(&outcome) {
@@ -118,6 +128,11 @@ enum EvolutionAttempt {
 /// restatement) changes nothing a subscriber can see and leaves the Entity
 /// row as it was, the version it read standing as the precondition. The fold
 /// settles at `now`, the instant the commit records the evolution at.
+///
+/// The evolution document is counted against the payload budget on its own
+/// when it is admitted; the current state the fold stores is held to `limit`
+/// as a Core write's is, so evolutions each within the budget cannot grow the
+/// Entity past it.
 fn evolution_write(
     notifier: &ChangeNotifier,
     target: &ContextTarget,
@@ -125,6 +140,7 @@ fn evolution_write(
     evolution: &WrittenEvolution,
     current: Option<&EntitySnapshot>,
     now: SystemInstant,
+    limit: JsonValueLimit,
 ) -> Result<EvolutionWrite, TemporalError> {
     let previous = current.map(|snapshot| &snapshot.state);
     let fold = fold_into_current_state(previous.map(|state| &**state), evolution.document(), now.get())?;
@@ -143,6 +159,7 @@ fn evolution_write(
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
             state.settle(previous.map(|state| &**state), now);
+            admit_stored_entity(limit, previous.map(|state| &**state), &state)?;
             let state = Arc::new(state);
             // clone: Arc ref-count bump; the state is also the notification's
             let record = match previous {
@@ -186,6 +203,7 @@ struct EvolutionWrite {
 )]
 mod tests {
     use crate::{
+        error::TemporalError,
         evolution_write::{EvolutionWrite, evolution_write},
         written_evolution::WrittenEvolution,
     };
@@ -194,6 +212,7 @@ mod tests {
     use andromeda_entity::{
         change_notifier::{ChangeNotifier, SubscriptionMatching},
         entity_snapshot::EntitySnapshot,
+        stored_census::stored_value_count,
     };
     use andromeda_ngsi_ld_entity::{
         document::EntityDocument,
@@ -205,10 +224,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
-    use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_number::{JsonNumber, json_value::value_census::JsonValueLimit};
+    use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
     use chrono::{TimeZone, Utc};
     use serde_json::{Value, json};
-    use std::sync::Arc;
+    use std::{num::NonZeroUsize, sync::Arc};
 
     const SPEED: &str = "https://example.org/speed";
     const HEADING: &str = "https://example.org/heading";
@@ -253,6 +273,12 @@ mod tests {
 
     /// [`written`], settled at `now`.
     fn written_at(evolution: &Value, current: Option<&EntitySnapshot>, now: SystemInstant) -> EvolutionWrite {
+        folded(evolution, current, now, limit(usize::MAX)).expect("the evolution folds")
+    }
+
+    /// Fold `evolution` into `current` at `now`, holding current state to
+    /// `limit`.
+    fn folded(evolution: &Value, current: Option<&EntitySnapshot>, now: SystemInstant, limit: JsonValueLimit) -> Result<EvolutionWrite, TemporalError> {
         let document = EntityDocument::from_slice(&serde_json::to_vec(evolution).expect("JSON")).expect("a written evolution decodes");
         evolution_write(
             &ChangeNotifier::new(None, SubscriptionMatching::Absent),
@@ -261,8 +287,12 @@ mod tests {
             &WrittenEvolution::new(Arc::new(document), None),
             current,
             now,
+            limit,
         )
-        .expect("the evolution folds")
+    }
+
+    fn limit(values: usize) -> JsonValueLimit {
+        JsonValueLimit::new(NonZeroUsize::new(values).expect("a positive value limit"))
     }
 
     /// The lifecycle and the per-instance kinds of the one change a write owes.
@@ -430,5 +460,36 @@ mod tests {
         let write = written(&evolution, Some(&current));
 
         pretty_assertions::assert_eq!(owed(&write), (EntityLifecycle::Modified, vec![(SPEED, AttributeChangeKind::Deleted)]));
+    }
+
+    /// Each evolution fits the budget on its own, but the attribute it adds
+    /// would take current state past the entity value limit, so the fold is
+    /// refused rather than stored.
+    #[test]
+    fn a_fold_growing_current_state_past_the_value_limit_is_refused() {
+        let current = standing();
+        let held = stored_value_count(&current.state).get();
+        let evolution = vehicle(&json!({HEADING: [instance(90, "2024-06-01T00:00:00Z")]}));
+        let now = SystemInstant::new(Utc::now());
+
+        let refusal = folded(&evolution, Some(&current), now, limit(held)).err();
+
+        assert!(
+            matches!(refusal, Some(TemporalError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { .. }))),
+            "{refusal:?}"
+        );
+        folded(&evolution, Some(&current), now, limit(2 * held)).expect("the grown entity fits twice the standing count");
+    }
+
+    /// A newer observation of the standing attribute keeps current state at
+    /// its size, so it lands even when the limit was lowered below it.
+    #[test]
+    fn a_fold_keeping_current_state_at_its_size_lands_under_a_lowered_limit() {
+        let current = standing();
+        let evolution = vehicle(&json!({SPEED: [instance(5, "2024-06-01T00:00:00Z")]}));
+
+        let write = folded(&evolution, Some(&current), SystemInstant::new(Utc::now()), limit(1)).expect("the fold does not grow the entity");
+
+        assert!(matches!(write.write.entity, EntityMutation::Update(_)), "{:?}", write.write.entity);
     }
 }

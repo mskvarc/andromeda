@@ -63,11 +63,12 @@ pub struct RequestLimitsConfig {
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_json_values: NonZeroUsize,
-    /// The most JSON values one written entity may hold outside its
-    /// geometries and JSON literals, counted on the document the write
-    /// expands to; an entity over it is answered 413.
+    /// The most JSON values one entity may hold outside its geometries and
+    /// JSON literals, counted on the document a write expands to and on the
+    /// entity it stores; a write over it is answered 413. A write to an entity
+    /// already over a lowered limit lands when it does not grow the entity.
     #[schemars(
-        description = "The most JSON values one written entity may hold outside its geometries and JSON literals, counted on the expanded document. An entity over it is answered `413`. Zero is refused."
+        description = "The most JSON values one entity may hold outside its geometries and JSON literals, counted on the expanded document and on the entity a write stores, so several writes cannot grow one entity past it. A write over it is answered `413`. After the limit is lowered, an entity already over it can still be shrunk or rewritten at its size, but not grown. Zero is refused."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_entity_json_values: NonZeroUsize,

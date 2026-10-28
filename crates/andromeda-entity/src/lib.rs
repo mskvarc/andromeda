@@ -227,6 +227,15 @@ pub mod spatial_watermark;
 mod spatial_write_visibility;
 /// Query capabilities of one entity store.
 pub mod storage_profile;
+/// Tests that the entity value limit holds for the entity a write stores.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod stored_budget_recording;
+/// Counting what a stored entity holds against the entity value limit.
+pub mod stored_census;
 /// The clause 5.5.4 screening a write payload passes before anything else.
 pub mod write_admission;
 /// Tests that each write settles its system times at the instant its commit

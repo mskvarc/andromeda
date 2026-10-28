@@ -2,12 +2,12 @@
 //! clause 6.3.2 answers a request whose input "was too large" with 413
 //! `RequestEntityTooLarge`), and what a payload over it is refused with.
 //!
-//! The budget is taken per request: it bounds what one write makes the broker
-//! hold, not what an entity grows to over many writes. It is counted on the
-//! written document the typed expansion produced, by the layer that admits
-//! the write. The same walk holds each attribute to the nesting its stored
-//! expansion can be read back at, which is refused on its own terms (see
-//! [`crate::attribute_nesting`]).
+//! The budget is counted on the written document the typed expansion
+//! produced, by the layer that admits the write, and the entity value limit is
+//! counted again on the entity a write stores, so an entity cannot grow past
+//! it over several writes. The same document walk holds each attribute to the
+//! nesting its stored expansion can be read back at, which is refused on its
+//! own terms (see [`crate::attribute_nesting`]).
 
 use crate::attribute_nesting::AttributeNestingLimit;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
@@ -34,10 +34,10 @@ pub struct EntityPayloadBudget {
 /// What a payload's census found over its budget.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PayloadBudgetExceeded {
-    /// The payload holds more JSON values outside its geometries' positions
-    /// than the entity limit admits.
+    /// The payload, or the entity a write would store, holds more JSON values
+    /// outside its geometries' positions than the entity limit admits.
     #[error(
-        "the entity holds more than the {limit} JSON values this broker accepts in one entity, geometry positions and JSON literals aside; send its values over several entities or requests"
+        "the entity would hold more than the {limit} JSON values this broker accepts in one entity, geometry positions and JSON literals aside; remove values from it or spread its content over several entities"
     )]
     EntityJsonValues {
         /// The limit the payload exceeds.
@@ -86,6 +86,7 @@ impl EntityPayloadBudget {
 mod tests {
     use crate::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use std::num::NonZeroUsize;
 
     /// The refusal names the attribute whose geometry is over the limit and
@@ -100,5 +101,18 @@ mod tests {
         assert!(text.contains("'https://uri.etsi.org/ngsi-ld/location'"), "{text}");
         assert!(text.contains("100000"), "{text}");
         assert!(text.contains("send a simplified geometry"), "{text}");
+    }
+
+    /// The limit holds for the entity as stored, so the refusal advises
+    /// shrinking or splitting the entity, never sending it over more requests.
+    #[test]
+    fn a_value_refusal_names_the_limit_and_advises_splitting_the_entity() {
+        let refusal = PayloadBudgetExceeded::EntityJsonValues {
+            limit: JsonValueLimit::new(NonZeroUsize::new(1_000_000).expect("a positive limit")),
+        };
+        let text = refusal.to_string();
+        assert!(text.contains("1000000"), "{text}");
+        assert!(text.contains("spread its content over several entities"), "{text}");
+        assert!(!text.contains("requests"), "{text}");
     }
 }

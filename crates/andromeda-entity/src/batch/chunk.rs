@@ -19,6 +19,7 @@ use crate::{
     modification_write::leaves_entity_unchanged,
     notification_plan::{NotificationPlan, creation, modification},
     side_effect::SideEffectPlacement,
+    stored_census::admit_stored_entity,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -185,8 +186,9 @@ impl EntityService {
     /// # Errors
     ///
     /// Answers the entity's identifier with the failure, boxed because a
-    /// failure is the rare outcome, when the entity's search columns cannot be
-    /// derived.
+    /// failure is the rare outcome, when the stored entity would pass the
+    /// entity value limit or its search columns cannot be derived. Only that
+    /// entity is refused (clause 5.6.8.4).
     pub(super) fn chunk_update(
         &self,
         target: &ContextTarget,
@@ -197,6 +199,9 @@ impl EntityService {
         let StampedUpdate { previous, current, history } = StampedUpdate::of(states, now);
         if leaves_entity_unchanged(previous, &current, &history) {
             return Ok(None);
+        }
+        if let Err(exceeded) = admit_stored_entity(self.payload_budget.json_values, Some(previous), &current) {
+            return Err(Box::new((id, exceeded.into())));
         }
         self.update_write(target, id, previous, current, history).map(Some)
     }

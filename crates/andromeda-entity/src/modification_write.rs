@@ -7,7 +7,7 @@
 //! channels are planned from that one change (clause 5.2.12). A write that
 //! modified nothing is not stored at all.
 
-use crate::{EntityService, error::EntityError, notification_plan::modification};
+use crate::{EntityService, error::EntityError, notification_plan::modification, stored_census::admit_stored_entity};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -95,9 +95,15 @@ impl EntityService {
     /// unchanged when it names nothing to change) and for a fragment or a
     /// replacement restating what the entity holds alike.
     ///
+    /// A write that does modify the entity is held to the entity value limit
+    /// on the state it stores, so writes each within the limit cannot grow
+    /// one entity past it.
+    ///
     /// # Errors
     ///
-    /// Reports the [`EntityError`] of [`EntityService::modification_write`].
+    /// Reports [`EntityError::PayloadBudget`] when the stored entity would
+    /// pass the entity value limit, and the [`EntityError`] of
+    /// [`EntityService::modification_write`].
     pub(crate) fn write_if_modified(
         &self,
         target: &ContextTarget,
@@ -109,6 +115,7 @@ impl EntityService {
         if leaves_entity_unchanged(previous, &current, &history) {
             return Ok((None, Vec::new()));
         }
+        admit_stored_entity(self.payload_budget.json_values, Some(previous), &current)?;
         let ModificationWrite { write, events } = self.modification_write(target, id, previous, current, history)?;
         Ok((Some(write), events))
     }
