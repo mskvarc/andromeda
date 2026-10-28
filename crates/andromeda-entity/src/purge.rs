@@ -90,9 +90,7 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            for event in events {
-                self.notifier.publish(target, event);
-            }
+            self.notifier.publish(target, events).await;
         }
 
         Ok(modified_count)

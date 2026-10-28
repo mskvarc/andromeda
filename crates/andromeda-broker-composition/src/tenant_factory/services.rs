@@ -2,7 +2,7 @@
 
 use crate::{
     blocking_executor::TokioBlockingExecutor,
-    event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
+    event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
     linked_forwarding::LinkedForwarding,
     local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
@@ -158,17 +158,23 @@ pub(super) fn construct_services(
 /// notifications through, so a change is notified the same way whichever API
 /// made it (clause 5.8.6).
 ///
-/// A durable notification write is configured only when delivery is durable;
-/// with live delivery the notification worker evaluates subscriptions itself.
+/// A durable notification write is configured only when delivery is durable,
+/// and then nothing is published: no worker reads the live queue, which would
+/// otherwise fill and hold every write. With live delivery the notification
+/// worker evaluates every published change itself.
 fn compose_change_notifier(config: &TenantFactoryConfig, storage: &TenantStorage, signals: &TenantSignals) -> Arc<ChangeNotifier> {
-    let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
     let subscription_cache = Arc::clone(&storage.subscription_cache);
-    let matching = if config.notifications.delivery.is_durable() {
-        SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache })
-    } else {
-        SubscriptionMatching::AtDelivery(subscription_cache)
-    };
-    Arc::new(ChangeNotifier::new(Some(entity_change_sink), matching))
+    if config.notifications.delivery.is_durable() {
+        return Arc::new(ChangeNotifier::new(
+            None,
+            SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache }),
+        ));
+    }
+    let entity_change_sink = Arc::new(QueuedEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
+    Arc::new(ChangeNotifier::new(
+        Some(entity_change_sink),
+        SubscriptionMatching::AtDelivery(subscription_cache),
+    ))
 }
 
 /// Compose the entity policy service every write and read request enters.

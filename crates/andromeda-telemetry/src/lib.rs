@@ -13,7 +13,6 @@ pub mod delivery_ops;
 pub mod entity;
 pub mod error;
 pub mod federation_ops;
-pub mod live_change_loss;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod names;

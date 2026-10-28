@@ -151,9 +151,7 @@ impl EntityService {
             }
             if outcome.is_updated() {
                 landed += 1;
-                for event in events {
-                    self.notifier.publish(target, event);
-                }
+                self.notifier.publish(target, events).await;
             }
         }
         Ok(landed)

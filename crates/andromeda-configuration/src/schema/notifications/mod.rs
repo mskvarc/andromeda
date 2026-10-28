@@ -17,14 +17,14 @@ pub struct EvaluationConfig {
     /// evaluation.
     ///
     /// Only `live` delivery reads the buffer; `durable` delivery records every
-    /// notification in the commit that raised it. Every slot is allocated
-    /// when the tenant opens: at under half a kilobyte a slot the default
-    /// costs under 4 MB per tenant. A burst larger than the buffer, arriving
-    /// faster than it is read, loses the notifications of its oldest changes;
-    /// each lost change is logged at warn and counted on
-    /// `andromeda_notification_live_changes_lost_total`.
+    /// notification in the commit that raised it. No change is ever dropped:
+    /// once the buffer is full, a write waits after its commit until
+    /// evaluation makes room, so a burst larger than the buffer slows the
+    /// tenant's writes rather than losing notifications. At under half a
+    /// kilobyte a slot, a full buffer at the default holds under 4 MB per
+    /// tenant.
     #[schemars(
-        description = "The most committed entity changes each tenant buffers for live evaluation. A burst larger than the buffer, arriving faster than it is evaluated, loses the notifications of its oldest changes; each loss is logged at warn and counted on `andromeda_notification_live_changes_lost_total`. Every slot is allocated when the tenant opens, under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer. Zero is refused."
+        description = "The most committed entity changes each tenant buffers for live evaluation. No change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer. Zero is refused."
     )]
     pub max_queued_changes: NonZeroUsize,
     /// The most committed entity changes evaluated at once.

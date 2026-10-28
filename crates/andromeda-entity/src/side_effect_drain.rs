@@ -211,7 +211,7 @@ impl EntitySideEffectDrain {
                 // The replay removed the job in its own transaction, under this
                 // worker's lease, so its live change events are published
                 // exactly here, once.
-                self.publish_changes(committed);
+                self.publish_changes(committed).await;
                 record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::Completed, 1);
                 Ok(JobSettlement::Settled)
             }
@@ -328,17 +328,19 @@ impl EntitySideEffectDrain {
     /// durable-delivery broker publishes nothing: its notification worker does
     /// not evaluate in-process changes, and the replay commit already queued the
     /// deliveries.
-    fn publish_changes(&self, committed: CommittedSideEffect) {
+    async fn publish_changes(&self, committed: CommittedSideEffect) {
         let SideEffectNotificationRoute::Live(sink) = &self.notifications else {
             return;
         };
         let CommittedSideEffect { change_events } = committed;
-        for event in change_events {
-            sink.publish(ContextChangeEvent {
+        let changes = change_events
+            .into_iter()
+            .map(|event| ContextChangeEvent {
                 target: ContextTarget::Live,
                 event,
-            });
-        }
+            })
+            .collect();
+        sink.publish(changes).await;
     }
 
     /// Remove dead-lettered jobs created before `cutoff`, returning how many
@@ -406,7 +408,7 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
     use chrono::{DateTime, TimeZone, Utc};
-    use futures::future::BoxFuture;
+    use futures::{future, future::BoxFuture};
     use serde_json::json;
     use std::{
         collections::VecDeque,
@@ -431,10 +433,11 @@ mod tests {
     }
 
     impl EntityChangeSink for RecordingSink {
-        fn publish(&self, event: ContextChangeEvent) {
+        fn publish(&self, changes: Vec<ContextChangeEvent>) -> BoxFuture<'static, ()> {
             if let Ok(mut published) = self.published.lock() {
-                published.push(event);
+                published.extend(changes);
             }
+            Box::pin(future::ready(()))
         }
     }
 

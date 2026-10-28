@@ -234,14 +234,7 @@ async fn build_tenant_state(
     task_supervisor: TaskSupervisor,
     subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
-    // Only live delivery reads committed entity changes from the channel; a
-    // durable tenant still publishes into it and needs no more than one slot.
-    let entity_change_capacity = if config.notifications.delivery.is_durable() {
-        1
-    } else {
-        config.notifications.evaluation.max_queued_changes.get()
-    };
-    let signals = TenantSignals::new(entity_change_capacity);
+    let signals = TenantSignals::new(config.notifications.evaluation.max_queued_changes);
     let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
     // One pacer for every background pass the tenant runs, created before the
     // first of them is registered, so one obligation read decides for all of

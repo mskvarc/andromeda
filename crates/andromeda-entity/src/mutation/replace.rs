@@ -62,9 +62,7 @@ impl EntityService {
                 })
                 .await?;
 
-            for event in events {
-                self.notifier.publish(target, event);
-            }
+            self.notifier.publish(target, events).await;
             Ok(())
         }
         .await;

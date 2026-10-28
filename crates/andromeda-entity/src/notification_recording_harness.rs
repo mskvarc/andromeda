@@ -53,6 +53,7 @@ use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
+use futures::{future, future::BoxFuture};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::{
@@ -177,8 +178,12 @@ pub(crate) struct RecordingSink {
 }
 
 impl EntityChangeSink for RecordingSink {
-    fn publish(&self, event: ContextChangeEvent) {
-        self.published.lock().expect("recording mutex is not poisoned").push(event.event);
+    fn publish(&self, changes: Vec<ContextChangeEvent>) -> BoxFuture<'static, ()> {
+        self.published
+            .lock()
+            .expect("recording mutex is not poisoned")
+            .extend(changes.into_iter().map(|change| change.event));
+        Box::pin(future::ready(()))
     }
 }
 

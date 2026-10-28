@@ -70,13 +70,18 @@ impl ChangeNotifier {
         }
     }
 
-    /// Publish one change the store has committed.
-    pub fn publish(&self, target: &ContextTarget, event: ChangeEvent) {
+    /// Publish the changes one commit made, in commit order, waiting while the
+    /// consumer catches up.
+    pub async fn publish(&self, target: &ContextTarget, events: impl IntoIterator<Item = ChangeEvent>) {
         if let Some(ref sink) = self.change_sink {
-            sink.publish(ContextChangeEvent {
-                target: target.clone(), // clone: the asynchronous consumer owns the immutable branch selection.
-                event,
-            });
+            let changes = events
+                .into_iter()
+                .map(|event| ContextChangeEvent {
+                    target: target.clone(), // clone: the asynchronous consumer owns the immutable branch selection.
+                    event,
+                })
+                .collect();
+            sink.publish(changes).await;
         }
     }
 

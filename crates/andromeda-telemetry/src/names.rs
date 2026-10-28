@@ -58,8 +58,6 @@ pub const FEDERATION_UPSTREAM_STATUS_TOTAL: &str = "andromeda_federation_upstrea
 pub const NOTIFICATION_DELIVERIES_TOTAL: &str = "andromeda_notification_deliveries_total";
 /// Histogram of notification delivery durations in seconds.
 pub const NOTIFICATION_DELIVERY_SECONDS: &str = "andromeda_notification_delivery_seconds";
-/// Counter of committed entity changes live notification evaluation lost to a full change buffer.
-pub const NOTIFICATION_LIVE_CHANGES_LOST_TOTAL: &str = "andromeda_notification_live_changes_lost_total";
 /// Counter of background task failures, labelled by failure class and criticality.
 pub const TASK_FAILURES_TOTAL: &str = "andromeda_task_failures_total";
 /// Histogram of subscription candidates surviving each funnel stage per event.

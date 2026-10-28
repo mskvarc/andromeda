@@ -342,9 +342,7 @@ impl EntityService {
             emit_events.extend(events);
         }
 
-        for event in emit_events {
-            self.notifier.publish(target, event);
-        }
+        self.notifier.publish(target, emit_events).await;
 
         Ok(chunk)
     }

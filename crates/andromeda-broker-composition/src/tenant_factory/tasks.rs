@@ -55,29 +55,35 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     wake_trigger::{DrainWakeReceiver, WakeHandle},
 };
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 use tokio::{
-    sync::{broadcast, watch},
+    sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
 
 /// Change channels shared by tenant services and their workers.
 pub(super) struct TenantSignals {
-    pub(super) entity: broadcast::Sender<ContextChangeEvent>,
+    /// Where committed entity changes queue for live notification evaluation.
+    pub(super) entity: mpsc::Sender<ContextChangeEvent>,
+    /// The queue's one reader, held across restarts of the notification worker
+    /// so a change queued while it restarts is still evaluated.
+    pub(super) entity_receiver: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
     pub(super) registration: broadcast::Sender<CsrChangeEvent>,
     pub(super) csource_subscription: broadcast::Sender<CsourceSubscriptionChange>,
 }
 
 impl TenantSignals {
-    /// Open bounded change channels for a tenant.
-    pub(super) fn new(entity_capacity: usize) -> TenantSignals {
-        let (entity, _) = broadcast::channel(entity_capacity.max(1));
+    /// Open bounded change channels for a tenant, queueing up to
+    /// `entity_capacity` committed entity changes for live evaluation.
+    pub(super) fn new(entity_capacity: NonZeroUsize) -> TenantSignals {
+        let (entity, entity_receiver) = mpsc::channel(entity_capacity.get());
         let (subscription, _) = broadcast::channel(1024);
         let (registration, _) = broadcast::channel(1024);
         let (csource_subscription, _) = broadcast::channel(1024);
         TenantSignals {
             entity,
+            entity_receiver: Arc::new(Mutex::new(entity_receiver)),
             subscription,
             registration,
             csource_subscription,
@@ -150,6 +156,7 @@ pub(super) fn supervise_tasks(
     } = channels;
     let TenantSignals {
         entity,
+        entity_receiver,
         subscription,
         registration,
         csource_subscription,
@@ -188,7 +195,7 @@ pub(super) fn supervise_tasks(
         delivery_queue(storage),
         &config.notifications,
         notification_processor,
-        &entity,
+        entity_receiver,
         subscription,
         DeliveryDrainDrive {
             wake: notification_wake,

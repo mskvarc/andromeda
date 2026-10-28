@@ -55,16 +55,16 @@ use andromeda_task_runtime::{
     task_name::TaskName,
     wake_trigger::wake_channel,
 };
-use andromeda_telemetry::live_change_loss::record_lost_live_changes;
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::sync::{
+    Mutex,
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
+    mpsc,
 };
-use tracing::warn;
 
 /// Committed entity changes one live evaluation lane queues behind the change
-/// it is evaluating; a full lane holds the rest in the tenant's change buffer.
+/// it is evaluating; a full lane holds the rest in the tenant's change queue.
 const LIVE_LANE_DEPTH: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Compose the query service one tenant's notifications resolve the Linked
@@ -151,7 +151,7 @@ pub(super) fn register_notification_workers(
     store: Arc<dyn DeliveryStore>,
     config: &NotificationsConfig,
     processor: Arc<NotificationProcessor>,
-    entity_changes: &broadcast::Sender<ContextChangeEvent>,
+    entity_changes: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
@@ -162,7 +162,7 @@ pub(super) fn register_notification_workers(
     };
     register_notification_processor(
         supervisor,
-        entity_changes.clone(), // clone: each worker owns a sender handle it subscribes through.
+        entity_changes,
         subscription_changes,
         Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
@@ -253,19 +253,9 @@ fn live_evaluation_lanes(
     }
 }
 
-/// Log and count the committed entity changes the live change buffer dropped
-/// before evaluation read them.
-fn report_lost_live_changes(skipped: u64) {
-    warn!(
-        skipped,
-        "live notification evaluation fell behind the committed entity changes; the notifications of the skipped changes are lost"
-    );
-    record_lost_live_changes(skipped);
-}
-
 fn register_notification_processor(
     supervisor: &TaskSupervisor,
-    entity_changes: broadcast::Sender<ContextChangeEvent>,
+    entity_changes: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     processor: Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
@@ -280,10 +270,11 @@ fn register_notification_processor(
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let mut entity_receiver = entity_changes.subscribe();
+        let entity_changes = Arc::clone(&entity_changes); // clone: every resident attempt takes the one queue reader in turn.
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = Arc::clone(&processor); // clone: every resident attempt owns the shared policy operation.
         async move {
+            let mut entity_receiver = entity_changes.lock_owned().await;
             processor.reload_cache().await.map_err(worker_notification_failure)?;
             let evaluation = live_evaluation_lanes(&processor, delivery, lanes);
             execution.mark_running();
@@ -304,7 +295,7 @@ fn register_notification_processor(
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Subscription)),
                     },
                     received = entity_receiver.recv(), if evaluation.is_some() => match received {
-                        Ok(change) => {
+                        Some(change) => {
                             loop {
                                 match subscription_receiver.try_recv() {
                                     Ok(change) => processor.apply_subscription_change(change).await,
@@ -319,8 +310,7 @@ fn register_notification_processor(
                                 lanes.lane(&change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
                             }
                         }
-                        Err(RecvError::Lagged(skipped)) => report_lost_live_changes(skipped),
-                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Entity)),
+                        None => return Err(channel_closed(ChangeChannel::Entity)),
                     },
                 }
             }

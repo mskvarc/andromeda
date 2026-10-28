@@ -143,16 +143,18 @@ impl EntityService {
         if next != AfterAttempt::Settled {
             return Ok(next);
         }
-        self.notifier.publish(
-            target,
-            ChangeEvent::builder()
-                .entity_id(id.clone()) // clone: the published event owns its identifier
-                .entity_types(types)
-                .change(change)
-                .occurred_at(now.get())
-                .origin(ChangeOrigin::Local)
-                .build(),
-        );
+        self.notifier
+            .publish(
+                target,
+                [ChangeEvent::builder()
+                    .entity_id(id.clone()) // clone: the published event owns its identifier
+                    .entity_types(types)
+                    .change(change)
+                    .occurred_at(now.get())
+                    .origin(ChangeOrigin::Local)
+                    .build()],
+            )
+            .await;
         Ok(next)
     }
 
@@ -221,19 +223,21 @@ impl EntityService {
             return Ok(next);
         }
 
-        self.notifier.publish(
-            target,
-            ChangeEvent::builder()
-                .entity_id(id.clone()) // clone: the published event owns its identifier
-                .entity_types(entity_types)
-                .change(change)
-                .occurred_at(now.get())
-                .origin(ChangeOrigin::Local)
-                .entity_snapshot(Some(Arc::clone(&removed)))
-                .previous_attributes(Some(removed))
-                .sys_attrs_snapshot(sys_attrs_snapshot)
-                .build(),
-        );
+        self.notifier
+            .publish(
+                target,
+                [ChangeEvent::builder()
+                    .entity_id(id.clone()) // clone: the published event owns its identifier
+                    .entity_types(entity_types)
+                    .change(change)
+                    .occurred_at(now.get())
+                    .origin(ChangeOrigin::Local)
+                    .entity_snapshot(Some(Arc::clone(&removed)))
+                    .previous_attributes(Some(removed))
+                    .sys_attrs_snapshot(sys_attrs_snapshot)
+                    .build()],
+            )
+            .await;
 
         Ok(next)
     }

@@ -95,9 +95,7 @@ impl TemporalService {
             Ok(events) => {
                 // The events describe the attempt the store accepted, never one
                 // that was computed and lost to a concurrent writer.
-                for event in events {
-                    self.notifier.publish(target, event);
-                }
+                self.notifier.publish(target, events).await;
                 Ok(())
             }
             Err(EvolutionAttempt::Lost) => Err(TemporalError::TransactionContended),

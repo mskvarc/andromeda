@@ -57,7 +57,7 @@ impl EntityService {
                 return Err(EntityError::already_exists(id));
             }
 
-            plan.events.into_iter().for_each(|event| self.notifier.publish(target, event));
+            self.notifier.publish(target, plan.events).await;
 
             Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
         }

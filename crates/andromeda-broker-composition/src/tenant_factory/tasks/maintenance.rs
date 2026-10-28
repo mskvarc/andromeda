@@ -1,7 +1,7 @@
 //! Durable entity side-effect and spatial-maintenance task registration.
 
 use crate::{
-    event::entity_change_sink::BroadcastEntityChangeSink,
+    event::entity_change_sink::QueuedEntityChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::{AssemblyInvariant, RetentionSetting},
@@ -43,7 +43,7 @@ use andromeda_task_runtime::{
 };
 use chrono::{DateTime, Utc};
 use std::{future::Future, sync::Arc, time::Duration};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 /// Compose the tenant's durable side-effect drain and register the workers
 /// that service it.
@@ -64,7 +64,7 @@ pub(super) fn register_entity_side_effects(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
     writes: &Arc<dyn ContextCommitter>,
-    changes: &broadcast::Sender<ContextChangeEvent>,
+    changes: &mpsc::Sender<ContextChangeEvent>,
     wake: DrainWakeReceiver,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
@@ -77,7 +77,7 @@ pub(super) fn register_entity_side_effects(
             subscription_cache: Arc::clone(&storage.subscription_cache),
         })
     } else {
-        SideEffectNotificationRoute::Live(Arc::new(BroadcastEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>) // clone: services and the drain each own a sender handle.
+        SideEffectNotificationRoute::Live(Arc::new(QueuedEntityChangeSink::new(changes.clone())) as Arc<dyn EntityChangeSink>) // clone: services and the drain each own a sender handle.
     };
     let drain = Arc::new(EntitySideEffectDrain::new(
         Arc::new(PendingSideEffectsRepository::new(
