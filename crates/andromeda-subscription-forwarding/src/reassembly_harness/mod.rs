@@ -31,7 +31,11 @@ use crate::{
 use andromeda_configuration::schema::{federation::FederationConfig, request_limits::RequestLimitsConfig};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{dispatch::TransportDispatcher, http::config::HttpTransportConfig, mqtt::config::MqttPoolConfig};
-use andromeda_entity::{configured_policy::geometry_census_limits, query::EntityQueryService, spatial_acceleration::SpatialAcceleration};
+use andromeda_entity::{
+    configured_policy::{filter_complexity_limits, geometry_census_limits},
+    query::EntityQueryService,
+    spatial_acceleration::SpatialAcceleration,
+};
 use andromeda_federation::{FederationService, local_entity_type::LocalEntityTypeResolver};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -46,6 +50,7 @@ use andromeda_subscription::{
     deleted_members::DeletedMembers,
     endpoint_admission::SubscriptionEndpointValidator,
     endpoint_refusal::EndpointRefusal,
+    filter_admission::SubscriptionFilterAdmission,
     forwarding_hook::ForwardedCopy,
     lifecycle::SubscriptionService,
 };
@@ -196,8 +201,11 @@ impl ReassemblyScene {
             CsrSubscriptionVariant::new(offline_engine()),
             None,
             Arc::new(AcceptingEndpoints),
-            GeoQueryAdmission::new(geometry_census_limits(&RequestLimitsConfig::default()), NearDistanceBand::Refused),
-            LanguageTargeting::Specification,
+            SubscriptionFilterAdmission {
+                geo_q: GeoQueryAdmission::new(geometry_census_limits(&RequestLimitsConfig::default()), NearDistanceBand::Refused),
+                q_complexity: filter_complexity_limits(&RequestLimitsConfig::default()),
+                language_targeting: LanguageTargeting::Specification,
+            },
         );
         let held = Arc::new(HeldEntities::new(held));
         let federation = FederationService::new(
@@ -220,6 +228,7 @@ impl ReassemblyScene {
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)
+            .filter_complexity(filter_complexity_limits(&RequestLimitsConfig::default()))
             .build();
         let service = SubscriptionForwardingService::builder()
             .live_target(ContextTarget::Live)

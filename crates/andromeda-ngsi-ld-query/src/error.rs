@@ -43,6 +43,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_number::{JsonNumberError, held_text::UnholdableCharacter};
 use langtag::{InvalidLangTag, LangTagBuf};
 use regex_syntax::hir;
+use std::num::NonZeroUsize;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]
@@ -121,6 +122,25 @@ pub enum QueryError {
         depth: usize,
         /// The maximum the parser accepts.
         limit: usize,
+    },
+    /// The filter makes more comparisons than the broker resolves in one
+    /// query (clause 5.5.6, `TooComplexQuery`).
+    #[error("q expression: {comparisons} comparisons, more than the {limit} this broker resolves in one query; a value list counts one comparison per value")]
+    QTooManyComparisons {
+        /// The comparisons the filter makes, a value list making one per value.
+        comparisons: usize,
+        /// The most the broker resolves.
+        limit: NonZeroUsize,
+    },
+    /// The filter nests its `;` and `|` combinations, or its parentheses,
+    /// deeper than the broker resolves in one query (clause 5.5.6,
+    /// `TooComplexQuery`).
+    #[error("q expression: nested {depth} levels deep, more than the {limit} this broker resolves in one query")]
+    QNestedTooDeep {
+        /// How deep the filter nests.
+        depth: usize,
+        /// The deepest the broker resolves.
+        limit: NonZeroUsize,
     },
     /// A one-member bracket held a name that is neither an attribute name nor
     /// an RFC 5646 language tag, nor an RFC 4647 extended range.

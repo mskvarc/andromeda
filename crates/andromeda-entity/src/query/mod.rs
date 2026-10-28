@@ -68,7 +68,10 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, geo::admission::GeoQueryAdmission};
+use andromeda_ngsi_ld_query::{
+    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    geo::admission::GeoQueryAdmission,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
@@ -104,6 +107,9 @@ pub struct EntityQueryService {
     /// What a query's target languages may be and how they select
     /// languageMap keys: the broker's `q_target_languages` level.
     language_targeting: LanguageTargeting,
+    /// The most a query's `q` filter may ask of the broker before it is too
+    /// complex to resolve (clause 5.5.6).
+    filter_complexity: FilterComplexityLimits,
 }
 
 impl EntityQueryService {
@@ -123,5 +129,11 @@ impl EntityQueryService {
     #[must_use]
     pub const fn language_targeting(&self) -> LanguageTargeting {
         self.language_targeting
+    }
+
+    /// The most a query's `q` filter may ask of the broker.
+    #[must_use]
+    pub const fn filter_complexity(&self) -> FilterComplexityLimits {
+        self.filter_complexity
     }
 }

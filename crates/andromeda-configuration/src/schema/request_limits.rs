@@ -30,6 +30,14 @@ const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturatin
 /// every sub-attribute a write can store addressable by a query.
 pub const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
+/// The default most comparisons one `q` filter may make: room for a value list
+/// of several hundred identifiers or categories beside the filter's other
+/// terms.
+const DEFAULT_MAX_Q_COMPARISONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(999);
+
+/// The default deepest a `q` filter's `;` and `|` combinations may nest.
+const DEFAULT_MAX_Q_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(15);
+
 /// What one request may cost the broker.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -91,6 +99,23 @@ pub struct RequestLimitsConfig {
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_attribute_nesting: NonZeroUsize,
+    /// The most comparisons one `q` filter may make, in a query, a delete by
+    /// query or a subscription: each Query Term is one, and a value list one
+    /// per value. A filter over it is answered 403 `TooComplexQuery`.
+    #[schemars(
+        description = "The most comparisons one `q` filter may make, in an entity or temporal query, a delete by query, or a subscription. Each Query Term is one comparison, and a value list such as `a==1,2,3` one per value. A filter over it is answered `403` `TooComplexQuery`. A stored subscription is not checked again after the limit is lowered. Zero is refused."
+    )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
+    pub max_q_comparisons: NonZeroUsize,
+    /// The deepest one `q` filter's `;` and `|` combinations may nest: `a;b`
+    /// nests one level, `a;(b|c)` and `a|b;c` two. A filter nesting deeper is
+    /// answered 403 `TooComplexQuery`. At most 64, the deepest the parser
+    /// admits parentheses at.
+    #[schemars(
+        description = "How deep the `;` and `|` combinations of one `q` filter may nest, in an entity or temporal query, a delete by query, or a subscription: `a;b` nests one level, `a;(b|c)` and `a|b;c` two, and parentheses around a single Query Term add none. A filter nesting deeper is answered `403` `TooComplexQuery`. From 1 to 64; parentheses written more than 64 deep are refused whatever this holds."
+    )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
+    pub max_q_nesting: NonZeroUsize,
 }
 
 impl Default for RequestLimitsConfig {
@@ -103,6 +128,8 @@ impl Default for RequestLimitsConfig {
             max_entity_json_values: DEFAULT_MAX_ENTITY_JSON_VALUES,
             max_geometry_positions: DEFAULT_MAX_GEOMETRY_POSITIONS,
             max_attribute_nesting: DEFAULT_MAX_ATTRIBUTE_NESTING,
+            max_q_comparisons: DEFAULT_MAX_Q_COMPARISONS,
+            max_q_nesting: DEFAULT_MAX_Q_NESTING,
         }
     }
 }
@@ -145,6 +172,8 @@ mod tests {
         assert_eq!(limits.max_entity_json_values.get(), 1_000_000);
         assert_eq!(limits.max_geometry_positions.get(), 1_000_000);
         assert_eq!(limits.max_attribute_nesting.get(), 32);
+        assert_eq!(limits.max_q_comparisons.get(), 1000);
+        assert_eq!(limits.max_q_nesting.get(), 16);
         assert_eq!(limits.max_header_section, HeaderSectionLimit::MAXIMUM);
     }
 
@@ -155,5 +184,11 @@ mod tests {
         assert_eq!(parsed.max_header_section, HeaderSectionLimit::MINIMUM);
         let zero = rendered.replace("max_json_values = 4000000", "max_json_values = 0");
         assert!(toml::from_str::<RequestLimitsConfig>(&zero).is_err());
+        for zero in [
+            rendered.replace("max_q_comparisons = 1000", "max_q_comparisons = 0"),
+            rendered.replace("max_q_nesting = 16", "max_q_nesting = 0"),
+        ] {
+            assert!(toml::from_str::<RequestLimitsConfig>(&zero).is_err(), "{zero}");
+        }
     }
 }

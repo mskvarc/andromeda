@@ -70,7 +70,9 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ProjectionMemberPickedAndOmitted { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         // Clause 5.5.6: a query "so complex that cannot be resolved" raises
         // TooComplexQuery, which Table 6.3.2-1 answers with 403.
-        QueryError::ReferenceGeometryTooComplex { .. } => ClassifiedReport::public(NgsiLdErrorType::TooComplexQuery, error.to_string()),
+        QueryError::ReferenceGeometryTooComplex { .. } | QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. } => {
+            ClassifiedReport::public(NgsiLdErrorType::TooComplexQuery, error.to_string())
+        }
         // Table 5.5.2-1: the terms and the @context both come with the request,
         // so a term naming no IRI under it (a keyword alias included) is input
         // that "does not meet the requirements of the operation", as the same
@@ -92,11 +94,12 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
-        filter::{expression::Expr, language_targeting::LanguageTargeting, target_language::TargetLanguage},
+        filter::{complexity::FilterComplexityLimits, expression::Expr, language_targeting::LanguageTargeting, target_language::TargetLanguage},
         projection::grammar::ProjectionList,
         term_expander::TermExpansionFailure,
         type_selection::grammar::TypeExprRaw,
     };
+    use std::num::NonZeroUsize;
 
     #[test]
     fn a_term_naming_no_iri_under_the_request_context_is_bad_request_data() {
@@ -147,6 +150,25 @@ mod tests {
         failures.push(QueryError::GeoIncomplete);
         for error in failures {
             pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error:?}");
+        }
+    }
+
+    /// Clause 5.5.6: a filter making more comparisons or nesting deeper than
+    /// the broker resolves is `TooComplexQuery`, which Table 6.3.2-1 answers
+    /// with 403.
+    #[test]
+    fn a_filter_past_the_complexity_limits_is_too_complex_query() {
+        let limits = FilterComplexityLimits::new(
+            NonZeroUsize::new(2).expect("a positive comparison limit"),
+            NonZeroUsize::new(1).expect("a positive nesting limit"),
+        );
+        let comparisons = limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons");
+        let nesting = limits.admit(&"a;(b|c)".parse::<Expr>().expect("a filter")).expect_err("nested too deep");
+        let written = format!("{}a{}", "(".repeat(65), ")".repeat(65))
+            .parse::<Expr>()
+            .expect_err("parenthesised too deep");
+        for error in [comparisons, nesting, written] {
+            pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::TooComplexQuery, "{error:?}");
         }
     }
 

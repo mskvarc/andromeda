@@ -6,7 +6,7 @@
 //! path that reached for a second read fails here.
 
 use crate::{
-    configured_policy::geometry_census_limits,
+    configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
@@ -159,6 +159,7 @@ fn service() -> EntityQueryService {
             NearDistanceBand::Refused,
         ))
         .language_targeting(LanguageTargeting::Specification)
+        .filter_complexity(filter_complexity_limits(&RequestLimitsConfig::default()))
         .build()
 }
 

@@ -11,6 +11,7 @@
 
 pub mod attribute_axis;
 pub mod compaction;
+pub mod complexity;
 pub mod eval;
 pub mod expansion;
 pub mod expectation;

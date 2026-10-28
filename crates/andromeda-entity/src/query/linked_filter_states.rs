@@ -108,7 +108,7 @@ fn standing(state: Arc<EntityState>, at: DateTime<Utc>) -> Arc<EntityState> {
 )]
 mod tests {
     use crate::{
-        configured_policy::geometry_census_limits,
+        configured_policy::{filter_complexity_limits, geometry_census_limits},
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
@@ -274,6 +274,7 @@ mod tests {
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)
+            .filter_complexity(filter_complexity_limits(&RequestLimitsConfig::default()))
             .build()
     }
 

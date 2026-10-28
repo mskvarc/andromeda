@@ -73,7 +73,8 @@ impl AdmittedQuery {
 ///
 /// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
 /// validation, of compiling the geoquery, of the clause 5.7.4.4 ordering rule,
-/// and of admitting the `q` target languages under the broker's
+/// of the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
+/// languages under the broker's
 /// `q_target_languages` level and the levels of the sources the query reaches.
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
@@ -93,9 +94,11 @@ pub(super) async fn admit_request(
         .with_instance(instance)?;
     let registry_geo = registry_geo_query(state, context, params, instance).await?;
     let service = &state.temporal;
-    // The broker refuses a target language its own `q_target_languages`
-    // level does not admit before any source is asked.
+    // The broker refuses a filter too complex for it to resolve, and a target
+    // language its own `q_target_languages` level does not admit, before any
+    // source is asked.
     if let Some(q) = &params.q {
+        service.filter_complexity().admit(q).with_instance(instance)?;
         service.language_targeting().admit(q).with_instance(instance)?;
     }
     let read = ParticipatingRead {

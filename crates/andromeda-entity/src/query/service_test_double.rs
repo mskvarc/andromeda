@@ -7,7 +7,7 @@
 //! being restated in each test module.
 
 use crate::{
-    configured_policy::geometry_census_limits,
+    configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
@@ -134,5 +134,6 @@ fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLi
         .remote_linked(None)
         .geo_admission(GeoQueryAdmission::new(reference_limits, NearDistanceBand::Refused))
         .language_targeting(LanguageTargeting::Specification)
+        .filter_complexity(filter_complexity_limits(&RequestLimitsConfig::default()))
         .build()
 }

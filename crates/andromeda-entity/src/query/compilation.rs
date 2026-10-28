@@ -48,8 +48,9 @@ impl EntityQueryService {
     ///
     /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
     /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
-    /// or `orderBy` expression is not well formed or names a target language
-    /// `language_targeting` does not admit, and
+    /// or `orderBy` expression is not well formed, names a target language
+    /// `language_targeting` does not admit, or is too complex to resolve
+    /// (clause 5.5.6), and
     /// [`EntityError::Request`] when a query parameter cannot be interpreted.
     pub async fn compile_query_public(
         &self,
@@ -97,6 +98,9 @@ impl EntityQueryService {
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
+        if let Some(q) = &params.q {
+            self.filter_complexity.admit(q)?;
+        }
         let q_expr = compile_q_expression(params, &json_keys, &expander).await?;
         if let Some(q) = &q_expr {
             language_targeting.admit(q)?;
@@ -337,5 +341,33 @@ mod tests {
     async fn an_order_from_geometry_past_the_budget_is_too_complex() {
         compiled(ORDERED_FROM_A_LINE, 3).await.expect("three positions are within a budget of three");
         assert_too_complex(compiled(ORDERED_FROM_A_LINE, 2).await);
+    }
+
+    /// Clause 5.5.6: a `q` making more comparisons, or nesting deeper, than
+    /// the broker's default limits (1000 and 16) is `TooComplexQuery`; one at
+    /// them compiles.
+    #[tokio::test]
+    async fn a_q_past_the_complexity_limits_is_too_complex_and_one_at_them_compiles() {
+        let values = |count: usize| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join("%2C");
+        let nested = |levels: usize| (1..levels).fold("a%3E1%3Bb%3E1".to_owned(), |inner, level| format!("c{level}%3E1%7C%28{inner}%29"));
+        for (q, admitted) in [
+            (format!("speed%3D%3D{}", values(1000)), true),
+            (format!("speed%3D%3D{}", values(1001)), false),
+            (nested(16), true),
+            (nested(17), false),
+        ] {
+            let result = compiled(&format!("type=Vehicle&q={q}"), 5).await;
+            if admitted {
+                assert!(result.is_ok(), "{q}: {result:?}");
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(EntityError::Query(QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }))
+                    ),
+                    "{q}: {result:?}"
+                );
+            }
+        }
     }
 }

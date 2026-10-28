@@ -43,6 +43,8 @@ pub mod entity;
 pub mod error;
 pub mod expiry;
 mod fields;
+/// What the filters a subscription request writes are admitted under.
+pub mod filter_admission;
 /// The opt-in lists a subscription's `q` filter reads.
 mod filter_opt_ins;
 /// The distributed side of the subscription lifecycle, as a port.

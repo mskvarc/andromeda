@@ -10,8 +10,10 @@
 use andromeda_configuration::broker_config::BrokerConfig;
 use andromeda_entity::configured_policy::{
     AttributeNestingAboveDecodable,
+    FilterNestingAboveParsed,
     SideEffectAttemptsAboveCeiling,
     check_attribute_nesting,
+    check_filter_nesting,
     side_effect_max_attempts,
     side_effect_retry_schedule,
 };
@@ -49,6 +51,10 @@ pub enum SectionAdmissionError {
     /// value reads back at.
     #[error("invalid configuration: {0}")]
     AttributeNesting(#[from] AttributeNestingAboveDecodable),
+    /// `request_limits.max_q_nesting` passes the depth a `q` filter's
+    /// parentheses are parsed at.
+    #[error("invalid configuration: {0}")]
+    FilterNesting(#[from] FilterNestingAboveParsed),
     /// The side-effect queue's retry delays do not bound a retry schedule.
     #[error("invalid configuration: entity.side_effects.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     EntitySideEffectRetry(#[source] BackoffScheduleError),
@@ -87,6 +93,7 @@ pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError
     check_security_headers(&config.http.security_headers)?;
     intent_retry_schedule(&config.temporal.history).map_err(SectionAdmissionError::TemporalIntentRetry)?;
     check_attribute_nesting(&config.request_limits)?;
+    check_filter_nesting(&config.request_limits)?;
     side_effect_retry_schedule(&config.entity.side_effects).map_err(SectionAdmissionError::EntitySideEffectRetry)?;
     side_effect_max_attempts(&config.entity.side_effects)?;
     cooldown_schedule(&config.federation.cooldown).map_err(SectionAdmissionError::FederationCooldown)?;

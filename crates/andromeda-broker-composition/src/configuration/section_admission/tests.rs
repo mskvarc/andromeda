@@ -79,6 +79,17 @@ fn an_attribute_nesting_past_the_decodable_ceiling_is_refused_at_load() {
     );
 }
 
+#[test]
+#[serial]
+fn a_filter_nesting_past_the_parsed_ceiling_is_refused_at_load() {
+    let result = admitted("[request_limits]\nmax_q_nesting = 65\n");
+    assert!(
+        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::FilterNesting(_)))),
+        "{result:?}"
+    );
+    assert!(admitted("[request_limits]\nmax_q_nesting = 64\n").is_ok());
+}
+
 /// The queue table refuses the pair before any domain reads it.
 #[test]
 #[serial]

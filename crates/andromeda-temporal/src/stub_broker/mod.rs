@@ -18,7 +18,7 @@ use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     change_notifier::{ChangeNotifier, SubscriptionMatching},
-    configured_policy::payload_budget,
+    configured_policy::{filter_complexity_limits, payload_budget},
     port::reader::EntityReader,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -260,6 +260,7 @@ pub(crate) fn limits() -> TemporalServiceLimits {
         payload_budget: payload_budget(&RequestLimitsConfig::default()),
         near_band: NearDistanceBand::Refused,
         language_targeting: LanguageTargeting::Specification,
+        filter_complexity: filter_complexity_limits(&RequestLimitsConfig::default()),
     }
 }
 

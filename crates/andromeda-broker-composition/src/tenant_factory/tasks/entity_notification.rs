@@ -33,7 +33,10 @@ use andromeda_entity::{
 use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
-use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+use andromeda_ngsi_ld_query::{
+    filter::complexity::FilterComplexityLimits,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+};
 use andromeda_notification::{
     delivery_store::DeliveryStore,
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
@@ -98,6 +101,9 @@ pub(super) fn compose_notification_query(
             ))
             // A subscription's filters read under the broker's live mode.
             .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
+            // A subscription's `q` was held to the complexity limits when it
+            // was written, so a limit lowered since refuses no stored one.
+            .filter_complexity(FilterComplexityLimits::PARSED)
             .build(),
     )
 }

@@ -11,7 +11,6 @@ use andromeda_configuration::schema::federation::identity::IdentityConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, geo::admission::GeoQueryAdmission};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
@@ -21,6 +20,7 @@ use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
     entity::EntitySubscriptionVariant,
+    filter_admission::SubscriptionFilterAdmission,
     forwarding_hook::SubscriptionForwardingHook,
     lifecycle::SubscriptionService,
     store::SubscriptionStore,
@@ -85,8 +85,7 @@ pub(super) fn compose_subscription_services(
     dispatcher: &Arc<TransportDispatcher>,
     edge: Option<DistributedSubscriptionEdge<'_>>,
     entity_query: &Arc<EntityQueryService>,
-    geo_admission: GeoQueryAdmission,
-    language_targeting: LanguageTargeting,
+    filter_admission: SubscriptionFilterAdmission,
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
@@ -96,8 +95,7 @@ pub(super) fn compose_subscription_services(
         CsrSubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
         Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))), // clone: service and worker each own a sender handle.
         Arc::clone(&endpoint_validator),                     // clone: both subscription services share one endpoint validator.
-        geo_admission,
-        language_targeting,
+        filter_admission,
     ));
     // clone: see above.
     let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
@@ -112,8 +110,7 @@ pub(super) fn compose_subscription_services(
             store,
         ))),
         endpoint_validator,
-        geo_admission,
-        language_targeting,
+        filter_admission,
     );
     if let Some(forwarding_service) = &forwarding {
         entity = entity.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);

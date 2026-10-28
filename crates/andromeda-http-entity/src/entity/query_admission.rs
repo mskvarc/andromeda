@@ -72,8 +72,9 @@ pub(crate) struct AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of the clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, of compiling the geoquery, of the clause 5.7.2.4 ordering rule, and
-/// of admitting the `q` target languages under the broker's
+/// options, of compiling the geoquery, of the clause 5.7.2.4 ordering rule, of
+/// the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
+/// languages under the broker's
 /// `q_target_languages` level and the levels of the sources the query reaches.
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
@@ -93,9 +94,11 @@ pub(crate) async fn admit_request(
     let opts = query.parse_options().with_entity_instance(instance)?;
     let registry_geo = registry_geo_query(state, context, query, instance).await?;
     let service = &state.entity_query;
-    // The broker refuses a target language its own `q_target_languages`
-    // level does not admit before any source is asked.
+    // The broker refuses a filter too complex for it to resolve, and a target
+    // language its own `q_target_languages` level does not admit, before any
+    // source is asked.
     if let Some(q) = &query.q {
+        service.filter_complexity().admit(q).with_entity_instance(instance)?;
         service.language_targeting().admit(q).with_entity_instance(instance)?;
     }
     let read = ParticipatingRead {

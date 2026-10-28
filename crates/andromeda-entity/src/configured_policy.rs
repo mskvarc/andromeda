@@ -4,6 +4,7 @@
 use andromeda_configuration::schema::{entity::side_effects::SideEffectsConfig, request_limits::RequestLimitsConfig};
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+use andromeda_ngsi_ld_query::filter::complexity::{FilterComplexityLimits, WRITTEN_NESTING_CEILING};
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingLimit, payload_budget::EntityPayloadBudget};
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use thiserror::Error;
@@ -35,6 +36,41 @@ pub const fn check_attribute_nesting(limits: &RequestLimitsConfig) -> Result<(),
         });
     }
     Ok(())
+}
+
+/// The configured `q` nesting admits filters nested deeper than the parser
+/// admits parentheses at.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("request_limits.max_q_nesting ({configured}) must not exceed {ceiling}, the deepest a q filter's parentheses may be written")]
+pub struct FilterNestingAboveParsed {
+    /// The configured limit.
+    pub configured: usize,
+    /// The deepest a filter's parentheses are parsed at.
+    pub ceiling: usize,
+}
+
+/// Check that the configured `q` nesting stays within the depth a filter's
+/// parentheses are parsed at.
+///
+/// # Errors
+///
+/// Returns [`FilterNestingAboveParsed`] when it passes that depth; the
+/// configuration loader asks, so a broker never starts with such a limit.
+pub const fn check_filter_nesting(limits: &RequestLimitsConfig) -> Result<(), FilterNestingAboveParsed> {
+    if limits.max_q_nesting.get() > WRITTEN_NESTING_CEILING.get() {
+        return Err(FilterNestingAboveParsed {
+            configured: limits.max_q_nesting.get(),
+            ceiling: WRITTEN_NESTING_CEILING.get(),
+        });
+    }
+    Ok(())
+}
+
+/// The limits every `q` filter a request writes is admitted under: an entity
+/// or temporal query's, a delete by query's and a subscription's.
+#[must_use]
+pub const fn filter_complexity_limits(limits: &RequestLimitsConfig) -> FilterComplexityLimits {
+    FilterComplexityLimits::new(limits.max_q_comparisons, limits.max_q_nesting)
 }
 
 /// The configured side-effect attempt ceiling is above what a job counts.
@@ -100,8 +136,11 @@ pub const fn geometry_census_limits(limits: &RequestLimitsConfig) -> GeometryCen
 mod tests {
     use crate::configured_policy::{
         AttributeNestingAboveDecodable,
+        FilterNestingAboveParsed,
         SideEffectAttemptsAboveCeiling,
         check_attribute_nesting,
+        check_filter_nesting,
+        filter_complexity_limits,
         payload_budget,
         side_effect_max_attempts,
         side_effect_retry_schedule,
@@ -136,6 +175,22 @@ mod tests {
             Err(AttributeNestingAboveDecodable { configured: 63, ceiling: 62 })
         );
         assert!(toml::from_str::<RequestLimitsConfig>(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 0")).is_err());
+    }
+
+    /// A `q` nesting past the depth parentheses are parsed at would name a
+    /// limit no filter can reach; it defaults to 16 and may be raised to 64.
+    #[test]
+    fn the_filter_nesting_defaults_to_16_and_is_refused_past_the_parsed_ceiling() {
+        let rendered = toml::to_string(&RequestLimitsConfig::default()).expect("the defaults render");
+        let limits = filter_complexity_limits(&RequestLimitsConfig::default());
+        assert_eq!((limits.comparisons.get(), limits.nesting.get()), (1000, 16));
+        let at_ceiling: RequestLimitsConfig = toml::from_str(&rendered.replace("max_q_nesting = 16", "max_q_nesting = 64")).expect("parses");
+        assert_eq!(check_filter_nesting(&at_ceiling), Ok(()));
+        let past_ceiling: RequestLimitsConfig = toml::from_str(&rendered.replace("max_q_nesting = 16", "max_q_nesting = 65")).expect("parses");
+        assert_eq!(
+            check_filter_nesting(&past_ceiling),
+            Err(FilterNestingAboveParsed { configured: 65, ceiling: 64 })
+        );
     }
 
     #[test]

@@ -221,7 +221,7 @@ impl LinkedSource for CoreLinkedSource<'_> {
 )]
 mod tests {
     use crate::{
-        configured_policy::geometry_census_limits,
+        configured_policy::{filter_complexity_limits, geometry_census_limits},
         entity_snapshot::EntitySnapshot,
         port::{query::EntityQueryStore, reader::EntityReader},
         query::{core_linked_source::*, remote_linked::RemoteLinkedEntitySource},
@@ -519,6 +519,7 @@ mod tests {
                 NearDistanceBand::Refused,
             ))
             .language_targeting(LanguageTargeting::Specification)
+            .filter_complexity(filter_complexity_limits(&RequestLimitsConfig::default()))
             .build()
     }
 

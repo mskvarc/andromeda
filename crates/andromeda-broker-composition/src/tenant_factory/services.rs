@@ -27,7 +27,7 @@ use andromeda_entity::{
     batch::execution::BatchExecutionConfig,
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
-    configured_policy::{geometry_census_limits, payload_budget},
+    configured_policy::{filter_complexity_limits, geometry_census_limits, payload_budget},
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
@@ -47,6 +47,7 @@ use andromeda_snapshot::{
     service::{SnapshotService, SnapshotServiceConfig},
     status_delivery_signal::StatusDeliverySignal,
 };
+use andromeda_subscription::filter_admission::SubscriptionFilterAdmission;
 use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, service::SubscriptionForwardingService};
 use andromeda_temporal::{
     instance_limits::TemporalInstanceLimits,
@@ -125,8 +126,11 @@ pub(super) fn construct_services(
         dispatcher,
         edge,
         &entity_query,
-        geo_query_admission(config),
-        EnabledExtensions::from(&config.extensions).language_targeting(),
+        SubscriptionFilterAdmission {
+            geo_q: geo_query_admission(config),
+            q_complexity: filter_complexity_limits(&config.request_limits),
+            language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
+        },
     );
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
@@ -236,6 +240,7 @@ fn compose_temporal_service(
             payload_budget: payload_budget(&config.request_limits),
             near_band: near_distance_band(EnabledExtensions::from(&config.extensions)),
             language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
+            filter_complexity: filter_complexity_limits(&config.request_limits),
         },
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
@@ -293,6 +298,7 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
             )) as Arc<dyn RemoteLinkedEntitySource>))
             .geo_admission(geo_query_admission(config))
             .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
+            .filter_complexity(filter_complexity_limits(&config.request_limits))
             .build(),
     )
 }

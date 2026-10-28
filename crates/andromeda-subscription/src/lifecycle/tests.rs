@@ -5,6 +5,7 @@ use crate::{
     endpoint_refusal::EndpointRefusal,
     entity::EntitySubscriptionVariant,
     error::SubscriptionError,
+    filter_admission::SubscriptionFilterAdmission,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
     lifecycle::{SubscriptionService, generate_id},
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
@@ -33,7 +34,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
-    filter::language_targeting::LanguageTargeting,
+    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
 };
@@ -57,15 +58,20 @@ use std::{
 };
 use url::Url;
 
-/// Limits no fixture reaches, with the distance band refused.
-fn geo_q_admission() -> GeoQueryAdmission {
-    GeoQueryAdmission::new(
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-        },
-        NearDistanceBand::Refused,
-    )
+/// Limits no fixture reaches, with the distance band refused and the
+/// specification's target languages.
+fn filter_admission() -> SubscriptionFilterAdmission {
+    SubscriptionFilterAdmission {
+        geo_q: GeoQueryAdmission::new(
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            },
+            NearDistanceBand::Refused,
+        ),
+        q_complexity: FilterComplexityLimits::new(NonZeroUsize::MIN.saturating_add(999), NonZeroUsize::MIN.saturating_add(15)),
+        language_targeting: LanguageTargeting::Specification,
+    }
 }
 
 #[test]
@@ -254,8 +260,7 @@ fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
         CsrSubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        geo_q_admission(),
-        LanguageTargeting::Specification,
+        filter_admission(),
     )
     .with_forwarding_hook(Arc::new(hook))
 }
@@ -430,8 +435,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        geo_q_admission(),
-        LanguageTargeting::Specification,
+        filter_admission(),
     );
     let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
     let updated = service
@@ -527,8 +531,7 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        geo_q_admission(),
-        LanguageTargeting::Specification,
+        filter_admission(),
     );
     (service, written)
 }
@@ -735,8 +738,7 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        geo_q_admission(),
-        LanguageTargeting::Specification,
+        filter_admission(),
     );
     let listing = service
         .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())

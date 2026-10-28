@@ -13,7 +13,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
-    filter::language_targeting::LanguageTargeting,
+    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::admission::GeoQueryAdmission,
     page_reach::PageReach,
     projection::compiled::Projection,
@@ -201,5 +201,12 @@ impl TemporalService {
     #[must_use]
     pub const fn language_targeting(&self) -> LanguageTargeting {
         self.limits.language_targeting
+    }
+
+    /// The most a temporal `q` filter may ask of the broker before it is too
+    /// complex to resolve (clause 5.5.6).
+    #[must_use]
+    pub const fn filter_complexity(&self) -> FilterComplexityLimits {
+        self.limits.filter_complexity
     }
 }

@@ -14,6 +14,7 @@
 use crate::{
     error::QueryError,
     filter::{
+        complexity::WRITTEN_NESTING_CEILING,
         expression::Expr,
         lexer::{Token, tokenize},
         linked_entity::parse_linked_entity_relation,
@@ -33,14 +34,15 @@ use crate::{
 /// it cannot be lexed, and [`QueryError::QExpected`],
 /// [`QueryError::QUnexpectedToken`], [`QueryError::QAttributePathTooDeep`] or
 /// one of the literal-typing variants when it is outside the clause 4.9
-/// grammar.
+/// grammar, and [`QueryError::QNestedTooDeep`] when its parentheses nest past
+/// [`WRITTEN_NESTING_CEILING`].
 pub fn parse(input: &str) -> Result<Expr, QueryError> {
     if input.trim().is_empty() {
         return Err(QueryError::QEmpty);
     }
     let tokens = tokenize(input)?;
     let mut cursor = TokenCursor::new(&tokens);
-    let expr = parse_or(&mut cursor)?;
+    let expr = parse_or(&mut cursor, 0)?;
     if !cursor.is_exhausted() {
         return Err(QueryError::QUnexpectedToken {
             position: cursor.position(),
@@ -50,15 +52,16 @@ pub fn parse(input: &str) -> Result<Expr, QueryError> {
     Ok(expr)
 }
 
-/// Parse a disjunction: `and_expr ('|' and_expr)*`.
-fn parse_or(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
-    let mut left = parse_and(cursor)?;
+/// Parse a disjunction: `and_expr ('|' and_expr)*`, inside `depth`
+/// parentheses.
+fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Expr, QueryError> {
+    let mut left = parse_and(cursor, depth)?;
     let mut terms = Vec::new();
 
     while cursor.peek() == Some(&Token::Pipe) {
         cursor.advance();
         terms.push(left);
-        left = parse_and(cursor)?;
+        left = parse_and(cursor, depth)?;
     }
 
     if terms.is_empty() {
@@ -69,15 +72,15 @@ fn parse_or(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
     }
 }
 
-/// Parse a conjunction: `primary (';' primary)*`.
-fn parse_and(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
-    let mut left = parse_primary(cursor)?;
+/// Parse a conjunction: `primary (';' primary)*`, inside `depth` parentheses.
+fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Expr, QueryError> {
+    let mut left = parse_primary(cursor, depth)?;
     let mut terms = Vec::new();
 
     while cursor.peek() == Some(&Token::Semi) {
         cursor.advance();
         terms.push(left);
-        left = parse_primary(cursor)?;
+        left = parse_primary(cursor, depth)?;
     }
 
     if terms.is_empty() {
@@ -88,11 +91,22 @@ fn parse_and(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
     }
 }
 
-/// Parse a primary: either a parenthesised group or a single predicate.
-fn parse_primary(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
+/// Parse a primary: either a parenthesised group or a single predicate, inside
+/// `depth` parentheses.
+///
+/// Each group recurses once, so the group that would nest past
+/// [`WRITTEN_NESTING_CEILING`] is refused before it is descended into.
+fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Expr, QueryError> {
     if cursor.peek() == Some(&Token::LParen) {
+        let inner = depth + 1;
+        if inner > WRITTEN_NESTING_CEILING.get() {
+            return Err(QueryError::QNestedTooDeep {
+                depth: inner,
+                limit: WRITTEN_NESTING_CEILING,
+            });
+        }
         cursor.advance();
-        let expr = parse_or(cursor)?;
+        let expr = parse_or(cursor, inner)?;
         cursor.expect(&Token::RParen)?;
         Ok(expr)
     } else {
@@ -260,6 +274,21 @@ mod tests {
             matches!(parse(&too_deep), Err(QueryError::QAttributePathTooDeep { .. })),
             "an over-deep path must be rejected"
         );
+    }
+
+    /// Clause 5.5.6: parentheses past the ceiling are `TooComplexQuery`, and
+    /// the refusal comes before the parser recurses into them.
+    #[test]
+    fn parentheses_at_the_written_ceiling_parse_and_one_level_deeper_are_too_complex() {
+        let grouped = |levels: usize| format!("{}a{}", "(".repeat(levels), ")".repeat(levels));
+        assert!(parse(&grouped(WRITTEN_NESTING_CEILING.get())).is_ok(), "parentheses at the ceiling must parse");
+        let error = parse(&grouped(WRITTEN_NESTING_CEILING.get() + 1)).expect_err("must reject");
+        assert!(
+            matches!(error, QueryError::QNestedTooDeep { depth: 65, limit } if limit == WRITTEN_NESTING_CEILING),
+            "got {error:?}"
+        );
+        let unbounded = format!("{}a", "(".repeat(1_000_000));
+        assert!(matches!(parse(&unbounded), Err(QueryError::QNestedTooDeep { depth: 65, .. })));
     }
 
     #[test]
