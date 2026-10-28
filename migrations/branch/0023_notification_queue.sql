@@ -31,6 +31,13 @@
 create table notification_events (
     event_key bigint generated always as identity (cache 32),
     created_at timestamptz not null,
+    -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
+    -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
+    -- can only report them from here; a change that leaves the Entity in place
+    -- stores none and the delivery reads them from the Entity.
+    entity_created_at timestamptz,
+    entity_modified_at timestamptz,
+    entity_expires_at timestamptz,
     -- The event's deterministic position within its write. With `write_id`
     -- it makes a replayed write insert nothing rather than announce a change
     -- a second time.
@@ -54,13 +61,6 @@ create table notification_events (
     entity_snapshot entity_state_record compression lz4,
     -- The Entity's state before a change that left it in place.
     previous_snapshot entity_state_record compression lz4,
-    -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
-    -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
-    -- can only report them from here; a change that leaves the Entity in place
-    -- stores none and the delivery reads them from the Entity.
-    entity_created_at timestamptz,
-    entity_modified_at timestamptz,
-    entity_expires_at timestamptz,
     constraint pk_notification_events primary key (event_key),
     constraint uq_notification_events_write_identity unique (write_id, event_ordinal),
     constraint chk_notification_events_event_ordinal check (event_ordinal >= 0),
@@ -68,7 +68,7 @@ create table notification_events (
     constraint chk_notification_events_change_kinds check (change_kinds <@ array[1, 2, 3]::smallint[]),
     constraint chk_notification_events_change_arity check (cardinality(change_attribute_name_keys) = cardinality(change_kinds) and cardinality(change_dataset_ids) = cardinality(change_kinds)),
     constraint chk_notification_events_deletion_state_once check (lifecycle <> 3 or previous_snapshot is null),
-    constraint chk_notification_events_entity_system_times check (num_nonnulls (entity_created_at, entity_modified_at) in (0, 2) and (entity_expires_at is null or entity_created_at is not null)),
+    constraint chk_notification_events_entity_system_times check (num_nonnulls(entity_created_at, entity_modified_at) in (0, 2) and (entity_expires_at is null or entity_created_at is not null)),
     constraint chk_notification_events_entity_id_length check (octet_length(entity_id) <= 1024)
 )
 with (
@@ -95,13 +95,13 @@ create table notification_deliveries (
     delivered_at timestamptz,
     exhausted_at timestamptz,
     claimed_by uuid,
-    last_error text compression lz4,
+    last_error text compression lz4 collate "C",
     constraint pk_notification_deliveries primary key (delivery_key),
     constraint fk_notification_deliveries_event foreign key (event_key) references notification_events (event_key) on delete cascade,
     constraint fk_notification_deliveries_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
     constraint chk_notification_deliveries_attempt_count_non_negative check (attempt_count >= 0),
-    constraint chk_notification_deliveries_claim_coherent check (num_nonnulls (claimed_at, claimed_by, lease_until) in (0, 3)),
-    constraint chk_notification_deliveries_exhausted_state check (exhausted_at is null or (delivered_at is null and num_nonnulls (claimed_at, claimed_by, lease_until) = 0)),
+    constraint chk_notification_deliveries_claim_coherent check (num_nonnulls(claimed_at, claimed_by, lease_until) in (0, 3)),
+    constraint chk_notification_deliveries_exhausted_state check (exhausted_at is null or (delivered_at is null and num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
     constraint chk_notification_deliveries_last_error_length check (last_error is null or char_length(last_error) <= 2048)
 )
 with (

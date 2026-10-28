@@ -37,15 +37,15 @@ create table pending_side_effects (
     lease_until timestamptz,
     claimed_by uuid,
     exhausted_at timestamptz,
-    last_error text compression lz4,
+    last_error text compression lz4 collate "C",
     -- The owed changes, in the order the commit made them, each state an
     -- `entity_state_record`, so no state crosses the queue as JSON.
     events pending_change_event[] compression lz4 not null,
     constraint pk_pending_side_effects primary key (id),
     constraint chk_pse_base_ordinal_non_negative check (base_ordinal >= 0),
     constraint chk_pse_attempt_count_non_negative check (attempt_count >= 0),
-    constraint chk_pse_claim_coherent check (num_nonnulls (claimed_at, lease_until, claimed_by) in (0, 3)),
-    constraint chk_pse_exhausted_state check (exhausted_at is null or num_nonnulls (claimed_at, lease_until, claimed_by) = 0),
+    constraint chk_pse_claim_coherent check (num_nonnulls(claimed_at, lease_until, claimed_by) in (0, 3)),
+    constraint chk_pse_exhausted_state check (exhausted_at is null or num_nonnulls(claimed_at, lease_until, claimed_by) = 0),
     constraint chk_pse_last_error_length check (last_error is null or char_length(last_error) <= 2048),
     constraint chk_pse_events_present check (cardinality(events) > 0),
     constraint uq_pse_write_identity unique (write_id)

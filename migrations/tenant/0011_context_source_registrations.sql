@@ -43,23 +43,33 @@ create table context_source_registrations (
     modified_at timestamptz not null default now(),
     -- NULL means the registration never expires.
     expires_at timestamptz,
-    mode smallint not null,
-    id text compression lz4 collate "C" not null,
-    registration_name text compression lz4,
-    description text compression lz4,
-    -- The revision of the broker's rendering that produced the
-    -- `entity_id_pattern_form` of this registration's information rows, NULL
-    -- when the registration declares no `idPattern`. A broker renders again,
-    -- when it opens the tenant, every row an older revision produced.
-    entity_id_pattern_forms_revision smallint,
-    -- The tenant to address at the context source; NULL means its default
-    -- tenant.
-    tenant text compression lz4,
     -- The two clause 5.2.11 intervals, each NULL when its member is absent.
     observation_interval_start timestamptz,
     observation_interval_end timestamptz,
     management_interval_start timestamptz,
     management_interval_end timestamptz,
+    -- The cooldown and timeout of Table 5.2.34-1 in milliseconds, each NULL
+    -- when its member is absent.
+    management_cooldown bigint,
+    management_timeout bigint,
+    mode smallint not null,
+    -- The revision of the broker's rendering that produced the
+    -- `entity_id_pattern_form` of this registration's information rows, NULL
+    -- when the registration declares no `idPattern`. A broker renders again,
+    -- when it opens the tenant, every row an older revision produced.
+    entity_id_pattern_forms_revision smallint,
+    -- Whether the registration declares `management` at all: an empty
+    -- `management` object reads back as written, with every member below
+    -- NULL.
+    is_management_declared boolean not null,
+    -- Table 5.2.34-1 `localOnly`, NULL when the member is absent.
+    management_local_only boolean,
+    id text compression lz4 collate "C" not null,
+    registration_name text compression lz4 collate "C",
+    description text compression lz4 collate "C",
+    -- The tenant to address at the context source; NULL means its default
+    -- tenant.
+    tenant text compression lz4 collate "C",
     -- Each geometry as written (clause 4.7.1), beside its `ST_MakeValid` form
     -- when the written one is invalid (clause 4.7.2 admits it, IETF RFC 7946
     -- section 3.1.6 sets no simplicity rule on a ring), NULL otherwise. A
@@ -70,9 +80,9 @@ create table context_source_registrations (
     observation_space_valid geometry compression lz4,
     operation_space geometry compression lz4,
     operation_space_valid geometry compression lz4,
-    endpoint text compression lz4 not null,
+    endpoint text compression lz4 collate "C" not null,
     -- The media type the broker sends as `Accept` to this context source.
-    accept text compression lz4,
+    accept text compression lz4 collate "C",
     -- NULL is the absent member, which reads as the clause 5.2.9 default,
     -- `federationOps`.
     operations smallint[] compression lz4,
@@ -83,22 +93,15 @@ create table context_source_registrations (
     -- The same Scopes as written, in the same order: the label path forgets
     -- the optional leading `/` of clause 4.18, and this is what reads back.
     verbatim_scope_paths text[] compression lz4 collate "C",
-    refresh_rate text compression lz4,
-    -- Whether the registration declares `management` at all: an empty
-    -- `management` object reads back as written, with every member below
-    -- NULL.
-    is_management_declared boolean not null,
+    refresh_rate text compression lz4 collate "C",
     -- Table 5.2.34-1, each NULL when its member is absent. The duration is
     -- held in the ISO 8601 text the broker writes; the two periods are
     -- milliseconds.
-    management_cache_duration text compression lz4,
-    management_cooldown bigint,
-    management_local_only boolean,
-    management_timeout bigint,
+    management_cache_duration text compression lz4 collate "C",
     -- `contextSourceInfo` as two parallel arrays in written order, both NULL
     -- when the member is absent and both empty when it is an empty list.
-    context_source_info_keys text[] compression lz4,
-    context_source_info_values text[] compression lz4,
+    context_source_info_keys text[] compression lz4 collate "C",
+    context_source_info_values text[] compression lz4 collate "C",
     -- Members outside Table 5.2.9-1, kept for the representation.
     additional_properties jsonb compression lz4,
     -- What a clause 4.9 `csf` filter reads: every Table 5.2.9-1 member the
@@ -109,14 +112,15 @@ create table context_source_registrations (
     -- Table 5.2.9-1 `datasetId`: each element a URI, or `@none` for the
     -- default instance (clause 4.5.5). Unindexed: nothing preselects
     -- registrations by dataset.
-    dataset_id text[] compression lz4,
-    context_source_alias text compression lz4,
+    dataset_id text[] compression lz4 collate "C",
+    context_source_alias text compression lz4 collate "C",
     constraint pk_context_source_registrations primary key (id),
     constraint chk_context_source_registrations_id_length check (octet_length(id) <= 1024),
     constraint chk_csr_mode check (mode between 1 and 4),
+    constraint chk_csr_entity_id_pattern_forms_revision_positive check (entity_id_pattern_forms_revision > 0),
     constraint chk_csr_observation_interval_end_after_start check (observation_interval_end is null or (observation_interval_start is not null and observation_interval_end > observation_interval_start)),
     constraint chk_csr_management_interval_end_after_start check (management_interval_end is null or (management_interval_start is not null and management_interval_end > management_interval_start)),
-    constraint chk_csr_management_presence check (is_management_declared or num_nonnulls (management_cache_duration, management_cooldown, management_local_only, management_timeout) = 0),
+    constraint chk_csr_management_presence check (is_management_declared or num_nonnulls(management_cache_duration, management_cooldown, management_local_only, management_timeout) = 0),
     constraint chk_csr_management_cooldown_positive check (management_cooldown > 0),
     constraint chk_csr_management_timeout_positive check (management_timeout > 0),
     constraint chk_csr_context_source_info_pairs check ((context_source_info_keys is null) = (context_source_info_values is null) and cardinality(context_source_info_keys) = cardinality(context_source_info_values) and array_position(context_source_info_keys, null) is null and array_position(context_source_info_values, null) is null),
@@ -174,10 +178,10 @@ where
 -- projection has already narrowed, so a `status` index would have no scan to
 -- speed up.
 create table registration_delivery_state (
+    times_sent bigint not null default 0,
+    times_failed bigint not null default 0,
     last_success timestamptz,
     last_failure timestamptz,
-    times_sent integer not null default 0,
-    times_failed integer not null default 0,
     status smallint not null,
     registration_id text compression lz4 collate "C" not null,
     constraint pk_registration_delivery_state primary key (registration_id),

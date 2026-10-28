@@ -8,8 +8,12 @@
 //! a constraint violation on a request the parser admitted.
 
 use crate::repository::{PinError, constraint, schema};
-use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
-use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
+use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, tenant::TENANT_NAME_BYTE_LIMIT};
+use andromeda_postgresql_schema::{
+    string_value_column::INDEXED_STRING_BYTE_LIMIT,
+    tenancy::DATABASE_NAME_BYTE_LIMIT,
+    uri_value_column::INDEXED_URI_BYTE_LIMIT,
+};
 use andromeda_sql::declared_schema::{
     DeclaredSchema,
     ResolvedType,
@@ -91,7 +95,11 @@ fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() -> Resu
     assert!(bounds.len() >= IDENTIFIER_LENGTH_CONSTRAINTS.len(), "the scan found too few bounds: {bounds:?}");
     for (table, bound) in &bounds {
         let column = bound.column();
-        let expected = if PROJECTED_STRING_COLUMNS.contains(&column) {
+        let expected = if (*table, column) == ("tenants", "name") {
+            TENANT_NAME_BYTE_LIMIT
+        } else if (*table, column) == ("tenants", "database_name") {
+            DATABASE_NAME_BYTE_LIMIT
+        } else if PROJECTED_STRING_COLUMNS.contains(&column) {
             INDEXED_STRING_BYTE_LIMIT
         } else if PROJECTED_URI_COLUMNS.contains(&column) {
             INDEXED_URI_BYTE_LIMIT

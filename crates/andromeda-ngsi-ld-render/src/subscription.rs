@@ -36,7 +36,7 @@ use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer};
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 
 /// The projection lists of one `pick` or `omit` member, written as the clause
 /// 4.21 strings they were sent as.
@@ -92,10 +92,10 @@ struct NotificationView<'a> {
     last_failure: Option<DateTime<Utc>>,
     /// How many times the notification has been sent.
     #[serde(skip_serializing_if = "Option::is_none")]
-    times_sent: Option<NonZeroU32>,
+    times_sent: Option<NonZeroU64>,
     /// How many delivery attempts drew an unsuccessful response or timed out.
     #[serde(skip_serializing_if = "Option::is_none")]
-    times_failed: Option<NonZeroU32>,
+    times_failed: Option<NonZeroU64>,
     /// Status of the last notification delivery attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<NotificationStatus>,

@@ -41,7 +41,7 @@ use langtag::LangTagBuf;
 use sea_query::Iden;
 use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
-use std::{num::NonZeroU32, str::FromStr};
+use std::{num::NonZeroU64, str::FromStr};
 
 /// Parse a subscription identifier read from PostgreSQL.
 ///
@@ -271,8 +271,8 @@ pub fn row_to_stored_subscription(row: SubscriptionRow) -> StoredSubscription {
 /// first advanced; the member is restricted to "Greater than 0", so a counter
 /// still at rest is absent. A negative count is not reachable through the
 /// column's own `CHECK`, and is read the same way as a counter at rest.
-fn positive_counter(counted: i32) -> Option<NonZeroU32> {
-    u32::try_from(counted).ok().and_then(NonZeroU32::new)
+fn positive_counter(counted: i64) -> Option<NonZeroU64> {
+    u64::try_from(counted).ok().and_then(NonZeroU64::new)
 }
 
 /// Convert a persistence-shaped `SubscriptionRow` into the domain [`Subscription`].

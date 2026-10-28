@@ -31,13 +31,13 @@ create table registration_information (
     entity_id text compression lz4 collate "C",
     -- Compared as written and never evaluated: PostgreSQL's regular
     -- expression dialect is not the one clause 5.2.8 mandates.
-    entity_id_pattern text compression lz4,
+    entity_id_pattern text compression lz4 collate "C",
     -- The restatement of `entity_id_pattern` the broker renders for this
     -- engine: every embedded option applied and every class written out, so
     -- `~` reads the pattern as the broker's in-memory engine does (clause 4.9;
     -- PostgreSQL's own `(?i)` folds only ASCII). The broker writes it beside
     -- the pattern; nothing here derives it.
-    entity_id_pattern_form text compression lz4,
+    entity_id_pattern_form text compression lz4 collate "C",
     -- `attribute_names` keys, in written order, repeated on every row of the
     -- item.
     property_name_keys integer[] compression lz4,
@@ -53,7 +53,7 @@ create table registration_information (
     constraint chk_registration_information_selector check (entity_types is not null or (entity_id is null and entity_id_pattern is null and selector_ordinal = 0)),
     constraint chk_registration_information_entity_id_pattern_form check ((entity_id_pattern is null) = (entity_id_pattern_form is null)),
     constraint chk_registration_information_name_keys check (cardinality(property_name_keys) > 0 and array_position(property_name_keys, null) is null and 0 < all (property_name_keys) and cardinality(relationship_name_keys) > 0 and array_position(relationship_name_keys, null) is null and 0 < all (relationship_name_keys)),
-    constraint chk_registration_information_item_presence check (num_nonnulls (entity_types, property_name_keys, relationship_name_keys) > 0)
+    constraint chk_registration_information_item_presence check (num_nonnulls(entity_types, property_name_keys, relationship_name_keys) > 0)
 )
 with (
     autovacuum_vacuum_scale_factor = 0.05,

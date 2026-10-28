@@ -31,7 +31,7 @@ create table jsonld_contexts (
     -- against. NULL for a context the broker stores itself, which was never
     -- read from anywhere. Nothing looks a row up by it or orders by it, so it
     -- has no index, no length bound and no byte-wise collation.
-    document_url text compression lz4,
+    document_url text compression lz4 collate "C",
     payload json compression lz4 not null,
     extra_info json compression lz4,
     constraint pk_jsonld_contexts primary key (id),

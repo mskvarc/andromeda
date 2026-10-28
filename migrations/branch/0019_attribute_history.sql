@@ -111,9 +111,9 @@ create table attribute_history (
     constraint chk_attribute_history_write_ordinal check (write_ordinal >= 0),
     constraint chk_attribute_history_attribute_kind check (attribute_kind between 1 and 8),
     constraint chk_attribute_history_unit_code_id_positive check (unit_code_id > 0),
-    constraint chk_attribute_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
+    constraint chk_attribute_history_instance_identity check (num_nonnulls(generated_instance_id, verbatim_instance_id) = 1),
     constraint chk_attribute_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
-    constraint chk_attribute_history_value_presence check ((value_kind = 0 and deleted_at is not null and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),
+    constraint chk_attribute_history_value_presence check ((value_kind = 0 and deleted_at is not null and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),
     -- Pins `value_kind` to the populated column, so a value whose declared
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
@@ -124,7 +124,7 @@ create table attribute_history (
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
     constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object')),
-    constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls (value_type_key, object_type_keys, unit_code_id, expires_at, proof_seals, sub_attributes) = 0),
+    constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(value_type_key, object_type_keys, unit_code_id, expires_at, proof_seals, sub_attributes) = 0),
     constraint chk_attribute_history_object_type_keys_present check (object_type_keys is null or cardinality(object_type_keys) > 0),
     constraint chk_attribute_history_sub_attributes_present check (sub_attributes is null or cardinality(sub_attributes) > 0)
 )

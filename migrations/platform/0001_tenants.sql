@@ -36,7 +36,9 @@ create table tenants (
     constraint uq_tenants_name unique (name),
     constraint uq_tenants_database_name unique (database_name),
     constraint chk_tenants_unnamed_default_has_no_name check ((name is null) = is_unnamed_default),
-    constraint chk_tenants_status check (status between 1 and 3)
+    constraint chk_tenants_status check (status between 1 and 3),
+    constraint chk_tenants_name_length check (octet_length(name) <= 1005),
+    constraint chk_tenants_database_name_length check (octet_length(database_name) <= 63)
 );
 
 create unique index uq_tenants_unnamed_default on tenants (is_unnamed_default)

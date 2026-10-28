@@ -75,9 +75,9 @@ pub struct SubscriptionRow {
     /// The `ngsildConformance` version notifications are amended to (clause 5.2.12); `NULL` amends nothing.
     pub ngsild_conformance: Option<SpecVersion>,
     /// Counter for notifications sent.
-    pub times_sent: i32,
+    pub times_sent: i64,
     /// Counter for deliveries that drew an unsuccessful response or timed out.
-    pub times_failed: i32,
+    pub times_failed: i64,
     /// Timestamp of the most recent notification attempt.
     pub last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the most recent successful notification.

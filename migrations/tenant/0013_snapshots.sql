@@ -33,8 +33,8 @@ create table snapshots (
     -- query.
     clone_source_id text compression lz4 collate "C",
     id text compression lz4 collate "C" not null,
-    snapshot_lifetime text compression lz4,
-    endpoint text compression lz4,
+    snapshot_lifetime text compression lz4 collate "C",
+    endpoint text compression lz4 collate "C",
     snapshot_queries json compression lz4,
     snapshot_temporal_queries json compression lz4,
     -- The resolved JSON-LD context both query families are compiled and run
@@ -68,12 +68,12 @@ create table snapshot_preparation (
     branch_schema_version integer not null,
     status smallint not null,
     -- Why the last branch upgrade failed; NULL once the branch is current.
-    branch_upgrade_error text compression lz4,
+    branch_upgrade_error text compression lz4 collate "C",
     queries_details json compression lz4,
     temporal_queries_details json compression lz4,
     constraint pk_snapshot_preparation primary key (snapshot_key),
     constraint fk_snapshot_preparation_snapshot foreign key (snapshot_key) references snapshots (snapshot_key) on delete cascade,
-    constraint chk_snapshot_preparation_claim_coherent check (num_nonnulls (claimed_by, claimed_at, lease_until) in (0, 3)),
+    constraint chk_snapshot_preparation_claim_coherent check (num_nonnulls(claimed_by, claimed_at, lease_until) in (0, 3)),
     constraint chk_snapshot_preparation_status check (status between 1 and 5),
     constraint chk_snapshot_preparation_branch_schema_version_positive check (branch_schema_version > 0),
     constraint chk_snapshot_preparation_branch_upgrade_error_length check (branch_upgrade_error is null or char_length(branch_upgrade_error) <= 2048)
@@ -110,16 +110,16 @@ create table snapshot_notification_outbox (
     attempt_count integer not null default 0,
     delivered_at timestamptz,
     exhausted_at timestamptz,
-    endpoint text compression lz4 not null,
+    endpoint text compression lz4 collate "C" not null,
     receiver_info json compression lz4,
     payload json compression lz4 not null,
-    last_error text compression lz4,
+    last_error text compression lz4 collate "C",
     constraint pk_snapshot_notification_outbox primary key (id),
     constraint fk_snapshot_notification_outbox_snapshot foreign key (snapshot_key) references snapshots (snapshot_key) on delete cascade,
     constraint chk_snapshot_notification_outbox_attempt_count_non_negative check (attempt_count >= 0),
     constraint chk_snapshot_notification_outbox_last_error_length check (last_error is null or char_length(last_error) <= 2048),
-    constraint chk_snapshot_notification_outbox_claim_coherent check (num_nonnulls (claimed_at, lease_until, claimed_by) in (0, 3)),
-    constraint chk_snapshot_notification_outbox_terminal_coherent check (num_nonnulls (delivered_at, exhausted_at) <= 1)
+    constraint chk_snapshot_notification_outbox_claim_coherent check (num_nonnulls(claimed_at, lease_until, claimed_by) in (0, 3)),
+    constraint chk_snapshot_notification_outbox_terminal_coherent check (num_nonnulls(delivered_at, exhausted_at) <= 1)
 );
 
 create index idx_snapshot_notification_outbox_claim on snapshot_notification_outbox (greatest(next_attempt_at, coalesce(lease_until, '-infinity'::timestamptz)), id)

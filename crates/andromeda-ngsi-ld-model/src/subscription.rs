@@ -35,7 +35,7 @@ use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
 
@@ -180,7 +180,7 @@ pub struct NotificationParams {
     /// a counter has to be somewhere before it is first advanced — and the two
     /// are different statements about different things.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub times_sent: Option<NonZeroU32>,
+    pub times_sent: Option<NonZeroU64>,
     /// How many delivery attempts drew an unsuccessful response or timed out
     /// (Table 5.2.14.2-1 `timesFailed`).
     ///
@@ -191,7 +191,7 @@ pub struct NotificationParams {
     /// Positive for the same reason as `timesSent`: the table restricts it to
     /// "Greater than 0" at cardinality `0..1`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub times_failed: Option<NonZeroU32>,
+    pub times_failed: Option<NonZeroU64>,
     /// Status of the last notification delivery attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<NotificationStatus>,
@@ -659,8 +659,8 @@ mod tests {
             "timesFailed": 3
         }))
         .expect("parses");
-        pretty_assertions::assert_eq!(notification.times_failed.map(NonZeroU32::get), Some(3));
-        pretty_assertions::assert_eq!(notification.times_sent.map(NonZeroU32::get), Some(7));
+        pretty_assertions::assert_eq!(notification.times_failed.map(NonZeroU64::get), Some(3));
+        pretty_assertions::assert_eq!(notification.times_sent.map(NonZeroU64::get), Some(7));
     }
 
     /// Table 5.2.14.2-1 restricts both delivery counters to "Greater than 0",

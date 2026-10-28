@@ -35,19 +35,19 @@
 create type sub_attribute as (
     parent integer,
     attribute_name_key integer,
-    dataset_id text,
+    dataset_id text collate "C",
     attribute_kind smallint,
     value_kind smallint,
     value_number numeric,
-    value_string text,
+    value_string text collate "C",
     value_boolean boolean,
     value_date_time timestamptz,
     value_geometry geometry,
     value_geometry_members jsonb,
     value_object jsonb,
-    value_uri text,
+    value_uri text collate "C",
     value_datatype_key integer,
-    value_language text,
+    value_language text collate "C",
     value_type_key integer,
     object_type_keys integer[],
     proof_seals jsonb,
@@ -89,16 +89,16 @@ create type attribute_instance_record as (
     value_type_key integer,
     unit_code_id smallint,
     value_boolean boolean,
-    dataset_id text,
+    dataset_id text collate "C",
     value_number numeric,
-    value_string text,
-    value_language text,
+    value_string text collate "C",
+    value_language text collate "C",
     value_geometry geometry,
     value_geometry_members jsonb,
     value_object jsonb,
-    value_uri text,
-    value_long_text text,
-    value_long_uri text,
+    value_uri text collate "C",
+    value_long_text text collate "C",
+    value_long_uri text collate "C",
     object_type_keys integer[],
     proof_seals jsonb,
     sub_attributes sub_attribute[]
@@ -110,14 +110,14 @@ create type attribute_instance_record as (
 -- top-level attribute instances in ordinal order.
 create type entity_state_record as (
     entity_type_name_keys integer[],
-    scope_paths text[],
+    scope_paths text[] collate "C",
     expires_at timestamptz,
     instances attribute_instance_record[]
 );
 
 -- One change a respond-async job still owes its subscribers (clause 5.8.6),
 -- in the shape `notification_events` stores one: the fields both hold carry
--- the same names, codes and order, and a deletion's removed state is
+-- the same names and codes, and a deletion's removed state is
 -- `entity_snapshot` alone. Beside them the job keeps what a notification
 -- built from the change needs before any event row exists: the Entity's
 -- types as `entity_type_name_keys`, the instant the change occurred, and its
@@ -126,11 +126,11 @@ create type entity_state_record as (
 -- the order the job holds them.
 create type pending_change_event as (
     lifecycle smallint,
-    entity_id text,
+    entity_id text collate "C",
     entity_type_name_keys integer[],
     change_kinds smallint[],
     change_attribute_name_keys integer[],
-    change_dataset_ids text[],
+    change_dataset_ids text[] collate "C",
     occurred_at timestamptz,
     origin smallint,
     entity_snapshot entity_state_record,
@@ -161,7 +161,7 @@ create type pending_change_event as (
 create type temporal_entry as (
     entry_kind smallint,
     attribute_name_key integer,
-    dataset_id text,
+    dataset_id text collate "C",
     attribute_kind smallint,
     value_kind smallint,
     observed_at timestamptz,
@@ -175,19 +175,19 @@ create type temporal_entry as (
     value_datatype_key integer,
     unit_code_id smallint,
     value_boolean boolean,
-    verbatim_instance_id text,
+    verbatim_instance_id text collate "C",
     value_number numeric,
-    value_string text,
-    value_language text,
+    value_string text collate "C",
+    value_language text collate "C",
     value_geometry geometry,
     value_geometry_members jsonb,
     value_object jsonb,
-    value_uri text,
+    value_uri text collate "C",
     object_type_keys integer[],
     proof_seals jsonb,
     sub_attributes sub_attribute[],
-    scope_path text,
-    verbatim_scope_path text
+    scope_path text collate "C",
+    verbatim_scope_path text collate "C"
 );
 
 -- One intent of a commit as the enqueue binds it: every intent of a commit
@@ -199,7 +199,7 @@ create type temporal_entry as (
 -- entries meet, so an application skips a statement no intent reaches without
 -- reading `entries`.
 create type temporal_intent as (
-    entity_id text,
+    entity_id text collate "C",
     entity_type_name_keys integer[],
     base_ordinal integer,
     entries temporal_entry[],

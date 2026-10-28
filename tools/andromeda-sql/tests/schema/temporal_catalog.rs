@@ -49,7 +49,7 @@ fn the_shape_mask_holds_one_bit_per_family_and_shape() -> Result<(), PinError> {
     let width = AttributeKind::ALL.len() * RecordedShape::ALL.len();
     assert_eq!(
         written(&schema, column.origin(), column.definition()),
-        format!("bit({width}) not null default B'0'::bit({width})")
+        format!("bit({width}) compression lz4 not null default b'0'::bit({width})")
     );
     Ok(())
 }

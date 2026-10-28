@@ -28,11 +28,11 @@ pub struct RegistrationHealth {
     /// "created on first successful operation".
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub times_sent: Option<i32>,
+    pub times_sent: Option<i64>,
     /// Number of those attempts that failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub times_failed: Option<i32>,
+    pub times_failed: Option<i64>,
     /// Timestamp of last successful notification.
     #[serde(skip_serializing_if = "Option::is_none", with = "instant_serde::optional", default)]
     #[builder(default = Default::default())]

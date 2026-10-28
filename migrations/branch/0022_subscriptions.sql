@@ -69,8 +69,8 @@ create table subscriptions (
     -- document: they are read once per delivery from the subscription already
     -- in memory, and never queried across rows.
     notification json compression lz4 not null,
-    subscription_name text compression lz4,
-    description text compression lz4,
+    subscription_name text compression lz4 collate "C",
+    description text compression lz4 collate "C",
     entities json compression lz4,
     -- `attribute_names` keys, in the order the subscriber wrote them. NULL
     -- means every attribute.
@@ -80,15 +80,15 @@ create table subscriptions (
     -- `attributeUpdated`, wherever a match is decided. An empty selection
     -- could never fire and is refused before it is written.
     notification_trigger smallint[] compression lz4,
-    q text compression lz4,
+    q text compression lz4 collate "C",
     -- `q` again with every trailing `[...]` member as the subscriber wrote it,
     -- every other name as `q` spells it. Clause 4.9 reads a LanguageProperty's
     -- target language and a raw JSON key in that spelling, which the expanded
     -- `q` no longer carries. NULL exactly when `q` is.
-    q_written_members text compression lz4,
+    q_written_members text compression lz4 collate "C",
     geo_q json compression lz4,
-    scope_q text compression lz4,
-    csf text compression lz4,
+    scope_q text compression lz4 collate "C",
+    csf text compression lz4 collate "C",
     -- `attribute_names` keys of clause 5.2.12 `expandValues` and `jsonKeys`,
     -- in the order the subscriber wrote them. They are kept for the
     -- representation only: the coercion they ask for is applied to `q` when
@@ -96,18 +96,18 @@ create table subscriptions (
     -- evaluates.
     expand_values integer[] compression lz4,
     json_keys integer[] compression lz4,
-    dataset_id text[] compression lz4,
+    dataset_id text[] compression lz4 collate "C",
     -- Used by csource subscriptions only.
     temporal_q json compression lz4,
-    lang text compression lz4,
+    lang text compression lz4 collate "C",
     -- The `@context` the subscription was created under, which notifications
     -- are compacted with.
-    jsonld_context text compression lz4,
+    jsonld_context text compression lz4 collate "C",
     -- Table 5.2.12-1 `ngsildConformance`, the `major.minor` text the client
     -- wrote. When set, a notification undergoes the clause 4.3.6.8 backwards
     -- compatibility operation before it is sent (clause 5.8.6). NULL means no
     -- amendment.
-    ngsild_conformance text compression lz4,
+    ngsild_conformance text compression lz4 collate "C",
     constraint pk_subscriptions primary key (subscription_key),
     constraint uq_subscriptions_id unique (id),
     constraint chk_subscriptions_id_length check (octet_length(id) <= 1024),
@@ -142,8 +142,8 @@ where
 -- one notification without moving the next (clause 5.8.6).
 create table subscription_delivery_state (
     subscription_key bigint not null,
-    times_sent integer not null default 0,
-    times_failed integer not null default 0,
+    times_sent bigint not null default 0,
+    times_failed bigint not null default 0,
     last_notification timestamptz,
     last_success timestamptz,
     last_failure timestamptz,

@@ -51,7 +51,7 @@ create table temporal_attribute_streams (
     -- first, so a concurrent write of the same combination has either
     -- committed, and the clearing reads its instance, or sets the bit again
     -- once the clearing has committed.
-    shape_mask bit(80) not null default B'0'::bit(80),
+    shape_mask bit(80) compression lz4 not null default b'0'::bit(80),
     constraint pk_temporal_attribute_streams primary key (stream_key),
     -- `INCLUDE (stream_key)` makes stream resolution index-only: every append
     -- resolves its grain to a stream key, the hottest catalog read there is.

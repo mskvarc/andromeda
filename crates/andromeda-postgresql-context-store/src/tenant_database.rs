@@ -9,6 +9,7 @@ use crate::error::ContextStoreError;
 use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_pool::{sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_schema::tenancy::DATABASE_NAME_BYTE_LIMIT;
 use andromeda_postgresql_seaquery::{
     command::Command,
     database_definition::{ConnectedSessions, DatabaseDefinition},
@@ -74,9 +75,6 @@ pub fn sanitize_identifier(input: &str) -> String {
     if collapsed.is_empty() { "tenant".to_string() } else { collapsed }
 }
 
-/// Postgres identifier length limit (NAMEDATALEN - 1 in a default build).
-const POSTGRES_IDENT_MAX: usize = 63;
-
 /// Build a per-tenant Postgres database name of the form
 /// `{prefix}_{sanitized}_{hash}` while ensuring the result fits within
 /// Postgres's identifier length limit. Uniqueness is preserved by the
@@ -90,7 +88,7 @@ pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -
     let hash = hasher.finish();
     let short_hash = format!("{:08x}", (hash & 0xffff_ffff) as u32);
     let fixed_len = prefix.len() + 1 + 1 + short_hash.len();
-    let max_sanitized = POSTGRES_IDENT_MAX.saturating_sub(fixed_len);
+    let max_sanitized = DATABASE_NAME_BYTE_LIMIT.saturating_sub(fixed_len);
     let truncated: String = sanitized.chars().take(max_sanitized).collect();
     let trimmed = truncated.trim_end_matches('_');
     TenantDatabaseName::from(format!("{prefix}_{trimmed}_{short_hash}"))

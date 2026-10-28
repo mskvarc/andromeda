@@ -32,10 +32,9 @@ create extension if not exists btree_gin;
 
 do $$
 begin
-    create extension if not exists pg_stat_statements;
-exception
-    when others then
-        raise notice 'pg_stat_statements requires shared_preload_libraries -- skipping';
+    if 'pg_stat_statements' = any (string_to_array(replace(current_setting('shared_preload_libraries'), ' ', ''), ',')) then
+        create extension if not exists pg_stat_statements;
+    end if;
 end
 $$;
 

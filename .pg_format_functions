@@ -1,11 +1,13 @@
 by_range
+cascade_entity_current_attributes
+check_current_attribute_entities
+check_current_attribute_name_keys
 create_hypertable
 geom_to_geog
 GREATEST
+num_nonnulls
 pg_current_xact_id
+refuse_dictionary_change
 ST_IsValid
 ST_SRID
 ST_Zmflag
-sub_eq_keys
-sub_eq_query_key
-sub_path_hash

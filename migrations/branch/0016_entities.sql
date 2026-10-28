@@ -189,7 +189,8 @@ create table entity_type_members (
     id text compression lz4 collate "C" not null,
     constraint pk_entity_type_members primary key (entity_type_name_key, id) include (entity_key, is_current_member, is_evolution_member),
     constraint fk_entity_type_members_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
-    constraint chk_entity_type_members_side check (is_current_member or is_evolution_member)
+    constraint chk_entity_type_members_side check (is_current_member or is_evolution_member),
+    constraint chk_entity_type_members_id_length check (octet_length(id) <= 1024)
 )
 with (
     vacuum_truncate = false,

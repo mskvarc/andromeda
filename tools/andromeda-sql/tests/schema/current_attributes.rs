@@ -93,12 +93,12 @@ fn an_instance_record_declares_the_current_attributes_columns_in_order() -> Resu
 fn every_value_kind_pins_exactly_one_column() -> Result<(), PinError> {
     let schema = schema()?;
     let presence = constraint_definition(&schema, "chk_current_attributes_value_presence")?;
-    assert_eq!(presence, format!("check (num_nonnulls ({}) = 1)", VALUE_COLUMNS.join(", ")));
+    assert_eq!(presence, format!("check (num_nonnulls({}) = 1)", VALUE_COLUMNS.join(", ")));
     let placement = constraint_definition(&schema, "chk_current_attributes_value_kind_column")?;
     for (code, columns) in VALUE_KIND_COLUMNS {
         let arm = match columns {
             [column] => format!("(value_kind = {code} and {column} is not null)"),
-            many => format!("(value_kind = {code} and num_nonnulls ({}) = 1)", many.join(", ")),
+            many => format!("(value_kind = {code} and num_nonnulls({}) = 1)", many.join(", ")),
         };
         assert!(placement.contains(&arm), "value kind {code} pins no column: {placement}");
     }

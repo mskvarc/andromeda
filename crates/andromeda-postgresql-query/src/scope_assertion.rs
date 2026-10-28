@@ -53,8 +53,9 @@ pub const EVENT_COLUMNS: [ScopeHistory; 3] = [ScopeHistory::RecordedAt, ScopeHis
 /// as a `text[]` sorted and compared byte-wise.
 ///
 /// Both sides of a judgement are built here, so they agree on the order and
-/// on the collation whatever relation each reads: a recorded path is
-/// `COLLATE "C"`, a queued one carries the default collation.
+/// on the collation whatever relation each reads. A recorded path and a queued
+/// one are both `COLLATE "C"`; collating the set and its order explicitly keeps
+/// an expression derived from either byte-wise too.
 #[must_use]
 pub fn path_set(mut paths: SelectStatement, path: SimpleExpr) -> SimpleExpr {
     // Paths compare by byte identity, the one clause 4.18 spelling comparison

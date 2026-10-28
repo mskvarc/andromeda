@@ -9,6 +9,11 @@
 
 use sea_query::Iden;
 
+/// The longest database name PostgreSQL keeps, in bytes (`NAMEDATALEN - 1` in a
+/// default build). `tenants.database_name` is held to it by a check, and every
+/// name the broker generates fits within it.
+pub const DATABASE_NAME_BYTE_LIMIT: usize = 63;
+
 /// The `tenants` table - the platform registry of tenant to database mappings.
 #[derive(Iden, Clone, Copy)]
 pub enum Tenants {

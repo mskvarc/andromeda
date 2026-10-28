@@ -48,12 +48,13 @@ create table temporal_append_intents (
     -- reads this instead of `entries` to skip the statements none of its
     -- intents reaches.
     entry_needs smallint[] compression lz4 not null,
-    last_error text compression lz4,
+    last_error text compression lz4 collate "C",
     constraint pk_temporal_append_intents primary key (intent_key),
     constraint uq_temporal_append_intents_write_identity unique (write_id, entity_id, base_ordinal),
     constraint chk_temporal_append_intents_attempt_count_non_negative check (attempt_count >= 0),
     constraint chk_temporal_append_intents_base_ordinal_non_negative check (base_ordinal >= 0),
-    constraint chk_temporal_append_intents_claim_coherent check (num_nonnulls (claimed_at, lease_until, claimed_by) in (0, 3)),
+    constraint chk_temporal_append_intents_entry_needs check (array_position(entry_needs, null) is null and 1 <= all (entry_needs) and 6 >= all (entry_needs)),
+    constraint chk_temporal_append_intents_claim_coherent check (num_nonnulls(claimed_at, lease_until, claimed_by) in (0, 3)),
     constraint chk_temporal_append_intents_last_error_length check (last_error is null or char_length(last_error) <= 2048),
     constraint chk_temporal_append_intents_entity_id_length check (octet_length(entity_id) <= 1024)
 )

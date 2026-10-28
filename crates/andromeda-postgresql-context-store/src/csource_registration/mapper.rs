@@ -325,8 +325,8 @@ fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
 
     Ok(RegistrationHealth::builder()
         .status(status)
-        .times_sent(row.try_get::<Option<i32>, _>("times_sent")?.and_then(observed_counter))
-        .times_failed(row.try_get::<Option<i32>, _>("times_failed")?.and_then(observed_counter))
+        .times_sent(row.try_get::<Option<i64>, _>("times_sent")?.and_then(observed_counter))
+        .times_failed(row.try_get::<Option<i64>, _>("times_failed")?.and_then(observed_counter))
         .last_success(last_success)
         .last_failure(last_failure)
         .build())
@@ -339,7 +339,7 @@ fn row_to_health(row: &PgRow) -> Result<RegistrationHealth, ContextStoreError> {
 /// absence the member's 0..1 cardinality provides for; a negative count is not
 /// reachable through the column's own `CHECK` and is read the same way, as is
 /// the absent counter of a registration without a delivery-state row.
-const fn observed_counter(counted: i32) -> Option<i32> {
+const fn observed_counter(counted: i64) -> Option<i64> {
     if counted > 0 { Some(counted) } else { None }
 }
 
