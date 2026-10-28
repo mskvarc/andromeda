@@ -18,6 +18,7 @@ andromeda-http-extraction.workspace = true
 andromeda-http-health.workspace = true
 andromeda-http-notification-receiver.workspace = true
 andromeda-http-registration.workspace = true
+andromeda-http-response.workspace = true
 andromeda-http-snapshot.workspace = true
 andromeda-http-source-identity.workspace = true
 andromeda-http-stack.workspace = true

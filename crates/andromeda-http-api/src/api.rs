@@ -2,6 +2,7 @@
 
 use crate::{management::ManagementRoutes, routes::ApiRoutes};
 use andromeda_http_extraction::{api_root::AdvertisedApiRoot, operation_hit_scope::scope_operation_hits, request_links::validate_request_links};
+use andromeda_http_response::method_not_allowed::registered_on;
 use andromeda_http_stack::stack::HttpStack;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use axum::{Extension, Router, middleware::from_fn};
@@ -40,6 +41,7 @@ impl HttpApi {
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
+        let ngsi = registered_on(ngsi);
         let mut api_root = Router::new().nest(
             "/ngsi-ld/v1",
             stack.apply_api(ngsi_request_layers(ngsi, routes.advertised_api_root, routes.pagination)),
@@ -479,6 +481,60 @@ mod tests {
         Ok(())
     }
 
+    /// A request whose method a resource does not serve is answered a problem
+    /// document rather than a bare status: the document names the method it
+    /// refused and the request target, and Axum still attaches the `Allow`
+    /// header naming what the resource serves (RFC 9110, clause 15.5.5).
+    #[tokio::test]
+    async fn a_wrong_method_request_gets_a_problem_document_and_the_allow_header() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let response = service.oneshot(request(Method::POST, "/ngsi-ld/v1/tenants/acme")?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let allow = response.headers().get("allow").and_then(|value| value.to_str().ok());
+        assert!(
+            allow.is_some_and(|allow| allow.contains("GET") && allow.contains("PATCH") && !allow.contains("POST")),
+            "{allow:?}"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let document: Value = serde_json::from_slice(&body)?;
+        pretty_assertions::assert_eq!(document["type"], "https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed");
+        pretty_assertions::assert_eq!(document["title"], "Method not allowed");
+        pretty_assertions::assert_eq!(document["status"], 405);
+        assert!(
+            document["detail"].as_str().is_some_and(|detail| detail.contains("POST")),
+            "{}",
+            document["detail"]
+        );
+        pretty_assertions::assert_eq!(document["instance"], "/ngsi-ld/v1/tenants/acme");
+        Ok(())
+    }
+
+    /// A `HEAD` on a resource serving only `POST` is answered the document with
+    /// no body: the assembly declares the document's length and strips the
+    /// body, as a `HEAD` response must not carry one (RFC 9110, clause 9.3.2).
+    #[tokio::test]
+    async fn a_head_on_a_post_only_resource_gets_the_document_without_a_body() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let response = service
+            .oneshot(
+                Request::builder()
+                    .method(Method::HEAD)
+                    .uri("/ngsi-ld/v1/entityOperations/create")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let length = response
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok());
+        assert!(length.is_some_and(|length| length > 0), "a declared document length, found {length:?}");
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        pretty_assertions::assert_eq!(body.len(), 0);
+        Ok(())
+    }
+
     /// Metrics are served on the management plane, so the scrape
     /// never answers under `/ngsi-ld/v1` -- neither on the plain data plane nor
     /// in merged mode, where the scrape lives at the root `/metrics` instead.
@@ -506,6 +562,18 @@ mod tests {
         }
         let nested = service.oneshot(request(Method::GET, "/ngsi-ld/v1/metrics")?).await?;
         pretty_assertions::assert_eq!(nested.status(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    /// Merged mode answers a wrong-method request on a root-mounted probe the
+    /// same document the data plane and the standalone management plane answer,
+    /// so the topology a client sees never changes the refusal's shape.
+    #[tokio::test]
+    async fn merged_mode_answers_a_wrong_method_on_a_probe_with_the_document() -> Result<(), Box<dyn Error>> {
+        let service = HttpApi::assemble(build_routes()?, Some(management_routes(None)), &test_stack()?).into_service();
+        let response = service.oneshot(request(Method::POST, "/readyz")?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        pretty_assertions::assert_eq!(problem_type(response).await?, "MethodNotAllowed");
         Ok(())
     }
 

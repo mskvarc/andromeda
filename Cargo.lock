@@ -504,6 +504,7 @@ dependencies = [
  "andromeda-http-health",
  "andromeda-http-notification-receiver",
  "andromeda-http-registration",
+ "andromeda-http-response",
  "andromeda-http-snapshot",
  "andromeda-http-source-identity",
  "andromeda-http-stack",
@@ -837,6 +838,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
  "url",
 ]

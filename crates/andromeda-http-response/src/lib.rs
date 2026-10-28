@@ -23,6 +23,7 @@ pub mod jsonld_failure;
 mod link_target;
 mod linked_entity_unresolved;
 pub mod linked_resolution_warning;
+pub mod method_not_allowed;
 pub mod not_acceptable;
 pub mod pagination;
 pub mod parameter_failure;

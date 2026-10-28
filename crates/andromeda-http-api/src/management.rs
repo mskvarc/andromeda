@@ -7,6 +7,7 @@
 //! compression or the request-metric layer.
 
 use andromeda_http_health::routes::HealthRoutes;
+use andromeda_http_response::method_not_allowed::registered_on;
 use andromeda_http_stack::stack::HttpStack;
 use andromeda_http_telemetry::routes::TelemetryRoutes;
 use axum::Router;
@@ -30,10 +31,11 @@ impl ManagementRoutes {
     /// plane, so neither reimplements the probe-plus-optional-metrics layout.
     pub(crate) fn into_root_router(self) -> Router {
         let router = self.health.into_management_router();
-        match self.metrics {
+        let router = match self.metrics {
             Some(metrics) => router.merge(metrics.into_router()),
             None => router,
-        }
+        };
+        registered_on(router)
     }
 }
 
@@ -78,9 +80,10 @@ mod tests {
     use andromeda_http_telemetry::routes::TelemetryRoutes;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use axum::{
-        body::Body,
+        body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use serde_json::Value;
     use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
@@ -160,6 +163,29 @@ mod tests {
             "the bare management stack must not answer with a helmet header, found {:?}",
             response.headers()
         );
+        Ok(())
+    }
+
+    /// A wrong-method request on the management plane is answered the same
+    /// problem document the data plane answers, with the `Allow` header naming
+    /// what the probe serves.
+    #[tokio::test]
+    async fn a_wrong_method_request_gets_a_problem_document_and_the_allow_header() -> Result<(), Box<dyn Error>> {
+        let service = ManagementApi::assemble(management_routes(None), &stack_with_edge_features()?).into_service();
+        let response = service.oneshot(Request::post("/livez").body(Body::empty())?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let allow = response.headers().get("allow").and_then(|value| value.to_str().ok());
+        assert!(allow.is_some_and(|allow| allow.contains("GET")), "{allow:?}");
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let document: Value = serde_json::from_slice(&body)?;
+        pretty_assertions::assert_eq!(document["type"], "https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed");
+        pretty_assertions::assert_eq!(document["status"], 405);
+        assert!(
+            document["detail"].as_str().is_some_and(|detail| detail.contains("POST")),
+            "{}",
+            document["detail"]
+        );
+        pretty_assertions::assert_eq!(document["instance"], "/livez");
         Ok(())
     }
 }

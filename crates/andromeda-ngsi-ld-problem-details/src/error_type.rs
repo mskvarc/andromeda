@@ -52,6 +52,9 @@ pub enum NgsiLdErrorType {
     /// The request payload body is larger than the broker accepts (413).
     #[strum(to_string = "Request entity too large")]
     RequestEntityTooLarge,
+    /// The request method is not one the resource serves (405).
+    #[strum(to_string = "Method not allowed")]
+    MethodNotAllowed,
 }
 
 impl NgsiLdErrorType {
@@ -72,6 +75,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::NoMultiTenantSupport => iri!("https://uri.etsi.org/ngsi-ld/errors/NoMultiTenantSupport"),
             NgsiLdErrorType::NonexistentTenant => iri!("https://uri.etsi.org/ngsi-ld/errors/NonexistentTenant"),
             NgsiLdErrorType::RequestEntityTooLarge => iri!("https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge"),
+            NgsiLdErrorType::MethodNotAllowed => iri!("https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed"),
         }
     }
 
@@ -86,7 +90,7 @@ impl NgsiLdErrorType {
     ///
     /// Searches the variants rather than matching a second list of IRIs: a
     /// hand-written inverse can drift from [`type_iri`](Self::type_iri), and a
-    /// thirteen-element scan costs nothing on a path that runs once per
+    /// fourteen-element scan costs nothing on a path that runs once per
     /// deserialised batch error.
     #[must_use]
     pub fn from_type_iri(iri: &IriRefBuf) -> Option<NgsiLdErrorType> {
@@ -112,6 +116,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::LdContextNotAvailable => StatusCode::GATEWAY_TIMEOUT,
             NgsiLdErrorType::NoMultiTenantSupport => StatusCode::NOT_IMPLEMENTED,
             NgsiLdErrorType::RequestEntityTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            NgsiLdErrorType::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
         }
     }
 }
@@ -206,6 +211,12 @@ mod tests {
                 "RequestEntityTooLarge",
                 "Request entity too large",
                 StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                NgsiLdErrorType::MethodNotAllowed,
+                "MethodNotAllowed",
+                "Method not allowed",
+                StatusCode::METHOD_NOT_ALLOWED,
             ),
         ] {
             pretty_assertions::assert_eq!(category.type_iri().as_str(), format!("https://uri.etsi.org/ngsi-ld/errors/{suffix}"));

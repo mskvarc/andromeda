@@ -19,6 +19,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-health",
         "andromeda-http-notification-receiver",
         "andromeda-http-registration",
+        "andromeda-http-response",
         "andromeda-http-snapshot",
         "andromeda-http-source-identity",
         "andromeda-http-stack",
