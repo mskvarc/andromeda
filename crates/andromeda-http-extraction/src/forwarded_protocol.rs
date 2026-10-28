@@ -14,7 +14,7 @@
 //! it. Both are read, `Forwarded` first.
 
 use crate::api_root_scheme::ApiRootScheme;
-use http::{HeaderMap, HeaderName};
+use axum::http::{HeaderMap, HeaderName};
 use rfc7239::RfcError;
 use thiserror::Error;
 
@@ -139,7 +139,7 @@ mod tests {
         api_root_scheme::ApiRootScheme,
         forwarded_protocol::{ForwardedProtocolError, forwarded_protocol, from_forwarded, from_x_forwarded_proto},
     };
-    use http::{HeaderMap, HeaderValue};
+    use axum::http::{HeaderMap, HeaderValue};
 
     /// A header map carrying the named fields.
     fn headers(fields: &[(&'static str, &str)]) -> HeaderMap {

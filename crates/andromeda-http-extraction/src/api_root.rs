@@ -8,9 +8,14 @@
 //! and every URL the broker mints is built on it. Without one, the origin the
 //! request reveals is the `apiRoot`, with no prefix.
 
-use crate::{addressed_uri::addressed_uri, classification::classify_api_root_error};
+use crate::{
+    addressed_uri::addressed_uri,
+    api_root_scheme::ApiRootScheme,
+    classification::classify_api_root_error,
+    forwarded_protocol::forwarded_protocol,
+    listener_scheme::ListenerScheme,
+};
 use andromeda_configuration::schema::forwarded_header_trust::ForwardedHeaderTrust;
-use andromeda_http_headers::{api_root_scheme::ApiRootScheme, forwarded_protocol::forwarded_protocol, listener_scheme::ListenerScheme};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
@@ -157,9 +162,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::api_root::{AdvertisedApiRoot, ApiRoot, ApiRootError, resolve_api_root};
+    use crate::{
+        api_root::{AdvertisedApiRoot, ApiRoot, ApiRootError, resolve_api_root},
+        api_root_scheme::ApiRootScheme,
+        listener_scheme::ListenerScheme,
+    };
     use andromeda_configuration::schema::forwarded_header_trust::ForwardedHeaderTrust;
-    use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
         extract::FromRequestParts,

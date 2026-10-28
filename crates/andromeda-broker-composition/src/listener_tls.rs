@@ -9,7 +9,7 @@
 //! behind a reverse proxy never reads a certificate.
 
 use andromeda_configuration::schema::{listener_transport::ListenerTransport, tls::TlsConfig};
-use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
+use andromeda_http_extraction::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
 use andromeda_http_server::listener_security::{ListenerSecurity, TCP_HANDSHAKE_POLICY};
 use andromeda_http3_server::quic_crypto::QUIC_HANDSHAKE_POLICY;
 use andromeda_server_tls::{
@@ -96,7 +96,7 @@ pub const fn listener_scheme(transport: ListenerTransport) -> ListenerScheme {
 mod tests {
     use crate::listener_tls::{SharedTlsIdentity, listener_scheme};
     use andromeda_configuration::schema::{listener_transport::ListenerTransport, tls::TlsConfig};
-    use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
+    use andromeda_http_extraction::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
     use andromeda_http_server::listener_security::ListenerSecurity;
     use http::{Request, Response};
     use std::{convert::Infallible, error::Error};

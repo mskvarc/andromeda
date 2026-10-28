@@ -1,7 +1,7 @@
 //! The `Strict-Transport-Security` response header, sent only over TLS.
 
 use andromeda_configuration::schema::{feature_mode::FeatureMode, http::security_headers::SecurityHeadersConfig};
-use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
+use andromeda_http_extraction::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -50,7 +50,7 @@ mod tests {
             http::security_headers::{SecurityHeadersConfig, strict_transport_security::StrictTransportSecurityConfig},
         },
     };
-    use andromeda_http_headers::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
+    use andromeda_http_extraction::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
     use axum::{
         Router,
         body::Body,
