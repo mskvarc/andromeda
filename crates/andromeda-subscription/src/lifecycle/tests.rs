@@ -193,16 +193,11 @@ struct RecordingHook {
 
 #[async_trait]
 impl SubscriptionForwardingHook for RecordingHook {
-    async fn created(
-        &self,
-        _subscription: &Subscription,
-        _context: &ContextSpec,
-        _encountered_sources: &[ContextSourcePseudonym],
-    ) -> Result<(), SubscriptionError> {
+    async fn created(&self, _subscription: &Subscription, _encountered_sources: &[ContextSourcePseudonym]) -> Result<(), SubscriptionError> {
         Ok(())
     }
 
-    async fn updated(&self, _subscription: &Subscription, _deleted: &DeletedMembers, _context: &ContextSpec) -> Result<(), SubscriptionError> {
+    async fn updated(&self, _subscription: &Subscription, _deleted: &DeletedMembers) -> Result<(), SubscriptionError> {
         Ok(())
     }
 

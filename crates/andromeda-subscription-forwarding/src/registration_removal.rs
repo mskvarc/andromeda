@@ -76,8 +76,10 @@ impl RegistrationRemovalHook for SubscriptionForwardingService {
                         },
                     )
                     .await;
-                if forwarded.admission == SubscriptionForwardAdmission::Forwarded && !forwarded.succeeded() {
-                    warn!(subscription = %copy.local_subscription, registration = %registration.id, "forwarded subscription copy could not be deleted at the removed registration's source");
+                if forwarded.admission == SubscriptionForwardAdmission::Forwarded
+                    && let Some(failure) = forwarded.failure()
+                {
+                    warn!(subscription = %copy.local_subscription, registration = %registration.id, %failure, "forwarded subscription copy could not be deleted at the removed registration's source");
                 }
                 if let Err(error) = self.router.unregister(&copy.remote_subscription).await {
                     warn!(subscription = %copy.local_subscription, remote = %copy.remote_subscription, %error, "forwarded subscription copy route could not be removed");

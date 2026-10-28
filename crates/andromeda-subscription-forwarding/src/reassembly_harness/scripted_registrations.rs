@@ -25,8 +25,9 @@ use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A registration store that answers every matching query with its fixed list,
-/// except for the first few, which it fails. A creation is refused as an
-/// unavailable store, and an update or deletion finds no registration.
+/// except for the first few, which it fails, and a lookup by identifier from
+/// the same list. A creation is refused as an unavailable store, and an update
+/// or deletion finds no registration.
 pub(crate) struct ScriptedRegistrations {
     /// The registrations every matching query answers.
     registrations: Vec<ContextSourceRegistration>,
@@ -66,8 +67,8 @@ impl RegistrationStore for ScriptedRegistrations {
         Err(RegistrationError::StoreUnavailable)
     }
 
-    async fn get(&self, _id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
-        Ok(None)
+    async fn get(&self, id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
+        Ok(self.registrations.iter().find(|registration| registration.id == *id).cloned()) // clone: the lookup answers its own copy
     }
 
     async fn query_compiled(&self, _compiled: &CompiledCsrQuery, _window: &PageWindow) -> Result<RegistrationPage, RegistrationError> {

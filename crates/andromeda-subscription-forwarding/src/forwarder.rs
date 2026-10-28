@@ -75,15 +75,22 @@ impl SubscriptionForwardingService {
     /// Carry out one decision for `subscription` at `registration`; `deleted`
     /// names the members the local update removed, which an update of the
     /// copy sends as deletions.
+    ///
+    /// The copy is written under the subscription's own `jsonldContext`,
+    /// whichever request or notification led to the placement: the stored
+    /// subscription names its terms expanded, and clause 5.8.1.4 initialises
+    /// `jsonldContext` from the `@context` applicable for the subscription, so
+    /// a copy placed when the subscription is created and one placed when a
+    /// registration starts to match later are the same document.
     pub(crate) async fn apply_forward_decision(
         &self,
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
         decision: ForwardDecision,
         deleted: &DeletedMembers,
-        context: &ContextSpec,
     ) -> Result<(), SubscriptionForwardingError> {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
+        let context = &ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
         match decision {
             ForwardDecision::Create => {
                 let minted = mint_subscription_id()?;
@@ -97,8 +104,8 @@ impl SubscriptionForwardingService {
                     debug!(subscription = %subscription.id, registration = %registration.id, "registration does not advertise createSubscription");
                     return Ok(());
                 }
-                if !forwarded.succeeded() {
-                    warn!(subscription = %subscription.id, registration = %registration.id, "reduced subscription copy was not accepted by the source");
+                if let Some(failure) = forwarded.failure() {
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy was not accepted by the source");
                     return Ok(());
                 }
                 let remote = forwarded.assigned_id(&minted);
@@ -128,8 +135,10 @@ impl SubscriptionForwardingService {
                         },
                     )
                     .await;
-                if forwarded.admission == SubscriptionForwardAdmission::Forwarded && !forwarded.succeeded() {
-                    warn!(subscription = %subscription.id, registration = %registration.id, "reduced subscription copy could not be updated at the source");
+                if forwarded.admission == SubscriptionForwardAdmission::Forwarded
+                    && let Some(failure) = forwarded.failure()
+                {
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy could not be updated at the source");
                 }
             }
             ForwardDecision::Delete { remote } => {
@@ -137,8 +146,10 @@ impl SubscriptionForwardingService {
                     .federation
                     .forward_subscription(registration, SubscriptionForward::Delete { remote_id: &remote })
                     .await;
-                if forwarded.admission == SubscriptionForwardAdmission::Forwarded && !forwarded.succeeded() {
-                    warn!(subscription = %subscription.id, registration = %registration.id, "reduced subscription copy could not be deleted at the source");
+                if forwarded.admission == SubscriptionForwardAdmission::Forwarded
+                    && let Some(failure) = forwarded.failure()
+                {
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy could not be deleted at the source");
                 }
                 self.mappings.remove_forwarded(&subscription.id, &registration.id).await?;
                 self.router.unregister(&remote).await?;
@@ -151,6 +162,14 @@ impl SubscriptionForwardingService {
     /// Handle a notification of a companion subscription: every registration it
     /// names is given, updated on, or relieved of a reduced copy.
     ///
+    /// The notification only says which registrations changed and why. Each
+    /// one is read back from the registration store, as the placement at
+    /// creation reads it: the notification writes a registration compacted
+    /// under the companion's `@context`, while the stored subscription names
+    /// its entity types and attributes expanded, and the reduction compares
+    /// the two. A registration the store no longer holds has had its copies
+    /// torn down with it.
+    ///
     /// # Errors
     ///
     /// Returns [`SubscriptionForwardingError::UnknownSubscription`] when the
@@ -158,11 +177,7 @@ impl SubscriptionForwardingService {
     /// for. Propagates the mapping-store, federation, subscription-store and
     /// serialisation failures raised while placing, updating or removing the
     /// reduced copies the notification calls for.
-    pub async fn handle_csource_notification(
-        &self,
-        notification: &InboundCsourceNotification,
-        context: &ContextSpec,
-    ) -> Result<(), SubscriptionForwardingError> {
+    pub async fn handle_csource_notification(&self, notification: &InboundCsourceNotification) -> Result<(), SubscriptionForwardingError> {
         let Some(local) = self.mappings.local_of_companion(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
@@ -181,12 +196,16 @@ impl SubscriptionForwardingService {
         // taken for one leaves the copy of another as it was read.
         let copies = self.mappings.forwarded_of(&local).await?;
         for element in &notification.data {
-            let registration = match element {
+            let notified = match element {
                 ReceivedElement::Read(registration) => registration,
                 ReceivedElement::Refused(refusal) => {
                     warn!(subscription = %local, %refusal, "companion notification carried a registration that does not parse");
                     continue;
                 }
+            };
+            let Some(registration) = self.federation_registration(&notified.id).await? else {
+                debug!(subscription = %local, registration = %notified.id, "companion notification names a registration that no longer exists");
+                continue;
             };
             let existing = copies
                 .iter()
@@ -194,7 +213,7 @@ impl SubscriptionForwardingService {
                 .map(|copy| copy.remote_subscription.clone()); // clone: the decision owns the identifier of the copy it acts on
             let decision = decide(trigger, registration.access.mode.unwrap_or_default(), existing);
             // A registration change deletes nothing of the subscription.
-            self.apply_forward_decision(&subscription, registration, decision, &DeletedMembers::default(), context)
+            self.apply_forward_decision(&subscription, &registration, decision, &DeletedMembers::default())
                 .await?;
         }
         Ok(())

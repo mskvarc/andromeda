@@ -191,7 +191,7 @@ where
                 .await; // clone: the caller and change event each own the branch and identifier.
             if self.forwarding_hook.is_some() && target.permits_federation() {
                 let created = self.get(target, &id).await?;
-                self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
+                self.run_hook(&id, |hook| hook.created(&created, encountered_sources)).await;
             }
             Ok(id)
         }
@@ -262,7 +262,7 @@ where
                 .await; // clone: the change event owns the branch and identifier.
             if self.forwarding_hook.is_some() && target.permits_federation() {
                 let merged = self.get(target, id).await?;
-                self.run_hook(id, |hook| hook.updated(&merged, &deleted, context)).await;
+                self.run_hook(id, |hook| hook.updated(&merged, &deleted)).await;
             }
             Ok(())
         }

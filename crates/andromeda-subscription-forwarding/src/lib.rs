@@ -21,6 +21,14 @@ pub mod forwarder;
 pub mod forwarding_invariant;
 /// The notifications received under identifiers this broker minted.
 pub mod inbound;
+/// What a source whose registration starts to match is given.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod late_placement_tests;
 /// The identifier mappings the distributed side keeps.
 pub mod mapping;
 /// The identifier this broker mints for a subscription it hands to a peer.

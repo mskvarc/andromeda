@@ -20,7 +20,7 @@ use crate::{
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::subscription::SubscriptionForward;
-use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -94,7 +94,6 @@ impl SubscriptionForwardingService {
     async fn create_companion(
         &self,
         subscription: &Subscription,
-        context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionForwardingError> {
         let request = SubscriptionRequest {
@@ -108,7 +107,7 @@ impl SubscriptionForwardingService {
             .csource_subscriptions
             .create(&self.live_target, request, SubscriptionContext::CoreOnly, &[])
             .await?;
-        self.place_initial_copies(subscription, &companion, context, encountered_sources).await?;
+        self.place_initial_copies(subscription, &companion, encountered_sources).await?;
         self.mappings.link_companion(&subscription.id, &companion).await?;
         self.router.register(&companion, &self.tenant).await?;
         debug!(subscription = %subscription.id, %companion, "companion context source registration subscription created");
@@ -133,7 +132,6 @@ impl SubscriptionForwardingService {
         &self,
         subscription: &Subscription,
         companion: &Identifier,
-        context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<(), SubscriptionForwardingError> {
         let compiled = self.compiled_companion(companion).await?;
@@ -161,7 +159,7 @@ impl SubscriptionForwardingService {
                     continue;
                 }
                 let decision = decide(CsrTriggerReason::NewlyMatching, registration.access.mode.unwrap_or_default(), None);
-                self.apply_forward_decision(subscription, &registration, decision, &DeletedMembers::default(), context)
+                self.apply_forward_decision(subscription, &registration, decision, &DeletedMembers::default())
                     .await?;
             }
             if exhausted {
@@ -224,8 +222,8 @@ impl SubscriptionForwardingService {
                         },
                     )
                     .await;
-                if !forwarded.succeeded() {
-                    warn!(subscription = %local, registration = %copy.registration, "forwarded subscription copy could not be deleted at the source");
+                if let Some(failure) = forwarded.failure() {
+                    warn!(subscription = %local, registration = %copy.registration, %failure, "forwarded subscription copy could not be deleted at the source");
                 }
             }
             Ok(None) => debug!(subscription = %local, registration = %copy.registration, "registration of a forwarded copy is gone; dropping the mapping"),
@@ -259,7 +257,7 @@ impl SubscriptionForwardingService {
 
     /// Follow an update of `subscription` on its companion and on every
     /// forwarded copy (clause 5.8.2.4).
-    async fn follow_update(&self, subscription: &Subscription, deleted: &DeletedMembers, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    async fn follow_update(&self, subscription: &Subscription, deleted: &DeletedMembers) -> Result<(), SubscriptionForwardingError> {
         if is_local_only(subscription) {
             let teardown = self.teardown_of(&subscription.id).await?;
             self.tear_down(&subscription.id, &teardown, CopyMappings::StillRecorded).await;
@@ -279,14 +277,14 @@ impl SubscriptionForwardingService {
             // An update that first provisions the companion carries no
             // creation-time `Via` chain here; the update path forwards to
             // every selected source.
-            self.create_companion(subscription, context, &[]).await?;
+            self.create_companion(subscription, &[]).await?;
             return Ok(());
         };
         let compiled = self.compiled_companion(&companion).await?;
         for copy in self.mappings.forwarded_of(&subscription.id).await? {
             if let Some(registration) = self.federation_registration(&copy.registration).await? {
                 let decision = Self::decision_after_update(&compiled, &registration, &copy);
-                self.apply_forward_decision(subscription, &registration, decision, deleted, context).await?;
+                self.apply_forward_decision(subscription, &registration, decision, deleted).await?;
             }
         }
         Ok(())
@@ -294,46 +292,42 @@ impl SubscriptionForwardingService {
 }
 
 impl SubscriptionForwardingHook for SubscriptionForwardingService {
-    fn created<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    fn created<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
-        context: &'life2 ContextSpec,
-        encountered_sources: &'life3 [ContextSourcePseudonym],
+        encountered_sources: &'life2 [ContextSourcePseudonym],
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait,
     {
         Box::pin(async move {
             if is_local_only(subscription) {
                 return Ok(());
             }
-            self.create_companion(subscription, context, encountered_sources)
+            self.create_companion(subscription, encountered_sources)
                 .await
                 .map_err(into_subscription_error)?;
             Ok(())
         })
     }
 
-    fn updated<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    fn updated<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
         deleted: &'life2 DeletedMembers,
-        context: &'life3 ContextSpec,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait,
     {
         // The update future is large, so it is boxed as it stands rather than
         // moved into a wrapping async block.
-        Box::pin(self.follow_update(subscription, deleted, context).map_err(into_subscription_error))
+        Box::pin(self.follow_update(subscription, deleted).map_err(into_subscription_error))
     }
 
     fn teardown_of<'life0, 'life1, 'async_trait>(

@@ -13,9 +13,11 @@ pub(crate) mod forwarding_maps;
 pub(crate) mod held_entities;
 pub(crate) mod recording_subscriptions;
 pub(crate) mod scripted_registrations;
+pub(crate) mod subscribing_source;
 
 use crate::{
     error::SubscriptionForwardingError,
+    forwarder::ForwardDecision,
     inbound::Inbound,
     reassembly_harness::{
         forwarding_maps::{DiscardingRouter, ForwardingMaps},
@@ -41,6 +43,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
+    deleted_members::DeletedMembers,
     endpoint_admission::SubscriptionEndpointValidator,
     endpoint_refusal::EndpointRefusal,
     forwarding_hook::ForwardedCopy,
@@ -246,7 +249,7 @@ impl ReassemblyScene {
         let text = serde_json::to_vec(notification).expect("the notification writes");
         match Inbound::from_slice(&text).expect("the notification decodes") {
             Inbound::Notification(received) => Box::pin(self.service.handle_notification(&received, &ContextSpec::core_only())).await,
-            Inbound::CsourceNotification(received) => Box::pin(self.service.handle_csource_notification(&received, &ContextSpec::core_only())).await,
+            Inbound::CsourceNotification(received) => Box::pin(self.service.handle_csource_notification(&received)).await,
         }
     }
 
@@ -273,5 +276,21 @@ impl ReassemblyScene {
     /// How many times the copies of the local subscription were asked for.
     pub(crate) fn copies_asked(&self) -> usize {
         self.maps.copies_asked()
+    }
+
+    /// Place a reduced copy of the local subscription at `registration`'s
+    /// source the way the subscription's creation places it at a registration
+    /// that already matches.
+    pub(crate) async fn place_as_at_creation(&self, registration: &ContextSourceRegistration) -> Result<(), SubscriptionForwardingError> {
+        let stored = self
+            .service
+            .subscriptions
+            .get(&ContextTarget::Live, &local_subscription())
+            .await
+            .expect("the store answers")
+            .expect("the local subscription is stored");
+        self.service
+            .apply_forward_decision(&stored.subscription, registration, ForwardDecision::Create, &DeletedMembers::default())
+            .await
     }
 }

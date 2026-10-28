@@ -12,7 +12,6 @@
 //! before the local row goes, and handed back to the hook once it has.
 
 use crate::{deleted_members::DeletedMembers, error::SubscriptionError};
-use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
@@ -45,33 +44,29 @@ pub trait SubscriptionForwardingHook: Send + Sync + 'static {
     /// `encountered_sources` are the `Via`-listed context source pseudonyms the
     /// creating request already passed through (Table 6.3.18-2); the hook must
     /// not forward a companion copy back to any of them.
-    fn created<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    fn created<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
-        context: &'life2 ContextSpec,
-        encountered_sources: &'life3 [ContextSourcePseudonym],
+        encountered_sources: &'life2 [ContextSourcePseudonym],
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// A subscription was updated; `subscription` is its merged state and
     /// `deleted` the members the update removed, which a copy at a context
     /// source still holds (clause 5.8.2.4).
-    fn updated<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    fn updated<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
         deleted: &'life2 DeletedMembers,
-        context: &'life3 ContextSpec,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// What deleting the subscription `id` must tear down, read before its row

@@ -156,6 +156,8 @@ pub mod source_walk;
 pub mod split_entities;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
+/// Why a context source did not complete a forwarded subscription operation.
+pub mod subscription_forward_failure;
 /// Temporal query and retrieve execution.
 pub mod temporal;
 /// Reading each Temporal Evolution a source answered under the context it was written in.

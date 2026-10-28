@@ -45,7 +45,7 @@ pub(crate) async fn receive(
     // future; boxing keeps the request future small.
     match &received {
         Inbound::Notification(notification) => Box::pin(resolved.service.handle_notification(notification, &context)).await,
-        Inbound::CsourceNotification(notification) => Box::pin(resolved.service.handle_csource_notification(notification, &context)).await,
+        Inbound::CsourceNotification(notification) => Box::pin(resolved.service.handle_csource_notification(notification)).await,
     }
     .map_err(|error| classify_forwarding(&error, &uri))?;
 

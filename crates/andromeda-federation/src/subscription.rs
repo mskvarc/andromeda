@@ -14,7 +14,9 @@ use crate::{
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, TransportFailure},
+    remote_answer::RemoteAnswer,
     request::TriggeringRequest,
+    subscription_forward_failure::SubscriptionForwardFailure,
     transport::ForwardedRequest,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -103,10 +105,21 @@ impl ForwardedSubscription {
         }
     }
 
-    /// Whether the source completed the operation.
+    /// Why the source did not complete the operation; `None` when it did.
     #[must_use]
-    pub const fn succeeded(&self) -> bool {
-        matches!(self.outcome, Some(ForwardedWriteOutcome::Completed { .. }))
+    pub fn failure(&self) -> Option<SubscriptionForwardFailure> {
+        match &self.outcome {
+            Some(ForwardedWriteOutcome::Completed { .. }) => None,
+            Some(ForwardedWriteOutcome::RemoteHttpFailure { status, body }) => Some(SubscriptionForwardFailure::Answered(RemoteAnswer {
+                status: *status,
+                problem: body.problem(),
+            })),
+            Some(ForwardedWriteOutcome::Transport(failure)) => Some(SubscriptionForwardFailure::Transport(failure.clone())), // clone: the failure outlives the outcome it reports
+            Some(ForwardedWriteOutcome::LoopDetected) => Some(SubscriptionForwardFailure::LoopDetected),
+            Some(ForwardedWriteOutcome::NotAdvertised | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised) | None => {
+                Some(SubscriptionForwardFailure::NotAdvertised)
+            }
+        }
     }
 }
 
@@ -176,3 +189,57 @@ impl FederationService {
 
 /// The context a body-less forward is expressed against.
 static CORE_CONTEXT: ContextSpec = ContextSpec::core_only();
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        answer_body::AnswerBody,
+        outcome::ForwardedWriteOutcome,
+        subscription::{ForwardedSubscription, SubscriptionForwardAdmission},
+    };
+    use std::sync::Arc;
+
+    fn forwarded(outcome: ForwardedWriteOutcome) -> ForwardedSubscription {
+        ForwardedSubscription {
+            admission: SubscriptionForwardAdmission::Forwarded,
+            outcome: Some(outcome),
+        }
+    }
+
+    #[test]
+    fn a_completed_forward_reports_no_failure() {
+        let completed = forwarded(ForwardedWriteOutcome::Completed {
+            status: 201,
+            body: AnswerBody::Absent,
+        });
+        assert!(completed.failure().is_none());
+    }
+
+    /// Clause 6.3.17: a refused copy is reported with the problem detail the
+    /// source answered, which names what it refused.
+    #[test]
+    fn a_refused_forward_reports_the_status_and_the_problem_detail_of_the_source() {
+        let refused = forwarded(ForwardedWriteOutcome::RemoteHttpFailure {
+            status: 400,
+            body: AnswerBody::Text(Arc::from(
+                br#"{"type":"https://uri.etsi.org/ngsi-ld/errors/BadRequestData","detail":"entities or watchedAttributes must be present"}"#.as_slice(),
+            )),
+        });
+        pretty_assertions::assert_eq!(
+            refused.failure().map(|failure| failure.to_string()).as_deref(),
+            Some("context source answered HTTP 400: entities or watchedAttributes must be present")
+        );
+    }
+
+    #[test]
+    fn a_forward_never_sent_reports_the_operation_as_not_advertised() {
+        let unsent = ForwardedSubscription {
+            admission: SubscriptionForwardAdmission::NotAdvertised,
+            outcome: None,
+        };
+        pretty_assertions::assert_eq!(
+            unsent.failure().map(|failure| failure.to_string()).as_deref(),
+            Some("the registration does not advertise the operation")
+        );
+    }
+}
