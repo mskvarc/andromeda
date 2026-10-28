@@ -4,6 +4,8 @@
 //! Every parameter name is read into the typed [`QueryParameter`] vocabulary
 //! and checked against the operation's [`QueryParameterSet`] before any value
 //! is decoded, so a parameter the operation does not define is refused by name.
+//! Every value is then held to the text the broker can hold, so a value no
+//! store statement could carry is refused by name as well, on every operation.
 //!
 //! A value that fails is named on the failure path alone. A decoding that
 //! tracks the member it is in names it directly. A parameter read inside a
@@ -13,6 +15,7 @@
 //! parameter reproduces is a combination of parameters and names none.
 
 use crate::query_refusal::QueryRefusal;
+use andromeda_ngsi_ld_number::held_text::admit_held_text;
 use andromeda_ngsi_ld_request::query_parameter::{QueryParameter, QueryParameterSet};
 use form_urlencoded::Serializer as PairWriter;
 use serde::de::DeserializeOwned;
@@ -25,17 +28,19 @@ use serde_urlencoded::{Deserializer as PairReader, de::Error as UrlencodedError}
 ///
 /// Returns [`QueryRefusal::Undefined`] for a name outside the vocabulary,
 /// [`QueryRefusal::NotDefinedHere`] for one `T` does not define,
+/// [`QueryRefusal::Unholdable`] for a value the broker cannot hold,
 /// [`QueryRefusal::Value`] for a value that does not decode, and
 /// [`QueryRefusal::Combination`] for parameters that only fail together.
 pub fn decode_query<T>(query: &str) -> Result<T, QueryRefusal>
 where
     T: DeserializeOwned + QueryParameterSet,
 {
-    for (name, _value) in form_urlencoded::parse(query.as_bytes()) {
+    for (name, value) in form_urlencoded::parse(query.as_bytes()) {
         let parameter: QueryParameter = name.parse().map_err(|_undefined| QueryRefusal::Undefined)?;
         if !T::defines(parameter) {
             return Err(QueryRefusal::NotDefinedHere(parameter));
         }
+        admit_held_text(&value).map_err(|source| QueryRefusal::Unholdable { parameter, source })?;
     }
     serde_urlencoded::from_str(query).map_err(
         |source| match tracked_parameter::<T>(query).or_else(|| isolated_parameter::<T>(query, &source)) {
@@ -89,7 +94,7 @@ mod tests {
     /// The parameter a refusal names, if any.
     fn named<T: Debug>(result: Result<T, QueryRefusal>) -> Option<QueryParameter> {
         match result.expect_err("the query is refused") {
-            QueryRefusal::NotDefinedHere(parameter) | QueryRefusal::Value { parameter, .. } => Some(parameter),
+            QueryRefusal::NotDefinedHere(parameter) | QueryRefusal::Value { parameter, .. } | QueryRefusal::Unholdable { parameter, .. } => Some(parameter),
             QueryRefusal::Undefined | QueryRefusal::Combination(_) => None,
         }
     }
@@ -144,5 +149,29 @@ mod tests {
             let detail = decode_query::<EntityQueryParameters>(query).expect_err(query).to_string();
             assert!(!detail.contains("sideways"), "{query}: {detail}");
         }
+    }
+
+    /// A value holding U+0000, spelled `%00`, is refused by the parameter that
+    /// carries it, whichever parameter and operation it is.
+    #[test]
+    fn a_value_holding_u0000_is_refused_naming_its_parameter() {
+        for (query, parameter) in [
+            ("type=Building&q=name%3D%3D%22a%00b%22", QueryParameter::Q),
+            ("idPattern=urn%3Ax%00", QueryParameter::IdPattern),
+            ("type=Building&lang=%00", QueryParameter::Lang),
+        ] {
+            let refused = decode_query::<EntityQueryParameters>(query);
+            assert!(
+                matches!(refused, Err(QueryRefusal::Unholdable { parameter: named, .. }) if named == parameter),
+                "{query}: {refused:?}"
+            );
+        }
+        assert!(matches!(decode_query::<LocalOnlyParams>("local=%00"), Err(QueryRefusal::Unholdable { .. })));
+    }
+
+    /// The escape spelled out in a value is six characters, not U+0000.
+    #[test]
+    fn a_value_spelling_the_escape_without_the_character_decodes() {
+        assert!(decode_query::<EntityQueryParameters>("type=Building&q=name%3D%3D%22%5Cu0001%22").is_ok());
     }
 }

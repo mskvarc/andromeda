@@ -13,8 +13,9 @@ pub(crate) enum BodyAdmissionRefusal {
     #[error(transparent)]
     NotJson(#[from] NotJsonDocument),
     /// Clause 5.5.4: the body is JSON whose text holds a number outside the
-    /// supported range, a member named like the reader's own tokens, or an
-    /// object naming one member twice (IETF RFC 8259 section 4). Never
+    /// supported range, a string or member name the broker cannot hold, a
+    /// member named like the reader's own tokens, or an object naming one
+    /// member twice (IETF RFC 8259 section 4). Never
     /// [`JsonTextRefusal::Syntax`], which is [`BodyAdmissionRefusal::NotJson`].
     #[error(transparent)]
     Inadmissible(JsonTextRefusal),
@@ -40,9 +41,10 @@ impl From<JsonTextRefusal> for BodyAdmissionRefusal {
     fn from(refusal: JsonTextRefusal) -> BodyAdmissionRefusal {
         match refusal {
             JsonTextRefusal::Syntax(source) => BodyAdmissionRefusal::NotJson(NotJsonDocument(source)),
-            inadmissible @ (JsonTextRefusal::OutOfRange(_) | JsonTextRefusal::ReservedMemberName { .. } | JsonTextRefusal::DuplicateMember { .. }) => {
-                BodyAdmissionRefusal::Inadmissible(inadmissible)
-            }
+            inadmissible @ (JsonTextRefusal::OutOfRange(_)
+            | JsonTextRefusal::Unholdable { .. }
+            | JsonTextRefusal::ReservedMemberName { .. }
+            | JsonTextRefusal::DuplicateMember { .. }) => BodyAdmissionRefusal::Inadmissible(inadmissible),
         }
     }
 }
@@ -84,12 +86,14 @@ mod tests {
         assert!(refusal.to_string().starts_with("request body is not a JSON document: "), "{refusal}");
     }
 
-    /// Clause 5.5.4: a number the model cannot hold, a reserved member name and
-    /// a repeated member are valid JSON of unacceptable data.
+    /// Clause 5.5.4: a number the model cannot hold, a string the broker cannot
+    /// hold, a reserved member name and a repeated member are valid JSON of
+    /// unacceptable data.
     #[test]
     fn the_inadmissible_texts_are_bad_request_data_naming_their_location() {
         for (text, detail_start) in [
             (r#"{"v":1e-16384}"#, "the JSON number at /v is refused: "),
+            (r#"{"v":"\u0000"}"#, "the string at /v is refused: "),
             (r#"{"$serde_json::private::Other":1}"#, "the member at /"),
             (r#"{"v":1,"v":2}"#, "the member at /v is named twice in its object"),
         ] {

@@ -4,7 +4,6 @@
 
 use crate::{
     admission_fixture::{admitted_batch, admitted_context, admitted_entity, submitted},
-    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     merge_options::MergeOptions,
     notification_recording_harness::{ENTITY_ID, entity_uri, live_target, recording_service},
@@ -13,7 +12,7 @@ use crate::{
     write_target::WriteTarget,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument, refusal::EntityRefusal};
+use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_ngsi_ld_model::{
     attribute::{member_reading::MemberReading, merge_member::MergeMember},
@@ -465,20 +464,4 @@ async fn a_null_on_an_instance_member_is_refused_outside_a_merge() {
         .await
         .expect_err("observedAt holds a date-time");
     assert!(error.contains("/temperature/observedAt"), "{error}");
-}
-
-/// A value holding U+0000 cannot be stored, so the creation is refused as the
-/// client's `BadRequestData` before anything is committed (clause 5.5.4).
-#[tokio::test]
-async fn a_created_value_holding_nul_is_refused_before_the_commit() {
-    let (service, _recorded) = recording_service().await;
-    let entity: Entity = written_entity("name", &json!({"type": "Property", "value": "nul\u{0}here"}));
-    let error = service
-        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await)
-        .await
-        .expect_err("U+0000 cannot be stored");
-    assert!(
-        matches!(&error, EntityError::Validation(EntityValidationReason::Refused(refusal)) if matches!(**refusal, EntityRefusal::NulCharacter { .. })),
-        "{error:?}"
-    );
 }

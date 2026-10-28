@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
     time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
 };
-use andromeda_ngsi_ld_number::JsonNumberError;
+use andromeda_ngsi_ld_number::{JsonNumberError, held_text::UnholdableCharacter};
 use langtag::{InvalidLangTag, LangTagBuf};
 use regex_syntax::hir;
 
@@ -232,6 +232,10 @@ pub enum QueryError {
     /// intermediate representation its store restatement is rendered from.
     #[error("invalid regular expression: {0}")]
     PatternTranslation(#[from] hir::Error),
+    /// The escapes of a `quotedStr` operand spell a character the broker
+    /// cannot hold, so no stored value can be compared with it.
+    #[error("a query text is refused: {0}")]
+    Unholdable(#[from] UnholdableCharacter),
 
     /// The `georel` value could not be parsed.
     #[error("geo: {0}")]

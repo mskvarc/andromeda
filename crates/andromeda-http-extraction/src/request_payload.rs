@@ -16,11 +16,13 @@
 //! upload with a stream reset instead and forbid the header.
 //!
 //! [`RequestPayload`] reads a JSON document an operation parses itself, so it
-//! also holds the payload to the JSON value limit the stack publishes, before
-//! the operation builds a tree from it.
+//! also holds the payload to the JSON value limit the stack publishes, and its
+//! text to the request text admission every other body passes, before the
+//! operation builds a tree from it.
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    body_admission_refusal::BodyAdmissionRefusal,
     content_kind::request_content_kind,
     content_length_precondition::{DeclaredBodyLength, declared_body_length},
     json_value_budget::refuse_values_past_budget,
@@ -33,6 +35,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     request_refusal::RequestRefusal,
 };
+use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     body::Bytes,
@@ -53,8 +56,9 @@ pub(crate) const SPLIT_ADVICE: &str = "send the content in smaller requests, a b
 ///
 /// Applies the clause 6.3.4 `Content-Length` precondition first, so a request
 /// that declares no length is the bare 411 the clause requires before anything
-/// is read. A payload that is no JSON text passes the count, and the parse
-/// that follows refuses it in its operation's own words.
+/// is read. A payload that is no JSON text passes the count and the text
+/// admission, and the parse that follows refuses it in its operation's own
+/// words.
 pub struct RequestPayload(pub Bytes);
 
 impl<S> FromRequest<S> for RequestPayload
@@ -78,8 +82,19 @@ where
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
         // Counted before the operation builds a tree, so a payload of too
         // many values costs its bytes and nothing more.
-        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance)))?;
-        Ok(RequestPayload(body))
+        // clone: a refused text names the request too.
+        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
+        // A text that is no JSON is left to the operation's parse, which words
+        // that refusal itself.
+        match admit_json_text(&body) {
+            Ok(()) | Err(JsonTextRefusal::Syntax(_)) => Ok(RequestPayload(body)),
+            Err(
+                refused @ (JsonTextRefusal::OutOfRange(_)
+                | JsonTextRefusal::Unholdable { .. }
+                | JsonTextRefusal::ReservedMemberName { .. }
+                | JsonTextRefusal::DuplicateMember { .. }),
+            ) => Err(BodyAdmissionRefusal::Inadmissible(refused).into_rejection(instance)),
+        }
     }
 }
 
@@ -293,6 +308,25 @@ mod tests {
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
         pretty_assertions::assert_eq!(body.as_ref(), b"16".as_slice());
+    }
+
+    /// A payload the operation parses itself passes the text admission every
+    /// body passes: a string holding U+0000 is `BadRequestData` at its
+    /// location, while a text that is no JSON is left to the operation.
+    #[tokio::test]
+    async fn a_payload_holding_u0000_is_bad_request_data_naming_where_it_stands() {
+        let body = r#"{"a":"\u0000"}"#;
+        let request = Request::post("/ngsi-ld/v1/jsonldContexts")
+            .header(CONTENT_LENGTH, body.len())
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("a valid request");
+        let (status, problem) = answer(router(true), request).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        let detail = problem["detail"].as_str().expect("a detail");
+        assert!(detail.contains("/a") && detail.contains("U+0000"), "{detail}");
     }
 
     /// RFC 9110 clause 10.1.1: refusing an HTTP/1.1 upload before reading it

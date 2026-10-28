@@ -1,6 +1,6 @@
 //! Admitting a request's JSON text before anything is built from it: no number
-//! outside the supported range, no reserved reader-token member name, no
-//! repeated member name.
+//! outside the supported range, no string or member name the broker cannot
+//! hold, no reserved reader-token member name, no repeated member name.
 //!
 //! A request decoded straight from its text into a domain type has no tree to
 //! walk, and many of its numbers -- the ordinates of a geometry, a typed
@@ -14,6 +14,11 @@
 //! reader's own spelling of a number: a tree holding such a member reads back
 //! as a different value once its members are reordered, as a stored document's
 //! are.
+//!
+//! A string or a member name holding a character the broker cannot hold
+//! ([`held_text`](crate::held_text)) is refused at its location too. Every
+//! request body, every item of a batch and every element a peer sends is read
+//! by this walk, so no reader of a client's JSON needs a check of its own.
 //!
 //! An object naming one member twice is refused as well, at the location of
 //! the repeated member: IETF RFC 8259 section 4 asks member names within an
@@ -29,6 +34,7 @@
 use crate::{
     JsonNumberError,
     checked_decimal_from_json,
+    held_text::{UnholdableCharacter, admit_held_text},
     json_value::{
         json_pointer::{JsonPointer, JsonPointerSegment},
         reader_private_members::SERDE_JSON_PRIVATE_MEMBER_PREFIX,
@@ -62,6 +68,18 @@ pub enum JsonTextRefusal {
     /// The text holds a number outside the supported range, at this location.
     #[error(transparent)]
     OutOfRange(#[from] JsonNumberPathError),
+    /// A string, or the name of a member, holds a character the broker cannot
+    /// hold, at this location.
+    #[error("the {} at {path} is refused: {source}", .site)]
+    Unholdable {
+        /// JSON Pointer locating the string, or the member whose name it is.
+        path: JsonPointer,
+        /// Whether the string is a value or a member name.
+        site: TextSite,
+        /// The character the broker cannot hold.
+        #[source]
+        source: UnholdableCharacter,
+    },
     /// The text names a member with the prefix the reader reserves for its own
     /// number and raw-value tokens, at this location.
     #[error("the member at {path} is named with the prefix the JSON reader reserves for its own tokens")]
@@ -82,11 +100,24 @@ pub enum JsonTextRefusal {
     Syntax(#[from] serde_json::Error),
 }
 
+/// Where in a JSON text a refused string stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum TextSite {
+    /// A string value.
+    #[display("string")]
+    Value,
+    /// The name of a member.
+    #[display("name of the member")]
+    MemberName,
+}
+
 /// The first refusal one walk met.
 #[derive(Debug)]
 enum Refusal {
     /// A number outside the supported range.
     Number(JsonNumberPathError),
+    /// A string the broker cannot hold, at this location.
+    Unholdable(JsonPointer, TextSite, UnholdableCharacter),
     /// A member named with the reader's reserved prefix, at this location.
     ReservedMemberName(JsonPointer),
     /// A member named twice in its object, at this location.
@@ -94,15 +125,17 @@ enum Refusal {
 }
 
 /// Admit a JSON text: refuse one holding a number outside the supported range,
-/// a member named with the reader's reserved prefix, or an object that names
-/// one member twice.
+/// a string or member name the broker cannot hold, a member named with the
+/// reader's reserved prefix, or an object that names one member twice.
 ///
 /// # Errors
 ///
 /// Returns [`JsonTextRefusal::Syntax`] for a text the streaming reader
 /// refuses, trailing content included, and otherwise the first refusal in
 /// document order: [`JsonTextRefusal::OutOfRange`] locating a number that lies
-/// outside the supported range, [`JsonTextRefusal::ReservedMemberName`]
+/// outside the supported range, [`JsonTextRefusal::Unholdable`] locating a
+/// string or member name the broker cannot hold,
+/// [`JsonTextRefusal::ReservedMemberName`]
 /// locating a member named with the reader's reserved prefix, or
 /// [`JsonTextRefusal::DuplicateMember`] locating a repeated member.
 pub fn admit_json_text(text: &[u8]) -> Result<(), JsonTextRefusal> {
@@ -112,6 +145,7 @@ pub fn admit_json_text(text: &[u8]) -> Result<(), JsonTextRefusal> {
     match walk.refused.into_inner() {
         None => Ok(()),
         Some(Refusal::Number(refused)) => Err(JsonTextRefusal::OutOfRange(refused)),
+        Some(Refusal::Unholdable(path, site, source)) => Err(JsonTextRefusal::Unholdable { path, site, source }),
         Some(Refusal::ReservedMemberName(path)) => Err(JsonTextRefusal::ReservedMemberName { path }),
         Some(Refusal::DuplicateMember(path)) => Err(JsonTextRefusal::DuplicateMember { path }),
     }
@@ -157,11 +191,28 @@ impl AdmissionWalk {
         *self.refused.borrow_mut() = Some(Refusal::Number(JsonNumberPathError { path, source }));
     }
 
-    /// Refuse the member `name` of the object at the current location if the
-    /// reader reserves its prefix, unless an earlier refusal stands.
+    /// Refuse the member `name` of the object at the current location if it
+    /// holds a character the broker cannot hold or the reader reserves its
+    /// prefix, unless an earlier refusal stands.
     fn check_name(&self, name: &str) {
-        if self.refused.borrow().is_none() && name.starts_with(SERDE_JSON_PRIVATE_MEMBER_PREFIX) {
-            *self.refused.borrow_mut() = Some(Refusal::ReservedMemberName(self.member_location(name)));
+        if self.refused.borrow().is_some() {
+            return;
+        }
+        let refusal = match admit_held_text(name) {
+            Err(source) => Refusal::Unholdable(self.member_location(name), TextSite::MemberName, source),
+            Ok(()) if name.starts_with(SERDE_JSON_PRIVATE_MEMBER_PREFIX) => Refusal::ReservedMemberName(self.member_location(name)),
+            Ok(()) => return,
+        };
+        *self.refused.borrow_mut() = Some(refusal);
+    }
+
+    /// Refuse the string value `text` at the current location if it holds a
+    /// character the broker cannot hold, unless an earlier refusal stands.
+    fn check_text(&self, text: &str) {
+        if self.refused.borrow().is_none()
+            && let Err(source) = admit_held_text(text)
+        {
+            *self.refused.borrow_mut() = Some(Refusal::Unholdable(self.location(), TextSite::Value, source));
         }
     }
 
@@ -200,8 +251,8 @@ impl AdmissionWalk {
     }
 }
 
-/// Reads one value and everything below it, checking every number and member
-/// name.
+/// Reads one value and everything below it, checking every number, string and
+/// member name.
 #[derive(Clone, Copy, Debug)]
 struct AdmissionSeed<'w> {
     /// The walk this value belongs to.
@@ -237,7 +288,8 @@ impl<'de> Visitor<'de> for AdmissionSeed<'_> {
         Ok(())
     }
 
-    fn visit_str<E: DeserializeError>(self, _value: &str) -> Result<(), E> {
+    fn visit_str<E: DeserializeError>(self, value: &str) -> Result<(), E> {
+        self.walk.check_text(value);
         Ok(())
     }
 
@@ -307,14 +359,19 @@ impl Visitor<'_> for MemberNameText {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::json_value::text_admission::{JsonTextRefusal, admit_json_text};
+    use crate::json_value::text_admission::{JsonTextRefusal, TextSite, admit_json_text};
 
     /// The refusal the text walk gives for `text`, rendered.
     fn text_refusal(text: &str) -> Option<String> {
         match admit_json_text(text.as_bytes()) {
             Ok(()) => None,
             Err(JsonTextRefusal::OutOfRange(refused)) => Some(refused.to_string()),
-            Err(refused @ (JsonTextRefusal::Syntax(_) | JsonTextRefusal::ReservedMemberName { .. } | JsonTextRefusal::DuplicateMember { .. })) => {
+            Err(
+                refused @ (JsonTextRefusal::Syntax(_)
+                | JsonTextRefusal::Unholdable { .. }
+                | JsonTextRefusal::ReservedMemberName { .. }
+                | JsonTextRefusal::DuplicateMember { .. }),
+            ) => {
                 panic!("{text}: unexpected refusal {refused}")
             }
         }
@@ -461,5 +518,57 @@ mod tests {
                 other => panic!("{text}: expected a reserved member name, got {other:?}"),
             }
         }
+    }
+
+    /// The refusal of a text holding U+0000: where, and in what kind of string.
+    fn unholdable(text: &str) -> Option<(String, TextSite)> {
+        match admit_json_text(text.as_bytes()) {
+            Err(JsonTextRefusal::Unholdable { path, site, .. }) => Some((path.to_string(), site)),
+            Ok(()) => None,
+            Err(other) => panic!("{text}: unexpected refusal {other}"),
+        }
+    }
+
+    /// U+0000 is refused in a string or a member name at any depth, at its
+    /// location: in an entity, a structured value, a list, a language map, a
+    /// subscription, a batch item and a hosted `@context`.
+    #[test]
+    fn u0000_in_a_string_or_a_member_name_is_refused_where_it_stands() {
+        for (text, location, site) in [
+            (r#"{"name":{"type":"Property","value":"a\u0000b"}}"#, "/name/value", TextSite::Value),
+            (r#"{"v":{"value":{"inner":[1,{"deep":"\u0000"}]}}}"#, "/v/value/inner/1/deep", TextSite::Value),
+            (r#"{"v":{"value":{"a\u0000":1}}}"#, "/v/value/a\u{0}", TextSite::MemberName),
+            (r#"{"l":{"languageMap":{"en":"x\u0000"}}}"#, "/l/languageMap/en", TextSite::Value),
+            (r#"{"type":"Subscription","description":"\u0000"}"#, "/description", TextSite::Value),
+            (r#"[{"id":"urn:ngsi-ld:T:1"},{"id":"urn:ngsi-ld:T:2","n":"\u0000"}]"#, "/1/n", TextSite::Value),
+            (
+                r#"{"@context":{"term\u0000":"https://example.org/t"}}"#,
+                "/@context/term\u{0}",
+                TextSite::MemberName,
+            ),
+            ("\"\\u0000\"", "/", TextSite::Value),
+        ] {
+            let (path, refused_site) = unholdable(text).unwrap_or_else(|| panic!("{text}: accepted"));
+            pretty_assertions::assert_eq!((path.as_str(), refused_site), (location, site), "{text}");
+        }
+    }
+
+    /// Every other control character, and `\u0000` spelled with an escaped
+    /// reverse solidus, are held as written.
+    #[test]
+    fn other_control_characters_and_an_escaped_u0000_spelling_are_held() {
+        for text in [r#"{"v":"\u0001\u001f\t"}"#, r#"{"v":"\\u0000"}"#, r#"{"\\u0000":1}"#] {
+            assert!(unholdable(text).is_none(), "{text}");
+        }
+    }
+
+    /// The refusal names the location and the character.
+    #[test]
+    fn the_unholdable_refusal_names_the_location_and_the_character() {
+        let refused = admit_json_text(br#"{"name":{"value":"\u0000"}}"#).expect_err("U+0000");
+        pretty_assertions::assert_eq!(
+            refused.to_string(),
+            "the string at /name/value is refused: the text holds the character U+0000, which this broker cannot hold"
+        );
     }
 }

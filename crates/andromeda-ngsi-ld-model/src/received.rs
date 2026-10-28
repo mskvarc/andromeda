@@ -72,8 +72,8 @@ pub enum ElementRefusalReason {
     Undecodable(serde_json::Error),
     /// The element's text is refused as the text of a request is: an object of
     /// it names one member twice (IETF RFC 8259 section 4), or it holds a
-    /// number outside the supported range or a member named like the JSON
-    /// reader's own tokens. A broker "reject[s] data that is invalid"
+    /// number outside the supported range, a string the broker cannot hold or
+    /// a member named like the JSON reader's own tokens. A broker "reject[s] data that is invalid"
     /// (clause 4.3.6.8), and a peer's data is judged as a client's is.
     #[error(transparent)]
     Inadmissible(JsonTextRefusal),

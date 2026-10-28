@@ -1,6 +1,7 @@
 //! The refusal of a query string the operation's parameter set does not admit.
 
 use andromeda_http_response::request_refusal::RequestRefusal;
+use andromeda_ngsi_ld_number::held_text::UnholdableCharacter;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::{query::deserialization::JOIN_LEVEL_NOT_AN_INTEGER, query_parameter::QueryParameter};
 use serde_urlencoded::de::Error as UrlencodedError;
@@ -24,6 +25,15 @@ pub enum QueryRefusal {
         #[source]
         source: UrlencodedError,
     },
+    /// The value of one parameter holds a character the broker cannot hold.
+    #[error("invalid query parameter {parameter}: {source}")]
+    Unholdable {
+        /// The parameter whose value is at fault.
+        parameter: QueryParameter,
+        /// The character the broker cannot hold.
+        #[source]
+        source: UnholdableCharacter,
+    },
     /// Parameters that decode alone but not together.
     #[error("invalid query parameters: {0}")]
     Combination(#[source] UrlencodedError),
@@ -44,7 +54,7 @@ impl RequestRefusal for QueryRefusal {
                 parameter: QueryParameter::JoinLevel,
                 source,
             } if source.to_string() == JOIN_LEVEL_NOT_AN_INTEGER => NgsiLdErrorType::InvalidRequest,
-            QueryRefusal::Value { .. } | QueryRefusal::Combination(_) => NgsiLdErrorType::BadRequestData,
+            QueryRefusal::Value { .. } | QueryRefusal::Unholdable { .. } | QueryRefusal::Combination(_) => NgsiLdErrorType::BadRequestData,
         }
     }
 }
@@ -53,6 +63,7 @@ impl RequestRefusal for QueryRefusal {
 mod tests {
     use crate::query_refusal::QueryRefusal;
     use andromeda_http_response::request_refusal::RequestRefusal;
+    use andromeda_ngsi_ld_number::held_text::UnholdableCharacter;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_request::{
         query::deserialization::{GEOREL_WITHOUT_GEOMETRY, JOIN_LEVEL_NOT_AN_INTEGER},
@@ -80,6 +91,13 @@ mod tests {
                 QueryRefusal::Value {
                     parameter: QueryParameter::JoinLevel,
                     source: UrlencodedError::custom("joinLevel is not a positive integer: 0"),
+                },
+                NgsiLdErrorType::BadRequestData,
+            ),
+            (
+                QueryRefusal::Unholdable {
+                    parameter: QueryParameter::Q,
+                    source: UnholdableCharacter,
                 },
                 NgsiLdErrorType::BadRequestData,
             ),

@@ -46,6 +46,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::PatternRepeatedQuantifier
         | QueryError::PatternNonPosixConstruct { .. }
         | QueryError::PatternTranslation(_)
+        | QueryError::Unholdable(_)
         | QueryError::GeoRel(_)
         | QueryError::GeoCoordinatesInvalid(_)
         | QueryError::ReferenceGeometry(_)

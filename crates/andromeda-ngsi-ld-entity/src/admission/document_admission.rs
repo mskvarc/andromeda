@@ -47,9 +47,8 @@ impl EntityDocument {
     ///
     /// Returns the [`EntityRefusal`] of the first rule the document breaks, in
     /// the order the attribute envelopes, the sub-attribute instance
-    /// identities, the family members, the JSON shapes, the datatypes, the
-    /// stored texts, the NGSI-LD Null placements, the scope and the geometries
-    /// are checked.
+    /// identities, the family members, the NGSI-LD Null placements, the scope
+    /// and the geometries are checked.
     pub fn admit(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
         for (name, member) in self.attributes() {
             admit_envelopes(name, member, admission.value_omission())?;
@@ -64,7 +63,6 @@ impl EntityDocument {
             member.instances().iter().try_for_each(|instance| admit_json_shapes(name, instance))?;
         }
         self.admit_datatypes()?;
-        self.admit_stored_text()?;
         self.admit_null_placements(admission)?;
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_geometry(name, instance))?;
@@ -121,7 +119,6 @@ impl InstanceDocument {
         admit_family_members(None, self)?;
         admit_json_shapes(attribute, self)?;
         self.admit_datatypes(attribute)?;
-        self.admit_stored_text(attribute)?;
         self.admit_null_placements(attribute, admission)?;
         admit_geometry(attribute, self)
     }

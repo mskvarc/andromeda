@@ -258,11 +258,11 @@ impl<'b> BatchArrayItem<'b> {
     /// # Errors
     ///
     /// Returns the [`BatchItemRefusal`] when the `id` is too long to be stored,
-    /// when the item carries a number the model cannot represent, or carries
-    /// an `@context` its representation forbids or lacks one it requires
-    /// (clause 6.3.5). Clause 5.6.7.4 reports these per entity, leaving the
-    /// rest of the batch intact. Whether the item is an entity is judged once
-    /// the context it names was admitted.
+    /// when the item carries a number the model cannot represent or a string
+    /// the broker cannot hold, or carries an `@context` its representation
+    /// forbids or lacks one it requires (clause 6.3.5). Clause 5.6.7.4 reports
+    /// these per entity, leaving the rest of the batch intact. Whether the item
+    /// is an entity is judged once the context it names was admitted.
     fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<ItemAdmission, BatchItemRefusal> {
         IdentifierTooLong::check(entity_id.as_str())?;
         let text = self.text.get().as_bytes();
@@ -702,6 +702,28 @@ mod tests {
             "{}",
             errors[0].error.detail
         );
+    }
+
+    /// Clause 5.6.7.4 reports a failing item per entity: the item holding
+    /// U+0000 is refused against its own `id`, naming where the character
+    /// stands, and its neighbours are decoded.
+    #[tokio::test]
+    async fn an_item_holding_u0000_is_refused_alone_naming_where_it_stands() {
+        let batch = json_batch(
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","name":{"type":"Property","value":"a\u0000b"}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","name":{"type":"Property","value":"ab"}}]"#,
+        )
+        .await;
+        let (entities, errors) = parsed(&batch).await;
+
+        assert_eq!(entities.len(), 1, "{errors:?}");
+        pretty_assertions::assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        pretty_assertions::assert_eq!(
+            errors[0].error.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::BadRequestData))
+        );
+        assert!(errors[0].error.detail.contains("/name/value"), "{}", errors[0].error.detail);
+        assert!(errors[0].error.detail.contains("U+0000"), "{}", errors[0].error.detail);
     }
 
     /// JSON-LD applies a top-level node's `@context` to that node alone, so each

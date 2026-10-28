@@ -101,7 +101,6 @@ impl TemporalService {
         admit_instance_nesting(self.limits.payload_budget.attribute_nesting, &attr_iri, &replacement)?;
         admit_instance_unit_code(&attr_iri, &replacement)?;
         replacement.admit_datatypes(&attr_iri)?;
-        replacement.admit_stored_text(&attr_iri)?;
         // Clause 5.5.4: the temporal evolution is excepted from the second
         // NGSI-LD Null prohibition, never from the third.
         replacement.admit_null_placements(&attr_iri, NullSentinelAdmission::TemporalEvolution)?;

@@ -23,8 +23,9 @@ pub enum BatchItemRefusal {
     /// Clause 6.3.5: an `application/ld+json` item carries no `@context`.
     #[error("an application/ld+json batch item must contain @context")]
     NoContextInLdJson,
-    /// A number the model cannot represent, a member named like the reader's
-    /// own number tokens, or an object naming one member twice.
+    /// A number the model cannot represent, a string or member name the broker
+    /// cannot hold, a member named like the reader's own number tokens, or an
+    /// object naming one member twice.
     #[error(transparent)]
     JsonText(#[from] JsonTextRefusal),
     /// A member that does not decode, named by its path.

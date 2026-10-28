@@ -3,6 +3,9 @@
 //! Andromeda preserves the mathematical value of every accepted JSON number.
 //! PostgreSQL `NUMERIC` supplies the persistence domain, so accepted non-zero
 //! values are limited to 131,072 integral digits and 16,383 fractional digits.
+//! The text a client hands the broker is held to what the store can hold as
+//! well: [`held_text`] owns that rule, and the request text admission applies
+//! it with the number range in one pass.
 
 use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero, serde::json_num};
 use derive_more::Display;
@@ -12,6 +15,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 pub mod float_spelling;
+pub mod held_text;
 pub mod json_value;
 mod number_token;
 

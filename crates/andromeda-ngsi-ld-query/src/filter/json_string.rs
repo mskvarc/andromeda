@@ -9,6 +9,7 @@
 //! `au00e9`, and would silently accept escapes the grammar does not define.
 
 use crate::error::QueryError;
+use andromeda_ngsi_ld_number::held_text::admit_held_text;
 use derive_more::Display;
 
 /// The number of hexadecimal digits RFC 8259 requires after `\u`.
@@ -104,7 +105,9 @@ pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usiz
 /// `escape` production does not admit, [`QueryError::QInvalidUnicodeEscape`]
 /// for a malformed or unpaired `\uXXXX` form,
 /// [`QueryError::QUnescapedControlCharacter`] for a raw character below U+0020,
-/// and [`QueryError::QUnterminatedString`] for a trailing lone backslash.
+/// [`QueryError::QUnterminatedString`] for a trailing lone backslash, and
+/// [`QueryError::Unholdable`] for a literal whose escapes spell a character
+/// the broker cannot hold.
 pub fn decode_quoted_str(body: &str) -> Result<String, QueryError> {
     let chars: Vec<char> = body.chars().collect();
     let mut literal = String::new();
@@ -128,6 +131,7 @@ pub fn decode_quoted_str(body: &str) -> Result<String, QueryError> {
             }
         }
     }
+    admit_held_text(&literal)?;
     Ok(literal)
 }
 
@@ -374,5 +378,13 @@ mod tests {
         let (literal, next) = scan_quoted_literal(&chars, 0).expect("a well-formed quoted literal");
         pretty_assertions::assert_eq!(literal, "ab");
         pretty_assertions::assert_eq!(chars[next], 'c');
+    }
+
+    /// Clause 4.9 reads `\u0000` as U+0000, which no stored value can hold,
+    /// so the literal is refused rather than compared.
+    #[test]
+    fn an_escape_spelling_u0000_is_refused() {
+        assert!(matches!(decode_quoted_str(r"a\u0000b"), Err(QueryError::Unholdable(_))));
+        pretty_assertions::assert_eq!(decode_quoted_str(r"\\u0000").expect("an escaped reverse solidus"), r"\u0000");
     }
 }
