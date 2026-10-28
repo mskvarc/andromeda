@@ -24,6 +24,10 @@ pub enum RenderError {
     Toml(#[from] TomlError),
 }
 
+/// The dotted paths of the keys [`redacted`] replaces. The configuration
+/// descriptor marks exactly these sensitive.
+pub const SENSITIVE_KEYS: [&str; 2] = ["database.url", "database.pooler.url"];
+
 /// The configuration with both database URLs, the direct one and the pooler's,
 /// replaced, since either may carry a password.
 #[must_use]
@@ -53,4 +57,45 @@ pub fn redacted_json(config: &BrokerConfig) -> Result<String, RenderError> {
 /// Returns [`RenderError::Toml`] when writing fails.
 pub fn redacted_toml(config: &BrokerConfig) -> Result<String, RenderError> {
     Ok(toml::to_string_pretty(&redacted(config))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SENSITIVE_KEYS, redacted};
+    use crate::{broker_config::BrokerConfig, schema::database::pooler::PoolerConfig};
+    use pretty_assertions::assert_eq;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+    use url_macro::url;
+
+    /// The dotted path of every leaf of `value` with its value.
+    fn leaves(value: &Value, path: &str, into: &mut Vec<(String, Value)>) {
+        match value {
+            Value::Object(members) => members
+                .iter()
+                .for_each(|(name, member)| leaves(member, &if path.is_empty() { name.clone() } else { format!("{path}.{name}") }, into)),
+            leaf @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => into.push((path.to_owned(), leaf.clone())),
+        }
+    }
+
+    #[test]
+    fn redaction_changes_exactly_the_sensitive_keys() -> Result<(), serde_json::Error> {
+        let mut config = BrokerConfig::default();
+        config.database.url = url!("postgres://user:secret@db.example/andromeda");
+        config.database.pooler = Some(PoolerConfig {
+            url: url!("postgres://user:secret@pooler.example/andromeda"),
+            ..PoolerConfig::default()
+        });
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        leaves(&serde_json::to_value(&config)?, "", &mut before);
+        leaves(&serde_json::to_value(redacted(&config))?, "", &mut after);
+        let changed: BTreeSet<&str> = before
+            .iter()
+            .zip(&after)
+            .filter(|(before, after)| before != after)
+            .map(|(before, _)| before.0.as_str())
+            .collect();
+        assert_eq!(changed, SENSITIVE_KEYS.into_iter().collect::<BTreeSet<_>>());
+        Ok(())
+    }
 }

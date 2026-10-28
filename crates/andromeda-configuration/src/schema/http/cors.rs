@@ -103,7 +103,7 @@ macro_rules! cors_rule {
         enum $name:ident over $elem:ty {
             $(
                 $(#[$variant_doc:meta])*
-                $variant:ident = $token:literal
+                $variant:ident = $token:literal => $description:literal
             ),+ $(,)?
         }
     ) => {
@@ -161,7 +161,12 @@ macro_rules! cors_rule {
 
             fn json_schema(generator: &mut SchemaGenerator) -> Schema {
                 let list = generator.subschema_for::<Vec<$elem>>();
-                json_schema!({ "anyOf": [{ "enum": [$($token),+] }, list] })
+                json_schema!({
+                    "anyOf": [
+                        { "oneOf": [$({ "const": $token, "description": $description }),+] },
+                        list
+                    ]
+                })
             }
         }
     };
@@ -171,7 +176,7 @@ cors_rule! {
     /// Which origins CORS accepts: any origin, or an explicit allow-list.
     enum OriginRule over Url {
         /// Accept requests from any origin (`Access-Control-Allow-Origin: *`).
-        Any = "any"
+        Any = "any" => "Accepts requests from any origin."
     }
 }
 
@@ -179,9 +184,9 @@ cors_rule! {
     /// Which methods CORS allows: any, the request's own (mirrored), or a list.
     enum MethodRule over CorsMethod {
         /// Allow any method (`Access-Control-Allow-Methods: *`).
-        Any = "any",
+        Any = "any" => "Allows any method.",
         /// Reflect the method the request asks for.
-        Mirror = "mirror"
+        Mirror = "mirror" => "Allows the method the request asks for."
     }
 }
 
@@ -189,9 +194,9 @@ cors_rule! {
     /// Which request headers CORS allows: any, the request's own, or a list.
     enum HeaderRule over CorsHeaderName {
         /// Allow any request header (`Access-Control-Allow-Headers: *`).
-        Any = "any",
+        Any = "any" => "Allows any request header.",
         /// Reflect the headers the request asks for.
-        Mirror = "mirror"
+        Mirror = "mirror" => "Allows the headers the request asks for."
     }
 }
 
@@ -199,7 +204,7 @@ cors_rule! {
     /// Which response headers CORS exposes: any, or an explicit list.
     enum ExposeRule over CorsHeaderName {
         /// Expose any response header (`Access-Control-Expose-Headers: *`).
-        Any = "any"
+        Any = "any" => "Exposes any response header."
     }
 }
 

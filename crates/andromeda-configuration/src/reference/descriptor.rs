@@ -9,11 +9,13 @@
 
 use crate::{
     load::ENVIRONMENT_PREFIX,
+    redact::SENSITIVE_KEYS,
     reference::{
         ReferenceError,
         key_listing::{KeyEntry, KeyState, ReferenceEntry, TableEntry, TableShape, key_listing},
         schema_node::{Choice, SchemaNode},
     },
+    schema::apply_mode::ApplyMode,
     validate::{
         bound::{Quantity, Relation},
         rule::{Limit, Rule},
@@ -42,7 +44,7 @@ struct TableDescriptor {
     /// Whether it is set by default.
     presence: KeyState,
     /// The operator description.
-    description: Option<String>,
+    description: String,
 }
 
 /// One key.
@@ -51,7 +53,13 @@ struct KeyDescriptor {
     /// The dotted path.
     path: String,
     /// The operator description.
-    description: Option<String>,
+    description: String,
+    /// Whether a change reaches a running broker or takes a restart.
+    apply: ApplyMode,
+    /// Whether every replica must hold the same value.
+    replica_consistent: bool,
+    /// Whether `configuration show` hides the value.
+    sensitive: bool,
     /// The type, under the name an operator reads, such as `duration`.
     type_name: String,
     /// Whether it is set by default.
@@ -142,7 +150,7 @@ pub fn configuration_descriptor() -> Result<ConfigurationDescriptor, ReferenceEr
                 path: table.path.dotted(),
                 shape: table.shape,
                 presence: table.state,
-                description: table.description,
+                description: table.description.unwrap_or_default(),
             })
             .collect(),
         keys,
@@ -177,8 +185,11 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
         }),
         limits: key.limits.iter().copied().map(limit_descriptor).collect(),
         conditions: key.conditions,
+        apply: node.map(SchemaNode::apply).unwrap_or_default(),
+        replica_consistent: node.is_some_and(SchemaNode::replica_consistent),
+        sensitive: SENSITIVE_KEYS.contains(&path.as_str()),
         path,
-        description: key.description,
+        description: key.description.unwrap_or_default(),
         presence: key.state,
         value: key.value,
     }

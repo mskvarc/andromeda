@@ -52,6 +52,7 @@ pub struct RequestLimitsConfig {
     #[schemars(
         description = "The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and HTTP/3 alike, from 8 KiB to 32 KiB. Every field, the method, target and authority included, costs its name, its value and 32 bytes. A request over it is answered a bare `431`. The management listener applies the same limit."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_header_section: HeaderSectionLimit,
     /// The most JSON values one request payload may hold, counted before the
     /// payload is parsed. Every scalar, array and object is one value. A
@@ -60,6 +61,7 @@ pub struct RequestLimitsConfig {
     #[schemars(
         description = "The most JSON values one request body may hold, counted before it is parsed. Every object, array, string, number, boolean and `null` counts once, so the count follows the cost of processing the body rather than its bytes. A body over it is answered `413`. Zero is refused."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_json_values: NonZeroUsize,
     /// The most JSON values one written entity may hold outside its
     /// geometries and JSON literals, counted on the document the write
@@ -67,6 +69,7 @@ pub struct RequestLimitsConfig {
     #[schemars(
         description = "The most JSON values one written entity may hold outside its geometries and JSON literals, counted on the expanded document. An entity over it is answered `413`. Zero is refused."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_entity_json_values: NonZeroUsize,
     /// The most positions one `GeoProperty` geometry may hold, in a written
     /// entity and in a query, subscription or registration geometry. A typed
@@ -75,6 +78,7 @@ pub struct RequestLimitsConfig {
     #[schemars(
         description = "The most positions one geometry may hold, in a written entity and in a query, subscription or registration geometry. A written geometry over it is answered `413`, a query's `403` `TooComplexQuery`. Zero is refused."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_geometry_positions: NonZeroUsize,
     /// The deepest nesting one written attribute may have, counted in levels:
     /// each sub-attribute, each JSON object or list of a value, and each
@@ -84,6 +88,7 @@ pub struct RequestLimitsConfig {
     #[schemars(
         description = "The deepest one written attribute may nest: each sub-attribute, each JSON object or list of a value, and each object or array inside a JSON literal is one level. An attribute nesting deeper is answered `400` `BadRequestData`. It is also the depth a `q` or `orderBy` path may walk. From 1 to 62, the deepest every stored value reads back at."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_attribute_nesting: NonZeroUsize,
 }
 

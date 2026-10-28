@@ -62,6 +62,7 @@ pub struct SpatialIndexConfig {
     #[schemars(
         description = "How the index is kept consistent with the database. `\"commit-synchronous\"` saves a read per geo query but is exact only when a single broker process writes the database."
     )]
+    #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub consistency: SpatialConsistency,
     /// Interval between full index rebuilds from the store, in human-readable
     /// form (`"30m"`).

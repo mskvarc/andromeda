@@ -1,6 +1,7 @@
 use crate::{
     reference::{
         ReferenceError,
+        descriptor::configuration_descriptor,
         key_listing::{ReferenceEntry, key_listing},
         schema_node::SchemaNode,
         template::configuration_template,
@@ -98,5 +99,29 @@ fn every_rule_names_a_key_of_the_file() -> Result<(), ReferenceError> {
         .filter(|path| !paths.contains(path))
         .collect();
     assert_eq!(unknown, [] as [String; 0]);
+    Ok(())
+}
+
+/// The descriptor is what a documentation site prints, so a table, key or
+/// choice with no text, such as a value a macro generates, must not reach it.
+#[test]
+fn the_descriptor_leaves_nothing_undescribed() -> Result<(), ReferenceError> {
+    let value = serde_json::to_value(configuration_descriptor()?)?;
+    let undescribed: Vec<String> = ["tables", "keys"]
+        .into_iter()
+        .flat_map(|list| value[list].as_array().into_iter().flatten())
+        .flat_map(|item| {
+            let path = item["path"].as_str().unwrap_or_default().to_owned();
+            let own = item["description"].as_str().is_none_or(|text| text.trim().is_empty()).then(|| path.clone());
+            let choices = item["choices"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|choice| choice["description"].as_str().is_none_or(|text| text.trim().is_empty()))
+                .map(move |choice| format!("{path} = {}", choice["value"]));
+            own.into_iter().chain(choices).collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(undescribed, [] as [String; 0]);
     Ok(())
 }

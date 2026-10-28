@@ -1,7 +1,10 @@
 //! The part of the configuration schema the reference reads: each node's
 //! operator description and the nodes nested in it.
 
-use crate::reference::{ReferenceError, json_schema::declared_schema};
+use crate::{
+    reference::{ReferenceError, json_schema::declared_schema},
+    schema::apply_mode::ApplyMode,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -34,8 +37,9 @@ impl JsonTypes {
 pub(crate) struct Choice {
     /// The value as TOML writes it.
     pub(crate) value: String,
-    /// What it means; absent when the schema says nothing of it.
-    pub(crate) description: Option<String>,
+    /// What it means; empty only when the schema says nothing of it, which the
+    /// descriptor test refuses.
+    pub(crate) description: String,
 }
 
 /// One schema node, read back from the schema's JSON text.
@@ -48,6 +52,12 @@ pub(crate) struct SchemaNode {
     /// The operator description; absent on a node that carries none.
     #[serde(default)]
     description: Option<String>,
+    /// Whether a change to the key reaches a running broker.
+    #[serde(default, rename = "x-andromeda-apply")]
+    apply: ApplyMode,
+    /// Whether every replica behind one load balancer must hold the same value.
+    #[serde(default, rename = "x-andromeda-replica-consistent")]
+    replica_consistent: bool,
     /// The short name of the value's type, where the configuration gives one.
     #[serde(default)]
     title: Option<String>,
@@ -99,6 +109,16 @@ impl SchemaNode {
         self.description.as_deref()
     }
 
+    /// How a change to the key reaches a running broker.
+    pub(crate) const fn apply(&self) -> ApplyMode {
+        self.apply
+    }
+
+    /// Whether every replica must hold the same value.
+    pub(crate) const fn replica_consistent(&self) -> bool {
+        self.replica_consistent
+    }
+
     /// The node at `path` below this one.
     pub(crate) fn descendant<'path>(&self, path: impl IntoIterator<Item = &'path str>) -> Option<&SchemaNode> {
         path.into_iter().try_fold(self, |node, name| node.child(name))
@@ -132,7 +152,7 @@ impl SchemaNode {
     pub(crate) fn choices(&self) -> Vec<Choice> {
         let listed = self.allowed.iter().flatten().map(|value| Choice {
             value: format!("{value:?}"),
-            description: None,
+            description: String::new(),
         });
         let described = self.one_of.iter().filter_map(|variant| {
             variant
@@ -141,7 +161,7 @@ impl SchemaNode {
                 .or_else(|| variant.allowed.iter().flatten().next())
                 .map(|value| Choice {
                     value: format!("{value:?}"),
-                    description: variant.description.clone(),
+                    description: variant.description.clone().unwrap_or_default(),
                 })
         });
         listed.chain(described).chain(self.any_of.iter().flat_map(SchemaNode::choices)).collect()

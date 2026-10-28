@@ -96,6 +96,7 @@ pub struct ClientAuthenticationConfig {
         title = "path",
         description = "The PEM bundle of the CAs client certificates must chain to. Left out, no client certificate can be verified."
     )]
+    #[schemars(extend("x-andromeda-apply" = "reload"))]
     pub ca: Option<PathBuf>,
 }
 
@@ -113,6 +114,7 @@ pub struct TlsConfig {
         title = "path",
         description = "The PEM certificate chain the broker presents, leaf first. Left out, no listener can terminate TLS. The file is reloaded when it changes."
     )]
+    #[schemars(extend("x-andromeda-apply" = "reload"))]
     pub certificate: Option<PathBuf>,
     /// PEM-encoded private key for the leaf certificate (PKCS#8, SEC1 or PKCS#1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,6 +122,7 @@ pub struct TlsConfig {
         title = "path",
         description = "The PEM private key of the leaf certificate, as PKCS#8, SEC1 or PKCS#1. Left out, no listener can terminate TLS. The file is reloaded when it changes."
     )]
+    #[schemars(extend("x-andromeda-apply" = "reload"))]
     pub private_key: Option<PathBuf>,
     /// Oldest TLS version a TCP handshake may negotiate: `tls1.2` or `tls1.3`.
     #[schemars(description = "The oldest TLS version a TCP connection may negotiate. HTTP/3 always uses TLS 1.3.")]
