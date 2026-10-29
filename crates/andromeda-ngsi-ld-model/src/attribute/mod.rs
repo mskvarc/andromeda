@@ -36,6 +36,7 @@ pub mod nested_null;
 pub mod object_list;
 pub mod one_or_many;
 pub mod patched;
+pub mod previous_instance;
 pub mod property;
 pub mod relationship;
 pub mod value;

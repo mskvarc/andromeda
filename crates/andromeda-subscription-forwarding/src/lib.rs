@@ -69,6 +69,9 @@ pub mod receiver;
 pub mod reduced_copy;
 /// Tearing down the copies held at a removed registration's context source.
 mod registration_removal;
+/// The entities of a relayed copy beside what their source reported of the
+/// change.
+mod relayed_entities;
 /// The Linked Entities the local subscription's `join` reaches from a relayed
 /// notification.
 mod relayed_join;

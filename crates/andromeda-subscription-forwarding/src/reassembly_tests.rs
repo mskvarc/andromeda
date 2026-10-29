@@ -157,6 +157,99 @@ async fn a_relayed_null_survives_split_reassembly() {
     pretty_assertions::assert_eq!(entity["name"]["value"], json!("Roadster"), "this broker's part: {entity}");
 }
 
+/// Table 5.2.14-1 `showChanges` with clause 5.8.6: the copy at the source asks
+/// for the previous values, which only the source holds, and the relayed copy
+/// carries them when the local subscription asks for them and never
+/// otherwise.
+#[tokio::test]
+async fn relayed_previous_values_follow_the_local_show_changes() {
+    for show_changes in [true, false] {
+        let mut scene = ReassemblyScene::start(SceneSpec {
+            subscription_members: json!({"notification": {"format": "normalized", "showChanges": show_changes}}),
+            ..SceneSpec::default()
+        })
+        .await;
+        let data = json!([compact_vehicle(
+            "urn:ngsi-ld:Vehicle:1",
+            &[
+                ("speed", json!({"type": "Property", "value": 5, "previousValue": 4})),
+                (
+                    "owner",
+                    json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:b", "previousObject": "urn:ngsi-ld:Person:a"})
+                )
+            ]
+        )]);
+
+        scene.post(&notification(&data)).await.expect("the notification is handled");
+
+        let entities = relayed(&mut scene).await;
+        let [entity] = entities.as_slice() else {
+            panic!("one entity is relayed, got {entities:?}");
+        };
+        let (speed, owner) = if show_changes {
+            (
+                json!({"type": "Property", "value": 5, "previousValue": 4}),
+                json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:b", "previousObject": "urn:ngsi-ld:Person:a"}),
+            )
+        } else {
+            (
+                json!({"type": "Property", "value": 5}),
+                json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:b"}),
+            )
+        };
+        pretty_assertions::assert_eq!(entity["speed"], speed, "showChanges {show_changes}: {entity}");
+        pretty_assertions::assert_eq!(entity["owner"], owner, "showChanges {show_changes}: {entity}");
+    }
+}
+
+/// Clause 5.8.6: under `showChanges` a source notifies a deleted instance as an
+/// object whose value is the NGSI-LD Null beside its previous value. A split
+/// part is still completed from the other holders: the deletion replaces the
+/// instance of its `datasetId` they hold, their other instances stay, and the
+/// deletion is relayed with the previous value the source reported.
+#[tokio::test]
+async fn an_instance_deletion_with_its_previous_value_survives_split_reassembly() {
+    let id = identifier("urn:ngsi-ld:Vehicle:1");
+    let sender = AnsweringSource::start(&sender_registration()).await;
+    let third = AnsweringSource::start(&identifier("urn:ngsi-ld:ContextSourceRegistration:third")).await;
+    third
+        .answer(
+            &id,
+            &compact_vehicle(
+                id.as_str(),
+                &[("speed", json!({"type": "Property", "value": 60, "datasetId": "urn:ngsi-ld:Dataset:kmh"}))],
+            ),
+        )
+        .await;
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"splitEntities": true, "notification": {"format": "normalized", "showChanges": true}}),
+        held: vec![held_vehicle(id.as_str(), &[("speed", json!(40)), ("name", json!("Roadster"))])],
+        registrations: vec![sender.registration(), third.registration()],
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([compact_vehicle(
+        id.as_str(),
+        &[("speed", json!({"type": "Property", "value": "urn:ngsi-ld:null", "previousValue": 40}))]
+    )]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    let entities = relayed(&mut scene).await;
+    let [entity] = entities.as_slice() else {
+        panic!("one entity is relayed, got {entities:?}");
+    };
+    pretty_assertions::assert_eq!(
+        entity["speed"],
+        json!([
+            {"type": "Property", "value": 60, "datasetId": "urn:ngsi-ld:Dataset:kmh"},
+            {"type": "Property", "value": "urn:ngsi-ld:null", "previousValue": 40}
+        ]),
+        "{entity}"
+    );
+    pretty_assertions::assert_eq!(entity["name"]["value"], json!("Roadster"), "this broker's part: {entity}");
+}
+
 /// Clause 5.8.6: the local subscription's filters are decided on the entity as
 /// completed, so an entity whose part alone fails the `q` is relayed when the
 /// other holders' members satisfy it, and dropped when they do not.

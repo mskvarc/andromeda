@@ -31,7 +31,7 @@ use ngsi_ld::{
         operation::{QueryMethod, RegisterContextSource},
     },
     model::{Entity, EntityId, Input, Output},
-    query::Locality,
+    query::{Locality, SelectorType},
 };
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -266,7 +266,7 @@ impl Scenario {
         let page = reader
             .entities()
             .query()
-            .entity_type(types.as_str())
+            .entity_type(types.parse::<SelectorType>()?)
             .attrs(attribute_names(attrs)?)
             .method(method)
             .send()

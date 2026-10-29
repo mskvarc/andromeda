@@ -7,7 +7,12 @@
 //! Entities are read from this broker's store by the engine a locally
 //! triggered notification reads them through, and written by the same plan.
 
-use crate::{error::SubscriptionForwardingError, forwarding_invariant::ForwardingInvariant, service::SubscriptionForwardingService};
+use crate::{
+    error::SubscriptionForwardingError,
+    forwarding_invariant::ForwardingInvariant,
+    relayed_entities::RelayedEntities,
+    service::SubscriptionForwardingService,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::{
     EntityQueryService,
@@ -22,6 +27,7 @@ use andromeda_ngsi_ld_render::{
     notification_data::{DataShape, notification_data},
     notification_entity::NotificationEntity,
     notification_language::NotificationLanguage,
+    notified_changes::{HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
@@ -75,9 +81,10 @@ impl SubscriptionForwardingService {
     /// The `data` of the copy sent to the local subscription's endpoint, its
     /// Entities written as a notification of that subscription writes a local
     /// entity (clause 5.8.6): its `format`, `pick` and `omit`, its `lang`, the
-    /// Linked Entities of its `join`, and amended to its `ngsildConformance`.
-    /// Table 5.3.1-1: the local endpoint's `accept` decides the shape,
-    /// whatever shape the source sent.
+    /// previous values of its `showChanges`, the Linked Entities of its
+    /// `join`, and amended to its `ngsildConformance`. Table 5.3.1-1: the
+    /// local endpoint's `accept` decides the shape, whatever shape the source
+    /// sent.
     ///
     /// # Errors
     ///
@@ -88,7 +95,7 @@ impl SubscriptionForwardingService {
         compiled: &CompiledSubscription,
         subscription: &Subscription,
         local_context: &ContextSpec,
-        data: &[Entity],
+        data: &RelayedEntities,
         shape: DataShape<'_>,
     ) -> Result<NotificationData, SubscriptionForwardingError> {
         let format = subscription.notification.format.unwrap_or_default();
@@ -107,13 +114,24 @@ impl SubscriptionForwardingService {
             entity_query: &self.entity_query,
             engine: &self.engine,
         };
-        let links = RelayedLinks::resolve(compiled, data, source, local_context).await;
+        let links = RelayedLinks::resolve(compiled, data.entities(), source, local_context).await;
         let plan = links.as_ref().and_then(|links| links.plan(compiled));
         let relayed = joined_entities(
             plan.as_ref(),
-            data,
-            |entity, cursor| {
+            data.iter(),
+            |(entity, previous), cursor| {
                 let relayed = NotificationEntity::relayed(entity, format, projection, language.as_ref()).with_fallback(fallback);
+                // Table 5.2.14-1 `showChanges`: each instance the change touched
+                // carries its value before the change, which the source
+                // reported (clause 5.8.6).
+                let relayed = match previous {
+                    Some(previous) => relayed.with_changes(NotifiedChanges {
+                        held: HeldAttributes::Current,
+                        deleted: None,
+                        previous: Some(previous),
+                    }),
+                    None => relayed,
+                };
                 match cursor {
                     Some(cursor) => relayed.with_inline_join(cursor),
                     None => relayed,

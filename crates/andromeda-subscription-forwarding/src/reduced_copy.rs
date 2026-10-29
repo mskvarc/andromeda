@@ -107,11 +107,14 @@ impl ReducedSubscription {
 
         // Clause 5.8.1.4: the notification member carries no `attributes`,
         // `pick` or `omit` whatever the carriage -- the source sends its whole
-        // part and this broker narrows the re-assembled entity.
+        // part and this broker narrows the re-assembled entity. It keeps
+        // `showChanges`: only the source holds the values its change replaced,
+        // and the copy relays them (clause 5.8.6).
         let notification = NotificationRequest {
             format: Some(ResponseFormat::Normalized),
             endpoint: Some(receiver.notification_endpoint()),
             sys_attrs: subscription.notification.sys_attrs,
+            show_changes: subscription.notification.show_changes,
             ..NotificationRequest::default()
         };
 
@@ -327,6 +330,50 @@ mod tests {
         assert!(document.get("q").is_none());
         // A registration declaring no attribute covers every watched one.
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED, COLOUR]));
+    }
+
+    /// A subscription asking for `showChanges` as `show_changes` says.
+    fn subscription_showing_changes(show_changes: Option<bool>) -> Subscription {
+        let mut notification = json!({"endpoint": {"uri": "http://subscriber.example.org/notify"}});
+        if let (Some(target), Some(show_changes)) = (notification.as_object_mut(), show_changes) {
+            target.insert("showChanges".to_owned(), json!(show_changes));
+        }
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:local",
+            "type": "Subscription",
+            "entities": [{"type": VEHICLE}],
+            "notification": notification,
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription")
+    }
+
+    /// Clause 5.8.1.4 removes only `attributes`, `pick` and `omit` from the
+    /// copy's notification member, so `showChanges` travels with it, on the
+    /// copy and on every update fragment, whatever the carriage; a local
+    /// subscription that stops asking for it sends a member without it.
+    #[test]
+    fn the_copy_keeps_show_changes() {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let copy = ReducedSubscription::reduce(&subscription_showing_changes(Some(true)), &registration, &receiver(), &minted(), carriage);
+            pretty_assertions::assert_eq!(written(&copy.request)["notification"]["showChanges"], json!(true), "{carriage:?}");
+            let fragment = written(&copy.as_fragment(&DeletedMembers::default(), carriage));
+            pretty_assertions::assert_eq!(fragment["notification"]["showChanges"], json!(true), "{carriage:?}");
+        }
+        for show_changes in [None, Some(false)] {
+            let copy = ReducedSubscription::reduce(
+                &subscription_showing_changes(show_changes),
+                &registration,
+                &receiver(),
+                &minted(),
+                FilterCarriage::Keep,
+            );
+            let document = written(&copy.request);
+            assert_ne!(document["notification"].get("showChanges"), Some(&json!(true)), "{show_changes:?}: {document}");
+        }
     }
 
     /// Clause 5.8.1.4: `q`, `geoQ` and `scopeQ` travel only when entities are

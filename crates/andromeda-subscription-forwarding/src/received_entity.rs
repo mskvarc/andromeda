@@ -13,14 +13,17 @@
 //! as.
 //!
 //! Completing a split entity merges on the model: the deletions the sender
-//! notified are set aside, the rest of its part becomes the version the local
-//! copy and every other holder fold into (clause 4.5.5), and the deletions are
-//! put back on the completed entity, which no other holder's instance
-//! overrides.
+//! notified, of whole attributes and of single instances, are set aside, the
+//! rest of its part becomes the version the local copy and every other holder
+//! fold into (clause 4.5.5), and the deletions are put back on the completed
+//! entity, which no other holder's instance overrides. The previous values the
+//! sender reported under `showChanges` stay the sender's: no other holder saw
+//! the change.
 
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::{
-    document::{EntityDocument, attribute_member::AttributeMember},
+    attribute_instances::InstanceRemoval,
+    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, written_value::ValueSlot},
     entity_state::EntityState,
     refusal::EntityRefusal,
 };
@@ -31,6 +34,7 @@ use andromeda_ngsi_ld_expansion::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::received::{ContextualEntity, ElementRefusal};
+use indexmap::{IndexMap, map::Entry};
 use thiserror::Error;
 
 /// Why one entity of an inbound notification is not re-assembled.
@@ -69,7 +73,7 @@ pub(crate) async fn read_notified(
     match &contextual.context {
         None => {
             let entity = contextual.entity(inbound.context().reading()).map_err(ReceivedEntityRefusal::Undecodable)?;
-            Ok(inbound.notified(&entity).await?)
+            Ok(inbound.notified(entity).await?)
         }
         Some(own) => {
             // clone: the context specification owns the literal it names
@@ -77,19 +81,34 @@ pub(crate) async fn read_notified(
                 .await
                 .map_err(ReceivedEntityRefusal::OwnContext)?;
             let entity = contextual.entity(expansion.context().reading()).map_err(ReceivedEntityRefusal::Undecodable)?;
-            Ok(expansion.notified(&entity).await?)
+            Ok(expansion.notified(entity).await?)
         }
     }
 }
 
+/// One deletion a sender notified (clause 5.8.6).
+#[derive(Debug)]
+pub(crate) enum NotifiedDeletion {
+    /// The whole attribute, notified as the bare NGSI-LD Null.
+    Member(AttributeName),
+    /// One instance, notified as an object whose value member is its family's
+    /// deletion encoding: the form a deletion takes when a `datasetId`, the
+    /// system attributes or a previous value are reported with it.
+    Instance(AttributeName, Box<InstanceDocument>),
+}
+
 /// The notified part of a split entity, set apart into the version its other
-/// holders' versions merge onto and the deletions it notified.
+/// holders' versions merge onto, the deletions it notified and the previous
+/// values it reported.
 #[derive(Debug)]
 pub(crate) struct NotifiedPart {
     /// The part as a version of the entity.
     pub(crate) version: ReceivedState,
-    /// The attributes the sender notified deleted, in notified order.
-    pub(crate) deletions: Vec<AttributeName>,
+    /// What the sender notified deleted, in notified order.
+    pub(crate) deletions: Vec<NotifiedDeletion>,
+    /// The instances the change touched as the sender reported they stood
+    /// before it.
+    pub(crate) previous: Option<EntityDocument>,
 }
 
 impl NotifiedPart {
@@ -98,20 +117,30 @@ impl NotifiedPart {
     /// # Errors
     ///
     /// Returns [`ReceivedEntityRefusal::Incomplete`] for a part that, its
-    /// deletions set aside, is no entity: one that deletes its `scope` or an
-    /// instance by its family's deletion encoding.
+    /// deletions set aside, is no entity: one that deletes its `scope`.
     pub(crate) fn of(part: ReceivedDocument) -> Result<NotifiedPart, ReceivedEntityRefusal> {
-        let ReceivedDocument { document, system_times } = part;
+        let ReceivedDocument {
+            document,
+            system_times,
+            previous,
+        } = part;
         let parts = document.into_parts();
         let mut deletions = Vec::new();
-        let mut kept = parts.attributes;
-        kept.retain(|name, member| match member {
-            AttributeMember::Remove => {
-                deletions.push(name.clone()); // clone: the deletion is put back after the merge
-                false
+        let mut kept = IndexMap::with_capacity(parts.attributes.len());
+        for (name, member) in parts.attributes {
+            match member {
+                AttributeMember::Remove => deletions.push(NotifiedDeletion::Member(name)),
+                AttributeMember::Instances(instances) => {
+                    let (removed, held): (Vec<InstanceDocument>, Vec<InstanceDocument>) =
+                        instances.into_iter().partition(|instance| matches!(instance.value(), ValueSlot::Remove(_)));
+                    // clone: each instance deletion is put back under its attribute after the merge
+                    deletions.extend(removed.into_iter().map(|instance| NotifiedDeletion::Instance(name.clone(), Box::new(instance))));
+                    if !held.is_empty() {
+                        kept.insert(name, AttributeMember::Instances(held));
+                    }
+                }
             }
-            AttributeMember::Instances(_) => true,
-        });
+        }
         let state = EntityState::try_from(EntityDocument::new(parts.id, parts.types, parts.scope, parts.expires_at, kept))
             .map_err(ReceivedEntityRefusal::Incomplete)?;
         Ok(NotifiedPart {
@@ -121,19 +150,54 @@ impl NotifiedPart {
                 linked: Vec::new(),
             },
             deletions,
+            previous,
         })
     }
 
     /// The completed entity `merged` is, as the written document the local
-    /// filters read, the notified deletions put back.
-    pub(crate) fn completed(merged: ReceivedState, deletions: Vec<AttributeName>) -> ReceivedDocument {
+    /// filters read, the notified deletions put back in place of whatever
+    /// another holder holds under the same attribute and `datasetId`, and the
+    /// reported previous values beside it.
+    pub(crate) fn completed(merged: ReceivedState, deletions: Vec<NotifiedDeletion>, previous: Option<EntityDocument>) -> ReceivedDocument {
         let ReceivedState { mut state, system_times, .. } = merged;
-        state.attributes_mut().retain(|name, _| !deletions.contains(name));
+        let attributes = state.attributes_mut();
+        for deletion in &deletions {
+            match deletion {
+                NotifiedDeletion::Member(name) => {
+                    attributes.remove(name);
+                }
+                NotifiedDeletion::Instance(name, instance) => {
+                    let emptied = attributes
+                        .get_mut(name)
+                        .is_some_and(|held| matches!(held.remove(instance.dataset_id()), InstanceRemoval::Emptied(_)));
+                    if emptied {
+                        attributes.remove(name);
+                    }
+                }
+            }
+        }
         let mut document = EntityDocument::from(&state);
         for deletion in deletions {
-            document.attributes_mut().insert(deletion, AttributeMember::Remove);
+            match deletion {
+                NotifiedDeletion::Member(name) => {
+                    document.attributes_mut().insert(name, AttributeMember::Remove);
+                }
+                NotifiedDeletion::Instance(name, instance) => match document.attributes_mut().entry(name) {
+                    Entry::Occupied(mut held) => match held.get_mut() {
+                        AttributeMember::Instances(instances) => instances.push(*instance),
+                        AttributeMember::Remove => {}
+                    },
+                    Entry::Vacant(absent) => {
+                        absent.insert(AttributeMember::Instances(vec![*instance]));
+                    }
+                },
+            }
         }
-        ReceivedDocument { document, system_times }
+        ReceivedDocument {
+            document,
+            system_times,
+            previous,
+        }
     }
 }
 
@@ -144,17 +208,18 @@ impl NotifiedPart {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::received_entity::{NotifiedPart, read_notified};
+    use crate::received_entity::{NotifiedDeletion, NotifiedPart, read_notified};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
     use andromeda_ngsi_ld_entity::document::attribute_member::AttributeMember;
-    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+    use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedDocument};
     use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_render::{
         notification_entity::NotificationEntity,
         notification_language::NotificationLanguage,
+        notified_changes::{HeldAttributes, NotifiedChanges},
         structural_projection::StructuralProjection,
     };
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
@@ -246,6 +311,107 @@ mod tests {
         pretty_assertions::assert_eq!(normalized["speed"], json!({"type": "Property", "value": 5}));
     }
 
+    /// `notified` read as a source notified it under the core context.
+    async fn received(engine: &JsonLdEngine, notified: &Value) -> ReceivedDocument {
+        let inbound = EntityExpansion::prepare(engine, &ContextSpec::core_only())
+            .await
+            .expect("the core context processes");
+        let elements = ReceivedEntities::from_slice(notified.to_string().as_bytes()).expect("an entity");
+        let [ReceivedElement::Read(contextual)] = elements.0.as_slice() else {
+            panic!("the notified entity reads");
+        };
+        read_notified(engine, &inbound, contextual).await.expect("the notified entity expands")
+    }
+
+    /// `received` written for a local subscriber asking for `showChanges`,
+    /// under the core context.
+    async fn relayed_with_changes(engine: &JsonLdEngine, received: &ReceivedDocument) -> Value {
+        let context = ContextSpec::core_only();
+        let context_compactor = engine.compactor(&context);
+        let compactor = EntityCompactor::new(&context_compactor);
+        let entity = compactor.document_entity(&received.document).await.expect("the entity compacts");
+        let previous = compactor
+            .document_entity(received.previous.as_ref().expect("previous values were reported"))
+            .await
+            .expect("the previous values compact");
+        let projection = Projection::default();
+        let changes = NotifiedChanges {
+            held: HeldAttributes::Current,
+            deleted: None,
+            previous: Some(&previous),
+        };
+        serde_json::to_value(
+            NotificationEntity::relayed(&entity, ResponseFormat::Normalized, StructuralProjection::from(&projection), None).with_changes(changes),
+        )
+        .expect("the entity writes")
+    }
+
+    /// Table 5.2.14-1 `showChanges`: the previous members a source reports are
+    /// read apart from the entity, which no state holding them could be, and
+    /// relayed beside the instance of the same `datasetId`.
+    #[tokio::test]
+    async fn reported_previous_values_are_read_apart_and_relayed_beside_their_instances() {
+        let engine = offline_engine();
+        let notified = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 5, "previousValue": 4},
+                {"type": "Property", "value": 50, "previousValue": 40, "datasetId": "urn:ngsi-ld:Dataset:kmh"}
+            ],
+            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:Person:b", "previousObject": "urn:ngsi-ld:Person:a"},
+            "colour": {"type": "Property", "value": "red"}
+        });
+        let received = received(&engine, &notified).await;
+        let without_changes = relayed(&notified, ResponseFormat::Normalized).await;
+        assert!(without_changes["owner"].get("previousObject").is_none(), "{without_changes}");
+
+        let written = relayed_with_changes(&engine, &received).await;
+        pretty_assertions::assert_eq!(
+            written["speed"],
+            json!([
+                {"type": "Property", "value": 5, "previousValue": 4},
+                {"type": "Property", "value": 50, "previousValue": 40, "datasetId": "urn:ngsi-ld:Dataset:kmh"}
+            ]),
+            "{written}"
+        );
+        pretty_assertions::assert_eq!(
+            written["owner"],
+            json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:b", "previousObject": "urn:ngsi-ld:Person:a"})
+        );
+        pretty_assertions::assert_eq!(written["colour"], json!({"type": "Property", "value": "red"}));
+    }
+
+    /// Clause 5.8.6: under `showChanges` a source notifies a deleted attribute
+    /// as an object whose value member is the NGSI-LD Null, beside the previous
+    /// value. A split part sets that instance deletion apart, so the part is
+    /// still an entity the holders' versions merge onto, and puts it back on
+    /// the completed entity with its previous value.
+    #[tokio::test]
+    async fn an_instance_deletion_and_its_previous_value_survive_the_completion() {
+        let engine = offline_engine();
+        let notified = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": {"type": "Property", "value": 5},
+            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Person:a"}
+        });
+        let part = NotifiedPart::of(received(&engine, &notified).await).expect("the part is a version of the entity");
+        assert!(
+            matches!(part.deletions.as_slice(), [NotifiedDeletion::Instance(name, _)] if name.as_str().ends_with("owner")),
+            "{:?}",
+            part.deletions
+        );
+        let completed = NotifiedPart::completed(part.version, part.deletions, part.previous);
+        let written = relayed_with_changes(&engine, &completed).await;
+        pretty_assertions::assert_eq!(
+            written["owner"],
+            json!({"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Person:a"}),
+            "{written}"
+        );
+        pretty_assertions::assert_eq!(written["speed"], json!({"type": "Property", "value": 5}));
+    }
+
     /// JSON-LD 1.1 with clause 5.8.6: an entity that carries its own `@context`
     /// is read under it, and the local subscription writes the entity under its
     /// own context, so a name the sender aliased differently is the local name.
@@ -308,7 +474,7 @@ mod tests {
         };
         let part = NotifiedPart::of(read_notified(&engine, &inbound, contextual).await.expect("expands")).expect("a version");
         pretty_assertions::assert_eq!(part.deletions.len(), 1);
-        let completed = NotifiedPart::completed(part.version, part.deletions);
+        let completed = NotifiedPart::completed(part.version, part.deletions, part.previous);
         let owner = completed
             .document
             .attributes()

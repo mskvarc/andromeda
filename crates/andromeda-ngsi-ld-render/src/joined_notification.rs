@@ -34,13 +34,14 @@ pub fn join_plan<'a>(join: Option<JoinMode>, graph: Option<&'a LinkedGraph<Entit
 #[must_use]
 pub fn joined_entities<'a, N>(
     plan: Option<&'a JoinPlan<'a, TypedEntities>>,
-    notified: &'a [N],
-    write: impl Fn(&'a N, Option<InlineCursor<'a, TypedEntities>>) -> NotificationEntity<'a>,
+    notified: impl IntoIterator<Item = N>,
+    write: impl Fn(N, Option<InlineCursor<'a, TypedEntities>>) -> NotificationEntity<'a>,
     linked: impl Fn(&FlatEntity<'a, TypedEntities>) -> NotificationEntity<'a>,
 ) -> Vec<NotificationEntity<'a>> {
+    let notified = notified.into_iter();
     match plan {
-        Some(JoinPlan::Inline(inline)) => notified.iter().map(|entity| write(entity, Some(inline.cursor()))).collect(),
-        Some(JoinPlan::Flat(flat)) => notified.iter().map(|entity| write(entity, None)).chain(flat.linked().map(linked)).collect(),
-        None => notified.iter().map(|entity| write(entity, None)).collect(),
+        Some(JoinPlan::Inline(inline)) => notified.map(|entity| write(entity, Some(inline.cursor()))).collect(),
+        Some(JoinPlan::Flat(flat)) => notified.map(|entity| write(entity, None)).chain(flat.linked().map(linked)).collect(),
+        None => notified.map(|entity| write(entity, None)).collect(),
     }
 }

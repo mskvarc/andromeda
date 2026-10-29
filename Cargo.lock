@@ -2183,6 +2183,7 @@ dependencies = [
  "chrono",
  "futures",
  "http",
+ "indexmap 2.14.2",
  "iri-rs",
  "pretty_assertions",
  "serde",

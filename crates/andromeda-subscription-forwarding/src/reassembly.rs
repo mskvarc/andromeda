@@ -7,8 +7,9 @@
 //! registered source that holds it -- never the sender, which already supplied
 //! its part -- and the entities that fail the local subscription's filters are
 //! dropped. Whatever remains is written the way a notification of the local
-//! subscription writes a local entity and delivered to the local endpoint
-//! under the local subscription's identifier.
+//! subscription writes a local entity, with the previous values the sender
+//! reported when the local subscription asks for them (`showChanges`), and
+//! delivered to the local endpoint under the local subscription's identifier.
 
 use crate::{
     error::SubscriptionForwardingError,
@@ -16,6 +17,7 @@ use crate::{
     inbound::{InboundData, InboundNotification},
     notification_narrowing::narrow_entity,
     received_entity::{NotifiedPart, read_notified},
+    relayed_entities::RelayedEntities,
     service::SubscriptionForwardingService,
 };
 use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, notification_context::NotificationContext, request::NotificationDelivery};
@@ -61,7 +63,7 @@ impl SubscriptionForwardingService {
         sender: &Identifier,
         context: &ContextSpec,
     ) -> Result<Option<ReceivedDocument>, SubscriptionForwardingError> {
-        let NotifiedPart { version, deletions } = match NotifiedPart::of(part) {
+        let NotifiedPart { version, deletions, previous } = match NotifiedPart::of(part) {
             Ok(part) => part,
             Err(refusal) => {
                 warn!(%refusal, "inbound notification carried a part that cannot be completed");
@@ -112,7 +114,7 @@ impl SubscriptionForwardingService {
         }
         sources.extend(remote.results);
         let merged = merge_retrieve_results(Some(version), sources).ok_or(ForwardingInvariant::MergeProducedNothing)?;
-        Ok(Some(NotifiedPart::completed(merged, deletions)))
+        Ok(Some(NotifiedPart::completed(merged, deletions, previous)))
     }
 
     /// Whether the local subscription's filters admit `document`, the entities
@@ -138,10 +140,10 @@ impl SubscriptionForwardingService {
         reading: &ReassemblyReading<'_, '_>,
         sender: &Identifier,
         local: &Identifier,
-    ) -> Result<Vec<Entity>, SubscriptionForwardingError> {
+    ) -> Result<RelayedEntities, SubscriptionForwardingError> {
         let local_terms = self.engine.prepare_term_context(reading.local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
-        let mut data = Vec::with_capacity(received.len());
+        let mut data = RelayedEntities::with_capacity(received.len());
         for element in received {
             let contextual = match element {
                 ReceivedElement::Read(contextual) => contextual,
@@ -162,7 +164,12 @@ impl SubscriptionForwardingService {
                 SplitEntities::Split => self.reassemble_entity(part, sender, reading.local_context).await?,
             };
             // Clause 5.8.6: entities failing the local filters leave the copy.
-            let Some(ReceivedDocument { document, system_times }) = completed else {
+            let Some(ReceivedDocument {
+                document,
+                system_times,
+                previous,
+            }) = completed
+            else {
                 continue;
             };
             if !self.admits(reading.compiled, &document).await? {
@@ -179,9 +186,28 @@ impl SubscriptionForwardingService {
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
             narrow_entity(&mut entity, reading.compiled, &mut local_expansions).await?;
-            data.push(entity);
+            let previous = self.relayed_previous(previous.as_ref(), reading, local).await;
+            data.push(entity, previous);
         }
         Ok(data)
+    }
+
+    /// The instances a relayed entity held before the change, as its source
+    /// reported them, in the local subscription's terms: only when the local
+    /// subscription asks for them (Table 5.2.14-1 `showChanges`). Previous
+    /// values that do not compact under the local context leave the entity
+    /// without them, as an entity whose previous values do not exist.
+    async fn relayed_previous(&self, previous: Option<&EntityDocument>, reading: &ReassemblyReading<'_, '_>, local: &Identifier) -> Option<Entity> {
+        if !reading.compiled.notification_show_changes {
+            return None;
+        }
+        match reading.local_compactor.document_entity(previous?).await {
+            Ok(previous) => Some(previous),
+            Err(error) => {
+                warn!(subscription = %local, %error, "the previous values of a relayed entity do not compact under the local context");
+                None
+            }
+        }
     }
 
     /// Handle a notification arriving under a forwarded copy's identifier.

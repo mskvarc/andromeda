@@ -13,6 +13,10 @@
 //! members no write carries, so they are lifted out before the entity is
 //! expanded and read the same way, each into a received state of its own; the
 //! Relationship keeps its targets.
+//!
+//! The previous members a notification reports under `showChanges` are output
+//! members too, and no state holds them: they are lifted out of a notified
+//! entity as the instances they were, and read beside it.
 
 use crate::{entity_expansion::EntityExpansion, error::ExpansionError, normalization::Normalization};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, refusal::EntityRefusal};
@@ -48,6 +52,11 @@ pub struct ReceivedDocument {
     pub document: EntityDocument,
     /// Its entity-level system times.
     pub system_times: EntitySystemTimes,
+    /// Under `showChanges` (Table 5.2.14-1), the instances the change touched
+    /// as they stood before it, each the value of its family's previous member
+    /// under its attribute and `datasetId`; `None` when the peer reported no
+    /// previous member.
+    pub previous: Option<EntityDocument>,
 }
 
 /// Why an entity a peer sent is not read into the model.
@@ -90,17 +99,56 @@ impl EntityExpansion<'_> {
 
     /// Read an entity a peer notified into the model under this expansion's
     /// context, a first-level NGSI-LD Null kept as the deletion of its
-    /// member (clause 5.8.6).
+    /// member (clause 5.8.6), and the previous members it reports lifted out
+    /// and read the same way, as the instances they were.
     ///
     /// # Errors
     ///
-    /// Returns [`ReceivedRefusal::Expansion`] when the entity does not expand.
-    pub async fn notified(&self, entity: &Entity) -> Result<ReceivedDocument, ReceivedRefusal> {
-        let document = self.entity(entity, Normalization::MemberDeletions).await?;
+    /// Returns [`ReceivedRefusal::Expansion`] when the entity, or the
+    /// instances its previous members were, do not expand.
+    pub async fn notified(&self, entity: Entity) -> Result<ReceivedDocument, ReceivedRefusal> {
+        let mut entity = entity;
+        let previous = lift_previous_instances(&mut entity);
+        let document = self.entity(&entity, Normalization::MemberDeletions).await?;
+        let previous = match previous {
+            Some(previous) => Some(self.entity(&previous, Normalization::MemberDeletions).await?),
+            None => None,
+        };
         Ok(ReceivedDocument {
             document,
-            system_times: EntitySystemTimes::of(entity),
+            system_times: EntitySystemTimes::of(&entity),
+            previous,
         })
+    }
+}
+
+/// Take every previous member out of `entity`'s attributes, as an entity
+/// holding the instances they were; `None` when it reports none.
+fn lift_previous_instances(entity: &mut Entity) -> Option<Entity> {
+    let mut previous = Entity::builder()
+        .id(entity.id.clone()) // clone: the instances before the change name the entity they belong to
+        .type_(entity.type_.clone()) // clone: as above
+        .build();
+    for (name, member) in &mut entity.attrs {
+        if let Some(lifted) = previous_member(member) {
+            previous.attrs.insert(name.clone(), lifted); // clone: as above
+        }
+    }
+    previous.location = entity.location.as_mut().and_then(previous_member);
+    previous.observation_space = entity.observation_space.as_mut().and_then(previous_member);
+    previous.operation_space = entity.operation_space.as_mut().and_then(previous_member);
+    let reports_any = !previous.attrs.is_empty() || previous.location.is_some() || previous.observation_space.is_some() || previous.operation_space.is_some();
+    reports_any.then_some(previous)
+}
+
+/// The instances the previous members of one member's instances were, taken
+/// out of them, in the member's shape; `None` when none carries one.
+fn previous_member(member: &mut AttributeValue) -> Option<AttributeValue> {
+    let mut lifted: Vec<Attribute> = member.instances_mut().filter_map(Attribute::take_previous).collect();
+    match member {
+        AttributeValue::Single(_) => lifted.pop().map(|instance| AttributeValue::Single(Box::new(instance))),
+        AttributeValue::Multiple(_) => (!lifted.is_empty()).then_some(AttributeValue::Multiple(lifted)),
+        AttributeValue::NgsiLdNull => None,
     }
 }
 
