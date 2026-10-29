@@ -131,6 +131,28 @@ impl ResultBudget {
         }
     }
 
+    /// Whether everything charged so far, by every source of the request,
+    /// still fits both limits.
+    ///
+    /// A walk asks before it requests another page: once any walk has crossed
+    /// a limit the query is refused whatever the others gather, so the pages
+    /// still to come would be fetched for an answer already decided.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResultBudgetExceeded::SourceRows`] when the rows charged
+    /// exceed their limit, and [`ResultBudgetExceeded::DistinctEntities`] when
+    /// the entities charged do.
+    pub fn check(&self) -> Result<(), ResultBudgetExceeded> {
+        if self.rows.load(Ordering::Relaxed) > u64::from(self.limits.source_rows.get()) {
+            return Err(ResultBudgetExceeded::SourceRows {
+                maximum: self.limits.source_rows,
+            });
+        }
+        let distinct = u64::try_from(self.distinct.len()).unwrap_or(u64::MAX);
+        self.admit_collection(distinct.saturating_add(self.anonymous.load(Ordering::Relaxed)))
+    }
+
     /// Whether a collection of `entities` distinct entities fits the entity
     /// limit.
     ///
@@ -259,6 +281,23 @@ mod tests {
             charge(&budget, ForwardingMode::Inclusive, vec![None]),
             Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(2) })
         );
+    }
+
+    #[test]
+    fn a_budget_checks_clean_until_a_charge_crosses_a_limit_and_then_stays_refused() {
+        let budget = budget(3, 100);
+        pretty_assertions::assert_eq!(budget.check(), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..3)), Ok(()));
+        pretty_assertions::assert_eq!(budget.check(), Ok(()));
+        assert!(charge(&budget, ForwardingMode::Inclusive, ids(3..4)).is_err());
+        pretty_assertions::assert_eq!(budget.check(), Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(3) }));
+    }
+
+    #[test]
+    fn a_budget_past_its_row_ceiling_checks_as_source_rows_exceeded() {
+        let budget = budget(100, 2);
+        assert!(charge(&budget, ForwardingMode::Auxiliary, ids(0..3)).is_err());
+        pretty_assertions::assert_eq!(budget.check(), Err(ResultBudgetExceeded::SourceRows { maximum: positive(2) }));
     }
 
     #[test]

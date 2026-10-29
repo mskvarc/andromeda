@@ -161,11 +161,7 @@ impl QueryForwarding<'_> {
         // Clause 4.12: one budget bounds everything the query gathers, from
         // both phases' sources and, once they have answered, the local store.
         let budget = ResultBudget::new(self.forwarding.result_limits());
-        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr, &budget).await?;
-        if let Some(status) = primary.sources.single_source_status {
-            return Err(single_source_declined(status, self.uri));
-        }
-        let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly, csf_expr, &budget).await?;
+        let (primary, auxiliary) = in_phases(|mode_filter| self.phase(mode_filter, csf_expr, &budget), self.uri).await?;
 
         let mut warnings = collect_warnings(&primary.results);
         warnings.extend(collect_warnings(&auxiliary.results));
@@ -231,5 +227,93 @@ impl QueryForwarding<'_> {
                 Ok(ForwardReadOutcome::empty())
             }
         }
+    }
+}
+
+/// Run the two clause 5.7.2.4 phases in order: the auxiliary sources are
+/// contacted only once the first phase has been answered, so a query the first
+/// phase refuses (clause 4.12) or that one proxied source declined (Table
+/// 6.4.3.2-3) never reaches them.
+///
+/// # Errors
+///
+/// The failure of either phase, and the 501 of a lone proxied source.
+async fn in_phases<Phase, Answered>(
+    mut phase: Phase,
+    uri: &HttpUri,
+) -> Result<(ForwardReadOutcome<ForwardedEntities>, ForwardReadOutcome<ForwardedEntities>), ProblemResponse>
+where
+    Phase: FnMut(CsrModeFilter) -> Answered,
+    Answered: Future<Output = Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse>>,
+{
+    let primary = phase(CsrModeFilter::ExcludeAuxiliary).await?;
+    if let Some(status) = primary.sources.single_source_status {
+        return Err(single_source_declined(status, uri));
+    }
+    let auxiliary = phase(CsrModeFilter::AuxiliaryOnly).await?;
+    Ok((primary, auxiliary))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        entity::{CsrModeFilter, ProblemResponse, query_forwarding::in_phases},
+        error::public_error,
+    };
+    use andromeda_federation::outcome::{ForwardReadOutcome, ForwardedEntities};
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use axum::http::Uri as HttpUri;
+    use std::cell::RefCell;
+
+    fn uri() -> HttpUri {
+        HttpUri::from_static("/ngsi-ld/v1/entities")
+    }
+
+    /// Clause 4.12: a first phase refused with `TooManyResults` leaves the
+    /// auxiliary sources uncontacted.
+    #[tokio::test]
+    async fn a_refused_first_phase_never_starts_the_auxiliary_phase() {
+        let uri = uri();
+        let started = RefCell::new(Vec::new());
+
+        let answer = in_phases(
+            |mode_filter| {
+                started.borrow_mut().push(mode_filter);
+                let refusal = public_error(NgsiLdErrorType::TooManyResults, "over the entity limit".to_owned(), &uri);
+                async move { Err::<ForwardReadOutcome<ForwardedEntities>, _>(refusal) }
+            },
+            &uri,
+        )
+        .await;
+
+        assert!(answer.is_err());
+        assert!(
+            matches!(started.borrow().as_slice(), [CsrModeFilter::ExcludeAuxiliary]),
+            "{:?}",
+            started.borrow().len()
+        );
+    }
+
+    /// Clause 4.3.6.2: an answered first phase is followed by the auxiliary one.
+    #[tokio::test]
+    async fn an_answered_first_phase_is_followed_by_the_auxiliary_phase() {
+        let uri = uri();
+        let started = RefCell::new(Vec::new());
+
+        let answer = in_phases(
+            |mode_filter| {
+                started.borrow_mut().push(mode_filter);
+                async { Ok::<_, ProblemResponse>(ForwardReadOutcome::<ForwardedEntities>::empty()) }
+            },
+            &uri,
+        )
+        .await;
+
+        assert!(answer.is_ok());
+        assert!(
+            matches!(started.borrow().as_slice(), [CsrModeFilter::ExcludeAuxiliary, CsrModeFilter::AuxiliaryOnly]),
+            "{:?}",
+            started.borrow().len()
+        );
     }
 }

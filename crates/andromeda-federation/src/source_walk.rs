@@ -188,8 +188,11 @@ impl AnswerPosition {
 }
 
 impl FederationService {
-    /// Walk every target's answer to its end, all targets concurrently, and
-    /// read what each gathered (clause 5.7.2.4).
+    /// Walk every target's answer to its end, concurrently up to the
+    /// forwarding concurrency, and read what each gathered (clause 5.7.2.4).
+    ///
+    /// The first walk to cross `budget` ends them all: the walks still in
+    /// flight are dropped and no target still waiting is contacted.
     ///
     /// # Errors
     ///
@@ -202,13 +205,14 @@ impl FederationService {
         conditions: ForwardedGetConditions<'_>,
         budget: &ResultBudget,
     ) -> Result<Vec<SourceAnswer<A>>, ResultBudgetExceeded> {
-        stream::iter(targets)
+        let mut walks = stream::iter(targets)
             .map(|(registration, first)| async move { self.walk_source::<A>(&registration, first, conditions, budget).await })
-            .buffer_unordered(self.csr_concurrency)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect()
+            .buffer_unordered(self.csr_concurrency);
+        let mut answers = Vec::new();
+        while let Some(walk) = walks.next().await {
+            answers.push(walk?);
+        }
+        Ok(answers)
     }
 
     /// Walk one source's answer from `first` to its last page, charging each
@@ -218,7 +222,9 @@ impl FederationService {
     /// # Errors
     ///
     /// Returns [`ResultBudgetExceeded`] once everything charged to `budget`,
-    /// by this walk and every other one sharing it, exceeds it.
+    /// by this walk and every other one sharing it, exceeds it. The walk asks
+    /// before each request, so it sends none once another walk has crossed the
+    /// limit.
     pub(crate) async fn walk_source<A: WalkedAnswer>(
         &self,
         registration: &ContextSourceRegistration,
@@ -226,6 +232,7 @@ impl FederationService {
         conditions: ForwardedGetConditions<'_>,
         budget: &ResultBudget,
     ) -> Result<SourceAnswer<A>, ResultBudgetExceeded> {
+        budget.check()?;
         let mode = registration.access.mode.unwrap_or_default();
         let (outcome, mut next) = match first {
             ForwardedRead::Get(url) => {
@@ -266,6 +273,7 @@ impl FederationService {
                 }
                 PageEnd::Continue(request) => request,
             };
+            budget.check()?;
             if !position.first_request_of(&request) {
                 gathered.warnings().push(incomplete_answer(&registration.id, IncompleteReason::PointedBack));
                 break;
@@ -394,13 +402,17 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_ngsi_ld_model::{
-        registration::ContextSourceRegistration,
+        registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
     };
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
     use http::StatusCode;
     use serde_json::json;
-    use std::{num::NonZeroU32, ops::Range, sync::Arc};
+    use std::{
+        num::{NonZeroU32, NonZeroUsize},
+        ops::Range,
+        sync::Arc,
+    };
     use wiremock::{MockServer, ResponseTemplate};
 
     /// The query resource every GET page of these walks lands on.
@@ -444,12 +456,17 @@ mod tests {
 
     /// A walking service choosing among what `store` holds.
     fn service_over(store: Arc<FixedRegistrationStore>) -> FederationService {
+        service_configured(store, &FederationConfig::default())
+    }
+
+    /// A walking service choosing among what `store` holds, under `config`.
+    fn service_configured(store: Arc<FixedRegistrationStore>, config: &FederationConfig) -> FederationService {
         FederationService::new(
             store,
             Arc::new(NoLocalEntities),
             JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
             ContextSourcePseudonym::new("walking-broker").expect("a valid alias"),
-            &FederationConfig::default(),
+            config,
         )
         .expect("the service builds")
     }
@@ -500,8 +517,16 @@ mod tests {
         delivery: QueryDelivery,
         limits: ResultLimits,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
+        walk_against(service, delivery, &ResultBudget::new(limits)).await
+    }
+
+    /// Forward `type=Vehicle` through `delivery`, charging `budget`.
+    async fn walk_against(
+        service: &FederationService,
+        delivery: QueryDelivery,
+        budget: &ResultBudget,
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
         let query: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle").expect("a valid query");
-        let budget = ResultBudget::new(limits);
         let context = ContextSpec::none();
         service
             .forward_query(
@@ -516,7 +541,7 @@ mod tests {
                     geo: None,
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
-                    budget: &budget,
+                    budget,
                 },
             )
             .await
@@ -830,6 +855,65 @@ mod tests {
         let refused = refusal(walk(&service, QueryDelivery::Query, 3).await);
 
         pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(3) });
+    }
+
+    /// Clause 4.12: the first walk to cross the limit ends the query. Ten
+    /// sources each answer four entities of their own over two pages under an
+    /// entity limit of 3 and a concurrency of 2, so only the sources the walk
+    /// had started are ever contacted.
+    #[tokio::test]
+    async fn a_walk_crossing_the_limit_leaves_the_waiting_sources_uncontacted() {
+        let mut sources = Vec::new();
+        let mut registrations = Vec::new();
+        for index in 0..10_usize {
+            let source = source().await;
+            let next = format!("/ngsi-ld/v1/entities?type=Vehicle&offset=2&walk={index}");
+            answer_in_turn(
+                &source,
+                "GET",
+                QUERY_PATH,
+                [page(index * 10, 2, Some(next.as_str())), page(index * 10 + 2, 2, None)],
+            )
+            .await;
+            registrations.push(registration_of(
+                &source,
+                &format!("urn:ngsi-ld:ContextSourceRegistration:crossing-{index}"),
+                "inclusive",
+                &["queryEntity"],
+            ));
+            sources.push(source);
+        }
+        let mut config = FederationConfig::default();
+        config.forwarding.max_concurrent = NonZeroUsize::MIN.saturating_add(1);
+        let service = service_configured(Arc::new(FixedRegistrationStore::new(registrations)), &config);
+
+        let refused = refusal(walk(&service, QueryDelivery::Query, 3).await);
+
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(3) });
+        let mut contacted = 0;
+        for source in &sources {
+            if !received(source).await.is_empty() {
+                contacted += 1;
+            }
+        }
+        assert!(contacted <= 2, "{contacted} of the ten sources were contacted");
+    }
+
+    /// A budget another walk has already crossed sends no request at all, so a
+    /// source never starts an answer the query is already refused for.
+    #[tokio::test]
+    async fn a_budget_already_crossed_sends_no_request() {
+        let source = source().await;
+        answer_in_turn(&source, "GET", QUERY_PATH, [page(0, 2, None)]).await;
+        let service = service(registration(&source, &["queryEntity"]));
+        let budget = ResultBudget::new(limits(1, u32::MAX));
+        let crossing = (0..2_u32).map(|number| Some(format!("urn:ngsi-ld:Vehicle:{number:04}").parse().expect("a valid identifier")));
+        assert!(budget.charge_page(ForwardingMode::Inclusive, 2, crossing).is_err());
+
+        let refused = refusal(walk_against(&service, QueryDelivery::Query, &budget).await);
+
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(1) });
+        pretty_assertions::assert_eq!(received(&source).await.len(), 0);
     }
 
     /// A budget the answer fits into exactly is not exceeded.
