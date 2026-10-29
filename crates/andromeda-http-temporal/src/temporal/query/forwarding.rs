@@ -48,7 +48,7 @@ pub(crate) enum QueryScope {
 
 impl QueryScope {
     /// How far `params` reaches against `target`.
-    pub(crate) const fn of(target: &ContextTarget, params: &TemporalQueryParameters) -> QueryScope {
+    pub(crate) fn of(target: &ContextTarget, params: &TemporalQueryParameters) -> QueryScope {
         if target.permits_federation() && !params.is_local() {
             QueryScope::Distributed
         } else {

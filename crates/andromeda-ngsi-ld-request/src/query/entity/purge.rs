@@ -136,8 +136,8 @@ pub struct PurgeSelection {
 impl PurgeEntitiesParameters {
     /// The execution scope the request asked for (clause 5.5.13).
     #[must_use]
-    pub const fn execution_scope(&self) -> ExecutionScope {
-        ExecutionScope::of(self.local, self.entity_type.as_ref())
+    pub fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::of(self.local, self.entity_type.as_ref(), &[])
     }
 
     /// Validate the purge before its selection runs.
@@ -166,7 +166,7 @@ impl PurgeEntitiesParameters {
                 .build(),
         )?;
         validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
-        require_wildcard_locality(self.local, self.entity_type.as_ref())?;
+        require_wildcard_locality(self.local, self.entity_type.as_ref(), &[])?;
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
         }

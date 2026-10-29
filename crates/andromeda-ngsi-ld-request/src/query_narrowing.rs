@@ -108,18 +108,21 @@ pub enum ExecutionScope {
     /// The request may reach the registered Context Sources.
     #[default]
     Distributed,
-    /// `local=true`, or a clause 4.17 `type=*` selector, which Table 5.2.33-1
+    /// `local=true`, or a clause 4.17 `*` type selector, which Table 5.2.33-1
     /// defines as implying local scope.
     Local,
 }
 
 impl ExecutionScope {
-    /// The scope a request's `local` and clause 4.17 type selector ask for.
+    /// The scope a request's `local` and clause 4.17 type selectors ask for,
+    /// the flat `type` and the `type` of each clause 5.2.33 selector of a POST
+    /// body alike.
     #[must_use]
-    pub const fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>) -> ExecutionScope {
-        match entity_type {
-            Some(TypeExprRaw::Wildcard) => ExecutionScope::Local,
-            Some(_) | None => ExecutionScope::of_flag(local),
+    pub fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> ExecutionScope {
+        if selects_every_type(entity_type, selectors) {
+            ExecutionScope::Local
+        } else {
+            ExecutionScope::of_flag(local)
         }
     }
 
@@ -134,17 +137,27 @@ impl ExecutionScope {
     }
 }
 
-/// Refuse a `type=*` selector beside `local=false`: Table 5.2.33-1 has `*`
-/// imply local scope, which "shall not be explicitly set to false".
+/// Refuse a `*` type selector beside `local=false`: Table 5.2.33-1 has `*`
+/// imply local scope, which "shall not be explicitly set to false". One `*`
+/// among the selectors of a POST body confines the whole request.
 ///
 /// # Errors
 ///
 /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] for that pair.
-pub const fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>) -> Result<(), ParameterError> {
-    match (local, entity_type) {
-        (Some(false), Some(TypeExprRaw::Wildcard)) => Err(ParameterError::WildcardTypeWithLocalFalse),
-        (Some(false | true) | None, _) => Ok(()),
+pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> Result<(), ParameterError> {
+    match local {
+        Some(false) if selects_every_type(entity_type, selectors) => Err(ParameterError::WildcardTypeWithLocalFalse),
+        Some(false | true) | None => Ok(()),
     }
+}
+
+/// Whether the flat `type` or the `type` of any clause 5.2.33 selector is the
+/// clause 4.17 `*` that selects every Entity Type.
+fn selects_every_type(entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> bool {
+    entity_type
+        .into_iter()
+        .chain(selectors.iter().filter_map(|selector| selector.type_.as_ref()))
+        .any(|selection| matches!(selection, TypeExprRaw::Wildcard))
 }
 
 /// Which of the clause's inputs one operation enumerates.

@@ -1010,6 +1010,37 @@ mod tests {
         }
     }
 
+    /// Table 5.2.33-1: a `*` among the selectors of a POST body implies local
+    /// scope for the whole request, so `local=false` beside it is refused.
+    #[test]
+    fn a_wildcard_among_several_body_selectors_refuses_local_false() {
+        const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
+        let selector = |selection: &str| EntitySelectorParams {
+            type_: Some(selection.parse().expect("a valid type selector")),
+            ..EntitySelectorParams::default()
+        };
+        for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {
+            for local in ["", "&local=true", "&local=false"] {
+                let mut wildcard = params_from_query(&format!("{WINDOW}{local}"));
+                wildcard.entity_selectors = vec![selector("Vehicle"), selector("*")];
+                assert!(wildcard.is_local(), "{operation:?}: {local}");
+                let validated = wildcard.validate(operation, TemporalJoin::Spec);
+                if local == "&local=false" {
+                    assert!(
+                        matches!(validated, Err(ParameterError::WildcardTypeWithLocalFalse)),
+                        "{operation:?}: {validated:?}"
+                    );
+                } else {
+                    assert!(validated.is_ok(), "{operation:?}: {local}: {validated:?}");
+                }
+            }
+            let mut named = params_from_query(&format!("{WINDOW}&local=false"));
+            named.entity_selectors = vec![selector("Vehicle"), selector("Building")];
+            assert!(!named.is_local());
+            assert!(named.validate(operation, TemporalJoin::Spec).is_ok(), "{operation:?}");
+        }
+    }
+
     #[test]
     fn is_local_false_with_specific_type() {
         let p = params_from_query("type=Vehicle");

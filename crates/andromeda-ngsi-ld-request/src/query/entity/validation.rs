@@ -31,17 +31,17 @@ impl EntityQueryParameters {
         })
     }
 
-    /// Whether the query is confined to this broker: `local=true`, or a
-    /// `type=*` selector, which Table 5.2.33-1 defines as implying local scope.
+    /// Whether the query is confined to this broker: `local=true`, or a `*`
+    /// type selector, which Table 5.2.33-1 defines as implying local scope.
     #[must_use]
-    pub const fn is_local(&self) -> bool {
+    pub fn is_local(&self) -> bool {
         matches!(self.execution_scope(), ExecutionScope::Local)
     }
 
     /// The execution scope the request asked for (clause 5.5.13).
     #[must_use]
-    pub const fn execution_scope(&self) -> ExecutionScope {
-        ExecutionScope::of(self.local, self.entity_type.as_ref())
+    pub fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::of(self.local, self.entity_type.as_ref(), &self.entity_selectors)
     }
 
     /// The clause 5.7.2.4 narrowing inputs this query carries.
@@ -87,7 +87,7 @@ impl EntityQueryParameters {
         // representation, where clause 4.18 leaves the Scope non-reified and so
         // not an Attribute at all, so `scope` names nothing the row admits.
         validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
-        require_wildcard_locality(self.local, self.entity_type.as_ref())?;
+        require_wildcard_locality(self.local, self.entity_type.as_ref(), &self.entity_selectors)?;
         check_projection_exclusivity(ProjectionSelectors {
             pick: Presence::of(self.pick.as_deref()),
             omit: Presence::of(self.omit.as_deref()),

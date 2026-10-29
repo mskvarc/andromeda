@@ -49,7 +49,7 @@ impl TemporalQueryParameters {
     /// Per NGSI-LD Table 6.18.3.2-1, `type=*` implies `local=true` since wildcard
     /// type queries are undefined across federated sources.
     #[must_use]
-    pub const fn is_local(&self) -> bool {
+    pub fn is_local(&self) -> bool {
         matches!(self.execution_scope(), ExecutionScope::Local)
     }
 
@@ -104,8 +104,8 @@ impl TemporalQueryParameters {
 
     /// The execution scope the request asked for (clause 5.5.13).
     #[must_use]
-    pub const fn execution_scope(&self) -> ExecutionScope {
-        ExecutionScope::of(self.local, self.entity_type.as_ref())
+    pub fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::of(self.local, self.entity_type.as_ref(), &self.entity_selectors)
     }
 
     /// The clause 5.7.4.4 narrowing inputs this query carries.
@@ -167,7 +167,7 @@ impl TemporalQueryParameters {
         validate_attrs(self.attrs.as_deref(), attrs_admission(operation))?;
         // Table 6.18.3.2-1: with `type=*`, "local is implicitly set to true and
         // shall not be explicitly set to false".
-        require_wildcard_locality(self.local, self.entity_type.as_ref())?;
+        require_wildcard_locality(self.local, self.entity_type.as_ref(), &self.entity_selectors)?;
         // Clause 4.21: the temporal API carries the same three selectors and
         // inherits the rule about combining them unchanged.
         check_projection_exclusivity(ProjectionSelectors {

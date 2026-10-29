@@ -649,6 +649,32 @@ mod tests {
         ));
     }
 
+    /// Table 5.2.33-1: a `*` selector of a POST body implies local scope even
+    /// beside other selectors, which leave the flat `type` unset, so the whole
+    /// request is local and `local=false` beside it is refused.
+    #[test]
+    fn a_wildcard_among_several_body_selectors_implies_local_scope_and_rejects_local_false() {
+        let body = |entities: &str| {
+            let query = serde_json::from_str::<Query>(&format!(r#"{{"type":"Query","entities":{entities}}}"#)).expect("valid canonical query");
+            EntityQueryParameters::try_from(query).expect("applicable entity query")
+        };
+        let mut wildcard = body(r#"[{"type":"Vehicle"},{"type":"*"}]"#);
+        assert!(wildcard.entity_type.is_none());
+        assert!(wildcard.is_local());
+        assert!(wildcard.validate(EntityQueryOperation::Query).is_ok());
+        wildcard.local = Some(true);
+        assert!(wildcard.validate(EntityQueryOperation::Query).is_ok());
+        wildcard.local = Some(false);
+        assert!(matches!(
+            wildcard.validate(EntityQueryOperation::Query),
+            Err(ParameterError::WildcardTypeWithLocalFalse)
+        ));
+        let mut named = body(r#"[{"type":"Vehicle"},{"type":"Building"}]"#);
+        named.local = Some(false);
+        assert!(!named.is_local());
+        assert!(named.validate(EntityQueryOperation::Query).is_ok());
+    }
+
     #[test]
     fn canonical_query_preserves_selector_pairing_and_geo_query() {
         let request = serde_json::from_str::<Query>(
