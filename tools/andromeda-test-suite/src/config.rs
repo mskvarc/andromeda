@@ -27,19 +27,19 @@ pub(crate) const PREFIX: &str = "ANDROMEDA_TEST_SUITE__";
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum BrokerRole {
-    /// The broker every test talks to unless it names another: broker A of the multi stack.
+    /// The broker every test talks to unless it names another: broker A of the multi-broker stacks.
     Front,
-    /// Broker B of the multi stack.
+    /// Broker B of the multi-broker stacks.
     B,
-    /// Broker C of the multi stack.
+    /// Broker C of the multi-broker stacks.
     C,
-    /// Broker D of the multi stack.
+    /// Broker D of the multi-broker stacks.
     D,
-    /// Broker E of the multi stack, running temporal Linked Entity retrieval.
+    /// Broker E of the multi-broker stacks, running temporal Linked Entity retrieval.
     E,
-    /// Broker F of the multi stack, reading `q` target languages as extended ranges.
+    /// Broker F of the multi-broker stacks, reading `q` target languages as extended ranges.
     F,
-    /// Broker G of the multi stack, reading `q` target languages as extended ranges.
+    /// Broker G of the multi-broker stacks, reading `q` target languages as extended ranges.
     G,
     /// The andromeda stack broker in conformance mode.
     Conformance,
@@ -74,19 +74,19 @@ pub enum BrokerRole {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum PeerRole {
-    /// Broker A of the multi stack.
+    /// Broker A of the multi-broker stacks.
     A,
-    /// Broker B of the multi stack.
+    /// Broker B of the multi-broker stacks.
     B,
-    /// Broker C of the multi stack.
+    /// Broker C of the multi-broker stacks.
     C,
-    /// Broker D of the multi stack.
+    /// Broker D of the multi-broker stacks.
     D,
-    /// Broker E of the multi stack.
+    /// Broker E of the multi-broker stacks.
     E,
-    /// Broker F of the multi stack.
+    /// Broker F of the multi-broker stacks.
     F,
-    /// Broker G of the multi stack.
+    /// Broker G of the multi-broker stacks.
     G,
     /// The andromeda stack broker in conformance mode.
     Conformance,

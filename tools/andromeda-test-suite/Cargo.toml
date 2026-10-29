@@ -42,3 +42,7 @@ path = "tests/etsi/main.rs"
 [[test]]
 name = "annex_c"
 path = "tests/annex_c/main.rs"
+
+[[test]]
+name = "interoperability"
+path = "tests/interoperability/main.rs"
