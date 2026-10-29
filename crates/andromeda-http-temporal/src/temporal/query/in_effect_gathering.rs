@@ -8,8 +8,12 @@
 //! apart: each source is probed for the latest instance and the latest
 //! deletion of every filter attribute before the start, this broker reads its
 //! own, and every dataset a source answering per Attribute may have hidden is
-//! probed for on its own. An entity a source answered a probe for is judged
-//! over every part even when no source answered it for the window.
+//! probed for on its own. The latest deletion is the one with the latest
+//! `deletedAt`, which an undated deletion placed after the instance in effect
+//! can fall before, so a source that answered a deletion is asked again for
+//! the older deletions of that stream until they can no longer pass the
+//! instance in effect. An entity a source answered a probe for is judged over
+//! every part even when no source answered it for the window.
 
 use crate::temporal::{
     ProblemResponse,
@@ -28,23 +32,42 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, temporal::window::TemporalWindow};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use andromeda_temporal::{in_effect_follow_up::follow_up_datasets, local_in_effect::LocalInEffect, query_reading::QueryReading, service::TemporalService};
+use andromeda_temporal::{
+    deletion_follow_up::{DeletionAnswer, earlier_deletions},
+    in_effect_follow_up::follow_up_datasets,
+    local_in_effect::LocalInEffect,
+    query_reading::QueryReading,
+    service::TemporalService,
+};
 use axum::http::Uri;
-use std::{collections::HashMap, slice};
+use chrono::{DateTime, Utc};
+use std::{collections::HashMap, iter, slice};
 
-/// The probes asked across every dataset.
-const ACROSS_DATASETS: [InEffectProbe<'static>; 2] = [
-    InEffectProbe {
-        reading: InEffectReading::Placed,
-        dataset: None,
-    },
-    InEffectProbe {
-        reading: InEffectReading::Deletion,
-        dataset: None,
-    },
-];
+/// The probe for the latest instance, asked across every dataset.
+const PLACED_ACROSS_DATASETS: InEffectProbe<'static> = InEffectProbe {
+    reading: InEffectReading::Placed,
+    dataset: None,
+};
+
+/// The probe for the latest deletion, asked across every dataset.
+const DELETION_ACROSS_DATASETS: InEffectProbe<'static> = InEffectProbe {
+    reading: InEffectReading::Deletion,
+    dataset: None,
+};
+
+/// What gathering has read of the parts of the entities judged, apart from
+/// the deletions it is following up.
+#[derive(Clone, Copy)]
+struct HeldParts<'a> {
+    /// What this broker holds in effect.
+    local: &'a LocalInEffect,
+    /// The parts the sources answered the window query with.
+    window_parts: &'a [&'a TemporalDocument],
+    /// What the sources answered the instance probes with.
+    probed: &'a [ForwardedTemporalEntities],
+}
 
 /// What every part holds in effect when a split query's window opens.
 pub(crate) struct InEffectGathering {
@@ -118,17 +141,22 @@ pub(crate) async fn gather_in_effect(
     forwarded: Option<&ForwardedHistory>,
 ) -> Result<Option<InEffectGathering>, ProblemResponse> {
     let GatheringRequest { target, query } = request;
-    let opens_with_an_instance_in_effect = query.params.window().ok().and_then(|window| window.in_effect_start()).is_some();
-    let (Some(forwarded), SplitEntities::Split, true, true) = (forwarded, filtering, carries_split_filters(query.params), opens_with_an_instance_in_effect)
-    else {
+    let window = query
+        .params
+        .window()
+        .ok()
+        .and_then(|window| window.in_effect_start().map(|start| (window, start)));
+    let (Some(forwarded), SplitEntities::Split, true, Some((window, start))) = (forwarded, filtering, carries_split_filters(query.params), window) else {
         return Ok(None);
     };
-    let mut probed = forward_in_effect_probes(sources, target, query, &ACROSS_DATASETS).await?;
+    let mut probed = forward_in_effect_probes(sources, target, query, &[PLACED_ACROSS_DATASETS]).await?;
+    let mut deletions = forward_in_effect_probes(sources, target, query, &[DELETION_ACROSS_DATASETS]).await?;
     let window_parts: Vec<&TemporalDocument> = instance_documents(&forwarded.sources).collect();
     let mut entity_ids: Vec<Identifier> = window_parts
         .iter()
         .copied()
         .chain(instance_documents(&probed))
+        .chain(instance_documents(&deletions))
         .filter_map(TemporalDocument::id)
         .cloned() // clone: the local read is asked about the identifiers the parts keep
         .collect();
@@ -146,24 +174,92 @@ pub(crate) async fn gather_in_effect(
         )
         .await
         .with_instance(query.instance)?;
-    let datasets = follow_up_datasets(&by_source(&probed), local.parts().chain(window_parts));
-    let follow_ups: Vec<InEffectProbe<'_>> = datasets
-        .iter()
-        .flat_map(|dataset| {
-            [InEffectReading::Placed, InEffectReading::Deletion].map(|reading| InEffectProbe {
-                reading,
-                dataset: Some(dataset),
-            })
-        })
-        .collect();
-    if !follow_ups.is_empty() {
-        probed.extend(forward_in_effect_probes(sources, target, query, &follow_ups).await?);
+    let datasets = follow_up_datasets(&by_source(probed.iter().chain(&deletions)), local.parts().chain(window_parts.iter().copied()));
+    if !datasets.is_empty() {
+        probed.extend(forward_in_effect_probes(sources, target, query, &dataset_probes(&datasets, InEffectReading::Placed)).await?);
+        deletions.extend(forward_in_effect_probes(sources, target, query, &dataset_probes(&datasets, InEffectReading::Deletion)).await?);
     }
+    let held = HeldParts {
+        local: &local,
+        window_parts: &window_parts,
+        probed: &probed,
+    };
+    let deletions = follow_up_deletions(sources, target, query, (window, start), held, deletions).await?;
+    probed.extend(deletions);
     Ok(Some(InEffectGathering { sources: probed, local }))
 }
 
+/// One probe of `reading` per dataset of `datasets`.
+fn dataset_probes<'a>(datasets: &'a [DatasetSelector], reading: InEffectReading<'static>) -> Vec<InEffectProbe<'a>> {
+    datasets
+        .iter()
+        .map(|dataset| InEffectProbe {
+            reading,
+            dataset: Some(dataset),
+        })
+        .collect()
+}
+
+/// Ask each source that answered a deletion again, for the older deletions of
+/// the stream it answered (clauses 4.5.7 and 4.11), until the streams are
+/// followed to the instance in effect; `deletions` and the answers to the
+/// repeated requests.
+///
+/// `window` is the window of the query and the instant it opens at, the bound
+/// the first probes carried.
+///
+/// # Errors
+///
+/// The failures of [`forward_in_effect_probes`].
+async fn follow_up_deletions(
+    sources: TemporalForwarding<'_>,
+    target: &ContextTarget,
+    query: InEffectRequest<'_>,
+    (window, start): (TemporalWindow, DateTime<Utc>),
+    held: HeldParts<'_>,
+    mut deletions: Vec<ForwardedTemporalEntities>,
+) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
+    let mut bounds = vec![start; deletions.len()];
+    let mut latest_round = 0;
+    loop {
+        let requests = {
+            let answers: Vec<DeletionAnswer<'_>> = deletions[latest_round..]
+                .iter()
+                .zip(&bounds[latest_round..])
+                .filter_map(|(answer, bound)| {
+                    Some(DeletionAnswer {
+                        source: answer.registration_id.as_ref()?,
+                        bound: *bound,
+                        documents: instance_documents(slice::from_ref(answer)).collect(),
+                    })
+                })
+                .collect();
+            let known = held
+                .local
+                .parts()
+                .chain(held.window_parts.iter().copied())
+                .chain(instance_documents(held.probed))
+                .chain(instance_documents(&deletions));
+            earlier_deletions(&answers, known, window)
+        };
+        if requests.is_empty() {
+            return Ok(deletions);
+        }
+        latest_round = deletions.len();
+        for request in &requests {
+            let probe = InEffectProbe {
+                reading: InEffectReading::EarlierDeletion(request),
+                dataset: None,
+            };
+            let answers = forward_in_effect_probes(sources, target, query, &[probe]).await?;
+            bounds.extend(iter::repeat_n(request.before, answers.len()));
+            deletions.extend(answers);
+        }
+    }
+}
+
 /// The parts `probed` answered, one list per source.
-fn by_source(probed: &[ForwardedTemporalEntities]) -> Vec<Vec<&TemporalDocument>> {
+fn by_source<'a>(probed: impl IntoIterator<Item = &'a ForwardedTemporalEntities>) -> Vec<Vec<&'a TemporalDocument>> {
     let mut sources: HashMap<Option<&Identifier>, Vec<&TemporalDocument>> = HashMap::new();
     for answer in probed {
         sources

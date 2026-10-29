@@ -74,6 +74,7 @@ impl FederationService {
             csf_expr,
             geo,
             mode_filter,
+            only_registration,
             entity_map,
             paging,
         } = request;
@@ -109,7 +110,10 @@ impl FederationService {
             .temporal_answer(paging.temporal_answer())
             .presence(BodyPresence::Absent)
             .build();
-        for registration in registrations {
+        for registration in registrations
+            .into_iter()
+            .filter(|registration| only_registration.is_none_or(|only| only == &registration.id))
+        {
             let reads = self
                 .registration_queries(&registration, &narrowing)
                 .await?

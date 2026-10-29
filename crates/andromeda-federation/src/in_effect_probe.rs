@@ -14,7 +14,11 @@
 //! on the window's axis is placed. A source applying `lastN` per Attribute
 //! answers one dataset only; the `datasetId` filter runs before the `lastN`
 //! cut (clause 5.7.4.4, step S8 before the instance selection), so a probe
-//! naming one dataset reads that dataset's latest instance.
+//! naming one dataset reads that dataset's latest instance. The latest deletion
+//! is only the one with the latest `deletedAt`, so the probe is repeated to the
+//! source that answered, with `timeAt` at the `deletedAt` it returned (clause
+//! 4.11 makes `before` exclusive), for the deletions placed after the instance
+//! in effect that it left out.
 
 use crate::{
     FederationService,
@@ -26,27 +30,38 @@ use crate::{
     split_entities::SplitEntities,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError, time_prop::TimeProp, time_rel::TimeRel};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::referenced_attributes::referenced_attributes};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    reference::NgsiLdReferenceError,
+    time_prop::TimeProp,
+    time_rel::TimeRel,
+};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::referenced_attributes::referenced_attributes, temporal::earlier_deletions::EarlierDeletions};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use std::num::NonZeroU32;
 
 /// Which instance before the window a probe asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InEffectReading {
+#[derive(Debug, Clone, Copy)]
+pub enum InEffectReading<'a> {
     /// The latest instance placed on the window's Temporal Property.
     Placed,
     /// The latest deletion, placed on `deletedAt`.
     Deletion,
+    /// The latest deletion before the `deletedAt` of the earliest one a source
+    /// already answered, for the one stream the request names and to the one
+    /// source it names.
+    EarlierDeletion(&'a EarlierDeletions),
 }
 
 /// One probe for the instances in effect when a split query's window opens.
 #[derive(Debug, Clone, Copy)]
 pub struct InEffectProbe<'a> {
     /// Which instance the probe asks for.
-    pub reading: InEffectReading,
+    pub reading: InEffectReading<'a>,
     /// The one dataset the probe asks about; `None` asks across every dataset.
+    /// An [`InEffectReading::EarlierDeletion`] names its own dataset.
     pub dataset: Option<&'a DatasetSelector>,
 }
 
@@ -81,9 +96,9 @@ impl InEffectProbe<'_> {
         let attrs = client.scope_q.is_none().then_some(attributes);
         let timeproperty = match self.reading {
             InEffectReading::Placed => client.timeproperty_or_default(),
-            InEffectReading::Deletion => TimeProp::Deleted,
+            InEffectReading::Deletion | InEffectReading::EarlierDeletion(_) => TimeProp::Deleted,
         };
-        Ok(Some(TemporalQueryParameters {
+        let params = TemporalQueryParameters {
             // clone: the probe owns the selection it forwards beside the client's query
             id: client.id.clone(),
             entity_type: client.entity_type.clone(),
@@ -96,7 +111,28 @@ impl InEffectProbe<'_> {
             last_n: Some(NonZeroU32::MIN),
             dataset_id: self.dataset.map(|dataset| vec![dataset.clone()]), // clone: the probe owns the dataset it names
             ..TemporalQueryParameters::default()
+        };
+        Ok(Some(match self.reading {
+            InEffectReading::Placed | InEffectReading::Deletion => params,
+            InEffectReading::EarlierDeletion(earlier) => TemporalQueryParameters {
+                // clone: the probe owns the stream it names
+                id: Some(earlier.entities.clone()),
+                id_pattern: None,
+                attrs: Some(vec![earlier.attribute.clone()]),
+                time_at: Some(earlier.before),
+                dataset_id: Some(vec![earlier.dataset.clone()]),
+                ..params
+            },
         }))
+    }
+
+    /// The one registration the probe is sent to; every matching registration
+    /// when it asks across all of them.
+    const fn registration(&self) -> Option<&Identifier> {
+        match self.reading {
+            InEffectReading::Placed | InEffectReading::Deletion => None,
+            InEffectReading::EarlierDeletion(earlier) => Some(&earlier.source),
+        }
     }
 }
 
@@ -167,6 +203,7 @@ impl FederationService {
             ForwardTemporalQueryRequest {
                 client_query: &params,
                 split: SplitEntities::Complete,
+                only_registration: probe.registration(),
                 ..request
             },
         )
@@ -192,7 +229,7 @@ mod tests {
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::{dataset::DatasetSelector, temporal::earlier_deletions::EarlierDeletions};
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use serde_json::json;
 
@@ -297,6 +334,43 @@ mod tests {
         };
         let query = forwarded(&format!("type=Vehicle&{WINDOW}&q=speed>50"), deletion).await.expect("probed");
         assert!(query.contains("timeproperty=deletedAt") && query.contains("lastN=1"), "{query}");
+    }
+
+    /// Clause 4.11 makes `before` exclusive, so the request repeated for a
+    /// stream starts at the `deletedAt` of the earliest deletion answered, names
+    /// the Entities, the Attribute and the dataset of that stream alone, and
+    /// is sent to its source only.
+    #[tokio::test]
+    async fn an_earlier_deletion_probe_names_its_stream_and_its_source() {
+        let earlier = EarlierDeletions {
+            source: "urn:ngsi-ld:csr:1".parse().expect("a valid identifier"),
+            entities: vec!["urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")],
+            attribute: "speed".parse().expect("a valid attribute name"),
+            dataset: DatasetSelector::Default,
+            before: "2020-08-01T11:50:00Z".parse().expect("a valid instant"),
+        };
+        let probe = InEffectProbe {
+            reading: InEffectReading::EarlierDeletion(&earlier),
+            dataset: None,
+        };
+        pretty_assertions::assert_eq!(probe.registration(), Some(&earlier.source));
+        let query = forwarded(&format!("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&{WINDOW}&q=speed>50&attrs=brand"), probe)
+            .await
+            .expect("probed");
+        for fragment in [
+            "id=urn%3Angsi-ld%3AVehicle%3A1",
+            "attrs=speed",
+            "timerel=before",
+            "timeAt=2020-08-01T11%3A50%3A00Z",
+            "timeproperty=deletedAt",
+            "lastN=1",
+            "datasetId=%40none",
+        ] {
+            assert!(query.contains(fragment), "{fragment} missing: {query}");
+        }
+        for parameter in ["idPattern=", "brand", "endTimeAt="] {
+            assert!(!query.contains(parameter), "{parameter} travels: {query}");
+        }
     }
 
     /// Clause 5.7.4.4 filters by `datasetId` before the `lastN` cut, so a

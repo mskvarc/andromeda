@@ -28,6 +28,9 @@ mod compilation;
 /// The ways a temporal policy configuration is refused as it is read.
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
 pub mod delete_by_query;
+/// The streams whose older deletions a split query still has to ask its
+/// sources for.
+pub mod deletion_follow_up;
 pub mod error;
 mod evolution_write;
 /// What a distributed temporal write hands to registrations and keeps locally.

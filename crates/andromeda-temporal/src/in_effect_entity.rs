@@ -136,7 +136,7 @@ impl<'a> InEffectEntity<'a> {
 
 /// Where `instance` is placed on `timeproperty`: at its instant there, or, for
 /// a deletion carrying none, at the instant it was deleted (clause 4.5.7).
-fn placement(instance: &InstanceDocument, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
+pub(crate) fn placement(instance: &InstanceDocument, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
     instance.instant_on(timeproperty).or_else(|| instance.deleted_at().map(NgsiLdDateTime::get))
 }
 

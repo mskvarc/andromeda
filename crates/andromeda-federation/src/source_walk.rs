@@ -573,6 +573,7 @@ mod tests {
                     csf_expr: None,
                     geo: None,
                     mode_filter: CsrModeFilter::All,
+                    only_registration: None,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::Walk(&budget),
                 },
@@ -1158,6 +1159,7 @@ mod tests {
                     csf_expr: None,
                     geo: None,
                     mode_filter: CsrModeFilter::All,
+                    only_registration: None,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::WalkHistory(HistoryBudget {
                         entities: &entities,

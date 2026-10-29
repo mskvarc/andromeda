@@ -202,6 +202,10 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub geo: Option<&'a GeoQuery>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
+    /// The one registration contacted, for a request repeated to a source
+    /// already known to hold what it asks for; every matching registration is
+    /// contacted when it is `None`.
+    pub only_registration: Option<&'a Identifier>,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// How much of each source's answer is read.
