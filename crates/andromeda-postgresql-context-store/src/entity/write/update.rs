@@ -148,7 +148,7 @@ pub(super) fn entity_update_statement<'entities>(
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
     let mut external = ExternalArguments::default();
-    let mut staged_entities = entity_arrays(entities, staged_column(&entities.locations), &mut external);
+    let mut staged_entities = entity_arrays(entities, &staged_column(&entities.locations), &mut external);
     staged_entities.push(Expr::val(kept_column(&entities.locations)));
     staged_entities.extend(expectation_arrays(expected));
     let instance_arrays = rows.into_arrays(&mut external);
@@ -162,7 +162,8 @@ pub(super) fn entity_update_statement<'entities>(
     for column in SCALAR_SEARCH_COLUMNS {
         search.value(column, projected(column));
     }
-    search.value(HOISTED_LOCATION.stored, hoisted_value());
+    search.value(HOISTED_LOCATION.stored, hoisted_value(HOISTED_LOCATION.stored));
+    search.value(HOISTED_LOCATION.reach_stored, hoisted_value(HOISTED_LOCATION.reach_stored));
     // A rewritten search row is a changed type, attribute name, scope or
     // geometry, which a spatial index catching up from the store must find.
     search.value(EntitySearch::WrittenXid, current_transaction_id());
@@ -276,24 +277,31 @@ const SCALAR_SEARCH_COLUMNS: [EntitySearch; 7] = [
     EntitySearch::LocationExpiresAt,
 ];
 
-/// The value a rewritten search row takes for the hoisted geometry:
-/// `CASE WHEN proj.loc_kept THEN entity_search.location ELSE proj.location END`.
+/// The value a rewritten search row takes for one column of the hoisted
+/// geometry, the geometry or its reach:
+/// `CASE WHEN proj.loc_kept THEN entity_search.<column> ELSE proj.<column> END`.
 ///
 /// A kept geometry is the stored column itself, so a row rewritten for another
 /// column keeps the geometry's stored value rather than a re-projection of it.
-fn hoisted_value() -> SimpleExpr {
+fn hoisted_value(column: EntitySearch) -> SimpleExpr {
     CaseStatement::new()
-        .case(projected(HOISTED_LOCATION.kept), Expr::col((EntitySearch::Table, HOISTED_LOCATION.stored)))
-        .finally(projected(HOISTED_LOCATION.stored))
+        .case(projected(HOISTED_LOCATION.kept), Expr::col((EntitySearch::Table, column)))
+        .finally(projected(column))
         .into()
 }
 
 /// Whether the hoisted geometry changes the search row:
-/// `NOT proj.loc_kept AND entity_search.location IS DISTINCT FROM proj.location`.
+/// `NOT proj.loc_kept AND (entity_search.location IS DISTINCT FROM
+/// proj.location OR entity_search.location_reach IS DISTINCT FROM
+/// proj.location_reach)`.
+///
+/// Two written geometries can repair to the same stored one and still bow
+/// differently, so the reach is compared on its own.
 fn hoisted_changed() -> Cond {
+    let differs = |column: EntitySearch| SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column));
     Cond::all()
         .add(projected(HOISTED_LOCATION.kept).not())
-        .add(SimpleExpr::from(Expr::col((EntitySearch::Table, HOISTED_LOCATION.stored))).distinct_from(projected(HOISTED_LOCATION.stored)))
+        .add(Cond::any().add(differs(HOISTED_LOCATION.stored)).add(differs(HOISTED_LOCATION.reach_stored)))
 }
 
 impl EntityRepository {
@@ -399,7 +407,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, expected_entity_key, expected_write_count)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_reach, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, expected_entity_key, expected_write_count)"
             ),
             "{sql}"
         );
@@ -418,7 +426,7 @@ mod tests {
     fn a_compare_and_set_write_states_the_read_version() {
         let sql = update();
         assert!(
-            sql.contains(r#""ents" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "modified_at" = $13, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
+            sql.contains(r#""ents" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "modified_at" = $14, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
             "{sql}"
         );
         assert!(
@@ -456,11 +464,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($42::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($44::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$38::text[], $39::integer[], $40::text[], $41::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$40::text[], $41::integer[], $42::text[], $43::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }
@@ -487,7 +495,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"((NOT "proj"."loc_kept") AND ("entity_search"."location" IS DISTINCT FROM "proj"."location"))"#),
+            sql.contains(r#""location_reach" = (CASE WHEN ("proj"."loc_kept") THEN "entity_search"."location_reach" ELSE "proj"."location_reach" END)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"((NOT "proj"."loc_kept") AND (("entity_search"."location" IS DISTINCT FROM "proj"."location") OR ("entity_search"."location_reach" IS DISTINCT FROM "proj"."location_reach")))"#),
             "{sql}"
         );
     }
@@ -509,7 +521,7 @@ mod tests {
             "{sql}"
         );
         let (search, _) = sql.split_once(r#""strays" AS"#).expect("the search write precedes the memberships");
-        pretty_assertions::assert_eq!(search.matches("IS DISTINCT FROM").count(), 8, "eight search columns are guarded: {sql}");
+        pretty_assertions::assert_eq!(search.matches("IS DISTINCT FROM").count(), 9, "nine search columns are guarded: {sql}");
         for column in [
             "entity_type_name_keys",
             "attribute_name_keys",
@@ -518,6 +530,7 @@ mod tests {
             "scope_paths",
             "verbatim_scope_paths",
             "location",
+            "location_reach",
             "location_expires_at",
         ] {
             assert!(

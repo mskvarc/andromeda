@@ -617,7 +617,14 @@ mod tests {
             built.count_sql
         );
         assert!(built.count_sql.contains(r#"AND "location" IS NULL) + (SELECT COUNT(*)"#), "{}", built.count_sql);
-        assert!(built.count_sql.contains(r#""location" IS NOT NULL AND ST_Intersects("#), "{}", built.count_sql);
+        assert!(
+            built
+                .count_sql
+                .contains(r#""location" IS NOT NULL AND ((COALESCE("location_reach", "location_valid", "location") && ST_MakeValid(ST_GeomFromEWKB("#),
+            "{}",
+            built.count_sql
+        );
+        assert!(built.count_sql.contains(" AND ST_Intersects("), "{}", built.count_sql);
         assert_eq!(built.count_sql.matches("registration_information").count(), 2, "{}", built.count_sql);
     }
 

@@ -1284,13 +1284,13 @@ fn an_application_grows_the_extent_after_recording_the_history() {
 }
 
 #[test]
-fn the_extent_grows_from_the_geometry_the_history_row_stores() {
+fn the_extent_grows_from_the_reach_else_the_geometry_the_history_row_stores() {
     let sql = growth();
     assert!(
         sql.starts_with(concat!(
             r#"UPDATE "temporal_attribute_streams" SET "value_extent" = "#,
             r#"ST_Envelope(ST_Collect("temporal_attribute_streams"."value_extent", "grown"."extent")) FROM (SELECT "s"."stream_key", "#,
-            r#"ST_Envelope(ST_Collect("e"."value_geometry")) AS "extent" FROM "#
+            r#"ST_Envelope(ST_Collect(COALESCE("e"."value_geometry_reach", "e"."value_geometry"))) AS "extent" FROM "#
         )),
         "{sql}"
     );

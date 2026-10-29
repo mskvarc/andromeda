@@ -6,7 +6,7 @@
 //! which is where clause 4.10 `near` is measured (see [`crate::proximity`]),
 //! and it wraps across the antimeridian rather than stopping at it.
 
-use crate::positive_distance::PositiveDistance;
+use crate::{great_circle_reach::REACH_TOLERANCE_DEGREES, positive_distance::PositiveDistance};
 use geo::{Coord, Rect};
 use std::slice;
 
@@ -42,7 +42,9 @@ impl NearEnvelope {
     /// [`WGS84_MIN_RADIUS_OF_CURVATURE_M`], and the longitude reach that same
     /// angle widened by the cosine of the reached latitude furthest from the
     /// equator. Both are upper bounds, so the envelope covers rather than
-    /// approximates; it overshoots by about 0.6 % plus the widening.
+    /// approximates; it overshoots by about 0.6 % plus the widening. Each side
+    /// is pushed out by a further [`REACH_TOLERANCE_DEGREES`], the most a
+    /// stored box may fall short of its geometry's great-circle reach.
     #[must_use]
     pub fn around(reference: Rect<f64>, distance: PositiveDistance) -> NearEnvelope {
         NearEnvelope::around_metres(reference, distance.metres())
@@ -52,14 +54,14 @@ impl NearEnvelope {
     /// non-negative number of metres, as a search radius derived from one is.
     pub(crate) fn around_metres(reference: Rect<f64>, metres: f64) -> NearEnvelope {
         let reach = (metres / WGS84_MIN_RADIUS_OF_CURVATURE_M).to_degrees();
-        let south = (reference.min().y - reach).max(-90.0);
-        let north = (reference.max().y + reach).min(90.0);
+        let south = (reference.min().y - reach - REACH_TOLERANCE_DEGREES).max(-90.0);
+        let north = (reference.max().y + reach + REACH_TOLERANCE_DEGREES).min(90.0);
         // Every meridian meets at a pole, so once one is within reach so is
         // every longitude.
         if south <= -90.0 || north >= 90.0 {
             return NearEnvelope::Single(rect(-180.0, south, 180.0, north));
         }
-        let widening = reach / north.abs().max(south.abs()).to_radians().cos();
+        let widening = reach / north.abs().max(south.abs()).to_radians().cos() + REACH_TOLERANCE_DEGREES;
         let west = reference.min().x - widening;
         let east = reference.max().x + widening;
         if east - west >= 360.0 {
@@ -106,7 +108,7 @@ fn rect(west: f64, south: f64, east: f64, north: f64) -> Rect<f64> {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{near_envelope::NearEnvelope, positive_distance::PositiveDistance};
+    use crate::{great_circle_reach::REACH_TOLERANCE_DEGREES, near_envelope::NearEnvelope, positive_distance::PositiveDistance};
     use geo::{Destination, Geodesic, Point, Rect};
     use std::str::FromStr;
 
@@ -211,6 +213,25 @@ mod tests {
         };
         pretty_assertions::assert_eq!((rect.min().x, rect.max().x, rect.max().y), (-180.0, 180.0, 90.0));
         pretty_assertions::assert_eq!(envelope.rects().len(), 1);
+    }
+
+    /// A stored box may fall short of its geometry's great-circle reach by up
+    /// to the tolerance, so even an envelope of no distance covers a point
+    /// that far off the reference on either axis.
+    #[test]
+    fn the_envelope_at_distance_zero_covers_a_point_one_tolerance_away() {
+        let envelope = NearEnvelope::around_metres(at(10.0, 50.0), 0.0);
+        for (longitude, latitude) in [
+            (10.0 + REACH_TOLERANCE_DEGREES, 50.0),
+            (10.0 - REACH_TOLERANCE_DEGREES, 50.0),
+            (10.0, 50.0 + REACH_TOLERANCE_DEGREES),
+            (10.0, 50.0 - REACH_TOLERANCE_DEGREES),
+        ] {
+            assert!(
+                covers(&envelope, Point::new(longitude, latitude)),
+                "({longitude}, {latitude}) outside {envelope:?}"
+            );
+        }
     }
 
     #[test]

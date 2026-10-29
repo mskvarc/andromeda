@@ -89,6 +89,10 @@ pub enum AttributeHistory {
     /// The `ST_MakeValid` form of an invalid written geometry, NULL when the
     /// written one is valid; spatial predicates judge this form when present
     ValueGeometryValid,
+    /// The rectangle the written geometry covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar
+    /// bounding box; the per-Evolution box test reads this box when present
+    ValueGeometryReach,
     /// The `bbox` and foreign members of the geometry value, when it has any
     ValueGeometryMembers,
     /// JSON object or array value, when `value_kind` selects it
@@ -210,6 +214,7 @@ mod tests {
                 AttributeHistory::ExpiresAt,
                 AttributeHistory::SubAttributes,
                 AttributeHistory::ValueGeometryValid,
+                AttributeHistory::ValueGeometryReach,
                 AttributeHistory::ValueDatatypeKey,
                 AttributeHistory::ValueLanguage,
             ]
@@ -221,6 +226,7 @@ mod tests {
                 "expires_at",
                 "sub_attributes",
                 "value_geometry_valid",
+                "value_geometry_reach",
                 "value_datatype_key",
                 "value_language"
             ]

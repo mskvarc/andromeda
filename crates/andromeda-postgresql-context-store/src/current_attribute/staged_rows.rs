@@ -20,6 +20,7 @@ use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code
 use andromeda_postgresql_encoding::{
     array_literal::IntegerArrayLiteral,
     ewkb::{EwkbError, encode},
+    ewkb_binding::reach_bytes,
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
@@ -60,6 +61,8 @@ struct ValueColumns {
     date_time: Option<DateTime<Utc>>,
     /// `value_geometry`, as EWKB.
     geometry: Option<Vec<u8>>,
+    /// `value_geometry_reach`, as EWKB.
+    geometry_reach: Option<Vec<u8>>,
     /// `value_geometry_members`.
     geometry_members: Option<Json<Box<RawValue>>>,
     /// `value_object`.
@@ -87,6 +90,7 @@ impl ValueColumns {
             StoredValue::Time { time, .. } => columns.string = Some(time.to_string()),
             StoredValue::Geometry { form, members } => {
                 columns.geometry = Some(encode(&form)?.to_vec());
+                columns.geometry_reach = reach_bytes(Some(&form));
                 columns.geometry_members = members.map(StoredJson::into_json);
             }
             StoredValue::Object(object) => columns.object = Some(object.into_json()),
@@ -124,6 +128,8 @@ pub struct StagedRows<'a> {
     value_date_times: Vec<Option<DateTime<Utc>>>,
     /// `value_geometry`, as EWKB.
     value_geometries: Vec<Option<Vec<u8>>>,
+    /// `value_geometry_reach`, as EWKB.
+    value_geometry_reaches: Vec<Option<Vec<u8>>>,
     /// `value_geometry_members`.
     value_geometry_members: Vec<Option<Json<Box<RawValue>>>>,
     /// `value_object`.
@@ -209,6 +215,7 @@ impl<'a> StagedRows<'a> {
             self.value_booleans.push(values.boolean);
             self.value_date_times.push(values.date_time);
             self.value_geometries.push(values.geometry);
+            self.value_geometry_reaches.push(values.geometry_reach);
             self.value_geometry_members.push(values.geometry_members);
             self.value_objects.push(values.object);
             self.value_uris.push(values.uri);
@@ -266,6 +273,7 @@ impl<'a> StagedRows<'a> {
             nullable_array(self.value_booleans),
             nullable_array(self.value_date_times),
             nullable_array(self.value_geometries),
+            nullable_array(self.value_geometry_reaches),
             external.push(self.value_geometry_members),
             external.push(self.value_objects),
             nullable_array(self.value_uris),

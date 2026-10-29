@@ -102,6 +102,8 @@ pub(super) struct ValueColumns {
     value_datatype_key: Option<i32>,
     /// `value_geometry`.
     value_geometry: Option<EwkbGeometry>,
+    /// `value_geometry_reach`.
+    value_geometry_reach: Option<EwkbGeometry>,
     /// `value_geometry_members`.
     value_geometry_members: Option<Json<Box<RawValue>>>,
     /// `value_object`.
@@ -124,6 +126,7 @@ impl ValueColumns {
             value_language: value.language().map(|language| language.as_str().to_owned()),
             value_datatype_key: value.datatype_key(),
             value_geometry: value.geometry().map(EwkbGeometry::of).transpose()?,
+            value_geometry_reach: value.geometry().and_then(EwkbGeometry::reach_of),
             value_geometry_members: value.geometry_members().map(|members| Json(members.to_owned())),
             value_object: value.object().map(|object| Json(object.to_owned())),
             value_uri: value.uri().map(|uri| String::from(uri.as_str())),
@@ -215,6 +218,7 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         value_language,
         value_datatype_key,
         value_geometry,
+        value_geometry_reach,
         value_geometry_members,
         value_object,
         value_uri,
@@ -249,6 +253,7 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         value_string,
         value_language,
         value_geometry,
+        value_geometry_reach,
         value_geometry_members,
         value_object,
         value_uri,

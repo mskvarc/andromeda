@@ -130,6 +130,13 @@ create table entity_search (
     -- the optional leading `/` of clause 4.18, and this is what reads back.
     verbatim_scope_paths text[] compression lz4 collate "C",
     location geometry compression lz4,
+    -- The rectangle the written `location` covers when its edges are read as
+    -- the great-circle arcs `near` measures along (clause 4.10), NULL where
+    -- it extends past the planar bounding box by no more than 1e-6 degrees:
+    -- every point, every meridian edge and every edge shorter than about
+    -- 2 km. The spatial index keys `coalesce(location_reach, location)`, so a
+    -- long edge bowing past its vertices is not dropped by a box test.
+    location_reach geometry compression lz4,
     constraint pk_entity_search primary key (entity_key),
     constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
@@ -138,7 +145,8 @@ create table entity_search (
     constraint chk_entity_search_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or (cardinality(scope_paths) > 0 and cardinality(scope_paths) = cardinality(verbatim_scope_paths)))),
     constraint chk_entity_search_location_valid check (location is null or st_isvalid(location)),
     constraint chk_entity_search_location_srid check (location is null or st_srid(location) = 4326),
-    constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2))
+    constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2)),
+    constraint chk_entity_search_location_reach check (location_reach is null or (location is not null and st_srid(location_reach) = 4326))
 )
 with (
     vacuum_truncate = false,
@@ -159,15 +167,9 @@ create index idx_entity_search_scope_paths on entity_search using gist (scope_pa
 where
     scope_paths is not null;
 
-create index idx_entity_search_location on entity_search using gist (location)
-where
-    location is not null;
-
--- `near` measures on the spheroid (clause 4.10), so its distance is judged on
--- the `geography` projection. The index keys the projection itself rather than
--- a stored copy of it: a row holds its geometry once, and a recheck projects
--- the one candidate it judges.
-create index idx_entity_search_location_geography on entity_search using gist ((geom_to_geog(location)))
+-- Every geo-query on the hoisted `location` tests this box before its exact
+-- relation, the planar ones and the spheroidal `near` alike.
+create index idx_entity_search_location on entity_search using gist (coalesce(location_reach, location))
 where
     location is not null;
 

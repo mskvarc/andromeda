@@ -109,6 +109,7 @@ select
     e.value_string,
     e.value_language,
     e.value_geometry,
+    e.value_geometry_reach,
     e.value_geometry_members,
     e.value_object,
     e.value_uri,

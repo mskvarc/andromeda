@@ -9,7 +9,10 @@
 
 use crate::stored_members::{InstanceMembers, MemberColumns, StoredInstanceError};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_postgresql_encoding::ewkb::{EwkbError, encode};
+use andromeda_postgresql_encoding::{
+    ewkb::{EwkbError, encode},
+    ewkb_binding::reach_bytes,
+};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -50,6 +53,13 @@ impl EwkbGeometry {
     /// Returns [`EwkbError`] when `form` has no EWKB encoding.
     pub fn of(form: &GeometryForm) -> Result<EwkbGeometry, EwkbError> {
         Ok(EwkbGeometry(encode(form)?.to_vec()))
+    }
+
+    /// The EWKB of the great-circle reach of `form`, or `None` where it stays
+    /// within the tolerance of the planar bounding box.
+    #[must_use]
+    pub fn reach_of(form: &GeometryForm) -> Option<EwkbGeometry> {
+        reach_bytes(Some(form)).map(EwkbGeometry)
     }
 }
 

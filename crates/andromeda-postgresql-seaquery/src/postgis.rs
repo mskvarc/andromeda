@@ -253,6 +253,20 @@ pub fn judged_geometry(repaired: SimpleExpr, written: SimpleExpr) -> SimpleExpr 
     Func::coalesce([repaired, written]).into()
 }
 
+/// `PostGIS`: `COALESCE(reach, repaired, written)`, or `COALESCE(reach,
+/// geometry)` where no repaired form is stored: the geometry a spatial index
+/// keys a stored geometry by.
+///
+/// The great-circle reach, where a geometry has one, covers both the written
+/// and the repaired form, and a `near` measured along great-circle edges
+/// reaches past their planar bounding box. The operands are one flat
+/// `COALESCE`, the spelling every geometry index keys, so the planner matches
+/// a box test to the index.
+#[must_use]
+pub fn reach_or_geometry(reach: SimpleExpr, geometry: impl IntoIterator<Item = SimpleExpr>) -> SimpleExpr {
+    Func::coalesce([reach].into_iter().chain(geometry)).into()
+}
+
 /// `PostGIS`: Builds a validated geometry from EWKB (SRID 4326 already embedded).
 ///
 /// Equivalent to: `ST_MakeValid(ST_GeomFromEWKB($1))`.

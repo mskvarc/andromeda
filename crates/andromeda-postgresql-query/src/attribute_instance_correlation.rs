@@ -9,7 +9,7 @@
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
+use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands, stored_geometry::StoredGeometry};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{literal::int_literal, postgis::judged_geometry};
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
@@ -52,6 +52,19 @@ pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
     let alias = Alias::new(subquery_alias);
     judged_geometry(
         SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometryValid)), // clone: the alias qualifies both columns
+        SeaExpr::col((alias, CurrentAttributes::ValueGeometry)),
+    )
+}
+
+/// The instance rows [`geometry_instances_of`] selects as a geo-query reads
+/// them: the geometry [`instance_geometry_column`] judges, and the box
+/// `idx_ca_value_geometry` keys, its great-circle reach first.
+#[must_use]
+pub fn instance_stored_geometry(subquery_alias: &str) -> StoredGeometry {
+    let alias = Alias::new(subquery_alias);
+    StoredGeometry::written(
+        SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometryReach)), // clone: the alias qualifies every column
+        SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometryValid)),
         SeaExpr::col((alias, CurrentAttributes::ValueGeometry)),
     )
 }

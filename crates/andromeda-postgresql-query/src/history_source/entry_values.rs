@@ -9,7 +9,11 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, ScopeHistory},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::repaired_when_invalid};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_type::PostgresType,
+    postgis::{reach_or_geometry, repaired_when_invalid},
+};
 use sea_query::SimpleExpr;
 
 /// How an entry field's value is recorded in its column.
@@ -36,7 +40,7 @@ impl Recorded {
 
 /// The `attribute_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
-const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 25] = [
+const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 26] = [
     (AttributeHistory::AttributeKind, TemporalEntry::AttributeKind, Recorded::AsHeld),
     (AttributeHistory::ValueKind, TemporalEntry::ValueKind, Recorded::AsHeld),
     (AttributeHistory::ObservedAt, TemporalEntry::ObservedAt, Recorded::AsHeld),
@@ -60,6 +64,7 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 25] = [
         TemporalEntry::ValueGeometry,
         Recorded::RepairedWhenInvalid,
     ),
+    (AttributeHistory::ValueGeometryReach, TemporalEntry::ValueGeometryReach, Recorded::AsHeld),
     (AttributeHistory::ValueGeometryMembers, TemporalEntry::ValueGeometryMembers, Recorded::AsHeld),
     (AttributeHistory::ValueObject, TemporalEntry::ValueObject, Recorded::AsHeld),
     (AttributeHistory::ValueUri, TemporalEntry::ValueUri, Recorded::AsHeld),
@@ -83,7 +88,7 @@ const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 7] = [
 /// The `attribute_history` value columns, in the table's column order, beside
 /// the identity (`recorded_at`, `write_id`, `write_ordinal`) and the stream.
 #[must_use]
-pub fn attribute_value_columns() -> [AttributeHistory; 25] {
+pub fn attribute_value_columns() -> [AttributeHistory; 26] {
     ATTRIBUTE_FIELDS.map(|(column, ..)| column)
 }
 
@@ -100,15 +105,18 @@ pub fn scope_value_columns() -> [ScopeHistory; 7] {
 /// The geometry is recorded as written, and `value_geometry_valid` derives
 /// its repaired form from the same field: the one value the entry does not
 /// hold as it is recorded.
-pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 25] {
+pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 26] {
     ATTRIBUTE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
-/// The geometry an attribute entry records in `value_geometry`, as written,
-/// `field` reading one field of the entry: `NULL` for an entry holding no
-/// geometry.
-pub fn recorded_geometry(field: impl Fn(TemporalEntry) -> SimpleExpr) -> SimpleExpr {
-    Recorded::AsHeld.of(field(TemporalEntry::ValueGeometry))
+/// What a stream extent grows by for an attribute entry, `field` reading one
+/// field of the entry: the great-circle reach the entry records, else the
+/// geometry it records as written, `NULL` for an entry holding no geometry.
+///
+/// The reach covers the repaired form as well, so an extent grown from it
+/// holds every geometry a relation judges.
+pub fn recorded_extent(field: impl Fn(TemporalEntry) -> SimpleExpr) -> SimpleExpr {
+    reach_or_geometry(field(TemporalEntry::ValueGeometryReach), [field(TemporalEntry::ValueGeometry)])
 }
 
 /// Every `scope_history` value column beside the value a Scope entry records
@@ -125,7 +133,7 @@ pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(Scop
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values};
+    use crate::history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values};
     use andromeda_postgresql_schema::temporal_intent::TemporalEntry;
     use sea_query::{Alias, Expr, Iden, PostgresQueryBuilder, Query};
 
@@ -150,17 +158,19 @@ mod tests {
             "{values:?}"
         );
         assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 25);
+        pretty_assertions::assert_eq!(values.len(), 26);
     }
 
     #[test]
-    fn the_recorded_geometry_is_the_one_the_history_row_stores() {
+    fn an_extent_grows_by_the_recorded_reach_else_the_recorded_geometry() {
         let entry = |field: TemporalEntry| Expr::col((Alias::new("e"), field));
         let values = rendered(attribute_entry_values(entry).map(|(column, value)| (column.to_string(), value)));
-        let [geometry] = rendered([("value_geometry".to_owned(), recorded_geometry(entry))])
-            .try_into()
-            .expect("one rendering");
-        assert!(values.contains(&geometry), "{geometry} in {values:?}");
+        assert!(
+            values.contains(&r#"value_geometry_reach <- SELECT "e"."value_geometry_reach""#.to_owned()),
+            "{values:?}"
+        );
+        let [extent] = rendered([("extent".to_owned(), recorded_extent(entry))]).try_into().expect("one rendering");
+        pretty_assertions::assert_eq!(extent, r#"extent <- SELECT COALESCE("e"."value_geometry_reach", "e"."value_geometry")"#);
     }
 
     /// Clause 4.5.6 gives the temporal Scope no `instanceId`, so a Scope row

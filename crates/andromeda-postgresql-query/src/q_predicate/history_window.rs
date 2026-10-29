@@ -37,7 +37,7 @@
 use crate::{
     attribute_name_key::AttributeNameKey,
     error::RenderError,
-    geo_predicate::{near_envelope_unindexed_prefilter, relation_expression},
+    geo_predicate::restriction,
     history_source::{
         HistoryBranch,
         HistoryOf,
@@ -50,6 +50,7 @@ use crate::{
         in_effect_instance::InEffectInstance,
         instance_test::{InstanceTest, non_empty},
     },
+    stored_geometry::{BoxIndexing, StoredGeometry},
     time_interval_predicate::within_interval,
     tombstone::carries_a_value,
     window_reach::WindowReach,
@@ -57,11 +58,8 @@ use crate::{
 use andromeda_ngsi_ld_query::{geo::query::GeoQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
-    cast::cast,
     literal::{false_literal, int_literal},
     pg_array::is_any_of,
-    pg_type::PostgresType,
-    postgis::judged_geometry,
 };
 use chrono::{DateTime, Utc};
 use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
@@ -172,11 +170,11 @@ impl HistoryWindow {
     /// window they test the same instances. A `GeoProperty` the dictionary
     /// never keyed has no history and matches nothing.
     ///
-    /// A `near` relation with a `maxDistance` first tests the near envelope as
-    /// a box no geometry index serves: the probe reads one Evolution's rows
-    /// through its stream index, and an indexable box would have the planner
-    /// AND a geometry index into every probe. The spheroidal distance then runs
-    /// only on the rows the box keeps.
+    /// Every relation admitting a box first tests it, over the rows'
+    /// great-circle reach, as a box no geometry index serves: the probe reads
+    /// one Evolution's rows through its stream index, and an indexable box
+    /// would have the planner AND a geometry index into every probe. The exact
+    /// relation then runs only on the rows the box keeps.
     ///
     /// # Errors
     ///
@@ -189,17 +187,12 @@ impl HistoryWindow {
         let aliases = HistoryAliases::top_level();
         // Clause 4.7.2 stores an invalid geometry as written; the relation
         // judges its repaired form.
-        let judged = || {
-            judged_geometry(
-                aliases.instance_column(AttributeHistory::ValueGeometryValid),
-                aliases.instance_column(AttributeHistory::ValueGeometry),
-            )
-        };
-        let planar = judged();
-        let geographic = cast(judged(), PostgresType::Geography);
-        let near_box = near_envelope_unindexed_prefilter(geo, &planar);
-        let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
-        let relation = Condition::all().add_option(near_box).add(spatial);
+        let stored = StoredGeometry::written(
+            aliases.instance_column(AttributeHistory::ValueGeometryReach),
+            aliases.instance_column(AttributeHistory::ValueGeometryValid),
+            aliases.instance_column(AttributeHistory::ValueGeometry),
+        );
+        let relation = restriction(&geo.georel, &geo.geometry, &stored, BoxIndexing::Unindexed)?;
         Ok(self.exists(geoproperty, relation, &aliases))
     }
 

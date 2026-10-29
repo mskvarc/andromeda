@@ -3,7 +3,6 @@ cascade_entity_current_attributes
 check_current_attribute_entities
 check_current_attribute_name_keys
 create_hypertable
-geom_to_geog
 GREATEST
 num_nonnulls
 pg_current_xact_id

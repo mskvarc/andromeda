@@ -58,6 +58,7 @@ pub mod geometry_object_type;
 pub mod geometry_type;
 pub mod geometry_writer;
 pub mod great_circle;
+pub mod great_circle_reach;
 pub mod line_string_coordinates;
 pub mod linear_ring;
 pub mod near_envelope;

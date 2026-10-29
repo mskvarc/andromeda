@@ -16,7 +16,7 @@ use crate::{
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::{
     entity_sides::holds_evolution,
-    history_source::entry_values::{attribute_entry_values, recorded_geometry},
+    history_source::entry_values::{attribute_entry_values, recorded_extent},
     tombstone::entry_carries_a_value,
 };
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::TemporalAttributeStreams, temporal_intent::TemporalEntry};
@@ -94,8 +94,8 @@ struct FirstIntent;
 #[iden = "first_ordinal"]
 struct FirstOrdinal;
 
-/// The geometry an entry records, which its stream's extent covers,
-/// `extent_geometry`.
+/// What an entry grows its stream's extent by, its recorded great-circle
+/// reach else its geometry, `extent_geometry`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "extent_geometry"]
 struct ExtentGeometry;
@@ -127,7 +127,7 @@ fn with_recorded_values(entries: &mut SelectStatement) {
     for (column, value) in attribute_entry_values(entry) {
         entries.expr_as(value, column);
     }
-    entries.expr_as(recorded_geometry(entry), ExtentGeometry);
+    entries.expr_as(recorded_extent(entry), ExtentGeometry);
 }
 
 /// The [`SEEDED_COLUMNS`] of the stream of each grain the rows `ah` are grouped

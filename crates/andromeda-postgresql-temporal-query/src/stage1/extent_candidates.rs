@@ -27,8 +27,8 @@ use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dictionary::query_names::QueryNames,
     error::RenderError,
-    geo_predicate::bounding_box_prefilter,
     history_source::{HistoryBranch, PendingEntries},
+    stored_geometry::{BoxIndexing, GeometryBox, box_test},
 };
 use andromeda_postgresql_schema::temporal::TemporalAttributeStreams;
 use andromeda_postgresql_seaquery::branch::qualified;
@@ -69,13 +69,17 @@ impl<'q> ExtentRead<'q> {
         let Some(geoproperty) = names.attributes.get(&geo.geoproperty) else {
             return Ok(None);
         };
-        Ok(
-            bounding_box_prefilter(geo, Expr::col((Rs, TemporalAttributeStreams::ValueExtent)))?.map(|overlap| ExtentRead {
-                geoproperty,
-                overlap,
-                contributed: &compiled.contributed,
-            }),
-        )
+        Ok(box_test(
+            &geo.georel,
+            &geo.geometry,
+            &GeometryBox::stream_extent(Expr::col((Rs, TemporalAttributeStreams::ValueExtent))),
+            BoxIndexing::Indexed,
+        )?
+        .map(|overlap| ExtentRead {
+            geoproperty,
+            overlap,
+            contributed: &compiled.contributed,
+        }))
     }
 
     /// The Evolutions of `branch` holding a stream of the `GeoProperty` whose

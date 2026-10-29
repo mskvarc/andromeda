@@ -120,13 +120,15 @@ pub(crate) fn release_verbatim_instance_claim_statement(
 }
 
 /// The geometry columns a replacement writes: `value_geometry` as written,
-/// `ST_GeomFromEWKB(ewkb)`, and `value_geometry_valid`, its repaired form when
-/// it is invalid. A NULL `ewkb` writes NULL to both.
-fn geometry_writes(ewkb: Option<&[u8]>) -> [(AttributeHistory, SimpleExpr); 2] {
+/// `ST_GeomFromEWKB(ewkb)`, `value_geometry_valid`, its repaired form when it
+/// is invalid, and `value_geometry_reach`, `ST_GeomFromEWKB(reach)`. A NULL
+/// EWKB writes NULL.
+fn geometry_writes(ewkb: Option<&[u8]>, reach: Option<&[u8]>) -> [(AttributeHistory, SimpleExpr); 3] {
     let written = || st_geom_from_ewkb(Expr::val(ewkb.map(<[u8]>::to_vec)));
     [
         (AttributeHistory::ValueGeometry, written()),
         (AttributeHistory::ValueGeometryValid, repaired_when_invalid(written())),
+        (AttributeHistory::ValueGeometryReach, st_geom_from_ewkb(Expr::val(reach.map(<[u8]>::to_vec)))),
     ]
 }
 
@@ -141,6 +143,8 @@ pub(crate) struct InstanceReplacement<'a> {
     pub(crate) value: &'a AttributeHistoryValue,
     /// The EWKB of the replacement's geometry, if it has one.
     pub(crate) geometry: Option<&'a [u8]>,
+    /// The EWKB of the geometry's great-circle reach, if it has one.
+    pub(crate) reach: Option<&'a [u8]>,
     /// The observation instant the replacement declares, if any.
     pub(crate) observed_at: Option<DateTime<Utc>>,
     /// The `entity_type_names` key of `valueType`.
@@ -180,7 +184,7 @@ pub(crate) fn update_instance_statement(
     let object_type_keys = (!replacement.object_type_keys.is_empty()).then_some(replacement.object_type_keys);
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
-        .values(geometry_writes(replacement.geometry))
+        .values(geometry_writes(replacement.geometry, replacement.reach))
         .values([
             (AttributeHistory::ValueKind, Expr::val(value.kind().code())),
             (AttributeHistory::ValueNumber, Expr::val(value.number().cloned())), // clone: the statement owns the value it binds
@@ -211,9 +215,10 @@ pub(crate) fn update_instance_statement(
         .to_owned()
 }
 
-/// Grow the extent of `stream_keys` to cover the replacing geometry, `ewkb`,
-/// as written: its box also bounds the repaired form a spatial predicate
-/// judges, which `ST_MakeValid` builds from the written vertices.
+/// Grow the extent of `stream_keys` to cover `ewkb`, the replacing geometry's
+/// great-circle reach where it has one, else the geometry as written: either
+/// box also bounds the repaired form a spatial predicate judges, which
+/// `ST_MakeValid` builds by adding vertices on the written edges.
 ///
 /// An extent already covering it is left alone, and none shrinks: the
 /// geometry replaced stays inside an extent too large, which still holds
@@ -321,6 +326,7 @@ mod tests {
         let replacement = InstanceReplacement {
             value: &value,
             geometry,
+            reach: None,
             observed_at: None,
             value_type_key: None,
             unit_code: None,
@@ -476,13 +482,14 @@ mod tests {
 
     /// Clause 4.7.1 reads the replacing geometry back as written; clause
     /// 4.7.2 admits one RFC 7946 section 3.1.6 does not call simple, whose
-    /// repair is stored beside it for spatial predicates.
+    /// repair is stored beside it for spatial predicates, as is the reach a
+    /// box test reads.
     #[test]
-    fn the_instance_modification_writes_the_geometry_as_given_and_its_repair() {
+    fn the_instance_modification_writes_the_geometry_as_given_its_repair_and_its_reach() {
         for instance in identities() {
             let (statement, _) = replacement_update(&instance, Some(&[1, 2]));
             assert!(
-                statement.starts_with(r#"UPDATE "attribute_history" SET "value_geometry" = ST_GeomFromEWKB($1), "value_geometry_valid" = (CASE WHEN (ST_IsValid(ST_GeomFromEWKB($2))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB($3)) END), "value_kind" = "#),
+                statement.starts_with(r#"UPDATE "attribute_history" SET "value_geometry" = ST_GeomFromEWKB($1), "value_geometry_valid" = (CASE WHEN (ST_IsValid(ST_GeomFromEWKB($2))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB($3)) END), "value_geometry_reach" = ST_GeomFromEWKB($4), "value_kind" = "#),
                 "{statement}"
             );
         }

@@ -73,13 +73,20 @@ create table context_source_registrations (
     -- Each geometry as written (clause 4.7.1), beside its `ST_MakeValid` form
     -- when the written one is invalid (clause 4.7.2 admits it, IETF RFC 7946
     -- section 3.1.6 sets no simplicity rule on a ring), NULL otherwise. A
-    -- geoquery and the spatial indexes judge `coalesce(<x>_valid, <x>)`.
+    -- geoquery judges `coalesce(<x>_valid, <x>)`. Each `<x>_reach` is the
+    -- rectangle the written geometry covers when its edges are read as the
+    -- great-circle arcs `near` measures along (clause 4.10), NULL where it
+    -- extends past the planar bounding box by no more than 1e-6 degrees; the
+    -- spatial indexes key `coalesce(<x>_reach, <x>_valid, <x>)`.
     location geometry compression lz4,
     location_valid geometry compression lz4,
+    location_reach geometry compression lz4,
     observation_space geometry compression lz4,
     observation_space_valid geometry compression lz4,
+    observation_space_reach geometry compression lz4,
     operation_space geometry compression lz4,
     operation_space_valid geometry compression lz4,
+    operation_space_reach geometry compression lz4,
     endpoint text compression lz4 collate "C" not null,
     -- The media type the broker sends as `Accept` to this context source.
     accept text compression lz4 collate "C",
@@ -128,12 +135,15 @@ create table context_source_registrations (
     constraint chk_csr_location_valid check (location_valid is null or (location is not null and st_isvalid(location_valid) and not st_isvalid(location))),
     constraint chk_csr_location_srid check (location is null or st_srid(location) = 4326),
     constraint chk_csr_location_zm check (location is null or st_zmflag(location) in (0, 2)),
+    constraint chk_csr_location_reach check (location_reach is null or (location is not null and st_srid(location_reach) = 4326 and location_reach ~ location)),
     constraint chk_csr_observation_space_valid check (observation_space_valid is null or (observation_space is not null and st_isvalid(observation_space_valid) and not st_isvalid(observation_space))),
     constraint chk_csr_observation_space_srid check (observation_space is null or st_srid(observation_space) = 4326),
     constraint chk_csr_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
+    constraint chk_csr_observation_space_reach check (observation_space_reach is null or (observation_space is not null and st_srid(observation_space_reach) = 4326 and observation_space_reach ~ observation_space)),
     constraint chk_csr_operation_space_valid check (operation_space_valid is null or (operation_space is not null and st_isvalid(operation_space_valid) and not st_isvalid(operation_space))),
     constraint chk_csr_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
     constraint chk_csr_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2)),
+    constraint chk_csr_operation_space_reach check (operation_space_reach is null or (operation_space is not null and st_srid(operation_space_reach) = 4326 and operation_space_reach ~ operation_space)),
     constraint chk_csr_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths)))
 );
 
@@ -141,7 +151,7 @@ create table context_source_registrations (
 -- declare none, so discovery reads the two as separate parts: the spatial
 -- indexes hold the declared geometries, and the identifier indexes beside them
 -- hold the registrations without one, in the identifier order a page is cut in.
-create index idx_csr_location on context_source_registrations using gist (coalesce(location_valid, location))
+create index idx_csr_location on context_source_registrations using gist (coalesce(location_reach, location_valid, location))
 where
     location is not null;
 
@@ -149,7 +159,7 @@ create index idx_csr_without_location on context_source_registrations (id)
 where
     location is null;
 
-create index idx_csr_observation_space on context_source_registrations using gist (coalesce(observation_space_valid, observation_space))
+create index idx_csr_observation_space on context_source_registrations using gist (coalesce(observation_space_reach, observation_space_valid, observation_space))
 where
     observation_space is not null;
 
@@ -157,7 +167,7 @@ create index idx_csr_without_observation_space on context_source_registrations (
 where
     observation_space is null;
 
-create index idx_csr_operation_space on context_source_registrations using gist (coalesce(operation_space_valid, operation_space))
+create index idx_csr_operation_space on context_source_registrations using gist (coalesce(operation_space_reach, operation_space_valid, operation_space))
 where
     operation_space is not null;
 

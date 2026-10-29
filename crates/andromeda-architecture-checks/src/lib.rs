@@ -18,6 +18,7 @@ pub mod dependencies;
 pub mod detail_message;
 pub mod detail_message_baseline;
 pub mod generated_artifact;
+pub mod geometry_box_test;
 pub mod god_file;
 pub mod linked_retrieval;
 pub mod manifest_hygiene;

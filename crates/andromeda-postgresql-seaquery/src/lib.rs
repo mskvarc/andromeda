@@ -43,7 +43,6 @@ pub mod ddl_statement;
 pub mod explain;
 pub mod extension_update;
 pub mod external_arguments;
-pub mod geography;
 pub mod gin_index;
 mod identifier;
 pub mod interval;

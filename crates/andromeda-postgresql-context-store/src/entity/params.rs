@@ -8,7 +8,10 @@
 //! ([`StagedRows`](crate::current_attribute::staged_rows::StagedRows)).
 
 use crate::{
-    entity::{staged_geometry::StagedGeometry, staged_scopes::StagedScopes},
+    entity::{
+        staged_geometry::{HoistedEwkb, StagedGeometry},
+        staged_scopes::StagedScopes,
+    },
     error::ContextStoreError,
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
@@ -40,7 +43,7 @@ pub struct PreparedEntityColumns {
     /// Scope arrays, as label paths and as written.
     pub scopes: Vec<StagedScopes>,
     /// Default `location` geometries, as EWKB or kept.
-    pub locations: Vec<StagedGeometry<Vec<u8>>>,
+    pub locations: Vec<StagedGeometry<HoistedEwkb>>,
     /// The instant after which every `location` instance has expired, when
     /// every instance carries one.
     pub location_expires_ats: Vec<Option<DateTime<Utc>>>,

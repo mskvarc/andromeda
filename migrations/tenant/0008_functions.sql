@@ -2,21 +2,10 @@
 -- 0008: Functions every branch resolves
 -- ============================================================================
 --
--- The functions the branch relations name in an index expression and the
--- trigger function the dictionaries refuse changes with. They live in
--- `public`, and a Snapshot schema reaches them through its search path, so one
+-- The trigger function the dictionaries refuse changes with. It lives in
+-- `public`, and a Snapshot schema reaches it through its search path, so one
 -- definition serves every branch.
 -- ============================================================================
--- `geom_to_geog` wraps the `geometry` to `geography` cast so an index
--- expression can use it. PostGIS marks the cast `STABLE` because it
--- reads `spatial_ref_sys`, but for SRID 4326, the only SRID the schema
--- admits, the result is deterministic, so the wrapper is declared `IMMUTABLE`.
-create function geom_to_geog (g geometry)
-    returns geography
-    language sql
-    immutable strict parallel safe
-    return g::geography;
-
 -- Refuses every change to a dictionary but the ones its triggers let through.
 -- Keys of the dictionaries are held where no foreign key reaches, so they are
 -- correct only while a key, once minted, names the same value for the life of

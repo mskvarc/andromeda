@@ -52,6 +52,7 @@ pub mod scope_assertion;
 pub mod scope_predicate;
 pub mod scope_validity;
 pub mod sort_key;
+pub mod stored_geometry;
 pub mod sub_attribute_key;
 pub mod temporal_operand;
 pub mod time_column;

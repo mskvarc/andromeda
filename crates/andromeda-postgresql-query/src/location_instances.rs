@@ -10,11 +10,13 @@
 //! `current_attributes` row. The relation is therefore evaluated as the
 //! union of two index-driven arms:
 //!
-//! - the hoisted default instance, through `idx_entity_search_location` (or its
-//!   `geography` twin, keyed by `geom_to_geog(location)`, for `near`),
-//!   restricted to the index's candidates when an
-//!   in-memory spatial index already answered for the default instance;
+//! - the hoisted default instance, through `idx_entity_search_location`,
+//!   restricted to the index's candidates when an in-memory spatial index
+//!   already answered for the default instance;
 //! - every instance carrying a `datasetId`, through `idx_ca_value_geometry`.
+//!
+//! Each arm tests the box its index keys, the instance's great-circle reach
+//! first, before the exact relation.
 //!
 //! An entity is in the answer when either arm finds one of its instances, and
 //! the outer statement reaches the union as a semi-join, so the planner may
@@ -28,20 +30,14 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    geo_predicate::{near_envelope_prefilter, relation_expression},
+    geo_predicate::restriction,
     instance_expiry::instance_stands,
+    stored_geometry::{BoxIndexing, StoredGeometry},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    geography::geography_of,
-    literal::false_literal,
-    pg_array::is_any_of,
-    pg_type::PostgresType,
-    postgis::judged_geometry,
-};
+use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
@@ -62,7 +58,7 @@ const INSTANCE_ALIAS: &str = "geo_location_instance";
 ///
 /// # Errors
 ///
-/// Returns [`RenderError`] exactly as [`relation_expression`] does.
+/// Returns [`RenderError`] exactly as [`restriction`] does.
 pub fn any_location_instance(
     geo: &GeoQuery,
     rows: &EntityRowRefs,
@@ -92,12 +88,12 @@ pub fn any_location_instance(
 /// index already established that none does.
 fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: &DefaultLocationNarrowing) -> Result<Option<SelectStatement>, RenderError> {
     let search = Alias::new(DEFAULT_ALIAS);
-    let spatial = relation_expression(
-        &geo.georel,
+    // The hoisted instance is stored already repaired.
+    let stored = StoredGeometry::valid(
+        SeaExpr::col((search.clone(), EntitySearch::LocationReach)), // clone: the alias qualifies both columns
         SeaExpr::col((search.clone(), EntitySearch::Location)),
-        geography_of(SeaExpr::col((search.clone(), EntitySearch::Location))),
-        &geo.geometry,
-    )?;
+    );
+    let spatial = restriction(&geo.georel, &geo.geometry, &stored, BoxIndexing::Indexed)?;
     let mut arm = Query::select();
     match default_location {
         DefaultLocationNarrowing::Unnarrowed => {
@@ -120,7 +116,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
     }
     // Clause 4.22: the hoisted default instance matches only while it stands.
     arm.and_where(instance_stands(SeaExpr::col((Alias::new(DEFAULT_ALIAS), EntitySearch::LocationExpiresAt))))
-        .and_where(spatial);
+        .cond_where(spatial);
     Ok(Some(arm.take()))
 }
 
@@ -132,7 +128,8 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
 fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
     // clone: the alias qualifies every column the arm reads
-    let geometry = judged_geometry(
+    let stored = StoredGeometry::written(
+        SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometryReach)),
         SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometryValid)),
         SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometry)),
     );
@@ -145,15 +142,7 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
         // The written column, which the partial `idx_ca_value_geometry` is
         // restricted by.
         .and_where(SeaExpr::col((instance, CurrentAttributes::ValueGeometry)).is_not_null());
-    if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
-        arm.and_where(prefilter);
-    }
-    arm.and_where(relation_expression(
-        &geo.georel,
-        geometry.clone(), // clone: the relation reads the column planar and cast
-        cast(geometry, PostgresType::Geography),
-        &geo.geometry,
-    )?);
+    arm.cond_where(restriction(&geo.georel, &geo.geometry, &stored, BoxIndexing::Indexed)?);
     Ok(arm.take())
 }
 
@@ -217,11 +206,11 @@ mod tests {
             .expect("renders"),
         );
         assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND ST_Within("geo_default"."location","#),
+            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND ST_Within("geo_default"."location","#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $2 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
+            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
             "{sql}"
         );
         assert!(
@@ -294,12 +283,11 @@ mod tests {
         assert!(sql.ends_with("WHERE FALSE"), "{sql}");
     }
 
-    /// `near` reads the hoisted geometry through the projection its
-    /// `geography` index is keyed by, and prefilters the `datasetId` instances
-    /// by a bounding box the geometry `GiST` answers, since a cast column
-    /// reaches no index of its own.
+    /// `near` measures both arms cast to `geography`, which no index keys, so
+    /// each arm is prefiltered by the box its geometry `GiST` keys, the
+    /// great-circle reach first.
     #[test]
-    fn near_reads_the_geography_column_and_prefilters_the_dataset_instances_by_their_box() {
+    fn near_prefilters_both_arms_by_their_reach_box_and_measures_on_the_spheroid() {
         let (sql, _) = render(
             any_location_instance(
                 &geo(near("1000")),
@@ -309,9 +297,14 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(sql.contains(r#"ST_DWithin(geom_to_geog("geo_default"."location"),"#), "{sql}");
         assert!(
-            sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
+            sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeEnvelope("#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
+        assert!(!sql.contains("geom_to_geog"), "{sql}");
+        assert!(
+            sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
             "{sql}"
         );
         assert!(
@@ -339,7 +332,7 @@ mod tests {
             .expect("renders"),
         );
         assert_eq!(
-            sql.matches(r#"COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#)
+            sql.matches(r#"COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#)
                 .count(),
             2,
             "{sql}"

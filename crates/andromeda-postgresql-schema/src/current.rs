@@ -84,6 +84,10 @@ pub enum EntitySearch {
     VerbatimScopePaths,
     /// The default `GeoProperty` geometry (clause 4.10).
     Location,
+    /// The rectangle the default `location` covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar bounding
+    /// box; the spatial index keys this box when present.
+    LocationReach,
 }
 
 /// The `entity_type_members` table - one row per type one Entity carries in
@@ -172,6 +176,10 @@ pub enum CurrentAttributes {
     /// The `ST_MakeValid` form of an invalid written geometry, NULL when the
     /// written one is valid; spatial predicates judge this form when present
     ValueGeometryValid,
+    /// The rectangle the written geometry covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar
+    /// bounding box; the geometry index keys this box when present
+    ValueGeometryReach,
     /// The `GeoJSON` members a geometry value carries beside its coordinates
     /// (`bbox` and foreign members), NULL when it carries none
     ValueGeometryMembers,
@@ -313,6 +321,7 @@ mod tests {
         assert_eq!(EntitySearch::AttributeInstanceKinds.to_string(), "attribute_instance_kinds");
         assert_eq!(EntitySearch::ScopePaths.to_string(), "scope_paths");
         assert_eq!(EntitySearch::Location.to_string(), "location");
+        assert_eq!(EntitySearch::LocationReach.to_string(), "location_reach");
     }
 
     #[test]
@@ -359,6 +368,7 @@ mod tests {
             CurrentAttributes::ValueLanguage,
             CurrentAttributes::ValueGeometry,
             CurrentAttributes::ValueGeometryValid,
+            CurrentAttributes::ValueGeometryReach,
             CurrentAttributes::ValueGeometryMembers,
             CurrentAttributes::ValueObject,
             CurrentAttributes::ValueUri,
@@ -394,6 +404,7 @@ mod tests {
                 "value_language",
                 "value_geometry",
                 "value_geometry_valid",
+                "value_geometry_reach",
                 "value_geometry_members",
                 "value_object",
                 "value_uri",

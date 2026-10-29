@@ -127,6 +127,12 @@ macro_rules! workspace_architecture {
                 $crate::dataset_grain_comparison::assert_dataset_columns_compare_by_their_grain_key(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Every geo-query box test reads the box a stored geometry's index keys.
+            #[test]
+            fn geometry_box_tests_read_the_indexed_box() {
+                $crate::geometry_box_test::assert_geometry_box_tests_read_the_indexed_box(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// The NGSI-LD Scope grammar is read by its one owner only.
             #[test]
             fn scope_grammar_has_one_owner() {

@@ -97,6 +97,10 @@ create table attribute_history (
     -- written one is valid, held beside the written form as on
     -- `current_attributes`.
     value_geometry_valid geometry compression lz4,
+    -- The great-circle reach of `value_geometry`, as on `current_attributes`:
+    -- the box a geo-query tests an Evolution's rows by before the exact
+    -- relation.
+    value_geometry_reach geometry compression lz4,
     value_geometry_members jsonb compression lz4,
     value_object jsonb compression lz4,
     value_uri text compression lz4 collate "C",
@@ -123,6 +127,7 @@ create table attribute_history (
     constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
+    constraint chk_attribute_history_value_geometry_reach check (value_geometry_reach is null or (value_geometry is not null and st_srid(value_geometry_reach) = 4326 and value_geometry_reach ~ value_geometry)),
     constraint chk_attribute_history_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object')),
     constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(value_type_key, object_type_keys, unit_code_id, expires_at, proof_seals, sub_attributes) = 0),
     constraint chk_attribute_history_object_type_keys_present check (object_type_keys is null or cardinality(object_type_keys) > 0),

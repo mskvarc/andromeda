@@ -12,6 +12,7 @@
 
 use crate::entity::{
     params::{PreparedEntityColumns, literal_texts},
+    staged_geometry::HoistedEwkb,
     write::version_guard::expectation_columns,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -22,7 +23,7 @@ use andromeda_postgresql_seaquery::{
     jsonb::jsonb_array_elements_text,
     pg_array::{array_of_subquery, nullable_array, text_array},
     pg_type::PostgresType,
-    postgis::validated_geom_from_ewkb,
+    postgis::{st_geom_from_ewkb, validated_geom_from_ewkb},
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use sea_query::{CaseStatement, CommonTableExpression, Expr, ExprTrait, FunctionCall, Iden, IntoIden, JoinType, Keyword, Query, SelectStatement, SimpleExpr};
@@ -106,7 +107,8 @@ pub(super) struct Doomed;
 /// and are cast to `integer[]`/`smallint[]` in the projection; the scopes
 /// arrive as JSONB (`scope_paths_json`, `verbatim_scope_paths_json`) and are
 /// expanded to `ltree[]` and `text[]` there; the default `location` geometry
-/// arrives as EWKB (`loc`) and is validated there. Not every statement uses
+/// arrives as EWKB (`loc`) and is validated there, beside the EWKB of its
+/// great-circle reach (`loc_reach`). Not every statement uses
 /// every column: the delete stages only `id` and the expectation, and only the
 /// update stages the expectation and whether a row keeps its geometry
 /// (`loc_kept`).
@@ -129,6 +131,9 @@ pub(super) enum StagedColumn {
     VerbatimScopePathsJson,
     /// Default `GeoProperty` geometry as EWKB.
     Loc,
+    /// The great-circle reach of the default `GeoProperty` geometry as EWKB,
+    /// NULL where it has none.
+    LocReach,
     /// The instant after which every `location` instance has expired.
     LocExpiresAt,
     /// Expiration timestamp.
@@ -156,6 +161,10 @@ pub(super) struct HoistedColumn {
     pub(super) stored: EntitySearch,
     /// The staging column carrying its EWKB.
     pub(super) ewkb: StagedColumn,
+    /// The `entity_search` column its great-circle reach lands in.
+    pub(super) reach_stored: EntitySearch,
+    /// The staging column carrying the EWKB of its great-circle reach.
+    pub(super) reach_ewkb: StagedColumn,
     /// The staging column saying whether an update keeps the stored geometry.
     pub(super) kept: StagedColumn,
 }
@@ -166,6 +175,8 @@ pub(super) struct HoistedColumn {
 pub(super) const HOISTED_LOCATION: HoistedColumn = HoistedColumn {
     stored: EntitySearch::Location,
     ewkb: StagedColumn::Loc,
+    reach_stored: EntitySearch::LocationReach,
+    reach_ewkb: StagedColumn::LocReach,
     kept: StagedColumn::LocKept,
 };
 
@@ -218,9 +229,9 @@ fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
         .into()
 }
 
-/// The eleven projected staging columns every insert and update stages, in
+/// The twelve projected staging columns every insert and update stages, in
 /// bind order.
-const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
+const fn value_staging_columns() -> [(StagedColumn, PostgresType); 12] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
         (StagedColumn::EntityTypeNameKeysLiteral, PostgresType::TextArray),
@@ -230,13 +241,14 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::VerbatimScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
+        (StagedColumn::LocReach, PostgresType::ByteaArray),
         (StagedColumn::LocExpiresAt, PostgresType::TimestamptzArray),
         (StagedColumn::ExpiresAt, PostgresType::TimestamptzArray),
         (StagedColumn::MinAttributeExpiresAt, PostgresType::TimestamptzArray),
     ]
 }
 
-/// The eleven value columns, as staging columns.
+/// The twelve value columns, as staging columns.
 fn value_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
@@ -244,8 +256,8 @@ fn value_columns() -> Vec<UnnestColumn> {
         .collect()
 }
 
-/// The twelve projected staging columns of the insert, in bind order: the
-/// eleven value columns and whether the create establishes the Temporal
+/// The thirteen projected staging columns of the insert, in bind order: the
+/// twelve value columns and whether the create establishes the Temporal
 /// Evolution.
 pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = value_columns();
@@ -253,7 +265,7 @@ pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     columns
 }
 
-/// The fourteen projected staging columns of the update: the eleven value
+/// The fifteen projected staging columns of the update: the twelve value
 /// columns, whether the hoisted geometry is kept, and the two of the
 /// expectation the compare-and-set holds.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
@@ -271,15 +283,16 @@ pub(super) fn delete_staging_columns() -> Vec<UnnestColumn> {
     columns
 }
 
-/// The eleven arrays the entity columns stage in `value_staging_columns`
+/// The twelve arrays the entity columns stage in `value_staging_columns`
 /// order, as the expressions standing for them in the statement.
 ///
 /// The scope arrays are `jsonb[]` values sea-query has no form for, so they
 /// travel as external arguments pushed onto `external`. `locations` is the
-/// hoisted geometry column the write stages: the EWKB of each row, or none.
+/// hoisted geometry column the write stages: the EWKB of each row and of its
+/// reach, or none.
 pub(super) fn entity_arrays<'entities>(
     entities: &'entities PreparedEntityColumns,
-    locations: Vec<Option<&[u8]>>,
+    locations: &[Option<&HoistedEwkb>],
     external: &mut ExternalArguments<'entities>,
 ) -> Vec<SimpleExpr> {
     let ids = entities.ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
@@ -291,7 +304,8 @@ pub(super) fn entity_arrays<'entities>(
         text_array(&literal_texts(&entities.attribute_instance_kinds)),
         external.push(entities.scope_paths_bind()),
         external.push(entities.verbatim_scope_paths_bind()),
-        nullable_array(locations.into_iter().map(|ewkb| ewkb.map(<[u8]>::to_vec))),
+        nullable_array(locations.iter().map(|ewkb| ewkb.map(|ewkb| ewkb.geometry().to_vec()))),
+        nullable_array(locations.iter().map(|ewkb| ewkb.and_then(HoistedEwkb::reach).map(<[u8]>::to_vec))),
         nullable_array(entities.location_expires_ats.iter().copied()),
         nullable_array(entities.expires_ats.iter().copied()),
         nullable_array(entities.min_attribute_expires_ats.iter().copied()),
@@ -338,6 +352,7 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, 
             EntitySearch::VerbatimScopePaths,
         )
         .expr_as(geometry(HOISTED_LOCATION.ewkb), HOISTED_LOCATION.stored)
+        .expr_as(st_geom_from_ewkb(staged(HOISTED_LOCATION.reach_ewkb)), HOISTED_LOCATION.reach_stored)
         .expr_as(staged(StagedColumn::LocExpiresAt), EntitySearch::LocationExpiresAt)
         .expr_as(staged(StagedColumn::ExpiresAt), Entities::ExpiresAt)
         .expr_as(staged(StagedColumn::MinAttributeExpiresAt), Entities::MinAttributeExpiresAt);

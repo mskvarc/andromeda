@@ -42,16 +42,28 @@ pub enum Csr {
     /// The `ST_MakeValid` form of an invalid written `location`, NULL when
     /// the written one is valid.
     LocationValid,
+    /// The rectangle the written `location` covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar bounding
+    /// box; the spatial index keys this box when present.
+    LocationReach,
     /// `PostGIS` geometry of the `observationSpace`, as written.
     ObservationSpace,
     /// The `ST_MakeValid` form of an invalid written `observationSpace`, NULL
     /// when the written one is valid.
     ObservationSpaceValid,
+    /// The rectangle the written `observationSpace` covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar bounding
+    /// box; the spatial index keys this box when present.
+    ObservationSpaceReach,
     /// `PostGIS` geometry of the `operationSpace`, as written.
     OperationSpace,
     /// The `ST_MakeValid` form of an invalid written `operationSpace`, NULL
     /// when the written one is valid.
     OperationSpaceValid,
+    /// The rectangle the written `operationSpace` covers read with great-circle
+    /// edges, NULL where it stays within the tolerance of the planar bounding
+    /// box; the spatial index keys this box when present.
+    OperationSpaceReach,
     /// Expiry instant, after which the registration is gone.
     ExpiresAt,
     /// The context source endpoint URI.
@@ -172,6 +184,9 @@ mod tests {
         assert_eq!(Csr::LocationValid.to_string(), "location_valid");
         assert_eq!(Csr::ObservationSpaceValid.to_string(), "observation_space_valid");
         assert_eq!(Csr::OperationSpaceValid.to_string(), "operation_space_valid");
+        assert_eq!(Csr::LocationReach.to_string(), "location_reach");
+        assert_eq!(Csr::ObservationSpaceReach.to_string(), "observation_space_reach");
+        assert_eq!(Csr::OperationSpaceReach.to_string(), "operation_space_reach");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
         assert_eq!(Csr::ContextSourceProperties.to_string(), "context_source_properties");
     }

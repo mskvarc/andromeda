@@ -34,7 +34,10 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
-use andromeda_postgresql_encoding::{ewkb::EwkbError, ewkb_binding::geometry_bytes};
+use andromeda_postgresql_encoding::{
+    ewkb::EwkbError,
+    ewkb_binding::{geometry_bytes, reach_bytes},
+};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
@@ -145,11 +148,13 @@ impl TemporalRepository {
         let stream_keys = attribute_stream_keys(&mut tx, target, entity_id, attribute).await?;
         lock_stream_evolutions(&mut tx, schema.as_ref(), &stream_keys).await?;
         let geometry = geometry_bytes(value.geometry())?;
+        let reach = reach_bytes(value.geometry());
         let mut external = ExternalArguments::default();
         let sub_attributes = external.push((!elements.is_empty()).then_some(elements));
         let replacement = InstanceReplacement {
             value: &value,
             geometry: geometry.as_deref(),
+            reach: reach.as_deref(),
             observed_at: state.observed_at,
             value_type_key: value_type_key.map(EntityTypeNameKey::get),
             unit_code: unit_code.map(stored_unit_code),
@@ -163,8 +168,8 @@ impl TemporalRepository {
         if modified.is_empty() {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
-        if let Some(geometry) = geometry.as_deref() {
-            grow_stream_extent_statement(target, &modified, geometry).to_query().execute(&mut *tx).await?;
+        if let Some(extent) = reach.as_deref().or(geometry.as_deref()) {
+            grow_stream_extent_statement(target, &modified, extent).to_query().execute(&mut *tx).await?;
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &modified).await?;
         grow_stream_shapes_statement(instance, target, &modified).to_query().execute(&mut *tx).await?;

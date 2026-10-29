@@ -55,6 +55,9 @@ pub enum TemporalEntry {
     ValueLanguage,
     /// Geometry value, when `value_kind` selects it
     ValueGeometry,
+    /// The rectangle the geometry covers read with great-circle edges, when
+    /// it extends past the planar bounding box
+    ValueGeometryReach,
     /// The `GeoJSON` members a geometry carries beside its coordinates
     ValueGeometryMembers,
     /// Structured value

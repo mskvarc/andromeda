@@ -70,7 +70,8 @@ create type sub_attribute_tree as (
 -- One top-level attribute instance of an Entity's state outside
 -- `current_attributes`: a row of that table without its `entity_key`, without
 -- the `sub_eq_keys` a write derives from its sub-attributes and without the
--- `value_geometry_valid` a write derives from its geometry, field for
+-- `value_geometry_valid` and `value_geometry_reach` a write derives from its
+-- geometry, field for
 -- field in the table's column order and with the same types, so a record and
 -- a current row decode alike. The codes and keys are those of
 -- `sub_attribute`; `ordinal` is the instance's written position among the
@@ -180,6 +181,7 @@ create type temporal_entry as (
     value_string text collate "C",
     value_language text collate "C",
     value_geometry geometry,
+    value_geometry_reach geometry,
     value_geometry_members jsonb,
     value_object jsonb,
     value_uri text collate "C",

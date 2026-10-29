@@ -20,7 +20,7 @@ use crate::{
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::{
     entity_sides::holds_evolution,
-    history_source::entry_values::{attribute_entry_values, recorded_geometry, scope_entry_values},
+    history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values},
 };
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -217,15 +217,16 @@ pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynId
 /// Grow the extent of every stream an entry of the source records a geometry
 /// on to cover it.
 ///
-/// The box each stream's entries span is taken from the written geometry the
-/// history row stores, so the extent covers exactly what was recorded. It also
-/// bounds the repaired form a spatial predicate judges, which `ST_MakeValid`
-/// builds from the written vertices and so keeps inside their box. A stream whose
+/// The box each stream's entries span is taken from the great-circle reach
+/// each history row stores, else from its written geometry, so the extent
+/// covers what was recorded as `near` reads it. The reach also bounds the
+/// repaired form a spatial predicate judges, which `ST_MakeValid` builds by
+/// adding vertices on the written edges. A stream whose
 /// extent already covers the box is left alone, so a write inside it updates
 /// no row. An extent never shrinks: one too large still holds every geometry
 /// of its stream.
 pub(crate) fn extent_growth_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
-    let geometry = recorded_geometry(entry);
+    let geometry = recorded_extent(entry);
     let mut grown = entries_with_stream(source, schema);
     grown
         .column((S, TemporalAttributeStreams::StreamKey))

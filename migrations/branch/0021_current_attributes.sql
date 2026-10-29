@@ -102,9 +102,16 @@ create table current_attributes (
     -- section 3.1.6 sets no simplicity rule on a ring.
     value_geometry geometry compression lz4,
     -- The `ST_MakeValid` form of an invalid `value_geometry`, NULL when the
-    -- written one is valid. Spatial predicates and the geometry index judge
+    -- written one is valid. Spatial predicates judge
     -- `coalesce(value_geometry_valid, value_geometry)`.
     value_geometry_valid geometry compression lz4,
+    -- The rectangle the written geometry covers when its edges are read as
+    -- the great-circle arcs `near` measures along (clause 4.10), NULL where
+    -- it extends past the planar bounding box by no more than 1e-6 degrees.
+    -- Repairing a geometry only adds vertices on its edges, so the reach of
+    -- the written form also bounds the repaired one. The geometry index keys
+    -- `coalesce(value_geometry_reach, value_geometry_valid, value_geometry)`.
+    value_geometry_reach geometry compression lz4,
     -- The members of the GeoJSON geometry beside its type and coordinates:
     -- `bbox` and foreign members (RFC 7946 sections 5 and 6.1).
     value_geometry_members jsonb compression lz4,
@@ -142,6 +149,7 @@ create table current_attributes (
     constraint chk_current_attributes_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_current_attributes_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_current_attributes_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
+    constraint chk_current_attributes_value_geometry_reach check (value_geometry_reach is null or (value_geometry is not null and st_srid(value_geometry_reach) = 4326 and value_geometry_reach ~ value_geometry)),
     constraint chk_current_attributes_value_string_length check (octet_length(value_string) <= 2048),
     constraint chk_current_attributes_value_long_text_length check (octet_length(value_long_text) > 2048),
     constraint chk_current_attributes_value_uri_length check (octet_length(value_uri) <= 1024),
@@ -235,8 +243,9 @@ create index idx_ca_value_object on current_attributes using gin (attribute_name
 where
     value_object is not null;
 
--- Geo-queries against a named GeoProperty (clause 4.10).
-create index idx_ca_value_geometry on current_attributes using gist (attribute_name_key, coalesce(value_geometry_valid, value_geometry))
+-- Geo-queries against a named GeoProperty (clause 4.10): every relation tests
+-- this box before its exact predicate.
+create index idx_ca_value_geometry on current_attributes using gist (attribute_name_key, coalesce(value_geometry_reach, value_geometry_valid, value_geometry))
 where
     value_geometry is not null;
 

@@ -3,14 +3,13 @@
 //! One reading of the seven `georel` relations, for every relation the broker
 //! filters on. What varies between callers is where the subject geometry is
 //! read from and what a row without one means; the relations themselves do not
-//! vary. [`relation_expression`] and [`near_envelope_prefilter`] are that one
-//! reading, with [`near_envelope_unindexed_prefilter`] the same envelope for a
-//! per-Evolution probe and [`bounding_box_prefilter`] the box every relation
-//! admitting one reduces to; [`condition`] applies it to an entity's `GeoProperty` instances,
-//! and [`registration_area`] to the geometry a registration declares, with the
-//! relation [`AreaCondition`] reduces the geoquery to, since that geometry bounds
-//! where the source's Entities are rather than where one of them is (clause
-//! 5.10.2.4).
+//! vary. [`restriction`] is that one reading: the box test of
+//! [`crate::stored_geometry`], then the exact relation of
+//! [`relation_expression`]. [`condition`] applies it to an entity's
+//! `GeoProperty` instances, and [`registration_area`] to the geometry a
+//! registration declares, with the relation [`AreaCondition`] reduces the
+//! geoquery to, since that geometry bounds where the source's Entities are
+//! rather than where one of them is (clause 5.10.2.4).
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
 //! to `location`, and clause 5.7.2.4 counts an entity as matching when any
@@ -24,19 +23,14 @@
 //! both.
 
 use crate::{
-    attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_geometry_column},
+    attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_stored_geometry},
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     location_instances::any_location_instance,
+    stored_geometry::{BoxIndexing, StoredGeometry, box_test},
 };
-use andromeda_ngsi_ld_geometry::{
-    geo_rel::GeoRel,
-    geometry::Geometry,
-    great_circle::great_circle_bounds,
-    near_envelope::NearEnvelope,
-    positive_distance::PositiveDistance,
-};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
@@ -48,20 +42,7 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::false_literal,
     pg_type::PostgresType,
-    postgis::{
-        bounding_boxes_overlap,
-        st_contains,
-        st_disjoint,
-        st_distance,
-        st_dwithin,
-        st_equals,
-        st_intersects,
-        st_make_envelope,
-        st_overlaps,
-        st_within,
-        unindexed_bounding_boxes_overlap,
-        validated_geom_from_ewkb,
-    },
+    postgis::{st_contains, st_disjoint, st_distance, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
 };
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
@@ -101,129 +82,56 @@ pub fn condition(
         // Entity at all, so the predicate is constant.
         return Ok(Condition::all().add(false_literal()));
     };
-    let planar = instance_geometry_column(INSTANCE_ALIAS);
-    // clone: the instance scan also reads the planar column for its
-    // bounding-box prefilter.
-    let spatial = relation_expression(&geo.georel, planar.clone(), cast(planar.clone(), PostgresType::Geography), &geo.geometry)?;
+    let spatial = restriction(&geo.georel, &geo.geometry, &instance_stored_geometry(INSTANCE_ALIAS), BoxIndexing::Indexed)?;
     // Clause 5.7.2.4: it is enough that one instance of the GeoProperty meets
     // the restriction, which is exactly an existential over the instance rows.
     let mut probe = geometry_instances_of(rows, INSTANCE_ALIAS, attribute_name_key);
-    probe.expr(existence_marker());
-    if let Some(prefilter) = near_envelope_prefilter(geo, &planar) {
-        probe.and_where(prefilter);
-    }
-    probe.and_where(spatial);
+    probe.expr(existence_marker()).cond_where(spatial);
     Ok(Condition::all().add(SeaExpr::exists(probe)))
 }
 
-/// The relation a registration's `geometry` has to meet for an Entity inside it
-/// to possibly match `geo` (clause 5.10.2.4), or `None` when the reduction
-/// constrains no geometry. A null geometry meets none of them.
+/// The relation a registration's geometry has to meet for an Entity inside it
+/// to possibly match `geo` (clause 5.10.2.4), behind the box test it admits,
+/// or `None` when the reduction constrains no geometry. A null geometry meets
+/// none of them.
 ///
 /// # Errors
 ///
 /// The failures of [`relation_expression`].
-pub fn registration_area(geo: &GeoQuery, geometry: &SimpleExpr) -> Result<Option<SimpleExpr>, RenderError> {
-    // clone: the relation reads the column both planar and cast to geography
-    let relation = |georel: &GeoRel| relation_expression(georel, geometry.clone(), cast(geometry.clone(), PostgresType::Geography), &geo.geometry);
+pub fn registration_area(geo: &GeoQuery, subject: &StoredGeometry) -> Result<Option<Condition>, RenderError> {
     match AreaCondition::of(geo) {
-        AreaCondition::Relation(georel) => relation(&georel).map(Some),
-        AreaCondition::NotWithin => relation(&GeoRel::Within).map(|within| Some(within.not())),
+        AreaCondition::Relation(georel) => restriction(&georel, &geo.geometry, subject, BoxIndexing::Indexed).map(Some),
+        AreaCondition::NotWithin => relation_expression(&GeoRel::Within, subject, &geo.geometry).map(|within| Some(Condition::all().add(within.not()))),
         AreaCondition::Unconstrained => Ok(None),
     }
 }
 
-/// A bounding-box test a geometry `GiST` index answers, admitting every geometry
-/// a `near` relation with a `maxDistance` could match, or `None` for any other
-/// relation.
+/// A subject geometry meets `georel` against `reference`: the box test the
+/// relation admits on the box `subject`'s index keys, then the exact relation
+/// on the geometry it judges.
 ///
-/// `near` measures on the spheroid over a `geometry` column cast to
-/// `geography`, which reaches no index. The [`NearEnvelope`] around the
-/// reference geometry's great-circle bounds covers every point within
-/// `maxDistance` of it on the spheroid, so the test discards no geometry a
-/// vertex of which the relation could match, and the exact distance is still
-/// evaluated on what it keeps. Where the envelope wraps across the
-/// antimeridian it is tested as its two halves. A `near` with only a
-/// `minDistance` matches geometries arbitrarily far from the reference and
-/// admits no box.
-///
-/// The test compares the stored geometry's planar box, which bounds its
-/// vertices only. A stored edge long enough for its great circle to bow past
-/// its vertices towards the reference can therefore still be discarded.
-pub fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
-    near_envelope_test(geo, geometry, bounding_boxes_overlap)
-}
-
-/// A bounding-box test a geometry `GiST` index answers that every geometry
-/// meeting the relation of `geo` passes, or `None` when the relation admits
-/// no box.
-///
-/// `near` with a `maxDistance` tests the [`near_envelope_prefilter`]
-/// envelope. `within`, `contains`, `intersects`, `overlaps` and `equals` each
-/// need the two geometries to share a point, so their boxes overlap: the test
-/// is the overlap with the reference geometry as the relation reads it.
-/// `disjoint` and a `near` with only a `minDistance` match geometries
-/// arbitrarily far from the reference.
+/// The box test is what reaches a spatial index, since the relations read the
+/// judged geometry, not the indexed box, and `near` reads it cast to
+/// `geography`, which no index keys.
 ///
 /// # Errors
 ///
-/// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
-/// geometry has no EWKB spelling the store can bind.
-pub fn bounding_box_prefilter(geo: &GeoQuery, geometry: SimpleExpr) -> Result<Option<SimpleExpr>, RenderError> {
-    match &geo.georel {
-        GeoRel::Near { .. } => Ok(near_envelope_prefilter(geo, &geometry)),
-        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Overlaps | GeoRel::Equals => {
-            let reference = encode(geo.geometry.form())?;
-            Ok(Some(bounding_boxes_overlap(
-                geometry,
-                validated_geom_from_ewkb(SeaExpr::val(reference.to_vec())),
-            )))
-        }
-        GeoRel::Disjoint => Ok(None),
-    }
-}
-
-/// The box test of [`near_envelope_prefilter`] over boxes no geometry index
-/// stores, or `None` for any relation that admits no box.
-///
-/// For a probe that reads one Evolution's rows through its stream index: an
-/// indexable test there lets the planner AND a geometry `GiST` into every
-/// probe, while this one only spares the spheroidal distance of the rows it
-/// discards.
-pub fn near_envelope_unindexed_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
-    near_envelope_test(geo, geometry, unindexed_bounding_boxes_overlap)
-}
-
-/// `overlap` of `geometry` with each rectangle of the [`NearEnvelope`] a
-/// `near` relation with a `maxDistance` admits, joined by `OR`.
-fn near_envelope_test(geo: &GeoQuery, geometry: &SimpleExpr, overlap: fn(SimpleExpr, SimpleExpr) -> SimpleExpr) -> Option<SimpleExpr> {
-    let GeoRel::Near {
-        max_distance: Some(max_distance),
-        ..
-    } = &geo.georel
-    else {
-        return None;
-    };
-    let envelope = NearEnvelope::around(great_circle_bounds(&geo.geometry.planar())?, *max_distance);
-    envelope
-        .rects()
-        .iter()
-        // clone: each rectangle of a split envelope tests the same column
-        .map(|rect| overlap(geometry.clone(), st_make_envelope([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])))
-        .reduce(ExprTrait::or)
+/// The failures of [`box_test`] and [`relation_expression`].
+pub fn restriction(georel: &GeoRel, reference: &Geometry, subject: &StoredGeometry, indexing: BoxIndexing) -> Result<Condition, RenderError> {
+    let boxed = box_test(georel, reference, &subject.indexed_box(), indexing)?;
+    Ok(Condition::all().add_option(boxed).add(relation_expression(georel, subject, reference)?))
 }
 
 /// The topological or distance relation of a geo query as a boolean SQL
 /// expression over a subject geometry (clause 4.10).
 ///
-/// `planar` is the subject read as a `PostGIS` `geometry`, which the six
-/// topological relations evaluate; `geographic` is the same subject cast to
-/// `geography`, which the spheroidal `near` relation measures on. Exactly one of
-/// the two is read, whichever the relation names. The relation semantics live
-/// here rather than inside [`condition`] so a caller that reads its subject
-/// geometry from rows this module does not model (the `attribute_history`
-/// instances a clause 5.7.4.4 temporal geo query filters) applies the
-/// identical relation rather than a second, drifting copy of it.
+/// The six topological relations evaluate the subject read as a `PostGIS`
+/// `geometry`; `near` measures the same subject cast to `geography`, on the
+/// spheroid. The relation semantics live here rather than inside
+/// [`condition`] so a caller that reads its subject geometry from rows this
+/// module does not model (the `attribute_history` instances a clause 5.7.4.4
+/// temporal geo query filters) applies the identical relation rather than a
+/// second, drifting copy of it.
 ///
 /// # Errors
 ///
@@ -231,24 +139,24 @@ fn near_envelope_test(geo: &GeoQuery, geometry: &SimpleExpr, overlap: fn(SimpleE
 /// geometry has no EWKB spelling the store can bind, and [`RenderError::Query`]
 /// carrying [`QueryError::NearWithoutDistance`] when `georel=near` names neither
 /// `maxDistance` nor `minDistance`.
-pub fn relation_expression(georel: &GeoRel, planar: SimpleExpr, geographic: SimpleExpr, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
+pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
     let reference = encode(geometry.form())?;
     // Built fresh per relation so the EWKB it binds is not shared as an owned
     // value between the two operands a `near` relation carries.
     let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     let spatial = match georel {
-        GeoRel::Within => st_within(planar, reference_geom()),
-        GeoRel::Contains => st_contains(planar, reference_geom()),
-        GeoRel::Intersects => st_intersects(planar, reference_geom()),
-        GeoRel::Disjoint => st_disjoint(planar, reference_geom()),
-        GeoRel::Equals => st_equals(planar, reference_geom()),
-        GeoRel::Overlaps => st_overlaps(planar, reference_geom()),
+        GeoRel::Within => st_within(subject.planar(), reference_geom()),
+        GeoRel::Contains => st_contains(subject.planar(), reference_geom()),
+        GeoRel::Intersects => st_intersects(subject.planar(), reference_geom()),
+        GeoRel::Disjoint => st_disjoint(subject.planar(), reference_geom()),
+        GeoRel::Equals => st_equals(subject.planar(), reference_geom()),
+        GeoRel::Overlaps => st_overlaps(subject.planar(), reference_geom()),
         // `near` measures on the spheroid, so both operands become `geography`.
         GeoRel::Near { max_distance, min_distance } => {
             let reference_geography = cast(reference_geom(), PostgresType::Geography);
             let max_metres = max_distance.map(PositiveDistance::metres);
             let min_metres = min_distance.map(PositiveDistance::metres);
-            near_expression(geographic, reference_geography, max_metres, min_metres)?
+            near_expression(subject.geographic(), reference_geography, max_metres, min_metres)?
         }
     };
     Ok(spatial)
@@ -288,27 +196,18 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
     clippy::unwrap_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
     use crate::{
-        attribute_instance_correlation::instance_geometry_column,
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::EntityRowRefs,
         error::RenderError,
-        geo_predicate::{INSTANCE_ALIAS, bounding_box_prefilter, condition, near_envelope_prefilter, near_envelope_unindexed_prefilter},
+        geo_predicate::condition,
     };
-    use andromeda_ngsi_ld_geometry::{
-        dimension::GeometryDimension,
-        geo_rel::GeoRel,
-        geometry::Geometry,
-        great_circle::great_circle_bounds,
-        near_envelope::NearEnvelope,
-        positive_distance::PositiveDistance,
-    };
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
@@ -317,7 +216,7 @@ mod tests {
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
+    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, Value, Values};
     use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
@@ -493,6 +392,22 @@ mod tests {
         );
     }
 
+    /// A planar relation reads the judged geometry, which the index does not
+    /// key, so the box the index keys, great-circle reach first, is tested
+    /// explicitly before the relation.
+    #[test]
+    fn an_area_relation_tests_the_indexed_reach_box_before_the_relation() {
+        let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
+        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        let boxed = sql
+            .find(r#"COALESCE("geo_instance"."value_geometry_reach", "geo_instance"."value_geometry_valid", "geo_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB("#)
+            .expect("the box test");
+        let relation = sql
+            .find(r#"ST_Within(COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry"), "#)
+            .expect("the relation");
+        assert!(boxed < relation, "{sql}");
+    }
+
     /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
     /// of them meeting the restriction is enough. The predicate is therefore an
     /// existential over the instance rows, with no restriction on `dataset_id`
@@ -576,8 +491,8 @@ mod tests {
         );
         assert!(sql.contains("ST_DWithin"), "{sql}");
         assert!(
-            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
-            "the cast column reaches no index, so a box the geometry GiST answers prefilters it: {sql}"
+            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
+            "the cast column reaches no index, so the box the geometry GiST keys prefilters it: {sql}"
         );
     }
 
@@ -610,13 +525,13 @@ mod tests {
         let geo = near_query(179.999, -17.0, Some("300"), None);
         let (sql, values) = render_parameterised(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
         assert_eq!(
-            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope(")
+            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope(")
                 .count(),
             2,
             "{sql}"
         );
         assert!(
-            sql.contains(")) OR (COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
+            sql.contains(")) OR (COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
             "{sql}"
         );
         let doubles = bound_doubles(&values);
@@ -637,95 +552,6 @@ mod tests {
             .filter(|double| double.abs() <= 90.0)
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(north >= 0.045_218, "the box reaches latitude {north}");
-    }
-
-    /// The instance geometry a box test is rendered over, as a named
-    /// `GeoProperty`'s predicate judges it.
-    fn instance_geometry() -> SimpleExpr {
-        instance_geometry_column(INSTANCE_ALIAS)
-    }
-
-    /// A box test alone, with its bound values.
-    fn render_box_test(test: SimpleExpr) -> (String, Values) {
-        Query::select().expr(test).build(PostgresQueryBuilder)
-    }
-
-    #[test]
-    fn the_unindexed_box_is_the_near_envelope() {
-        let geo = near_query(4.5, 52.5, Some("2000"), None);
-        let (sql, values) = render_box_test(near_envelope_unindexed_prefilter(&geo, &instance_geometry()).expect("a near box"));
-        assert_eq!(
-            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope(")
-                .count(),
-            1,
-            "{sql}"
-        );
-        assert!(sql.ends_with(")::box2d"), "{sql}");
-        let reference = great_circle_bounds(&geo.geometry.planar()).expect("a point has bounds");
-        let NearEnvelope::Single(rect) = NearEnvelope::around(reference, PositiveDistance::from_str("2000").expect("positive distance")) else {
-            panic!("a reference far from the antimeridian has one rectangle");
-        };
-        assert_eq!(bound_doubles(&values), [rect.min().x, rect.min().y, rect.max().x, rect.max().y]);
-
-        let across = near_query(179.99, 52.5, Some("2000"), None);
-        let (sql, _) = render_box_test(near_envelope_unindexed_prefilter(&across, &instance_geometry()).expect("a near box"));
-        assert_eq!(
-            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope(")
-                .count(),
-            2,
-            "{sql}"
-        );
-        assert!(
-            sql.contains(")::box2d) OR (COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::box2d && ST_MakeEnvelope("),
-            "{sql}"
-        );
-    }
-
-    /// The Entity geo-query and registration discovery read the geometry
-    /// through its `GiST` index, so their box test stays the indexable `&&`.
-    #[test]
-    fn the_entity_and_registration_prefilters_stay_indexable() {
-        let geo = near_query(4.5, 52.5, Some("2000"), None);
-        let (sql, _) = render_box_test(near_envelope_prefilter(&geo, &instance_geometry()).expect("a near box"));
-        assert!(
-            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
-            "{sql}"
-        );
-        assert!(!sql.contains("::box2d"), "{sql}");
-        let entity = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert!(
-            entity.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
-            "{entity}"
-        );
-        assert!(!entity.contains("::box2d"), "{entity}");
-    }
-
-    /// Each of the five area relations needs the two geometries to share a
-    /// point, so each admits the overlap of the boxes, with the reference made
-    /// valid as the relation reads it.
-    #[test]
-    fn an_area_relation_admits_the_reference_bounding_box() {
-        for georel in [GeoRel::Within, GeoRel::Contains, GeoRel::Intersects, GeoRel::Overlaps, GeoRel::Equals] {
-            let geo = point_query(georel, CUSTOM_GEOPROPERTY);
-            let (sql, values) = render_box_test(bounding_box_prefilter(&geo, instance_geometry()).expect("renders").expect("an area box"));
-            assert_eq!(
-                sql, r#"SELECT COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($1))"#,
-                "{:?}",
-                geo.georel
-            );
-            assert_eq!(bound_bytes(&values), [encode(geo.geometry.form()).expect("encodes").to_vec()]);
-        }
-    }
-
-    #[test]
-    fn a_near_box_is_the_near_envelope_and_disjoint_admits_none() {
-        let geo = near_query(4.5, 52.5, Some("2000"), None);
-        let near = render_box_test(bounding_box_prefilter(&geo, instance_geometry()).expect("renders").expect("a near box"));
-        assert_eq!(near, render_box_test(near_envelope_prefilter(&geo, &instance_geometry()).expect("a near box")));
-        let far = near_query(4.5, 52.5, None, Some("10"));
-        assert!(bounding_box_prefilter(&far, instance_geometry()).expect("renders").is_none());
-        let disjoint = point_query(GeoRel::Disjoint, CUSTOM_GEOPROPERTY);
-        assert!(bounding_box_prefilter(&disjoint, instance_geometry()).expect("renders").is_none());
     }
 
     #[test]

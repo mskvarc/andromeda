@@ -340,7 +340,7 @@ mod tests {
     fn the_temporal_near_probe_prefilters_by_an_unindexed_box() {
         let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &names());
         let unindexed = sql
-            .find(r#"COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeEnvelope("#)
+            .find(r#"COALESCE("qh"."value_geometry_reach", "qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeEnvelope("#)
             .expect("the unindexed box");
         let distance = sql.find("ST_DWithin").expect("the distance");
         assert!(unindexed < distance, "{sql}");
@@ -349,17 +349,21 @@ mod tests {
             "{sql}"
         );
         assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");
-        assert!(
-            !sql.contains(r#"COALESCE("qh"."value_geometry_valid", "qh"."value_geometry") && ST_MakeEnvelope("#),
-            "{sql}"
-        );
+        assert!(!sql.contains(r#""qh"."value_geometry") && ST_MakeEnvelope("#), "{sql}");
     }
 
+    /// An area relation is prefiltered too, by the reference's box against
+    /// the rows' reach box, which no geometry index serves on this probe.
     #[test]
-    fn an_area_relation_carries_no_box_prefilter() {
+    fn an_area_relation_carries_an_unindexed_box_prefilter() {
         for georel in [GeoRel::Within, GeoRel::Intersects] {
             let (sql, _) = geo_filter(&HistoryBranch::live_recorded(), &area(georel, compiled(before_2030())), &names());
-            assert!(!sql.contains("::box2d"), "{sql}");
+            assert!(
+                sql.contains(
+                    r#"COALESCE("qh"."value_geometry_reach", "qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeValid(ST_GeomFromEWKB("#
+                ),
+                "{sql}"
+            );
         }
     }
 

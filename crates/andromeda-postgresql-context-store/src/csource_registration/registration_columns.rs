@@ -4,6 +4,7 @@
 
 use crate::{
     csource_registration::registration_statements::{
+        GeometryColumns,
         ManagementColumns,
         context_source_info_columns,
         dataset_selectors,
@@ -28,7 +29,7 @@ use andromeda_ngsi_ld_model::registration::{
     operation::CsrOperation,
 };
 use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
-use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_encoding::ewkb_binding::{geometry_bytes, reach_bytes};
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{cast::cast, external_arguments::ExternalArguments, pg_type::PostgresType};
 use andromeda_registration::{error::RegistrationError, resolved_update::ResolvedCsrUpdate, store::create_params::CreateCsrParams};
@@ -146,14 +147,36 @@ pub(super) fn registration_columns<'a>(
     let (management_start, management_end) = interval_columns(members.management_interval);
     let management = ManagementColumns::of(members.management);
     let (info_keys, info_values) = context_source_info_columns(members.context_source_info);
-    let geometry = |written: Csr, repaired: Csr, geometry: Option<&Geometry>| {
-        geometry_bytes(geometry.map(Geometry::form))
-            .map(|ewkb| geometry_writes(written, repaired, ewkb))
+    let geometry = |columns: GeometryColumns, geometry: Option<&Geometry>| {
+        let form = geometry.map(Geometry::form);
+        geometry_bytes(form)
+            .map(|ewkb| geometry_writes(columns, ewkb, reach_bytes(form)))
             .map_err(|error| persistence_error::<RegistrationError>(error))
     };
-    let [location, location_repaired] = geometry(Csr::Location, Csr::LocationValid, members.location)?;
-    let [observation_space, observation_space_repaired] = geometry(Csr::ObservationSpace, Csr::ObservationSpaceValid, members.observation_space)?;
-    let [operation_space, operation_space_repaired] = geometry(Csr::OperationSpace, Csr::OperationSpaceValid, members.operation_space)?;
+    let [location, location_repaired, location_reach] = geometry(
+        GeometryColumns {
+            written: Csr::Location,
+            repaired: Csr::LocationValid,
+            reach: Csr::LocationReach,
+        },
+        members.location,
+    )?;
+    let [observation_space, observation_space_repaired, observation_space_reach] = geometry(
+        GeometryColumns {
+            written: Csr::ObservationSpace,
+            repaired: Csr::ObservationSpaceValid,
+            reach: Csr::ObservationSpaceReach,
+        },
+        members.observation_space,
+    )?;
+    let [operation_space, operation_space_repaired, operation_space_reach] = geometry(
+        GeometryColumns {
+            written: Csr::OperationSpace,
+            repaired: Csr::OperationSpaceValid,
+            reach: Csr::OperationSpaceReach,
+        },
+        members.operation_space,
+    )?;
     let property_document = members.document().map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(vec![
         (Csr::RegistrationName, Expr::val(members.registration_name.map(NonEmptyText::as_str))),
@@ -166,10 +189,13 @@ pub(super) fn registration_columns<'a>(
         (Csr::ManagementIntervalEnd, Expr::val(management_end)),
         location,
         location_repaired,
+        location_reach,
         observation_space,
         observation_space_repaired,
+        observation_space_reach,
         operation_space,
         operation_space_repaired,
+        operation_space_reach,
         (Csr::ExpiresAt, Expr::val(members.expires_at.map(DeclaredDateTime::instant))),
         (Csr::Endpoint, Expr::val(members.endpoint.as_str())),
         (Csr::Accept, Expr::val(fields.accept.map(ToString::to_string))),

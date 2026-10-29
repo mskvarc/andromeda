@@ -16,11 +16,11 @@ create table temporal_attribute_streams (
     entity_key bigint not null,
     attribute_name_key integer not null,
     dataset_id text compression lz4 collate "C",
-    -- The bounding box of every geometry the stream ever recorded, null until
-    -- it records one. The write path grows it when a recorded geometry falls
-    -- outside it and never shrinks it, so after a deletion, an instance
-    -- modification or a dropped chunk it still holds every geometry the
-    -- stream holds.
+    -- The bounding box of every geometry the stream ever recorded, each read
+    -- by its great-circle reach where it has one, null until it records one.
+    -- The write path grows it when a recorded geometry falls outside it and
+    -- never shrinks it, so after a deletion, an instance modification or a
+    -- dropped chunk it still holds every geometry the stream holds.
     value_extent geometry compression lz4,
     -- Every combination of attribute family and value shape the stream's
     -- instances hold, tombstones excepted (a deletion carries no value), one

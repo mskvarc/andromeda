@@ -77,12 +77,13 @@ fn an_element_names_its_parent_by_an_integer_position() -> Result<(), PinError> 
 
 /// A queue holds an Entity's state as `attribute_instance_record`s, which
 /// decode as `current_attributes` rows do: the record is the table's columns
-/// but `entity_key` and the `sub_eq_keys` and `value_geometry_valid` a write
-/// derives from the instance, in order and with the same types.
+/// but `entity_key` and the `sub_eq_keys`, `value_geometry_valid` and
+/// `value_geometry_reach` a write derives from the instance, in order and with
+/// the same types.
 #[test]
 fn an_instance_record_declares_the_current_attributes_columns_in_order() -> Result<(), PinError> {
     let schema = schema()?;
-    let derived = ["entity_key", "sub_eq_keys", "value_geometry_valid"];
+    let derived = ["entity_key", "sub_eq_keys", "value_geometry_valid", "value_geometry_reach"];
     let record = fields(&schema, "attribute_instance_record", &derived);
     assert!(!record.is_empty(), "no migration declares attribute_instance_record");
     assert_eq!(record, fields(&schema, TABLE, &derived));

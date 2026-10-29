@@ -27,7 +27,7 @@ use crate::{
     ewkb_build::{GeometryBuildError, GeometryBuilder},
     ewkb_walk::GeometryWalk,
 };
-use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, great_circle_reach::GreatCircleReach};
 use bytes::Bytes;
 use geozero::{GeozeroGeometry, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
 use thiserror::Error;
@@ -130,6 +130,34 @@ impl TryFrom<&GeometryForm> for Ewkb {
         let walk = GeometryWalk(geometry);
         let bytes = walk.to_ewkb(walk.dims(), Some(SRID_WGS84))?;
         Ok(Ewkb(Bytes::from(bytes)))
+    }
+}
+
+/// The WKB type word of a Polygon.
+const WKB_POLYGON: u32 = 3;
+
+/// Written field by field rather than walked through geozero: the reach is a
+/// rectangle, always one XY ring of five positions, so its encoding cannot
+/// fail and a `TryFrom` would only add an error no input produces.
+impl From<&GreatCircleReach> for Ewkb {
+    /// The reach as the XY Polygon of its rectangle, wound west to east along
+    /// its southern edge.
+    fn from(reach: &GreatCircleReach) -> Ewkb {
+        let ring = [
+            [reach.west(), reach.south()],
+            [reach.east(), reach.south()],
+            [reach.east(), reach.north()],
+            [reach.west(), reach.north()],
+            [reach.west(), reach.south()],
+        ];
+        let mut bytes = Vec::with_capacity(MIN_EWKB_LEN + 8 + ring.len() * 16);
+        bytes.push(BYTE_ORDER_LITTLE_ENDIAN);
+        bytes.extend_from_slice(&(WKB_POLYGON | EWKB_SRID_FLAG).to_le_bytes());
+        bytes.extend_from_slice(&SRID_WGS84.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&5_u32.to_le_bytes());
+        ring.iter().flatten().for_each(|ordinate| bytes.extend_from_slice(&ordinate.to_le_bytes()));
+        Ewkb(Bytes::from(bytes))
     }
 }
 

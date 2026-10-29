@@ -88,6 +88,9 @@ pub struct TemporalEntryRecord {
     pub value_language: Option<String>,
     /// `value_geometry`.
     pub value_geometry: Option<EwkbGeometry>,
+    /// `value_geometry_reach`, the great-circle reach of `value_geometry`
+    /// where it bows past the planar bounding box.
+    pub value_geometry_reach: Option<EwkbGeometry>,
     /// `value_geometry_members`.
     pub value_geometry_members: Option<Json<Box<RawValue>>>,
     /// `value_object`.
@@ -317,6 +320,7 @@ impl TemporalEntryRecord {
             value_string: None,
             value_language: None,
             value_geometry: None,
+            value_geometry_reach: None,
             value_geometry_members: None,
             value_object: None,
             value_uri: None,

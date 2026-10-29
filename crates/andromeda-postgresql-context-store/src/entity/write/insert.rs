@@ -143,7 +143,7 @@ pub(super) fn entity_insert_statement<'entities>(
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = insert_staging_columns();
     let mut external = ExternalArguments::default();
-    let mut staged_entities = entity_arrays(entities, written_column(&entities.locations)?, &mut external);
+    let mut staged_entities = entity_arrays(entities, &written_column(&entities.locations)?, &mut external);
     staged_entities.push(Expr::val(entities.ids.iter().map(|id| establishing.contains(id)).collect::<Vec<bool>>()));
     let instance_arrays = rows.into_arrays(&mut external);
 
@@ -162,6 +162,7 @@ pub(super) fn entity_insert_statement<'entities>(
             EntitySearch::ScopePaths,
             EntitySearch::VerbatimScopePaths,
             EntitySearch::Location,
+            EntitySearch::LocationReach,
         ])
         .select_from(
             from_inserted()
@@ -174,6 +175,7 @@ pub(super) fn entity_insert_statement<'entities>(
                 .expr(projected(EntitySearch::ScopePaths))
                 .expr(projected(EntitySearch::VerbatimScopePaths))
                 .expr(projected(EntitySearch::Location))
+                .expr(projected(EntitySearch::LocationReach))
                 .take(),
         )?;
     search.returning(Query::returning().columns([
@@ -364,7 +366,7 @@ mod tests {
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, establishes_evolution)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_reach, loc_expires_at, expires_at, min_attribute_expires_at, establishes_evolution)"
             ),
             "{sql}"
         );
@@ -383,8 +385,8 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($15::text[]"), "{sql}");
-        assert!(sql.contains(r"$44::sub_attribute_tree[], $38::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($16::text[]"), "{sql}");
+        assert!(sql.contains(r"$46::sub_attribute_tree[], $40::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -408,7 +410,7 @@ mod tests {
             sql.contains(r#""ins" ("entity_key", "id", "established") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys")"#),
             "{sql}"
         );
-        assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location")"#), "{sql}");
+        assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location", "location_reach")"#), "{sql}");
         assert!(
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
@@ -462,6 +464,11 @@ mod tests {
     fn the_insert_reads_every_geometry_from_its_embedded_srid() {
         let sql = insert();
         assert!(sql.contains(r#"ST_MakeValid(ST_GeomFromEWKB("d"."loc"))"#), "{sql}");
+        assert!(sql.contains(r#"ST_GeomFromEWKB("d"."loc_reach") AS "location_reach""#), "{sql}");
+        assert!(
+            sql.contains(r#", ST_GeomFromEWKB("r"."value_geometry_reach") AS "value_geometry_reach""#),
+            "{sql}"
+        );
         assert!(sql.contains(r#", ST_GeomFromEWKB("r"."value_geometry") AS "value_geometry""#), "{sql}");
         assert!(sql.contains(r#"(CASE WHEN (ST_IsValid(ST_GeomFromEWKB("r"."value_geometry"))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) END) AS "value_geometry_valid""#), "{sql}");
         assert!(!sql.contains("ST_SetSRID"), "{sql}");
@@ -481,8 +488,8 @@ mod tests {
         let sql = insert();
         assert!(
             sql.contains(concat!(
-                r#"SELECT "proj"."id", $11, $12, "proj"."expires_at", "proj"."min_attribute_expires_at", "#,
-                r#"(CASE WHEN ("proj"."establishes_evolution") THEN $13 ELSE NULL END), (CASE WHEN ("proj"."establishes_evolution") THEN $14 ELSE NULL END), "#,
+                r#"SELECT "proj"."id", $12, $13, "proj"."expires_at", "proj"."min_attribute_expires_at", "#,
+                r#"(CASE WHEN ("proj"."establishes_evolution") THEN $14 ELSE NULL END), (CASE WHEN ("proj"."establishes_evolution") THEN $15 ELSE NULL END), "#,
                 r#"(CASE WHEN ("proj"."establishes_evolution") THEN "proj"."entity_type_name_keys" ELSE NULL END) FROM "proj" "#,
                 r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
                 r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at", "#,
