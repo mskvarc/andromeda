@@ -14,6 +14,13 @@ pub(crate) const PACKAGE_DIRECTORIES: [&str; 2] = ["crates", "tools"];
 /// `src/` and every package directory.
 const SOURCE_DIRECTORIES: [&str; 3] = ["src", PACKAGE_DIRECTORIES[0], PACKAGE_DIRECTORIES[1]];
 
+/// The package of the black-box test suite. Its library is test support that
+/// reaches the broker only over the network and depends on no broker crate, so
+/// a rule whose remedy is a broker crate (the lexicon's time types, the
+/// configuration crate, the typed entity model, the problem-details wording)
+/// does not reach it.
+const BLACK_BOX_SUITE: &str = "tools/andromeda-test-suite/";
+
 /// A parsed Rust source file and its workspace-relative path.
 pub(crate) struct RustSource {
     /// Absolute path used to resolve external modules.
@@ -22,6 +29,13 @@ pub(crate) struct RustSource {
     pub(crate) syntax: File,
     /// Workspace-relative path with forward slashes.
     pub(crate) workspace_path: String,
+}
+
+impl RustSource {
+    /// Whether the source belongs to the black-box test suite package.
+    pub(crate) fn is_black_box_suite(&self) -> bool {
+        self.workspace_path.starts_with(BLACK_BOX_SUITE)
+    }
 }
 
 /// Read and parse every Rust source below the workspace production roots.

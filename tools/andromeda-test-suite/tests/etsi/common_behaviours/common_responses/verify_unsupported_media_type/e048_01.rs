@@ -13,6 +13,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use iri_rs::IriBuf;
+use mediatype::{MediaType, media_type};
 use ngsi_ld::{
     http::{
         ContextDelivery,
@@ -23,7 +24,7 @@ use ngsi_ld::{
 };
 
 /// The media type every case sends its body as.
-const XML: &str = "application/xml";
+const XML: MediaType<'static> = media_type!(APPLICATION / XML);
 
 /// The client of `broker` sending `vocabulary` in the body, as the cases send the suite's `@context`.
 fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClient> {
@@ -44,7 +45,7 @@ async fn e048_01_01_patch_entity_attribute() -> Result<()> {
     let speed: AttributeName = "speed".parse()?;
     let patch = Attribute::from(Property::builder("BMW").build()?).into_patch().into();
     let update = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&patch).build();
-    let answer = client.send_unchecked(content_type(client.unchecked(&update)?, XML)).await;
+    let answer = client.send_unchecked(content_type(client.unchecked(&update)?, &XML)?).await;
     expect_that!(&answer, answered(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     broker.entities().delete(&id).send().await.any_answer();
     broker.temporal().delete(&id).send().await.any_answer();
@@ -71,7 +72,7 @@ async fn e048_01_02_patch_subscription() -> Result<()> {
         .notification(NotificationParams::builder(endpoint).format(Representation::Simplified).build()?)
         .build()?;
     let update = UpdateSubscription { id: &id, fragment: &fragment };
-    let answer = client.send_unchecked(content_type(client.unchecked(&update)?, XML)).await;
+    let answer = client.send_unchecked(content_type(client.unchecked(&update)?, &XML)?).await;
     expect_that!(&answer, answered(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     broker.subscriptions().delete(&id).send().await.any_answer();
     Ok(())
@@ -89,7 +90,7 @@ async fn e048_01_03_post_entities() -> Result<()> {
     let client = in_body(&broker, &vocabulary)?;
     let entity = building_simple_attributes(&namespace, 1)?;
     let create = CreateEntity::builder().entity(&entity).build();
-    let request = content_type(client.unchecked(&create)?, XML).uri(api_uri(&client, "entities/")?);
+    let request = content_type(client.unchecked(&create)?, &XML)?.uri(api_uri(&client, "entities/")?);
     expect_that!(&client.send_unchecked(request).await, answered(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     broker.entities().delete(&entity.id).send().await.any_answer();
     Ok(())
@@ -117,7 +118,7 @@ async fn e048_01_04_post_subscriptions() -> Result<()> {
         .build()?;
     let _subscription = Cleanup::of(&broker).subscription_of(&subscription);
     let create = CreateSubscription { subscription: &subscription };
-    let request = content_type(client.unchecked(&create)?, XML).uri(api_uri(&client, "subscriptions/")?);
+    let request = content_type(client.unchecked(&create)?, &XML)?.uri(api_uri(&client, "subscriptions/")?);
     expect_that!(&client.send_unchecked(request).await, answered(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     broker.subscriptions().delete(&id).send().await.any_answer();
     Ok(())
@@ -136,7 +137,7 @@ async fn e048_01_05_post_batch_create() -> Result<()> {
     let entities = [building_simple_attributes(&namespace, 1)?, building_simple_attributes(&namespace, 2)?];
     let create = BatchCreate::builder().entities(&entities).build();
     expect_that!(
-        &client.send_unchecked(content_type(client.unchecked(&create)?, XML)).await,
+        &client.send_unchecked(content_type(client.unchecked(&create)?, &XML)?).await,
         answered(StatusCode::UNSUPPORTED_MEDIA_TYPE)
     );
     let ids = entities.map(|entity| entity.id);
@@ -169,7 +170,7 @@ async fn e048_01_06_post_temporal_entities() -> Result<()> {
         )
         .build()?;
     let create = CreateOrUpdateTemporalEvolution::builder().entity(&evolution).build();
-    let request = content_type(client.unchecked(&create)?, XML).uri(api_uri(&client, "temporal/entities/")?);
+    let request = content_type(client.unchecked(&create)?, &XML)?.uri(api_uri(&client, "temporal/entities/")?);
     expect_that!(&client.send_unchecked(request).await, answered(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     broker.temporal().delete(&evolution.id).send().await.any_answer();
     Ok(())

@@ -5,7 +5,7 @@
 //! ends at the first poll that sees the condition, so only a failing one costs the whole bound.
 
 use crate::config::SuiteConfig;
-use std::{future::Future, time::Duration};
+use std::{fmt, future::Future, time::Duration};
 use tokio::time::{Instant, sleep};
 
 /// The longest a positive wait waits when the stack sets no `ANDROMEDA_TEST_SUITE__DELIVERY_DEADLINE_SECONDS`.
@@ -31,21 +31,37 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The outcome of one poll.
 #[derive(Debug)]
-pub enum Poll<T> {
+pub enum Poll<T, O> {
     /// The condition holds, with what the wait answers.
     Ready(T),
-    /// The condition does not hold yet; the text says what was seen, for the failure message.
-    Pending(String),
+    /// The condition does not hold yet, with what was seen, for the failure message.
+    Pending(O),
 }
 
-/// Why a wait ended without its condition.
+/// Why a wait ended without its condition, with what the last poll saw.
 #[derive(Debug, thiserror::Error)]
 #[error("the condition did not hold within {bound:?}: {last}")]
-pub struct TimedOut {
+pub struct TimedOut<O: fmt::Display> {
     /// The bound waited.
     pub bound: Duration,
     /// What the last poll saw.
-    pub last: String,
+    pub last: O,
+}
+
+/// How many of the awaited arrivals a wait for arrivals saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Arrivals {
+    /// How many have arrived.
+    pub held: usize,
+    /// How many are awaited.
+    pub awaited: usize,
+}
+
+// Hand-written: the two counts read as one sentence of a failure message.
+impl fmt::Display for Arrivals {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} held, {} awaited", self.held, self.awaited)
+    }
 }
 
 /// Polls `poll` every [`POLL_INTERVAL`] until it is ready or `bound` has passed since the first poll.
@@ -53,10 +69,11 @@ pub struct TimedOut {
 /// # Errors
 ///
 /// Returns [`TimedOut`] with what the last poll saw.
-pub async fn eventually<T, F, Fut>(bound: Duration, mut poll: F) -> Result<T, TimedOut>
+pub async fn eventually<T, O, F, Fut>(bound: Duration, mut poll: F) -> Result<T, TimedOut<O>>
 where
+    O: fmt::Display,
     F: FnMut() -> Fut,
-    Fut: Future<Output = Poll<T>>,
+    Fut: Future<Output = Poll<T, O>>,
 {
     let deadline = Instant::now() + bound;
     loop {
@@ -114,7 +131,7 @@ mod tests {
     #[gtest]
     #[tokio::test]
     async fn a_wait_past_its_bound_reports_the_last_poll() -> Result<()> {
-        let result = eventually(Duration::from_millis(300), || async { Poll::<()>::Pending("still empty".to_owned()) }).await;
+        let result = eventually(Duration::from_millis(300), || async { Poll::<(), _>::Pending("still empty") }).await;
         let error = result.err().or_fail()?;
         verify_that!(error.last, eq("still empty"))
     }

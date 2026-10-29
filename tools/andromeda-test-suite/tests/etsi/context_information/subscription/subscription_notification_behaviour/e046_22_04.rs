@@ -77,7 +77,7 @@ async fn e046_22_04_check_that_a_notification_is_sent_with_matching_entity() -> 
                     "unitCode": "C62",
                     "observedAt": "2020-09-09T16:40:00.000Z",
                 },
-                "name": {"type": "Property", "value": NGSI_LD_NULL},
+                "name": {"type": "Property", "value": NGSI_LD_NULL.as_str()},
             }))
             .hiding_everywhere("id")
         )

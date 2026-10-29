@@ -12,15 +12,12 @@ use andromeda_test_suite::{
 use bytes::Bytes;
 use googletest::prelude::*;
 use http::{Method, StatusCode};
-use ngsi_ld::model::ErrorType;
-
-/// The media type every case sends.
-const LD_JSON: &str = "application/ld+json";
+use ngsi_ld::model::{APPLICATION_LD_JSON, ErrorType};
 
 /// Sends `method` to `path` as the case does, with `Content-Type: application/ld+json` and `body`, and checks the
 /// refusal: 400 with the problem type `InvalidRequest`.
 async fn refused(client: &BrokerClient, method: Method, path: &str, body: Option<String>) -> Result<()> {
-    let request = content_type(request_to(client, method, path)?, LD_JSON);
+    let request = content_type(request_to(client, method, path)?, &APPLICATION_LD_JSON)?;
     let request = match body {
         Some(text) => request.body(Bytes::from(text)),
         None => request,

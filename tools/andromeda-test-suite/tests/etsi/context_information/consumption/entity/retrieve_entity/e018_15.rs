@@ -13,14 +13,11 @@ use andromeda_test_suite::{
     vocabulary::Vocabulary,
 };
 use googletest::prelude::*;
-use ngsi_ld::model::EntityId;
+use ngsi_ld::model::{CORE_CONTEXT, EntityId};
 use serde_json::{Value, json};
 
 /// The terms of the case's `@context`.
 const TERMS: [&str; 5] = ["Building", "name", "subCategory", "airQualityLevel", "almostFull"];
-
-/// The core `@context` a response names when its request carries none.
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 /// The keyValues representation of the case's Building: each property is its value, under its expanded name.
 fn key_values(namespace: &Namespace) -> Result<Value> {
@@ -31,7 +28,7 @@ fn key_values(namespace: &Namespace) -> Result<Value> {
         namespace.expanded_term("airQualityLevel")?: 4,
         namespace.expanded_term("almostFull")?: false,
         namespace.expanded_term("subCategory")?: "tourism",
-        "@context": CORE_CONTEXT,
+        "@context": CORE_CONTEXT.as_str(),
     }))
 }
 
@@ -49,7 +46,7 @@ fn normalized(namespace: &Namespace) -> Result<Value> {
         },
         namespace.expanded_term("almostFull")?: {"type": "Property", "value": false},
         namespace.expanded_term("subCategory")?: {"type": "Property", "value": "tourism"},
-        "@context": CORE_CONTEXT,
+        "@context": CORE_CONTEXT.as_str(),
     }))
 }
 

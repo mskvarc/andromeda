@@ -41,7 +41,7 @@ async fn e046_38_01_delete_entity_and_check_previous_values_in_notification() ->
     let expected = json!({
         "type": "Building",
         "deletedAt": ANY_SYSTEM_TIME,
-        "jsonProperty": {"type": "JsonProperty", "previousJson": {"null": null, "type": "some-type", "anythingElse": "anything-else"}, "json": NGSI_LD_NULL},
+        "jsonProperty": {"type": "JsonProperty", "previousJson": {"null": null, "type": "some-type", "anythingElse": "anything-else"}, "json": NGSI_LD_NULL.as_str()},
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
 

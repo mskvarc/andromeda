@@ -4,7 +4,8 @@
 //! HTTP/1.1 or HTTP/2 as the broker offers, no redirect followed, no proxy and no content decoding.
 
 use crate::{
-    config::{BrokerRole, ConfigError, PeerRole, SuiteConfig},
+    config::{BrokerRole, PeerRole, SuiteConfig},
+    config_error::ConfigError,
     eventually::{Poll, TimedOut, delivery_deadline, eventually},
     exchange_log::ExchangeLog,
     namespace::{Namespace, NamespaceError},
@@ -12,7 +13,8 @@ use crate::{
 use ngsi_ld::{
     client::{Client, ClientError, ReqwestError, ReqwestTransport},
     http::EndpointError,
-    registration::{CSourceRegistration, RegistrationId, RegistrationInfo},
+    model::{BuildError, UriError},
+    registration::{CSourceRegistration, Problem, RegistrationId, RegistrationInfo},
 };
 use reqwest::redirect::Policy;
 use std::time::Duration;
@@ -45,12 +47,15 @@ pub enum BrokerError {
     /// A namespaced value is invalid.
     #[error(transparent)]
     Namespace(#[from] NamespaceError),
-    /// The provisioning registration is invalid.
-    #[error("the provisioning registration cannot be built: {0}")]
-    Registration(String),
+    /// The provisioning registration's identifier is invalid.
+    #[error("the provisioning registration cannot be built")]
+    RegistrationId(#[source] UriError),
+    /// The provisioning registration or its information is invalid.
+    #[error("the provisioning registration cannot be built")]
+    Registration(#[source] BuildError<Problem>),
     /// The broker stayed saturated for the whole delivery deadline.
     #[error("the broker stayed saturated while bringing up the tenant")]
-    Saturated(#[source] TimedOut),
+    Saturated(#[source] TimedOut<ClientError<ReqwestError>>),
     /// The broker refused a provisioning request.
     #[error("the broker refused to bring up the tenant")]
     Provisioning(#[source] Box<ClientError<ReqwestError>>),
@@ -130,22 +135,19 @@ pub async fn private_tenant(client: &BrokerClient, namespace: &Namespace) -> Res
     let id: RegistrationId = namespace
         .urn_text("ContextSourceRegistration", "provision")
         .parse()
-        .map_err(|error| BrokerError::Registration(format!("{error}")))?;
+        .map_err(BrokerError::RegistrationId)?;
     let information = RegistrationInfo::builder()
         .entities(["ProvisioningSentinel"])
         .build()
-        .map_err(|error| BrokerError::Registration(error.to_string()))?;
+        .map_err(BrokerError::Registration)?;
     let registration = CSourceRegistration::builder(config.unreachable_origin().as_str())
         .id(id.clone())
         .information([information])
         .build()
-        .map_err(|error| BrokerError::Registration(error.to_string()))?;
+        .map_err(BrokerError::Registration)?;
     let registered = eventually(delivery_deadline(), || async {
         match tenant.registrations().register(&registration).send().await {
-            Err(error) if error.problem().and_then(|problem| problem.status) == Some(SATURATED) => {
-                // The detail is copied: the failure message outlives the answer.
-                Poll::Pending(error.problem().and_then(|problem| problem.detail.clone()).unwrap_or_default())
-            }
+            Err(error) if error.problem().and_then(|problem| problem.status) == Some(SATURATED) => Poll::Pending(error),
             other => Poll::Ready(other),
         }
     })

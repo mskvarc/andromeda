@@ -6,7 +6,7 @@
 //! message with is the one the message was published with, and it keeps every message in arrival order with its
 //! retain flag and its MQTT 5 properties (none for a message published over MQTT 3.1.1).
 
-use crate::eventually::{Poll, TimedOut, delivery_deadline, eventually};
+use crate::eventually::{Arrivals, Poll, TimedOut, delivery_deadline, eventually};
 use bytes::Bytes;
 use indexmap::IndexMap;
 use ngsi_ld::{
@@ -41,7 +41,7 @@ pub enum ObserverError {
     NotAcknowledged,
     /// The awaited message did not arrive.
     #[error(transparent)]
-    TimedOut(#[from] TimedOut),
+    TimedOut(#[from] TimedOut<Arrivals>),
 }
 
 /// A message as the observer received it.
@@ -185,7 +185,10 @@ impl MqttObserver {
             if received.len() >= count {
                 Poll::Ready(received)
             } else {
-                Poll::Pending(format!("{} messages received, {count} awaited", received.len()))
+                Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: count,
+                })
             }
         })
         .await?)

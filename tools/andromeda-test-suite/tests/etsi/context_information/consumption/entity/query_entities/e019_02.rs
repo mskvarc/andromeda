@@ -17,13 +17,10 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::operation::QueryMethod,
-    model::{AttributeName, NgsiLdMediaType},
+    model::{AttributeName, CORE_CONTEXT, NgsiLdMediaType},
     query::{EntitySelector, SelectorType},
 };
 use serde_json::{Value, json};
-
-/// The core `@context` the responses name when the request carries none of its own.
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 /// The terms of the `@context` of the type and attribute cases.
 const VEHICLE_TERMS: [&str; 4] = ["Building", "Vehicle", "brandName", "isParked"];
@@ -145,7 +142,7 @@ async fn e019_02_02_query_several_entities_via_post_interaction_based_on_the_ent
 
 /// Adds the core `@context` a Vehicle answer carries in its body.
 fn with_body_context(mut vehicle: Value) -> Value {
-    vehicle["@context"] = json!(CORE_CONTEXT);
+    vehicle["@context"] = json!(CORE_CONTEXT.as_str());
     vehicle
 }
 

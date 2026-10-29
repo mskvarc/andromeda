@@ -3,7 +3,7 @@
 //! NGSI-LD Null (clause 5.6.4).
 
 use crate::{
-    suite_keywords::{LD_JSON, create_vehicle_brand_parked_speed_gps, delete_entities, ld_json_body_client, refused},
+    suite_keywords::{create_vehicle_brand_parked_speed_gps, delete_entities, ld_json_body_client, refused},
     suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_56_patch},
 };
 use andromeda_test_suite::{
@@ -14,7 +14,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::{
     http::{UncheckedDocument, operation::PartialAttributeUpdate},
-    model::{Attribute, AttributeName, Change, ErrorType, Lossless, Property, Relationship},
+    model::{APPLICATION_LD_JSON, Attribute, AttributeName, Change, ErrorType, Lossless, Property, Relationship},
 };
 
 /// Pins: Check that one cannot perform a partial update on an entity attribute with missing entity id
@@ -96,7 +96,7 @@ async fn e012_02_04_make_a_partial_attribute_update_if_the_entity_fragment_is_em
     let speed: AttributeName = "speed".parse()?;
     let change = Change::Set(speedometer_speed_56_patch(&namespace)?);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
-    let request = content_type(broker.unchecked(&operation)?.document_as_is(&UncheckedDocument::empty()), LD_JSON);
+    let request = content_type(broker.unchecked(&operation)?.document_as_is(&UncheckedDocument::empty()), &APPLICATION_LD_JSON)?;
     refused(&broker, request, ErrorType::BadRequestData).await?;
     delete_entities(&broker, &[&id]).await;
     Ok(())

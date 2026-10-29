@@ -1,19 +1,22 @@
 //! The system times a broker writes on the instances of a temporal evolution (`createdAt`, `modifiedAt`,
 //! `deletedAt`, clause 4.8), read from an answer so a later request can name the instant it answered.
 
-use crate::{evolution_matcher::instances, system_time::SystemMember};
+use crate::{
+    evolution_matcher::{InstanceChoice, instances},
+    system_time::SystemMember,
+};
 use googletest::matcher::Matcher;
-use ngsi_ld::model::{Attribute, DateTime, Output, evolution::TemporalEntity};
+use ngsi_ld::model::{Attribute, AttributeName, DateTime, Output, evolution::TemporalEntity};
 use std::fmt::Debug;
 
 /// The evolution holds no instance the test names, or the instance carries no such time.
 #[derive(Debug, thiserror::Error)]
 #[error("the evolution of {name} holds no instance {which} carrying {member}")]
-pub struct InstanceTimeNotFound {
+pub struct InstanceTimeNotFound<M: Debug> {
     /// The attribute name.
-    name: String,
+    name: AttributeName,
     /// Which instance was looked for.
-    which: String,
+    which: InstanceChoice<M>,
     /// The system member read.
     member: SystemMember,
 }
@@ -35,16 +38,17 @@ const fn time_of(instance: &Attribute<Output>, member: SystemMember) -> Option<D
 /// Returns [`InstanceTimeNotFound`] when no instance meets it or the one that does carries no such time.
 pub fn instance_time_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
     entity: &TemporalEntity<Output>,
-    name: &str,
+    name: &AttributeName,
     matcher: M,
     member: SystemMember,
-) -> Result<DateTime, InstanceTimeNotFound> {
-    instances(entity, name)
+) -> Result<DateTime, InstanceTimeNotFound<M>> {
+    instances(entity, name.as_ref())
         .and_then(|found| found.iter().find(|instance| matcher.matches(instance).is_match()))
         .and_then(|instance| time_of(instance, member))
         .ok_or_else(|| InstanceTimeNotFound {
-            name: name.to_owned(),
-            which: format!("meeting {matcher:?}"),
+            // clone: the error names the attribute the caller keeps
+            name: name.clone(),
+            which: InstanceChoice::Meeting(matcher),
             member,
         })
 }
@@ -54,13 +58,19 @@ pub fn instance_time_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
 /// # Errors
 ///
 /// Returns [`InstanceTimeNotFound`] when there is no such instance or it carries no such time.
-pub fn instance_time_at(entity: &TemporalEntity<Output>, name: &str, index: usize, member: SystemMember) -> Result<DateTime, InstanceTimeNotFound> {
-    instances(entity, name)
+pub fn instance_time_at(
+    entity: &TemporalEntity<Output>,
+    name: &AttributeName,
+    index: usize,
+    member: SystemMember,
+) -> Result<DateTime, InstanceTimeNotFound<()>> {
+    instances(entity, name.as_ref())
         .and_then(|found| found.get(index))
         .and_then(|instance| time_of(instance, member))
         .ok_or_else(|| InstanceTimeNotFound {
-            name: name.to_owned(),
-            which: format!("at {index}"),
+            // clone: the error names the attribute the caller keeps
+            name: name.clone(),
+            which: InstanceChoice::At(index),
             member,
         })
 }
@@ -89,11 +99,11 @@ mod tests {
     fn an_instance_picked_by_its_value_or_its_position_answers_its_time() -> Result<()> {
         let entity = evolution()?;
         expect_that!(
-            instance_time_where(&entity, "speed", any_attribute().value(2), SystemMember::CreatedAt)?,
+            instance_time_where(&entity, &"speed".parse()?, any_attribute().value(2), SystemMember::CreatedAt)?,
             eq("2026-01-01T00:00:02.5Z".parse::<DateTime>()?)
         );
         verify_that!(
-            instance_time_at(&entity, "speed", 0, SystemMember::CreatedAt)?,
+            instance_time_at(&entity, &"speed".parse()?, 0, SystemMember::CreatedAt)?,
             eq("2026-01-01T00:00:01Z".parse::<DateTime>()?)
         )
     }
@@ -102,9 +112,9 @@ mod tests {
     fn a_missing_instance_or_time_is_an_error() -> Result<()> {
         let entity = evolution()?;
         expect_that!(
-            instance_time_where(&entity, "speed", any_attribute().value(3), SystemMember::CreatedAt),
+            instance_time_where(&entity, &"speed".parse()?, any_attribute().value(3), SystemMember::CreatedAt),
             err(anything())
         );
-        verify_that!(instance_time_at(&entity, "speed", 0, SystemMember::ModifiedAt), err(anything()))
+        verify_that!(instance_time_at(&entity, &"speed".parse()?, 0, SystemMember::ModifiedAt), err(anything()))
     }
 }

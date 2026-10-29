@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary, wire::content_type};
 use googletest::prelude::*;
-use ngsi_ld::http::operation::BatchCreate;
+use ngsi_ld::{http::operation::BatchCreate, model::APPLICATION_JSON};
 
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
 /// "application/json" and the request payload body (as JSON) contains a "@context" term
@@ -21,7 +21,7 @@ async fn e003_06_01_create_a_batch_of_one_entity_containing_a_json_ld_context_wi
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let entities = [building_simple_attributes(&namespace, 1)?];
     let operation = BatchCreate::builder().entities(&entities).build();
-    let request = content_type(client.unchecked(&operation)?, "application/json");
+    let request = content_type(client.unchecked(&operation)?, &APPLICATION_JSON)?;
     let result = partial_batch_answer(&client, request).await?;
     expect_bad_request_entity(&result)
 }

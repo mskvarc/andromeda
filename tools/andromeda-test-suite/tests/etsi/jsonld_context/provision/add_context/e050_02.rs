@@ -8,7 +8,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::{UncheckedDocument, operation::AddContext},
-    model::ErrorType,
+    model::{APPLICATION_JSON, ErrorType},
 };
 
 /// Pins: Check that the payload include "@context"
@@ -29,7 +29,7 @@ async fn e050_02_01_checking_incorrect_payload() -> Result<()> {
     });
     let context = attribute_terms(&namespace, &terms)?;
     let request = broker.unchecked(&AddContext::builder().context(&context).build())?.document_as_is(&document);
-    let answer = broker.send_unchecked(wire::content_type(request, "application/json")).await;
+    let answer = broker.send_unchecked(wire::content_type(request, &APPLICATION_JSON)?).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_distinct_detail());
     Ok(())
 }
@@ -53,7 +53,7 @@ async fn e050_02_02_checking_wrong_json() -> Result<()> {
     );
     let context = attribute_terms(&namespace, &["A1", "A2", "A3"])?;
     let request = broker.unchecked(&AddContext::builder().context(&context).build())?.body(Bytes::from(body));
-    let answer = broker.send_unchecked(wire::content_type(request, "application/json")).await;
+    let answer = broker.send_unchecked(wire::content_type(request, &APPLICATION_JSON)?).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest).with_distinct_detail());
     Ok(())
 }

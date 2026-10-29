@@ -7,7 +7,7 @@
 
 use crate::{
     callback_server::{CallbackError, CallbackServer},
-    eventually::{Poll, TimedOut, delivery_deadline, eventually},
+    eventually::{Arrivals, Poll, TimedOut, delivery_deadline, eventually},
     source_request::SourceRequest,
 };
 use http::Method;
@@ -25,13 +25,13 @@ pub enum SourceError {
     Server(#[from] CallbackError),
     /// The awaited request did not arrive.
     #[error(transparent)]
-    TimedOut(#[from] TimedOut),
+    TimedOut(#[from] TimedOut<Arrivals>),
     /// An answer sequence must hold at least one answer.
     #[error("an answer sequence holds no answer")]
     NoAnswer,
     /// A path pattern is not a regular expression.
-    #[error("the path pattern {0} is not a regular expression")]
-    Pattern(String, #[source] regex::Error),
+    #[error("a path pattern is not a regular expression")]
+    Pattern(#[source] regex::Error),
 }
 
 /// A context source of one test.
@@ -165,7 +165,10 @@ impl ContextSource {
             async move {
                 match self.received_on(verb, request_path).await {
                     Ok(received) if received.len() >= count => Poll::Ready(Ok(received)),
-                    Ok(received) => Poll::Pending(format!("the source holds {} requests on {request_path}, {count} awaited", received.len())),
+                    Ok(received) => Poll::Pending(Arrivals {
+                        held: received.len(),
+                        awaited: count,
+                    }),
                     Err(error) => Poll::Ready(Err(error)),
                 }
             }
@@ -199,7 +202,10 @@ impl ContextSource {
         eventually(delivery_deadline(), || async move {
             match self.received_matching(request).await {
                 Ok(received) if received.len() >= count => Poll::Ready(Ok(received)),
-                Ok(received) => Poll::Pending(format!("the source holds {} requests matching {request:?}, {count} awaited", received.len())),
+                Ok(received) => Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: count,
+                }),
                 Err(error) => Poll::Ready(Err(error)),
             }
         })
@@ -230,7 +236,10 @@ impl ContextSource {
         eventually(delivery_deadline(), || async move {
             match self.received().await {
                 Ok(received) if received.len() >= count => Poll::Ready(Ok(received)),
-                Ok(received) => Poll::Pending(format!("the source holds {} requests, {count} awaited", received.len())),
+                Ok(received) => Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: count,
+                }),
                 Err(error) => Poll::Ready(Err(error)),
             }
         })

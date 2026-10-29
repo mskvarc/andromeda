@@ -8,13 +8,14 @@
 
 use crate::{
     broker::BrokerClient,
-    config::{ConfigError, SuiteConfig},
+    config::SuiteConfig,
+    config_error::ConfigError,
     namespace::{Namespace, NamespaceError},
 };
-use iri_rs::{IriBuf, IriRefBuf};
+use iri_rs::{InvalidIri, IriBuf, IriRefBuf};
 use ngsi_ld::{
     client::{ClientError, ReqwestError},
-    model::{Context, ContextEntry, InlineContext, RawJson},
+    model::{Context, ContextEntry, InlineContext, InlineContextError, InvalidJson, RawJson},
 };
 use std::collections::BTreeMap;
 use url::Url;
@@ -28,9 +29,18 @@ pub enum VocabularyError {
     /// A term breaks its IRI.
     #[error(transparent)]
     Namespace(#[from] NamespaceError),
-    /// The term object could not be written.
-    #[error("the term object could not be written: {0}")]
-    Terms(String),
+    /// The term object could not be written as JSON.
+    #[error("the term object could not be written")]
+    TermsText(#[source] serde_json::Error),
+    /// The written term object is not JSON the model reads.
+    #[error("the term object is not JSON")]
+    TermsJson(#[source] InvalidJson),
+    /// The term object is not an inline `@context`.
+    #[error("the term object is not an inline @context")]
+    TermsContext(#[source] InlineContextError),
+    /// The configured core `@context` is not an IRI reference.
+    #[error("the core @context is not an IRI reference")]
+    CoreContext(#[source] InvalidIri<String>),
     /// The broker refused to store the context.
     #[error("the broker refused the vocabulary")]
     Refused(#[source] Box<ClientError<ReqwestError>>),
@@ -39,7 +49,7 @@ pub enum VocabularyError {
     NoLocation,
     /// The Location does not resolve against the broker URL.
     #[error("the Location {0} does not resolve against the broker")]
-    Location(String, #[source] url::ParseError),
+    Location(IriRefBuf, #[source] url::ParseError),
 }
 
 /// A stored test vocabulary.
@@ -61,12 +71,12 @@ impl Vocabulary {
             .iter()
             .map(|term| namespace.vocabulary_iri(term).map(|iri| (*term, iri.into_inner())))
             .collect::<Result<BTreeMap<_, _>, _>>()?;
-        let text = serde_json::to_string(&mapping).map_err(|error| VocabularyError::Terms(error.to_string()))?;
+        let text = serde_json::to_string(&mapping).map_err(VocabularyError::TermsText)?;
         let inline = text
             .parse::<RawJson>()
-            .map_err(|error| VocabularyError::Terms(error.to_string()))
-            .and_then(|json| InlineContext::try_from(json).map_err(|error| VocabularyError::Terms(error.to_string())))?;
-        let core = IriRefBuf::new(config.core_context().as_str().to_owned()).map_err(|error| VocabularyError::Terms(error.to_string()))?;
+            .map_err(VocabularyError::TermsJson)
+            .and_then(|json| InlineContext::try_from(json).map_err(VocabularyError::TermsContext))?;
+        let core = IriRefBuf::new(config.core_context().as_str().to_owned()).map_err(VocabularyError::CoreContext)?;
         let context = Context::Multiple(vec![ContextEntry::Inline(inline), ContextEntry::Reference(core)]);
         let created = client
             .contexts()
@@ -75,10 +85,10 @@ impl Vocabulary {
             .await
             .map_err(|error| VocabularyError::Refused(Box::new(error)))?;
         let location = created.location.valid().ok_or(VocabularyError::NoLocation)?;
-        let broker = Url::parse(client.endpoint().base_url().as_str()).map_err(|error| VocabularyError::Location(location.as_str().to_owned(), error))?;
-        let resolved = broker
-            .join(location.as_str())
-            .map_err(|error| VocabularyError::Location(location.as_str().to_owned(), error))?;
+        // clone: the error names the location the answer keeps
+        let unresolved = |error| VocabularyError::Location(location.clone(), error);
+        let broker = Url::parse(client.endpoint().base_url().as_str()).map_err(unresolved)?;
+        let resolved = broker.join(location.as_str()).map_err(unresolved)?;
         let url = IriBuf::new(resolved.to_string()).map_err(|_| VocabularyError::NoLocation)?;
         Ok(Vocabulary { url })
     }

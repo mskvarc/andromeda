@@ -130,7 +130,7 @@ pub fn assert_detail_messages_are_well_formed(workspace_root: &str, baseline: &[
 pub fn detail_violations(workspace_root: &str) -> Vec<DetailViolation> {
     let mut violations = BTreeSet::new();
     for source in workspace_sources(Path::new(workspace_root)) {
-        if source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") {
+        if source.is_black_box_suite() || source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") {
             continue;
         }
         let mut visitor = DetailVisitor {

@@ -159,7 +159,7 @@ impl SourceRequest {
         let path_holds = match &self.path {
             SourcePath::Exact(exact) => request.url.path() == exact,
             SourcePath::Pattern(pattern) => Regex::new(&SourcePath::anchored(pattern))
-                .map_err(|error| SourceError::Pattern(pattern.clone(), error))?
+                .map_err(SourceError::Pattern)?
                 .is_match(request.url.path()),
         };
         Ok(path_holds

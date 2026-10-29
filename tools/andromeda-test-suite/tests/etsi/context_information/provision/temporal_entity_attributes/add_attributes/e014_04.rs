@@ -2,13 +2,16 @@
 //! (clause 5.6.12).
 
 use crate::{
-    suite_keywords::{LD_JSON, create_temporal_evolution, ld_json_body_client, post_empty, with_doubled_separator},
+    suite_keywords::{create_temporal_evolution, ld_json_body_client, post_empty, with_doubled_separator},
     suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, wire::api_uri};
 use googletest::prelude::*;
 use http::StatusCode;
-use ngsi_ld::{http::operation::CreateOrUpdateTemporalEvolution, model::ErrorType};
+use ngsi_ld::{
+    http::operation::CreateOrUpdateTemporalEvolution,
+    model::{APPLICATION_LD_JSON, ErrorType},
+};
 
 /// Pins: Check that an error is raised if one adds a temporal entity attribute with empty/invalid content
 /// Clause: 5.6.12
@@ -54,7 +57,7 @@ async fn e014_04_02_add_an_attribute_to_a_temporal_representation_of_an_entity_w
 
     let id = namespace.urn("Vehicle", 1)?;
     let path = format!("temporal/entities/{id}/attrs");
-    let answer = broker.send_unchecked(post_empty(&broker, &path, LD_JSON)?).await;
+    let answer = broker.send_unchecked(post_empty(&broker, &path, &APPLICATION_LD_JSON)?).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest).with_title());
 
     broker.temporal().delete(&id).send().await.any_answer();

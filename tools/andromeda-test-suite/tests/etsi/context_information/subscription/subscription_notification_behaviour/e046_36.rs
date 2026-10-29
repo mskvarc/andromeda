@@ -40,7 +40,7 @@ async fn e046_36_01_delete_attribute_and_check_previous_value_in_notification() 
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let expected = json!({
         "type": "Building",
-        "vocabProperty": {"type": "VocabProperty", "vocab": NGSI_LD_NULL, "previousVocab": "monument"},
+        "vocabProperty": {"type": "VocabProperty", "vocab": NGSI_LD_NULL.as_str(), "previousVocab": "monument"},
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
 

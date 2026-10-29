@@ -42,8 +42,8 @@ fn a_member_hidden_below_the_root_still_counts_at_the_root() {
 fn a_missing_member_fails_and_names_its_path() {
     let differences = matches_document(json!({"speed": {"value": 1}})).differences(&json!({"speed": {}}));
     expect_that!(
-        differences.iter().map(|difference| difference.path.as_str()).collect::<Vec<_>>(),
-        elements_are![eq(&"$['speed']['value']")]
+        differences.iter().map(|difference| difference.path.to_string()).collect::<Vec<_>>(),
+        elements_are![eq("$['speed']['value']")]
     );
 }
 
@@ -160,11 +160,11 @@ fn a_list_beyond_the_cutoff_names_what_its_closest_items_differ_in() {
     let expected = json!([{"v": 1, "w": "a"}, {"v": 2, "w": "b"}]);
     let differences = matches_document(expected).differences(&json!([{"v": 1, "w": "x"}, {"v": 2, "w": "y"}]));
     expect_that!(
-        differences.iter().map(|difference| difference.message.as_str()).collect::<Vec<_>>(),
+        differences.iter().map(|difference| difference.discrepancy.to_string()).collect::<Vec<_>>(),
         contains(starts_with("is \"x\""))
     );
     expect_that!(
-        differences.iter().map(|difference| difference.message.as_str()).collect::<Vec<_>>(),
+        differences.iter().map(|difference| difference.discrepancy.to_string()).collect::<Vec<_>>(),
         contains(starts_with("is \"y\""))
     );
 }

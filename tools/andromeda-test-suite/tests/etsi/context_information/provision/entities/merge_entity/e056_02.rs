@@ -16,7 +16,7 @@ use googletest::prelude::*;
 use http::{Method, StatusCode, header::LINK};
 use ngsi_ld::{
     http::UncheckedDocument,
-    model::{Lossless, RawJson},
+    model::{APPLICATION_JSON, Lossless, RawJson},
 };
 
 /// Pins: Check that if the target entity ID is faulty an error is raised
@@ -33,8 +33,8 @@ async fn e056_02_01_merge_an_existing_entity_giving_an_invalid_id() -> Result<()
         .set_member("id", &r#""invalidUri""#.parse::<RawJson>()?);
     let request = content_type(
         request_to(&broker, Method::PATCH, "entities/invalidUri")?.document_as_is(&document),
-        "application/json",
-    )
+        &APPLICATION_JSON,
+    )?
     .append_header(LINK, context_link(&vocabulary)?);
     let answer = broker.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::BAD_REQUEST));
@@ -54,7 +54,7 @@ async fn e056_02_02_merge_an_existing_entity_without_giving_an_id() -> Result<()
     create_entity_with_link(&broker, &vocabulary, &original).await?;
     let document =
         UncheckedDocument::from_entity(&pisa_tower_located_at_pisa(&namespace, 1)?, Lossless::Normalized).set_member("id", &r#""""#.parse::<RawJson>()?);
-    let request = content_type(request_to(&broker, Method::PATCH, "entities/")?.document_as_is(&document), "application/json")
+    let request = content_type(request_to(&broker, Method::PATCH, "entities/")?.document_as_is(&document), &APPLICATION_JSON)?
         .append_header(LINK, context_link(&vocabulary)?);
     let answer = broker.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::BAD_REQUEST));

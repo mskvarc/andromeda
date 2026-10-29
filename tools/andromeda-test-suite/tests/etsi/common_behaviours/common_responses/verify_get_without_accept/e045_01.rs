@@ -24,7 +24,7 @@ use ngsi_ld::{
         headers::Accept,
         operation::{CreateEntity, CreateOrUpdateTemporalEvolution, CreateSubscription, RetrieveSubscription},
     },
-    model::{DatasetId, EntityTypeName, NgsiLdMediaType, Property, Representation, evolution::TemporalEntity},
+    model::{APPLICATION_JSON, DatasetId, EntityTypeName, NgsiLdMediaType, Property, Representation, evolution::TemporalEntity},
     query::{IdPattern, temporal_query},
     registration::{CSourceRegistration, EntityInfo, RegistrationId, RegistrationInfo},
     subscription::{Endpoint, EntitySubscription, NotificationParams, Subscription, SubscriptionId},
@@ -98,7 +98,7 @@ async fn e045_01_02_retrieve_subscription() -> Result<()> {
 
     let reader = reading(&broker, &vocabulary)?;
     let retrieve = RetrieveSubscription::builder().id(&id).kind(EntitySubscription).build();
-    let request = content_type(reader.unchecked(&retrieve)?, "application/json");
+    let request = content_type(reader.unchecked(&retrieve)?, &APPLICATION_JSON)?;
     let retrieved = reader.send_unchecked(request).await;
     verify_that!(&retrieved, answered(StatusCode::OK))?;
     expect_json_with_link(retrieved?.headers());

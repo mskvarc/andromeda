@@ -1,7 +1,7 @@
 //! The system times a broker writes (`createdAt`, `modifiedAt`, `deletedAt`, clause 4.8), read from an entity or
 //! from an attribute or sub-attribute of it, so a test can hold a later read to the times an earlier one answered.
 
-use ngsi_ld::model::{Attribute, Attributes, DateTime, Entity, Output};
+use ngsi_ld::model::{Attribute, Attributes, DateTime, Entity, EntityId, Output};
 
 /// One system member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
@@ -20,15 +20,34 @@ pub enum SystemMember {
 /// Why a system time could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum SystemTimeError {
-    /// No attribute of that name at that level.
-    #[error("there is no attribute {0}")]
-    NoAttribute(String),
+    /// No attribute of the name the path gives at that level, the first level being 1.
+    #[error("{entity} holds no attribute at level {level} of the path")]
+    NoAttribute {
+        /// The entity read.
+        entity: EntityId,
+        /// The level of the path.
+        level: usize,
+    },
     /// The attribute holds several instances, so which one is meant is not said.
-    #[error("the attribute {0} holds {1} instances")]
-    Instances(String, usize),
-    /// The member is not written.
-    #[error("{0} carries no {1}")]
-    Missing(String, SystemMember),
+    #[error("the attribute at level {level} of the path in {entity} holds {count} instances")]
+    Instances {
+        /// The entity read.
+        entity: EntityId,
+        /// The level of the path, the first being 1.
+        level: usize,
+        /// How many instances it holds.
+        count: usize,
+    },
+    /// The member is not written on what the path names, the entity itself for an empty path.
+    #[error("{entity} carries no {member} at depth {depth} of the path")]
+    Missing {
+        /// The entity read.
+        entity: EntityId,
+        /// How many attribute levels the path descends.
+        depth: usize,
+        /// The member read.
+        member: SystemMember,
+    },
 }
 
 /// The `member` of `entity`.
@@ -43,7 +62,12 @@ pub fn of_entity(entity: &Entity<Output>, member: SystemMember) -> Result<&DateT
         SystemMember::ModifiedAt => output.modified_at.as_ref(),
         SystemMember::DeletedAt => output.deleted_at.as_ref(),
     }
-    .ok_or_else(|| SystemTimeError::Missing(entity.id.to_string(), member))
+    .ok_or_else(|| SystemTimeError::Missing {
+        // clone: the error names the entity the caller keeps
+        entity: entity.id.clone(),
+        depth: 0,
+        member,
+    })
 }
 
 /// The `member` of the attribute at `path` of `entity`: an attribute name, then the names of the sub-attributes
@@ -53,9 +77,9 @@ pub fn of_entity(entity: &Entity<Output>, member: SystemMember) -> Result<&DateT
 ///
 /// Returns [`SystemTimeError`] when a level is missing or holds several instances, or the member is not written.
 pub fn of_attribute<'e>(entity: &'e Entity<Output>, path: &[&str], member: SystemMember) -> Result<&'e DateTime, SystemTimeError> {
-    let attribute = path.iter().try_fold(None::<&Attribute<Output>>, |parent, name| {
+    let attribute = path.iter().zip(1..).try_fold(None::<&Attribute<Output>>, |parent, (name, level)| {
         let attributes = parent.map_or(&entity.attributes, |attribute| &attribute.meta().attributes);
-        single(attributes, name).map(Some)
+        single(attributes, name).map(Some).map_err(|shortfall| shortfall.of(entity, level))
     })?;
     let Some(attribute) = attribute else {
         return of_entity(entity, member);
@@ -66,19 +90,44 @@ pub fn of_attribute<'e>(entity: &'e Entity<Output>, path: &[&str], member: Syste
         SystemMember::ModifiedAt => output.modified_at.as_ref(),
         SystemMember::DeletedAt => output.deleted_at.as_ref(),
     }
-    .ok_or_else(|| SystemTimeError::Missing(path.join("."), member))
+    .ok_or_else(|| SystemTimeError::Missing {
+        // clone: the error names the entity the caller keeps
+        entity: entity.id.clone(),
+        depth: path.len(),
+        member,
+    })
+}
+
+/// Why one level of a path names no single instance.
+enum LevelShortfall {
+    /// No attribute has the name.
+    Absent,
+    /// The attribute holds this many instances.
+    Several(usize),
+}
+
+impl LevelShortfall {
+    /// The error this shortfall is at `level` of a path into `entity`.
+    fn of(self, entity: &Entity<Output>, level: usize) -> SystemTimeError {
+        // clone: the error names the entity the caller keeps
+        let entity = entity.id.clone();
+        match self {
+            LevelShortfall::Absent => SystemTimeError::NoAttribute { entity, level },
+            LevelShortfall::Several(count) => SystemTimeError::Instances { entity, level, count },
+        }
+    }
 }
 
 /// The one instance of the attribute `name` of `attributes`.
-fn single<'a>(attributes: &'a Attributes<Output>, name: &str) -> Result<&'a Attribute<Output>, SystemTimeError> {
+fn single<'a>(attributes: &'a Attributes<Output>, name: &str) -> Result<&'a Attribute<Output>, LevelShortfall> {
     let instances = attributes
         .iter()
         .find_map(|(candidate, instances)| (candidate.to_string() == name).then_some(instances))
-        .ok_or_else(|| SystemTimeError::NoAttribute(name.to_owned()))?;
+        .ok_or(LevelShortfall::Absent)?;
     if instances.len() == 1 {
         Ok(instances.first())
     } else {
-        Err(SystemTimeError::Instances(name.to_owned(), instances.len()))
+        Err(LevelShortfall::Several(instances.len()))
     }
 }
 

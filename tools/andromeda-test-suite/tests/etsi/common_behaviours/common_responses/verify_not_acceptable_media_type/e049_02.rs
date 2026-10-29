@@ -12,6 +12,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
+use ngsi_ld::model::APPLICATION_JSON;
 
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header is
 /// "application/geo+json" for operations different than "Retrieve Entity" and "Query Entity" (get
@@ -25,7 +26,7 @@ async fn e049_02_01_retrieve_subscription_by_id() -> Result<()> {
     let broker = broker::front()?;
     let id = namespace.urn_text("Subscription", 1);
     let request = request_to(&broker, Method::GET, &format!("subscriptions/{id}"))?;
-    let request = content_type(request, "application/json").append_header(ACCEPT, HeaderValue::from_static("application/geo+json"));
+    let request = content_type(request, &APPLICATION_JSON)?.append_header(ACCEPT, HeaderValue::from_static("application/geo+json"));
     expect_that!(&broker.send_unchecked(request).await, answered(StatusCode::NOT_ACCEPTABLE));
     Ok(())
 }

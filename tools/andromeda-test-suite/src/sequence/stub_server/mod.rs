@@ -40,8 +40,8 @@ pub enum StubServerError {
     #[error(transparent)]
     Callback(#[from] CallbackError),
     /// A stub or pattern is not the JSON of one.
-    #[error("{0} is not a stub mapping or request pattern: {1}")]
-    Shape(String, String),
+    #[error("a stub mapping or request pattern is not the JSON of one: {0}")]
+    Shape(#[source] serde_json::Error),
     /// A stub cannot answer.
     #[error(transparent)]
     Stub(#[from] StubError),
@@ -178,10 +178,10 @@ impl StubServer {
     ///
     /// Returns [`StubServerError`] when `mapping` is not a stub the server can answer with.
     pub fn set(&self, mapping: &str) -> Result<(u16, String), StubServerError> {
-        let parsed = serde_json::from_str::<StubMapping>(mapping).map_err(|error| StubServerError::Shape(mapping.to_owned(), error.to_string()))?;
+        let parsed = serde_json::from_str::<StubMapping>(mapping).map_err(StubServerError::Shape)?;
         parsed.validate()?;
         let id = Uuid::new_v4();
-        let mut answer = serde_json::from_str::<Map<String, Json>>(mapping).map_err(|error| StubServerError::Shape(mapping.to_owned(), error.to_string()))?;
+        let mut answer = serde_json::from_str::<Map<String, Json>>(mapping).map_err(StubServerError::Shape)?;
         answer.insert("id".to_owned(), Json::String(id.to_string()));
         answer.insert("uuid".to_owned(), Json::String(id.to_string()));
         self.stubs
@@ -207,10 +207,9 @@ impl StubServer {
     ///
     /// Returns [`StubServerError`] when `pattern` is not a metadata pattern.
     pub fn remove_by_metadata(&self, pattern: &str) -> Result<u16, StubServerError> {
-        let parsed = serde_json::from_str::<MetadataPattern>(pattern).map_err(|error| StubServerError::Shape(pattern.to_owned(), error.to_string()))?;
+        let parsed = serde_json::from_str::<MetadataPattern>(pattern).map_err(StubServerError::Shape)?;
         let selection = parsed.matches_json_path;
-        let path = JsonPath::parse(&selection.expression)
-            .map_err(|error| StubServerError::Pattern(PatternError::JsonPath(selection.expression.clone(), error.to_string())))?;
+        let path = JsonPath::parse(&selection.expression).map_err(|error| StubServerError::Pattern(PatternError::JsonPath(error)))?;
         let expected = Json::String(selection.equal_to);
         self.stubs
             .write()
@@ -244,7 +243,7 @@ impl StubServer {
 
     /// The requests received that match `pattern`, oldest first.
     async fn matching(&self, pattern: &str) -> Result<Vec<Request>, StubServerError> {
-        let parsed = serde_json::from_str::<RequestPattern>(pattern).map_err(|error| StubServerError::Shape(pattern.to_owned(), error.to_string()))?;
+        let parsed = serde_json::from_str::<RequestPattern>(pattern).map_err(StubServerError::Shape)?;
         let mut matching = Vec::new();
         for request in self.server.received().await? {
             if parsed.matches(&request)? {

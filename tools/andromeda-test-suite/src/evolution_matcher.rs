@@ -10,8 +10,8 @@ use googletest::{
     description::Description,
     matcher::{Matcher, MatcherBase, MatcherResult},
 };
-use ngsi_ld::model::{Attribute, InstanceId, Output, evolution::TemporalEntity};
-use std::fmt::Debug;
+use ngsi_ld::model::{Attribute, AttributeName, InstanceId, Output, evolution::TemporalEntity};
+use std::fmt::{self, Debug};
 
 /// The instances of the evolution `name` of `entity`, in the answer's order.
 pub(crate) fn instances<'e>(entity: &'e TemporalEntity<Output>, name: &str) -> Option<&'e [Attribute<Output>]> {
@@ -21,14 +21,33 @@ pub(crate) fn instances<'e>(entity: &'e TemporalEntity<Output>, name: &str) -> O
         .find_map(|(candidate, evolution)| (candidate.to_string() == name).then(|| evolution.as_slice()))
 }
 
+/// Which instance of an evolution a test names.
+#[derive(Debug)]
+pub enum InstanceChoice<M> {
+    /// The first instance meeting the matcher.
+    Meeting(M),
+    /// The instance at this position, from 0.
+    At(usize),
+}
+
+// Hand-written: a matcher is named by its `Debug` form, which googletest matchers all carry.
+impl<M: Debug> fmt::Display for InstanceChoice<M> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstanceChoice::Meeting(matcher) => write!(formatter, "meeting {matcher:?}"),
+            InstanceChoice::At(index) => write!(formatter, "at {index}"),
+        }
+    }
+}
+
 /// The temporal entity holds no instance the test names.
 #[derive(Debug, thiserror::Error)]
 #[error("the evolution of {name} holds no instance {which} carrying an instanceId")]
-pub struct InstanceNotFound {
+pub struct InstanceNotFound<M: Debug> {
     /// The attribute name.
-    name: String,
+    name: AttributeName,
     /// Which instance was looked for.
-    which: String,
+    which: InstanceChoice<M>,
 }
 
 /// The `instanceId` of the first instance of the evolution `name` meeting `matcher` (clause 4.5.7).
@@ -38,15 +57,16 @@ pub struct InstanceNotFound {
 /// Returns [`InstanceNotFound`] when no instance meets it or the one that does carries no `instanceId`.
 pub fn instance_id_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
     entity: &TemporalEntity<Output>,
-    name: &str,
+    name: &AttributeName,
     matcher: M,
-) -> Result<InstanceId, InstanceNotFound> {
-    instances(entity, name)
+) -> Result<InstanceId, InstanceNotFound<M>> {
+    instances(entity, name.as_ref())
         .and_then(|found| found.iter().find(|instance| matcher.matches(instance).is_match()))
         .and_then(|instance| instance.meta().output.instance_id.clone())
         .ok_or_else(|| InstanceNotFound {
-            name: name.to_owned(),
-            which: format!("meeting {matcher:?}"),
+            // clone: the error names the attribute the caller keeps
+            name: name.clone(),
+            which: InstanceChoice::Meeting(matcher),
         })
 }
 
@@ -55,13 +75,14 @@ pub fn instance_id_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
 /// # Errors
 ///
 /// Returns [`InstanceNotFound`] when there is no such instance or it carries no `instanceId`.
-pub fn instance_id_at(entity: &TemporalEntity<Output>, name: &str, index: usize) -> Result<InstanceId, InstanceNotFound> {
-    instances(entity, name)
+pub fn instance_id_at(entity: &TemporalEntity<Output>, name: &AttributeName, index: usize) -> Result<InstanceId, InstanceNotFound<()>> {
+    instances(entity, name.as_ref())
         .and_then(|found| found.get(index))
         .and_then(|instance| instance.meta().output.instance_id.clone())
         .ok_or_else(|| InstanceNotFound {
-            name: name.to_owned(),
-            which: format!("at {index}"),
+            // clone: the error names the attribute the caller keeps
+            name: name.clone(),
+            which: InstanceChoice::At(index),
         })
 }
 

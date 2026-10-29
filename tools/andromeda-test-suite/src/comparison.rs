@@ -20,15 +20,22 @@
 //! DeepDiff ignores how often an item repeats; the comparison counts every item, which is stricter for an answer
 //! that repeats one.
 
-use crate::ngsild_date::same_instant;
-use chrono::DateTime;
+pub mod difference;
+pub mod document_path;
+mod leaf_value;
+
+use crate::comparison::{
+    difference::{Difference, Discrepancy},
+    document_path::DocumentPath,
+    leaf_value::{compare_numbers, compare_observed_at, compare_system_timestamp},
+};
 use googletest::{
     description::Description,
     matcher::{Matcher, MatcherBase, MatcherResult},
 };
 use regex::Regex;
-use serde_json::{Map, Number, Value};
-use std::{collections::BTreeSet, fmt, sync::LazyLock};
+use serde_json::{Map, Value};
+use std::{collections::BTreeSet, sync::LazyLock};
 
 /// The versioned NGSI-LD core `@context`s, any of which the AnyCoreContextVersion operator accepts.
 static CORE_CONTEXT: LazyLock<Result<Regex, regex::Error>> =
@@ -59,21 +66,6 @@ pub struct Expectation {
     hidden_everywhere: BTreeSet<String>,
     /// How `@context` compares.
     context: ContextRule,
-}
-
-/// One way the answer departs from the expectation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Difference {
-    /// Where, as a JSON path from the compared root.
-    pub path: String,
-    /// What differs.
-    pub message: String,
-}
-
-impl fmt::Display for Difference {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.path, self.message)
-    }
 }
 
 /// How two values are compared: as DeepDiff diffs two members, or as its hash pairs two items of a list.
@@ -115,8 +107,8 @@ impl Expectation {
     }
 
     /// Whether member `name` of the object at `path` is hidden; the root is the object at `$`.
-    fn hides(&self, path: &str, name: &str) -> bool {
-        self.hidden_everywhere.contains(name) || (path != "$" && self.hidden_below_root.contains(name))
+    fn hides(&self, path: &DocumentPath, name: &str) -> bool {
+        self.hidden_everywhere.contains(name) || (!path.is_root() && self.hidden_below_root.contains(name))
     }
 
     /// Compares `@context` under `rule`.
@@ -130,12 +122,12 @@ impl Expectation {
     #[must_use]
     pub fn differences(&self, actual: &Value) -> Vec<Difference> {
         let mut differences = Vec::new();
-        self.compare("$", None, actual, &self.expected, Mode::Diff, &mut differences);
+        self.compare(&DocumentPath::default(), None, actual, &self.expected, Mode::Diff, &mut differences);
         differences
     }
 
     /// Compares `actual` with `expected` at `path`, the value of member `key` when it is one.
-    fn compare(&self, path: &str, key: Option<&str>, actual: &Value, expected: &Value, mode: Mode, out: &mut Vec<Difference>) {
+    fn compare(&self, path: &DocumentPath, key: Option<&str>, actual: &Value, expected: &Value, mode: Mode, out: &mut Vec<Difference>) {
         match (key, mode) {
             (Some("observedAt"), Mode::Diff) => compare_observed_at(path, actual, expected, out),
             (Some(name), Mode::Diff) if SYSTEM_TIMESTAMPS.contains(&name) => compare_system_timestamp(path, actual, out),
@@ -145,37 +137,49 @@ impl Expectation {
     }
 
     /// Compares two values by their JSON kind.
-    fn compare_value(&self, path: &str, actual: &Value, expected: &Value, mode: Mode, out: &mut Vec<Difference>) {
+    fn compare_value(&self, path: &DocumentPath, actual: &Value, expected: &Value, mode: Mode, out: &mut Vec<Difference>) {
         match (actual, expected) {
             (Value::Object(actual), Value::Object(expected)) => self.compare_objects(path, actual, expected, mode, out),
             (Value::Array(actual), Value::Array(expected)) => self.compare_lists(path, actual, expected, mode, out),
             (Value::Number(actual), Value::Number(expected)) => compare_numbers(path, actual, expected, mode, out),
             (actual, expected) if actual == expected => {}
-            (actual, expected) => out.push(difference(path, format!("is {actual}, expected {expected}"))),
+            (actual, expected) => out.push(Difference::at(
+                path,
+                Discrepancy::Unequal {
+                    actual: actual.clone(), // clone: the difference owns the values it reports
+                    expected: expected.clone(),
+                },
+            )),
         }
     }
 
     /// Compares two objects member by member.
-    fn compare_objects(&self, path: &str, actual: &Map<String, Value>, expected: &Map<String, Value>, mode: Mode, out: &mut Vec<Difference>) {
+    fn compare_objects(&self, path: &DocumentPath, actual: &Map<String, Value>, expected: &Map<String, Value>, mode: Mode, out: &mut Vec<Difference>) {
         for (name, expected) in expected.iter().filter(|(name, _)| !self.hides(path, name)) {
-            let member = member_path(path, name);
+            let member = path.member(name);
             match actual.get(name) {
                 Some(actual) => self.compare(&member, Some(name), actual, expected, mode, out),
-                None => out.push(difference(&member, format!("is missing, expected {expected}"))),
+                None => out.push(Difference::at(&member, Discrepancy::Missing(expected.clone()))), // clone: the difference owns the values it reports
             }
         }
         out.extend(
             actual
                 .iter()
                 .filter(|(name, _)| !expected.contains_key(*name) && !self.hides(path, name))
-                .map(|(name, value)| difference(&member_path(path, name), format!("is unexpected, holding {value}"))),
+                .map(|(name, value)| Difference::at(&path.member(name), Discrepancy::Unexpected(value.clone()))), // clone: the difference owns the values it reports
         );
     }
 
     /// Compares two lists regardless of order.
-    fn compare_lists(&self, path: &str, actual: &[Value], expected: &[Value], mode: Mode, out: &mut Vec<Difference>) {
+    fn compare_lists(&self, path: &DocumentPath, actual: &[Value], expected: &[Value], mode: Mode, out: &mut Vec<Difference>) {
         if actual.len() != expected.len() {
-            out.push(difference(path, format!("holds {} items, expected {}", actual.len(), expected.len())));
+            out.push(Difference::at(
+                path,
+                Discrepancy::Length {
+                    actual: actual.len(),
+                    expected: expected.len(),
+                },
+            ));
             return;
         }
         match (ids(actual), ids(expected), mode) {
@@ -189,39 +193,39 @@ impl Expectation {
     /// element as a member.
     fn compare_by_id(
         &self,
-        path: &str,
+        path: &DocumentPath,
         (actual, actual_ids): (&[Value], &[&str]),
         (expected, expected_ids): (&[Value], &[&str]),
         mode: Mode,
         out: &mut Vec<Difference>,
     ) {
         for (expected, id) in expected.iter().zip(expected_ids) {
-            let item = format!("{path}[?(@.id=='{id}')]");
+            let item = path.item_with_id(id);
             match actual_ids.iter().position(|actual_id| actual_id == id) {
                 Some(index) => self.compare(&item, None, &actual[index], expected, mode, out),
-                None => out.push(difference(&item, "is missing".to_owned())),
+                None => out.push(Difference::at(&item, Discrepancy::MissingItem)),
             }
         }
     }
 
     /// Pairs the items of two lists inside a hashed item: every expected item with a distinct hash-equal one.
-    fn compare_by_hash(&self, path: &str, actual: &[Value], expected: &[Value], out: &mut Vec<Difference>) {
-        let item = format!("{path}[*]");
+    fn compare_by_hash(&self, path: &DocumentPath, actual: &[Value], expected: &[Value], out: &mut Vec<Difference>) {
+        let item = path.any_item();
         let partner = self.pairing(&item, &actual.iter().collect::<Vec<_>>(), &expected.iter().collect::<Vec<_>>(), Mode::Hash);
         out.extend(
             expected
                 .iter()
                 .zip(&partner)
                 .filter(|(_, paired)| paired.is_none())
-                .map(|(value, _)| difference(&item, format!("holds no item agreeing with {value}"))),
+                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference owns the values it reports
         );
     }
 
     /// Pairs the items of two lists as DeepDiff does with `ignore_order`: items with equal hashes first; then, while
     /// few items are left (`cutoff_intersection_for_pairs`, 0.7 of both lists), each left expected item with a
     /// distinct left actual item it agrees with member by member.
-    fn compare_by_pairing(&self, path: &str, actual: &[Value], expected: &[Value], out: &mut Vec<Difference>) {
-        let item = format!("{path}[*]");
+    fn compare_by_pairing(&self, path: &DocumentPath, actual: &[Value], expected: &[Value], out: &mut Vec<Difference>) {
+        let item = path.any_item();
         let hashed = self.pairing(&item, &actual.iter().collect::<Vec<_>>(), &expected.iter().collect::<Vec<_>>(), Mode::Hash);
         let left_expected = hashed
             .iter()
@@ -235,10 +239,7 @@ impl Expectation {
             return;
         }
         if 20 * left_expected.len() > 7 * (2 * expected.len() + 1) {
-            out.push(difference(
-                path,
-                format!("holds {} items no expected item hash-pairs, more than DeepDiff pairs", left_expected.len()),
-            ));
+            out.push(Difference::at(path, Discrepancy::BeyondPairingCutoff(left_expected.len())));
             out.extend(
                 left_expected
                     .iter()
@@ -254,13 +255,13 @@ impl Expectation {
                 .iter()
                 .zip(&diffed)
                 .filter(|(_, paired)| paired.is_none())
-                .map(|(value, _)| difference(&item, format!("holds no item agreeing with {value}"))),
+                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference owns the values it reports
         );
     }
 
     /// The member differences between `expected` and the item among `candidates` (indexes into `actual`) it differs
     /// from least, to show what a list that DeepDiff refuses to pair differs in.
-    fn closest_differences(&self, item: &str, candidates: &[usize], actual: &[Value], expected: &Value) -> Vec<Difference> {
+    fn closest_differences(&self, item: &DocumentPath, candidates: &[usize], actual: &[Value], expected: &Value) -> Vec<Difference> {
         candidates
             .iter()
             .map(|index| {
@@ -273,7 +274,7 @@ impl Expectation {
     }
 
     /// The actual item paired with each expected item, under `mode`, along augmenting paths (Kuhn's algorithm).
-    fn pairing(&self, item: &str, actual: &[&Value], expected: &[&Value], mode: Mode) -> Vec<Option<usize>> {
+    fn pairing(&self, item: &DocumentPath, actual: &[&Value], expected: &[&Value], mode: Mode) -> Vec<Option<usize>> {
         let agrees = expected
             .iter()
             .map(|expected| actual.iter().map(|actual| self.agrees(item, actual, expected, mode)).collect::<Vec<_>>())
@@ -293,14 +294,14 @@ impl Expectation {
     }
 
     /// Whether `actual` agrees with `expected` under `mode`, as an item of a list at `item`.
-    fn agrees(&self, item: &str, actual: &Value, expected: &Value, mode: Mode) -> bool {
+    fn agrees(&self, item: &DocumentPath, actual: &Value, expected: &Value, mode: Mode) -> bool {
         let mut differences = Vec::new();
         self.compare(item, None, actual, expected, mode, &mut differences);
         differences.is_empty()
     }
 
     /// Compares an `@context` under the expectation's rule.
-    fn compare_context(&self, path: &str, actual: &Value, expected: &Value, out: &mut Vec<Difference>) {
+    fn compare_context(&self, path: &DocumentPath, actual: &Value, expected: &Value, out: &mut Vec<Difference>) {
         let accepted = match self.context {
             ContextRule::StringOrSingleList => single(actual).zip(single(expected)).is_some_and(|(actual, expected)| actual == expected),
             ContextRule::AnyCoreContextVersion => single(actual).is_some_and(|actual| CORE_CONTEXT.as_ref().is_ok_and(|core| core.is_match(actual))),
@@ -308,39 +309,6 @@ impl Expectation {
         if !accepted {
             self.compare_value(path, actual, expected, Mode::Diff, out);
         }
-    }
-}
-
-/// Compares an `observedAt` as an instant.
-fn compare_observed_at(path: &str, actual: &Value, expected: &Value, out: &mut Vec<Difference>) {
-    match (actual, expected) {
-        (Value::String(actual), Value::String(expected)) if same_instant(actual, expected) => {}
-        (actual, expected) => out.push(difference(path, format!("is {actual}, expected the instant {expected}"))),
-    }
-}
-
-/// Requires a system timestamp to be a well-formed date.
-fn compare_system_timestamp(path: &str, actual: &Value, out: &mut Vec<Difference>) {
-    if actual.as_str().is_none_or(|text| DateTime::parse_from_rfc3339(text).is_err()) {
-        out.push(difference(path, format!("is {actual}, expected a well-formed date")));
-    }
-}
-
-/// Compares two numbers: by value and kind in a diff, by value in a hash.
-fn compare_numbers(path: &str, actual: &Number, expected: &Number, mode: Mode, out: &mut Vec<Difference>) {
-    let same_value = match (actual.as_i64(), expected.as_i64(), actual.as_u64(), expected.as_u64()) {
-        (Some(actual), Some(expected), _, _) => actual == expected,
-        (_, _, Some(actual), Some(expected)) => actual == expected,
-        _ => actual
-            .as_f64()
-            .zip(expected.as_f64())
-            .is_some_and(|(actual, expected)| actual.total_cmp(&expected).is_eq()),
-    };
-    let same_kind = actual.is_f64() == expected.is_f64();
-    match (same_value, same_kind, mode) {
-        (true, true, _) | (true, false, Mode::Hash) => {}
-        (true, false, Mode::Diff) => out.push(difference(path, format!("is {actual}, expected {expected} of the other number type"))),
-        (false, _, _) => out.push(difference(path, format!("is {actual}, expected {expected}"))),
     }
 }
 
@@ -373,19 +341,6 @@ fn augment(item: usize, agrees: &[Vec<bool>], partner: &mut [Option<usize>], vis
         }
     }
     false
-}
-
-/// The path of member `name` of the object at `path`.
-fn member_path(path: &str, name: &str) -> String {
-    format!("{path}['{name}']")
-}
-
-/// A difference at `path`.
-fn difference(path: &str, message: String) -> Difference {
-    Difference {
-        path: path.to_owned(),
-        message,
-    }
 }
 
 impl Matcher<&Value> for Expectation {

@@ -17,7 +17,7 @@ use googletest::prelude::*;
 use http::header::LINK;
 use ngsi_ld::{
     http::{ContextDelivery, operation::RegisterContextSource},
-    model::ErrorType,
+    model::{APPLICATION_JSON, ErrorType},
 };
 
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
@@ -44,5 +44,5 @@ async fn e033_06_01_payload_context_with_json_content_type() -> Result<()> {
         .with_context_delivery(ContextDelivery::LdJsonBody);
     let _registration = Cleanup::of(&client).registration_of(&registration);
     let request = client.unchecked(&RegisterContextSource { registration: &registration })?.remove_header(&LINK);
-    refused(&broker, content_type(request, "application/json"), ErrorType::BadRequestData).await
+    refused(&broker, content_type(request, &APPLICATION_JSON)?, ErrorType::BadRequestData).await
 }

@@ -10,57 +10,62 @@
 
 pub mod answer;
 pub mod body;
+pub mod body_rendering;
+mod body_spelling;
+mod created_resources;
 pub mod expect;
 pub mod mqtt_relay;
 pub mod parameters;
 pub mod payload;
 pub mod peer_certificate;
+pub mod placeholder_name;
 pub mod predicate;
 pub mod queried;
 pub mod query;
+pub mod query_error;
 pub mod request;
+pub mod sequence_error;
 pub mod stub_server;
+mod transports;
 pub mod variables;
 pub mod written_json;
 
 use crate::{
-    broker::{self, BrokerError, SuiteTransport},
-    cleanup::{Cleanup, Removal},
-    config::{BrokerRole, Budget, ConfigError, SuiteConfig},
+    broker::{self, SuiteTransport},
+    cleanup::Cleanup,
+    config::{BrokerRole, Budget, SuiteConfig},
     eventually::delivery_deadline,
     exchange_log::ExchangeLog,
     namespace::Namespace,
     sequence::{
         answer::Answer,
-        body::{BodyError, BodyKind},
-        expect::{Expect, Verdict},
-        mqtt_relay::{MqttRelay, RelayError},
-        parameters::{ParameterRefusal, check},
+        body::BodyKind,
+        expect::Expect,
+        mqtt_relay::MqttRelay,
+        parameters::check,
         peer_certificate::PeerCertificate,
-        request::{Action, Connection, HttpRequest, HttpVersion, Parameters, Request},
-        stub_server::{StubServer, StubServerError},
-        variables::{TemplateError, Variables},
+        request::{Action, Connection, HttpRequest, Parameters, Request},
+        sequence_error::SequenceError,
+        stub_server::StubServer,
+        transports::{client_builder, resolve},
+        variables::Variables,
     },
 };
 use bytes::Bytes;
 use http::{
-    HeaderMap,
     HeaderName,
     HeaderValue,
     Method,
     Request as HttpMessage,
     StatusCode,
     Uri,
-    header::{ACCEPT, CONTENT_TYPE, LOCATION},
+    header::{ACCEPT, CONTENT_TYPE},
 };
 use ngsi_ld::client::{ReqwestTransport, Transport};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
-use reqwest::{Certificate, Identity, redirect::Policy, tls::TlsInfo};
-use std::{fs, net::SocketAddr, time::Duration};
-use tokio::{
-    net::lookup_host,
-    time::{Instant, sleep},
-};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use reqwest::tls::TlsInfo;
+use std::{net::SocketAddr, time::Duration};
+use tokio::time::{Instant, sleep};
 use url::Url;
 
 /// The characters a query parameter keeps as they are: the unreserved characters of RFC 3986.
@@ -70,94 +75,7 @@ const QUERY_KEPT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove
 const TENANT: &str = "NGSILD-Tenant";
 
 /// The longest a request may take: beyond every forward timeout a broker waits out before answering.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// Why a sequence stopped.
-#[derive(Debug, thiserror::Error)]
-pub enum SequenceError {
-    /// The stack's configuration lacks a value the sequence needs.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    /// The HTTP client cannot be built.
-    #[error("the HTTP client cannot be built")]
-    Http(#[source] reqwest::Error),
-    /// The client a request names cannot be built: its authority or identity cannot be read.
-    #[error("request {step}: the client cannot be built: {reason}")]
-    Connection {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        reason: String,
-    },
-    /// The stub server failed.
-    #[error(transparent)]
-    Stubs(#[from] StubServerError),
-    /// A template cannot be filled.
-    #[error("request {step}: {source}")]
-    Template {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        #[source]
-        source: TemplateError,
-    },
-    /// A body cannot be sent.
-    #[error("request {step}: {source}")]
-    Body {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        #[source]
-        source: BodyError,
-    },
-    /// The query parameters are refused by their typed model.
-    #[error("request {step}: {source}")]
-    Parameters {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        #[source]
-        source: ParameterRefusal,
-    },
-    /// The request is not an HTTP request.
-    #[error("request {step}: {reason}")]
-    Malformed {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        reason: String,
-    },
-    /// The request could not be sent or its answer read.
-    #[error("request {step}: the exchange failed: {reason}")]
-    Transport {
-        /// The request, counted from 1.
-        step: usize,
-        /// Why.
-        reason: String,
-    },
-    /// A host the stack connects a URL's host to cannot be resolved.
-    #[error("the host {host} cannot be resolved: {reason}")]
-    Resolve {
-        /// The host.
-        host: String,
-        /// Why.
-        reason: String,
-    },
-    /// The private tenant could not be brought up.
-    #[error(transparent)]
-    Tenant(#[from] BrokerError),
-    /// The MQTT relay could not start.
-    #[error(transparent)]
-    Relay(#[from] RelayError),
-    /// The answer did not meet its expectation.
-    #[error("request {step}: the answer does not meet its expectation:\n  {}", failures.join("\n  "))]
-    Unmet {
-        /// The request, counted from 1.
-        step: usize,
-        /// Every unmet requirement.
-        failures: Vec<String>,
-    },
-}
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The requests of one test.
 #[derive(Debug)]
@@ -290,7 +208,7 @@ impl Sequence {
     pub async fn relay_mqtt(&mut self) -> Result<(), SequenceError> {
         let config = SuiteConfig::get().map_err(|error| SequenceError::Config(error.clone()))?;
         let mqtt = config.mqtt()?;
-        let hosts = [mqtt.host().to_string(), mqtt.auth_host().to_string()];
+        let hosts = [mqtt.host(), mqtt.auth_host()];
         let namespace = self.fill("{{ns}}")?;
         let local = self.stubs.local()?;
         self.relay = Some(MqttRelay::start(&hosts, mqtt.observer_port(), &namespace, &local).await?);
@@ -338,11 +256,11 @@ impl Sequence {
 
     /// Whether `answer` meets `expect`.
     fn judge(&mut self, answer: &Answer, expect: &Expect) -> Result<(), SequenceError> {
-        let Verdict { failures, .. } = expect.verdict(answer, &mut self.variables);
-        if failures.is_empty() {
+        let verdict = expect.verdict(answer, &mut self.variables);
+        if verdict.failures.is_empty() {
             Ok(())
         } else {
-            Err(SequenceError::Unmet { step: self.step, failures })
+            Err(SequenceError::Unmet { step: self.step, verdict })
         }
     }
 
@@ -375,41 +293,6 @@ impl Sequence {
         })
     }
 
-    /// Records for deletion the registration or subscription a create answered with `headers` made, when `url` is
-    /// one of the broker's registration or subscription collections.
-    fn remember(&mut self, url: &str, tenant: Option<String>, headers: &HeaderMap) {
-        let Ok(broker) = self.fill("{{broker}}") else { return };
-        let Some(collection) = url.strip_prefix(&broker).map(|path| path.split('?').next().unwrap_or_default()) else {
-            return;
-        };
-        let Some(id) = headers
-            .get(LOCATION)
-            .and_then(|location| location.to_str().ok())
-            .and_then(|location| location.rsplit('/').next())
-            .map(|id| percent_decode_str(id).decode_utf8_lossy().into_owned())
-        else {
-            return;
-        };
-        let removal = match collection {
-            "/ngsi-ld/v1/csourceRegistrations" => id.parse().ok().map(Removal::Registration),
-            "/ngsi-ld/v1/subscriptions" => id.parse().ok().map(Removal::Subscription),
-            "/ngsi-ld/v1/csourceSubscriptions" => id.parse().ok().map(Removal::RegistrationSubscription),
-            _ => None,
-        };
-        let Some(removal) = removal else { return };
-        if let Some((_, cleanup)) = self.cleanups.iter_mut().find(|(owner, _)| *owner == tenant) {
-            cleanup.remove(removal);
-            return;
-        }
-        let Ok(client) = broker::front() else { return };
-        let client = match tenant.as_deref().map(str::parse) {
-            Some(Ok(named)) => client.with_tenant(named),
-            Some(Err(_)) => return,
-            None => client,
-        };
-        self.cleanups.push((tenant, Cleanup::of(&client).removing(removal)));
-    }
-
     /// Sends the HTTP `request` and reads its answer.
     async fn exchange(&mut self, request: &HttpRequest) -> Result<Answer, SequenceError> {
         let step = self.step;
@@ -430,10 +313,7 @@ impl Sequence {
             url.push(if url.contains('?') { '&' } else { '?' });
             url.push_str(&query);
         }
-        let uri = url.parse::<Uri>().map_err(|error| SequenceError::Malformed {
-            step,
-            reason: format!("{url} is not a URI: {error}"),
-        })?;
+        let uri = url.parse::<Uri>().map_err(|source| SequenceError::Target { step, source })?;
         if request.parameters == Parameters::Typed
             && let Some(sent) = uri.query()
         {
@@ -459,27 +339,18 @@ impl Sequence {
         }
         let message = message
             .body(body.map_or_else(Bytes::new, |(text, _)| Bytes::from(text)))
-            .map_err(|error| SequenceError::Malformed {
-                step,
-                reason: error.to_string(),
-            })?;
+            .map_err(|source| SequenceError::Malformed { step, source })?;
         let tenant = message.headers().get(TENANT).and_then(|value| value.to_str().ok()).map(str::to_owned);
         let started = Instant::now();
         let transport = self.transport(&request.connection)?;
-        let response = transport.send(message).await.map_err(|error| SequenceError::Transport {
-            step,
-            reason: error.to_string(),
-        })?;
+        let response = transport.send(message).await.map_err(|source| SequenceError::Transport { step, source })?;
         let certificate = response
             .extensions()
             .get::<TlsInfo>()
             .and_then(TlsInfo::peer_certificate)
             .map(PeerCertificate::from_der)
             .transpose()
-            .map_err(|error| SequenceError::Transport {
-                step,
-                reason: error.to_string(),
-            })?;
+            .map_err(|source| SequenceError::Certificate { step, source })?;
         if request.method == Method::POST && response.status() == StatusCode::CREATED {
             self.remember(&url, tenant, response.headers());
         }
@@ -493,81 +364,4 @@ impl Sequence {
             certificate,
         })
     }
-
-    /// The transport of `connection`, built the first time a request names it.
-    fn transport(&mut self, connection: &Connection) -> Result<&SuiteTransport, SequenceError> {
-        if !self.transports.iter().any(|(known, _)| known == connection) {
-            let transport = self.connect(connection)?;
-            // The connection is kept as the key the later requests naming it find their transport by.
-            self.transports.push((connection.clone(), transport));
-        }
-        let step = self.step;
-        self.transports
-            .iter()
-            .find(|(known, _)| known == connection)
-            .map(|(_, transport)| transport)
-            .ok_or_else(|| SequenceError::Connection {
-                step,
-                reason: "the transport is gone".to_owned(),
-            })
-    }
-
-    /// A transport for `connection`, printing into the test's exchange log.
-    fn connect(&self, connection: &Connection) -> Result<SuiteTransport, SequenceError> {
-        let step = self.step;
-        let failed = |reason: String| SequenceError::Connection { step, reason };
-        let read = |template: &str| -> Result<Vec<u8>, SequenceError> {
-            let path = self.fill(template)?;
-            fs::read(&path).map_err(|error| failed(format!("{path}: {error}")))
-        };
-        let mut builder = client_builder(&self.resolved);
-        if let Some(authority) = &connection.authority {
-            let certificate = Certificate::from_pem(&read(authority)?).map_err(|error| failed(error.to_string()))?;
-            builder = builder.add_root_certificate(certificate);
-        }
-        if let Some((certificate, key)) = &connection.identity {
-            let mut pem = read(certificate)?;
-            pem.extend(read(key)?);
-            builder = builder.identity(Identity::from_pem(&pem).map_err(|error| failed(error.to_string()))?);
-        }
-        builder = match connection.version {
-            HttpVersion::Negotiated | HttpVersion::Http2 => builder,
-            HttpVersion::Http11 => builder.http1_only(),
-        };
-        let http = builder.build().map_err(|error| failed(error.to_string()))?;
-        let first = self
-            .transports
-            .first()
-            .map(|(_, transport)| transport)
-            .ok_or_else(|| failed("the sequence has no transport".to_owned()))?;
-        Ok(first.beside(ReqwestTransport::new(http)))
-    }
-}
-
-/// The client every connection starts from: no redirects followed, no proxy, the request timeout, the TLS
-/// session's peer certificate kept for the checks that read it, and each host of `resolved` connected to at its
-/// addresses.
-fn client_builder(resolved: &[(String, Vec<SocketAddr>)]) -> reqwest::ClientBuilder {
-    resolved.iter().fold(
-        reqwest::Client::builder()
-            .redirect(Policy::none())
-            .no_proxy()
-            .timeout(REQUEST_TIMEOUT)
-            .tls_info(true),
-        |builder, (name, addresses)| builder.resolve_to_addrs(name, addresses),
-    )
-}
-
-/// The addresses of each host the stack connects a URL's host to.
-async fn resolve(config: &SuiteConfig) -> Result<Vec<(String, Vec<SocketAddr>)>, SequenceError> {
-    let mut resolved = Vec::new();
-    for (name, target) in config.connect_to() {
-        let target = target.host().to_string();
-        let addresses = lookup_host((target.as_str(), 0)).await.map_err(|error| SequenceError::Resolve {
-            host: target.clone(),
-            reason: error.to_string(),
-        })?;
-        resolved.push((name.host().to_string(), addresses.collect()));
-    }
-    Ok(resolved)
 }

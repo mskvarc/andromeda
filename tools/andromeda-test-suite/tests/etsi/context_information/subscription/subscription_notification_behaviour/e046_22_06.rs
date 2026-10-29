@@ -47,7 +47,7 @@ async fn e046_22_06_check_that_a_notification_is_sent_with_matching_entity() -> 
                         "datasetId": namespace.urn_text("Dataset", "german-name"),
                         "value": "Eiffelturm",
                     },
-                    {"type": "Property", "datasetId": french.to_string(), "value": NGSI_LD_NULL},
+                    {"type": "Property", "datasetId": french.to_string(), "value": NGSI_LD_NULL.as_str()},
                 ],
                 "locatedAt": [
                     {"type": "Relationship", "object": namespace.urn_text("City", "Paris")},

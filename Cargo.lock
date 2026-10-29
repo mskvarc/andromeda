@@ -2304,6 +2304,7 @@ dependencies = [
  "http",
  "indexmap 2.14.2",
  "iri-rs",
+ "mediatype",
  "ngsi-ld",
  "percent-encoding",
  "regex",

@@ -8,7 +8,10 @@ use crate::{
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary, wire::content_type};
 use googletest::prelude::*;
 use http::header::LINK;
-use ngsi_ld::{http::operation::CreateEntity, model::ErrorType};
+use ngsi_ld::{
+    http::operation::CreateEntity,
+    model::{APPLICATION_LD_JSON, ErrorType},
+};
 
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
 /// "application/ld+json" and a JSON-LD Link header is present in the incoming HTTP request
@@ -25,8 +28,8 @@ async fn e001_09_01_link_header_with_json_ld_content_type() -> Result<()> {
         client
             .unchecked(&CreateEntity::builder().entity(&entity).build())?
             .append_header(LINK, context_link(&vocabulary)?),
-        "application/ld+json",
-    );
+        &APPLICATION_LD_JSON,
+    )?;
     refused(&client, request, ErrorType::BadRequestData).await?;
     Ok(())
 }

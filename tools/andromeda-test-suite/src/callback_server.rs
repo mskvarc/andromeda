@@ -5,7 +5,7 @@
 //! unanswered, as a server that has not started yet does, until [`CallbackServer::start_serving`], which keeps the
 //! port and records nothing of what came before.
 
-use crate::config::{ConfigError, SuiteConfig};
+use crate::{config::SuiteConfig, config_error::ConfigError};
 use std::{
     io,
     net::{Ipv4Addr, SocketAddr, TcpListener},
@@ -23,9 +23,24 @@ pub enum CallbackError {
     /// The listening socket could not be opened.
     #[error("the callback server could not listen")]
     Listen(#[source] io::Error),
-    /// A URL of the server could not be built.
-    #[error("{0} is not a URL")]
-    Url(String, #[source] url::ParseError),
+    /// The base URL of the server listening on `port` could not be built.
+    #[error("the callback server on port {port} has no base URL")]
+    Url {
+        /// The port the server listens on.
+        port: u16,
+        /// Why the URL does not parse.
+        #[source]
+        source: url::ParseError,
+    },
+    /// A path does not join the base URL of the server.
+    #[error("a path does not join the callback server URL {base}")]
+    Join {
+        /// The base URL of the server.
+        base: Url,
+        /// Why the joined URL does not parse.
+        #[source]
+        source: url::ParseError,
+    },
     /// The server was used before it served.
     #[error("the callback server still refuses connections")]
     Refusing,
@@ -109,9 +124,13 @@ impl CallbackServer {
     ///
     /// # Errors
     ///
-    /// Returns [`CallbackError::Url`] when `path` breaks the URL.
+    /// Returns [`CallbackError::Join`] when `path` breaks the URL.
     pub fn url(&self, path: &str) -> Result<Url, CallbackError> {
-        self.base.join(path).map_err(|error| CallbackError::Url(path.to_owned(), error))
+        self.base.join(path).map_err(|source| CallbackError::Join {
+            // The error names the base it could not extend, which the server keeps.
+            base: self.base.clone(),
+            source,
+        })
     }
 
     /// The server, once it serves.
@@ -145,6 +164,6 @@ fn listen() -> Result<(TcpListener, Url), CallbackError> {
         Host::Ipv6(address) => format!("http://[{address}]:{port}/"),
         host @ (Host::Domain(_) | Host::Ipv4(_)) => format!("http://{host}:{port}/"),
     };
-    let base = Url::parse(&text).map_err(|error| CallbackError::Url(text, error))?;
+    let base = Url::parse(&text).map_err(|source| CallbackError::Url { port, source })?;
     Ok((listener, base))
 }

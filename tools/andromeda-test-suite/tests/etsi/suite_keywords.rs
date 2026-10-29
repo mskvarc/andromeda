@@ -66,6 +66,7 @@ use http::{
     header::{ACCEPT, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, LINK, LOCATION},
 };
 use iri_rs::{IriBuf, IriRefBuf};
+use mediatype::MediaType;
 use ngsi_ld::{
     client::{ClientError, Received, ReqwestError},
     http::{
@@ -94,6 +95,7 @@ use ngsi_ld::{
         },
     },
     model::{
+        APPLICATION_JSON,
         Attribute,
         AttributeKind,
         AttributeName,
@@ -131,9 +133,6 @@ use tokio::time::sleep;
 /// The `observedAt` the ETSI cases match for a whole second in UTC: `2020-09-09T16:40:00Z`, with at most six
 /// fractional zeros.
 pub(crate) const OBSERVED_AT_WHOLE_SECOND: &str = r"^2020-09-09T16:40:00(Z$|[.,](0{1,5}|0{6}\d*)Z)";
-
-/// The media type of the JSON-LD bodies and `Content-Type` fields the ETSI keywords send.
-pub(crate) const LD_JSON: &str = "application/ld+json";
 
 /// The `observedAt` text of the member `name` of `body`, when it is a string.
 pub(crate) fn observed_at<'a>(body: &'a Value, name: &str) -> Option<&'a str> {
@@ -711,7 +710,7 @@ pub(crate) async fn create_vehicle_parking_name_fuel(broker: &BrokerClient, name
 /// The answer is not checked: the cases that delete an attribute only read what the deletion left behind.
 pub(crate) async fn delete_attribute(client: &BrokerClient, id: &EntityId, name: &str) -> Result<()> {
     let deletion = request_to(client, Method::DELETE, &format!("entities/{id}/attrs/{name}?deleteAll=false"))?;
-    client.send_unchecked(content_type(deletion, "application/json")).await.any_answer();
+    client.send_unchecked(content_type(deletion, &APPLICATION_JSON)?).await.any_answer();
     Ok(())
 }
 
@@ -723,7 +722,7 @@ pub(crate) fn naming_delete_all_false<O: Operation>(client: &BrokerClient, opera
     let uri = request.as_request().uri();
     let separator = if uri.query().is_some() { '&' } else { '?' };
     let target: Uri = format!("{uri}{separator}deleteAll=false").parse()?;
-    Ok(content_type(request.uri(target), "application/json"))
+    Ok(content_type(request.uri(target), &APPLICATION_JSON)?)
 }
 
 /// `GET temporal/entities/<id>?options=temporalValues&timeproperty=deletedAt` in the context `client` carries, without
@@ -956,13 +955,13 @@ pub(crate) async fn answered_with(client: &BrokerClient, request: UncheckedReque
 
 /// A `POST` of `text` to `path` (relative to the API root, written as the ETSI keyword writes it) sent as
 /// `media_type`: the body an invalid case sends exactly as written.
-pub(crate) fn post_text(broker: &BrokerClient, path: &str, media_type: &'static str, text: &str) -> Result<UncheckedRequest> {
-    Ok(content_type(request_to(broker, Method::POST, path)?, media_type).body(Bytes::copy_from_slice(text.as_bytes())))
+pub(crate) fn post_text(broker: &BrokerClient, path: &str, media_type: &MediaType<'_>, text: &str) -> Result<UncheckedRequest> {
+    Ok(content_type(request_to(broker, Method::POST, path)?, media_type)?.body(Bytes::copy_from_slice(text.as_bytes())))
 }
 
 /// A `POST` with no body to `path` sent as `media_type`, with `Content-Length: 0` named as the case names it: the
 /// broker answers 411 to an empty request that names no length.
-pub(crate) fn post_empty(broker: &BrokerClient, path: &str, media_type: &'static str) -> Result<UncheckedRequest> {
+pub(crate) fn post_empty(broker: &BrokerClient, path: &str, media_type: &MediaType<'_>) -> Result<UncheckedRequest> {
     Ok(post_text(broker, path, media_type, "")?.append_header(CONTENT_LENGTH, HeaderValue::from_static("0")))
 }
 
@@ -1493,11 +1492,11 @@ impl PageLink {
 
 /// The pagination link of `rel` to `target`, which names the `limit` and `offset` of the page it leads to, with the
 /// `type` parameter `media_type` the case expects.
-pub(crate) fn page_link(target: &str, rel: RelationType, media_type: &str) -> Result<PageLink> {
+pub(crate) fn page_link(target: &str, rel: RelationType, media_type: &MediaType<'_>) -> Result<PageLink> {
     Ok(PageLink {
         target: IriRefBuf::new(target.to_owned())?,
         rels: vec![rel],
-        media_type: Some(media_type.to_owned()),
+        media_type: Some(media_type.to_string()),
         profile: None,
     })
 }

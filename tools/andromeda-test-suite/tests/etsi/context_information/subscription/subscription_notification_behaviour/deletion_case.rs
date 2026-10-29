@@ -35,6 +35,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::StatusCode;
+use iri_rs::{Iri, iri};
 use ngsi_ld::{
     http::{ContextDelivery, operation::InstanceSelection},
     model::{AttributeKind, Change, Entity, EntityFragment, Input, InstanceDeletion, Lossless, NgsiLdMediaType, Representation},
@@ -44,7 +45,7 @@ use ngsi_ld::{
 use serde_json::{Value, json};
 
 /// The NGSI-LD Null a deletion writes and a notification reports (clause 4.5.0).
-pub(crate) const NGSI_LD_NULL: &str = "urn:ngsi-ld:null";
+pub(crate) const NGSI_LD_NULL: Iri<&str> = iri!("urn:ngsi-ld:null");
 
 /// With the sink not serving yet, creates the Building `urn:ngsi-ld:Building:<ns>-None` and the keyValues
 /// subscription `id` to every Building with the `entityDeleted` trigger and the system attributes `reporting` says
@@ -111,9 +112,9 @@ impl StreetBuildingAttribute {
     /// The attribute as a normalized notification reports it deleted: the NGSI-LD Null in the shape of its kind.
     fn deleted(self) -> Value {
         match self {
-            StreetBuildingAttribute::Name => json!({"type": "Property", "value": NGSI_LD_NULL}),
-            StreetBuildingAttribute::LocatedAt => json!({"type": "Relationship", "object": NGSI_LD_NULL}),
-            StreetBuildingAttribute::Street => json!({"type": "LanguageProperty", "languageMap": {"@none": NGSI_LD_NULL}}),
+            StreetBuildingAttribute::Name => json!({"type": "Property", "value": NGSI_LD_NULL.as_str()}),
+            StreetBuildingAttribute::LocatedAt => json!({"type": "Relationship", "object": NGSI_LD_NULL.as_str()}),
+            StreetBuildingAttribute::Street => json!({"type": "LanguageProperty", "languageMap": {"@none": NGSI_LD_NULL.as_str()}}),
         }
     }
 }

@@ -97,7 +97,7 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
     let root = Path::new(workspace_root);
     let mut sites = Vec::new();
     for source in every_workspace_source(root) {
-        if source.workspace_path.starts_with(GUARD_SOURCES) {
+        if source.workspace_path.starts_with(GUARD_SOURCES) || source.is_black_box_suite() {
             continue;
         }
         if !source.workspace_path.starts_with(XSD_OWNER) {

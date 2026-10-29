@@ -21,13 +21,10 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{AttributeName, Entity, NgsiLdMediaType, OneOrMany, Scope},
+    model::{AttributeName, CORE_CONTEXT, Entity, NgsiLdMediaType, OneOrMany, Scope},
     query::{SelectorType, geoquery, scope_query::ScopeQuery},
 };
 use serde_json::{Value, json};
-
-/// The core `@context` the responses name when the request carries none of its own.
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 /// The terms of the `@context` of the type-selection case.
 const TYPES_TERMS: [&str; 7] = ["Building", "Vehicle", "brandName", "isParked", "OffStreetParking", "name", "reliability"];
@@ -152,7 +149,7 @@ async fn e019_01_02_query_several_entities_based_on_the_entities_types() -> Resu
                 "observedAt": "2017-07-29T12:00:04Z",
                 "providedBy": {"type": "Relationship", "object": namespace.urn_text("Person", "Bob")},
             },
-            "@context": CORE_CONTEXT,
+            "@context": CORE_CONTEXT.as_str(),
         },
         {
             "id": namespace.urn_text("OffStreetParking", 1),
@@ -167,7 +164,7 @@ async fn e019_01_02_query_several_entities_based_on_the_entities_types() -> Resu
             },
             "totalSpotNumber": {"type": "Property", "value": 200},
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [-8.5, 41.2]}},
-            "@context": CORE_CONTEXT,
+            "@context": CORE_CONTEXT.as_str(),
         },
     ]);
     expect_that!(
@@ -289,7 +286,7 @@ async fn e019_01_05_query_several_entities_based_on_a_geoquery() -> Result<()> {
             namespace.expanded_term("name")?: {"type": "Property", "value": "Eiffel Tower"},
             namespace.expanded_term("subCategory")?: {"type": "Property", "value": "tourism"},
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.3986, 52.5547]}},
-            "@context": CORE_CONTEXT,
+            "@context": CORE_CONTEXT.as_str(),
         }))
     };
     expect_that!(

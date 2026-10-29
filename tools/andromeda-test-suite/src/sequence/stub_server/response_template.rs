@@ -32,15 +32,27 @@ static ARGUMENT: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"(\w+)=
 /// Why a template cannot be rendered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TemplateError {
-    /// The template uses a helper other than `now`.
-    #[error("the response template {0:?} uses a helper the stub server does not render")]
-    Unknown(String),
+    /// The patterns the server finds its helpers by do not compile.
+    #[error("the stub server's helper patterns are not regular expressions")]
+    HelperPatterns,
+    /// The template uses a helper the server does not render.
+    #[error("the response template uses a helper the stub server does not render")]
+    UnknownHelper,
+    /// A `now` helper names an argument other than `offset`, `format` and `timezone`.
+    #[error("a now helper names an argument the stub server does not read")]
+    UnknownArgument,
+    /// An `each` block does not name a range of numbers.
+    #[error("an each block of the response template names no range of numbers")]
+    Each,
+    /// A `randomValue` helper names neither `type='UUID'` nor a `length`.
+    #[error("a randomValue helper names no length")]
+    RandomLength,
     /// An offset is not `<amount> <unit>`.
-    #[error("{0:?} is not an offset")]
-    Offset(String),
-    /// A format pattern holds a letter the server does not write.
-    #[error("{0:?} is not a date format the stub server writes")]
-    Format(String),
+    #[error("an offset is not <amount> <unit>")]
+    Offset,
+    /// A format pattern holds, at this byte, a letter the server does not write, or a quote it does not close.
+    #[error("the date format holds at byte {0} a letter the stub server does not write")]
+    Format(usize),
 }
 
 /// `template` with each `now` helper replaced by the instant it names.
@@ -50,7 +62,7 @@ pub enum TemplateError {
 /// Returns [`TemplateError`] when the template uses another helper or an argument is not understood.
 pub fn render(template: &str) -> Result<String, TemplateError> {
     let (Some(now), Some(argument)) = (NOW.as_ref(), ARGUMENT.as_ref()) else {
-        return Err(TemplateError::Unknown(template.to_owned()));
+        return Err(TemplateError::HelperPatterns);
     };
     let expanded = randomised(&expand_each(template)?)?;
     let template = expanded.as_str();
@@ -69,7 +81,7 @@ pub fn render(template: &str) -> Result<String, TemplateError> {
                 "offset" => moved = offset(moved, value)?,
                 "format" => format = Some(value.to_owned()),
                 "timezone" => {}
-                other => return Err(TemplateError::Unknown(other.to_owned())),
+                _ => return Err(TemplateError::UnknownArgument),
             }
         }
         rendered.push_str(&written(moved, format.as_deref())?);
@@ -77,7 +89,7 @@ pub fn render(template: &str) -> Result<String, TemplateError> {
     }
     rendered.push_str(&template[last..]);
     if rendered.contains("{{") {
-        return Err(TemplateError::Unknown(template.to_owned()));
+        return Err(TemplateError::UnknownHelper);
     }
     Ok(rendered)
 }
@@ -85,7 +97,7 @@ pub fn render(template: &str) -> Result<String, TemplateError> {
 /// `template` with each `each` block over a range written out item by item.
 fn expand_each(template: &str) -> Result<String, TemplateError> {
     let (Some(each), Some(unless_first)) = (EACH.as_ref(), UNLESS_FIRST.as_ref()) else {
-        return Err(TemplateError::Unknown(template.to_owned()));
+        return Err(TemplateError::HelperPatterns);
     };
     let mut expanded = String::with_capacity(template.len());
     let mut last = 0;
@@ -93,11 +105,10 @@ fn expand_each(template: &str) -> Result<String, TemplateError> {
         let (Some(whole), Some(first), Some(end), Some(name), Some(body)) = (block.get(0), block.get(1), block.get(2), block.get(3), block.get(4)) else {
             continue;
         };
-        let unknown = || TemplateError::Unknown(whole.as_str().to_owned());
-        let first = first.as_str().parse::<u64>().map_err(|_| unknown())?;
-        let end = end.as_str().parse::<u64>().map_err(|_| unknown())?;
+        let first = first.as_str().parse::<u64>().map_err(|_| TemplateError::Each)?;
+        let end = end.as_str().parse::<u64>().map_err(|_| TemplateError::Each)?;
         let name = name.as_str();
-        let padded = Regex::new(&format!(r"\{{\{{numberFormat {name} '(0+)'\}}\}}")).map_err(|_| unknown())?;
+        let padded = Regex::new(&format!(r"\{{\{{numberFormat {name} '(0+)'\}}\}}")).map_err(|_| TemplateError::Each)?;
         let bare = format!("{{{{{name}}}}}");
         expanded.push_str(&template[last..whole.start()]);
         for index in first..=end {
@@ -118,7 +129,7 @@ fn expand_each(template: &str) -> Result<String, TemplateError> {
 /// random lowercase letters and digits.
 fn randomised(template: &str) -> Result<String, TemplateError> {
     let Some(random) = RANDOM.as_ref() else {
-        return Err(TemplateError::Unknown(template.to_owned()));
+        return Err(TemplateError::HelperPatterns);
     };
     let mut rendered = String::with_capacity(template.len());
     let mut last = 0;
@@ -134,7 +145,7 @@ fn randomised(template: &str) -> Result<String, TemplateError> {
                 .and_then(|pattern| pattern.captures(arguments))
                 .and_then(|found| found.get(1))
                 .and_then(|digits| digits.as_str().parse::<usize>().ok())
-                .ok_or_else(|| TemplateError::Unknown(whole.as_str().to_owned()))?;
+                .ok_or(TemplateError::RandomLength)?;
             let letters = Uuid::new_v4().simple().to_string() + &Uuid::new_v4().simple().to_string();
             rendered.push_str(&letters.chars().cycle().take(length).collect::<String>());
         }
@@ -146,9 +157,8 @@ fn randomised(template: &str) -> Result<String, TemplateError> {
 
 /// `instant` moved by an offset such as `-15 minutes`.
 fn offset(instant: DateTime<Utc>, offset: &str) -> Result<DateTime<Utc>, TemplateError> {
-    let invalid = || TemplateError::Offset(offset.to_owned());
     let mut parts = offset.split_whitespace();
-    let amount = parts.next().and_then(|amount| amount.parse::<i64>().ok()).ok_or_else(invalid)?;
+    let amount = parts.next().and_then(|amount| amount.parse::<i64>().ok()).ok_or(TemplateError::Offset)?;
     let delta = match parts.next().map(|unit| unit.trim_end_matches('s')) {
         Some("second") => TimeDelta::try_seconds(amount),
         Some("minute") => TimeDelta::try_minutes(amount),
@@ -156,8 +166,8 @@ fn offset(instant: DateTime<Utc>, offset: &str) -> Result<DateTime<Utc>, Templat
         Some("day") => TimeDelta::try_days(amount),
         Some(_) | None => None,
     }
-    .ok_or_else(invalid)?;
-    instant.checked_add_signed(delta).ok_or_else(invalid)
+    .ok_or(TemplateError::Offset)?;
+    instant.checked_add_signed(delta).ok_or(TemplateError::Offset)
 }
 
 /// `instant` in a `SimpleDateFormat` pattern, as `unix` seconds, or as RFC 3339 when no format is given.
@@ -177,7 +187,7 @@ fn strftime(pattern: &str) -> Result<String, TemplateError> {
     while let Some(first) = rest.chars().next() {
         if first == '\'' {
             let after = &rest[1..];
-            let end = after.find('\'').ok_or_else(|| TemplateError::Format(pattern.to_owned()))?;
+            let end = after.find('\'').ok_or(TemplateError::Format(pattern.len() - rest.len()))?;
             converted.push_str(&after[..end].replace('%', "%%"));
             rest = &after[end + 1..];
             continue;
@@ -196,7 +206,7 @@ fn strftime(pattern: &str) -> Result<String, TemplateError> {
             "EEE" => "%a",
             "z" => "GMT",
             other if !first.is_ascii_alphabetic() => other,
-            _ => return Err(TemplateError::Format(pattern.to_owned())),
+            _ => return Err(TemplateError::Format(pattern.len() - rest.len())),
         });
         rest = &rest[run..];
     }

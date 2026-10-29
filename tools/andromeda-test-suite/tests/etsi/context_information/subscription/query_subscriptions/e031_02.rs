@@ -1,11 +1,14 @@
 //! ETSI `031_02`: a query pages through the subscriptions of the tenant, and the `Link` field of each page names the
 //! pages before and after it (clause 5.8.4).
 
-use crate::suite_keywords::{LD_JSON, create_query_subscriptions, expect_page_links, page_link};
+use crate::suite_keywords::{create_query_subscriptions, expect_page_links, page_link};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
-use ngsi_ld::{http::headers::RelationType, model::NgsiLdMediaType};
+use ngsi_ld::{
+    http::headers::RelationType,
+    model::{APPLICATION_LD_JSON, NgsiLdMediaType},
+};
 use serde_json::json;
 
 /// Pins: Check that one can query a list of subscriptions: Pagination logic shall be in place
@@ -65,8 +68,8 @@ async fn e031_02_01_query_second_subscription() -> Result<()> {
     expect_page_links(
         received.head.headers(),
         &[
-            page_link("/ngsi-ld/v1/subscriptions?limit=1&offset=0", RelationType::Prev, LD_JSON)?,
-            page_link("/ngsi-ld/v1/subscriptions?limit=1&offset=2", RelationType::Next, LD_JSON)?,
+            page_link("/ngsi-ld/v1/subscriptions?limit=1&offset=0", RelationType::Prev, &APPLICATION_LD_JSON)?,
+            page_link("/ngsi-ld/v1/subscriptions?limit=1&offset=2", RelationType::Next, &APPLICATION_LD_JSON)?,
         ],
     )?;
 
@@ -132,7 +135,11 @@ async fn e031_02_02_query_last_subscription() -> Result<()> {
     );
     expect_page_links(
         received.head.headers(),
-        &[page_link("/ngsi-ld/v1/subscriptions?limit=1&offset=1", RelationType::Prev, LD_JSON)?],
+        &[page_link(
+            "/ngsi-ld/v1/subscriptions?limit=1&offset=1",
+            RelationType::Prev,
+            &APPLICATION_LD_JSON,
+        )?],
     )?;
 
     for id in &ids {

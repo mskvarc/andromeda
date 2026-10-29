@@ -45,18 +45,18 @@ async fn e046_37_01_delete_entity_and_check_previous_values_in_notification() ->
         "location": {
             "type": "GeoProperty",
             "previousValue": {"type": "Point", "coordinates": [-8.5, 41.2]},
-            "value": NGSI_LD_NULL,
+            "value": NGSI_LD_NULL.as_str(),
         },
-        "name": {"type": "Property", "previousValue": "Eiffel Tower", "value": NGSI_LD_NULL},
+        "name": {"type": "Property", "previousValue": "Eiffel Tower", "value": NGSI_LD_NULL.as_str()},
         "street": {
             "type": "LanguageProperty",
             "previousLanguageMap": {"fr": "Grand Place", "nl": "Grote Markt"},
-            "languageMap": {"@none": NGSI_LD_NULL},
+            "languageMap": {"@none": NGSI_LD_NULL.as_str()},
         },
         "locatedAt": {
             "type": "Relationship",
             "previousObject": namespace.urn_text("City", "Paris"),
-            "object": NGSI_LD_NULL,
+            "object": NGSI_LD_NULL.as_str(),
         },
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));

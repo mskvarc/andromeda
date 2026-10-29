@@ -21,6 +21,7 @@ pub mod cleanup;
 pub mod clock_wait;
 pub mod comparison;
 pub mod config;
+pub mod config_error;
 pub mod context_source;
 pub mod core_context;
 pub mod entity_matcher;

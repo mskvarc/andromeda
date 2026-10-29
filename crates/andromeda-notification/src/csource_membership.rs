@@ -18,20 +18,22 @@
 //! the same record, so the step also decides which of them sends it. The
 //! transition rules themselves live in [`crate::csource_transition`].
 
+mod reconciliation;
+mod registration_change;
+
 use crate::{
-    csource_transition::{MembershipStep, RegistrationChange, Selection, StepOutcome, reason, step},
+    csource_transition::RegistrationChange,
     error::NotificationError,
-    notified_registration_store::{NotifiedRegistrationStore, Release, UpdateReport},
+    notified_registration_store::{NotifiedRegistrationStore, Release},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, notification::CsrTriggerReason, registration::ContextSourceRegistration};
 use andromeda_subscription::{
     change::UpsertKind,
     compiled::CompiledCsrSubscription,
-    csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration},
+    csource_matching::csource_subscription_selects_registration,
     csource_notification_cadence::CsourceNotificationCadence,
 };
-use chrono::{DateTime, Utc};
 use std::{collections::HashSet, slice, sync::Arc};
 use tracing::error;
 
@@ -206,143 +208,6 @@ impl CsourceMembership {
         }
     }
 
-    /// The notifications one committed registration change owes the live,
-    /// change-driven subscriptions among `subscriptions`, each recorded as
-    /// notified.
-    ///
-    /// `before` is the registration as it stood before an update or deletion
-    /// and `after` is the registration as it stands now, absent once deleted.
-    /// A `noLongerMatching` notification carries `before`, the state the
-    /// subscriber was told matched; without it the withdrawal is still
-    /// recorded, but there is nothing matching to carry.
-    pub(crate) async fn plan_registration_change<'registration>(
-        &self,
-        subscriptions: &[Arc<CompiledCsrSubscription>],
-        change: RegistrationChange,
-        revision: CsourceChangeRevision,
-        registration_id: &Identifier,
-        before: Option<&'registration ContextSourceRegistration>,
-        after: Option<&'registration ContextSourceRegistration>,
-    ) -> Vec<PlannedNotification<'registration>> {
-        let notified = match self.subscriptions_notified_of(change, registration_id).await {
-            Ok(notified) => notified,
-            Err(failure) => {
-                error!("Failed to read the subscriptions notified of CSR {}: {}", registration_id, failure);
-                return Vec::new();
-            }
-        };
-        let mut planned = Vec::new();
-        for subscription in subscriptions
-            .iter()
-            .filter(|subscription| csource_subscription_follows_registration_changes(subscription))
-        {
-            let selection = match after {
-                Some(current) if csource_subscription_selects_registration(subscription, current) => Selection::Selected,
-                Some(_) | None => Selection::Unselected,
-            };
-            let outcome = match self.take_step(step(change, selection), &subscription.id, registration_id, &notified).await {
-                Ok(outcome) => outcome,
-                Err(failure) => {
-                    error!("Failed to record CSR {} for subscription {}: {}", registration_id, subscription.id, failure);
-                    continue;
-                }
-            };
-            let previously = match before {
-                Some(replaced) if csource_subscription_selects_registration(subscription, replaced) => Selection::Selected,
-                Some(_) | None => Selection::Unselected,
-            };
-            let Some(reason) = reason(change, outcome, previously) else {
-                continue;
-            };
-            let revision = match reason {
-                CsrTriggerReason::Updated => match self.ledger.report_update(&subscription.id, registration_id, revision).await {
-                    Ok(UpdateReport::Claimed) => Some(revision),
-                    Ok(UpdateReport::Settled) => continue,
-                    Err(failure) => {
-                        error!(
-                            "Failed to claim the update of CSR {} for subscription {}: {}",
-                            registration_id, subscription.id, failure
-                        );
-                        continue;
-                    }
-                },
-                CsrTriggerReason::NewlyMatching | CsrTriggerReason::NoLongerMatching => None,
-            };
-            let carried = match reason {
-                CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated => after,
-                CsrTriggerReason::NoLongerMatching => before,
-            };
-            if let Some(registration) = carried {
-                planned.push(PlannedNotification {
-                    subscription: Arc::clone(subscription),
-                    registration,
-                    reason,
-                    change,
-                    revision,
-                });
-            }
-        }
-        planned
-    }
-
-    /// The notifications owed `subscription` for the registration changes it
-    /// did not see, derived from the record instead of from the changes.
-    ///
-    /// `matching` is every registration the subscription selects now and
-    /// `departed` pairs each registration recorded for it outside that set with
-    /// its state as the store holds it, absent once deleted. A match not yet
-    /// recorded is recorded and reported as `newlyMatching` (clause 5.3.3). A
-    /// departed registration no longer selected is withdrawn and reported as
-    /// `noLongerMatching` with the state it has now, since the state the
-    /// subscriber was told matched is not known; one that was deleted is
-    /// withdrawn without a notification, as a deletion that carries no prior
-    /// state is. The record does not keep what the subscriber was last told, so
-    /// a recorded match is reported as `updated` when it was modified after
-    /// `evaluated_through`, the modification time of the last change evaluated
-    /// before the gap; without one, nothing is known to have changed.
-    pub(crate) async fn plan_reconciliation<'registration>(
-        &self,
-        subscription: &Arc<CompiledCsrSubscription>,
-        matching: &'registration [ContextSourceRegistration],
-        departed: &'registration [(Identifier, Option<ContextSourceRegistration>)],
-        evaluated_through: Option<DateTime<Utc>>,
-    ) -> Vec<PlannedNotification<'registration>> {
-        let identifiers: Vec<Identifier> = matching.iter().map(|registration| registration.id.clone()).collect(); // clone: the store takes the identifiers as one slice
-        let recorded = match self.ledger.claim(&subscription.id, &identifiers).await {
-            Ok(recorded) => recorded.into_iter().collect::<HashSet<Identifier>>(),
-            Err(failure) => {
-                error!("Failed to record the CSRs matching subscription {}: {}", subscription.id, failure);
-                HashSet::new()
-            }
-        };
-        let withdrawn: HashSet<Identifier> = self.withdraw_unselected(subscription, departed).await.into_iter().collect();
-        let newly = matching
-            .iter()
-            .filter(|registration| recorded.contains(&registration.id))
-            .map(|registration| (registration, CsrTriggerReason::NewlyMatching));
-        let changed = matching
-            .iter()
-            .filter(|registration| !recorded.contains(&registration.id))
-            .filter(|registration| evaluated_through.is_some_and(|through| registration.lifecycle.modified_at > through))
-            .map(|registration| (registration, CsrTriggerReason::Updated));
-        let gone = departed
-            .iter()
-            .filter(|(identifier, _)| withdrawn.contains(identifier))
-            .filter_map(|(_, state)| state.as_ref())
-            .map(|registration| (registration, CsrTriggerReason::NoLongerMatching));
-        newly
-            .chain(changed)
-            .chain(gone)
-            .map(|(registration, reason)| PlannedNotification {
-                subscription: Arc::clone(subscription),
-                registration,
-                reason,
-                change: RegistrationChange::Updated,
-                revision: None,
-            })
-            .collect()
-    }
-
     /// Restore the record a planned notification that was not sent had
     /// changed, so the subscriber's view and the record agree again.
     ///
@@ -370,41 +235,6 @@ impl CsourceMembership {
                 "Failed to restore the record of unsent CSR {} for subscription {}: {}",
                 registration, subscription, failure
             );
-        }
-    }
-
-    /// The subscriptions a change may have to withdraw the registration from.
-    ///
-    /// A creation withdraws nothing, so it reads nothing.
-    async fn subscriptions_notified_of(&self, change: RegistrationChange, registration: &Identifier) -> Result<HashSet<Identifier>, NotificationError> {
-        match change {
-            RegistrationChange::Created => Ok(HashSet::new()),
-            RegistrationChange::Updated | RegistrationChange::Deleted => Ok(self.ledger.notified_subscriptions(registration).await?.into_iter().collect()),
-        }
-    }
-
-    /// Apply `step` for `subscription` and report how the store answered it.
-    async fn take_step(
-        &self,
-        step: MembershipStep,
-        subscription: &Identifier,
-        registration: &Identifier,
-        notified: &HashSet<Identifier>,
-    ) -> Result<StepOutcome, NotificationError> {
-        match step {
-            MembershipStep::Claim => {
-                let recorded = self.ledger.claim(subscription, slice::from_ref(registration)).await?;
-                Ok(if recorded.is_empty() {
-                    StepOutcome::AlreadyRecorded
-                } else {
-                    StepOutcome::Recorded
-                })
-            }
-            MembershipStep::Release if notified.contains(subscription) => Ok(match self.ledger.release(subscription, registration).await? {
-                Release::Released => StepOutcome::Withdrawn,
-                Release::Absent => StepOutcome::Unrecorded,
-            }),
-            MembershipStep::Release | MembershipStep::Keep => Ok(StepOutcome::Unrecorded),
         }
     }
 }

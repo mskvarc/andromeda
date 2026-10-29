@@ -9,16 +9,17 @@
 //! as the only attribute of such an entity under the name its request path gives: the matchers then check the
 //! attributes, and the placeholders are never compared.
 
+use iri_rs::{Iri, iri};
 use ngsi_ld::{
-    model::{Entity, Input, Lossless, Output, evolution::TemporalEntity},
-    subscription::Subscription,
+    model::{DocumentError, Entity, Input, Lossless, Output, evolution::TemporalEntity},
+    subscription::{Problem, ReadErrorKind, Subscription},
 };
 use serde_json::{Map, Value};
 use std::str;
 use wiremock::Request;
 
 /// The placeholder id of the entity holding a forwarded fragment's attributes.
-const FRAGMENT_ID: &str = "urn:ngsi-ld:ForwardedFragment:placeholder";
+const FRAGMENT_ID: Iri<&str> = iri!("urn:ngsi-ld:ForwardedFragment:placeholder");
 
 /// The placeholder type of the entity holding a forwarded fragment's attributes.
 const FRAGMENT_TYPE: &str = "ForwardedFragment";
@@ -30,16 +31,34 @@ pub enum ForwardedBodyError {
     #[error("the forwarded body is not UTF-8: {0}")]
     Text(#[from] str::Utf8Error),
     /// The body is not the JSON shape the operation forwards.
-    #[error("the forwarded body is not {expected}: {body}")]
+    #[error("the forwarded body is not {expected}")]
     Shape {
         /// The shape the operation forwards.
-        expected: &'static str,
-        /// The body as received.
-        body: String,
+        expected: JsonShape,
+        /// Why the body does not read as that shape.
+        #[source]
+        source: serde_json::Error,
     },
-    /// The model does not read the document.
-    #[error("the forwarded document is not one the model reads: {0}")]
-    Document(String),
+    /// The model does not read the entity.
+    #[error("the forwarded document is not an entity the model reads: {0}")]
+    Entity(#[source] DocumentError),
+    /// The model does not read the temporal entity.
+    #[error("the forwarded document is not a temporal entity the model reads: {0}")]
+    Evolution(#[source] DocumentError),
+    /// The model does not read the subscription.
+    #[error("the forwarded document is not a subscription the model reads: {0}")]
+    Subscription(#[source] DocumentError<ReadErrorKind<Problem>>),
+}
+
+/// The JSON shape a forwarded body has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+pub enum JsonShape {
+    /// A JSON array.
+    #[strum(serialize = "an array")]
+    Array,
+    /// A JSON object.
+    #[strum(serialize = "an object")]
+    Object,
 }
 
 /// The body of `request` as text.
@@ -53,7 +72,7 @@ fn text(request: &Request) -> Result<&str, ForwardedBodyError> {
 ///
 /// Returns [`ForwardedBodyError`] when the body is not an entity the model reads.
 pub fn entity(request: &Request) -> Result<Entity<Output>, ForwardedBodyError> {
-    Entity::<Output>::parse(text(request)?, Lossless::Normalized).map_err(|error| ForwardedBodyError::Document(error.to_string()))
+    Entity::<Output>::parse(text(request)?, Lossless::Normalized).map_err(ForwardedBodyError::Entity)
 }
 
 /// The entities of the batch `request` carries, in their order.
@@ -63,13 +82,13 @@ pub fn entity(request: &Request) -> Result<Entity<Output>, ForwardedBodyError> {
 /// Returns [`ForwardedBodyError`] when the body is not an array of entities the model reads.
 pub fn entities(request: &Request) -> Result<Vec<Entity<Output>>, ForwardedBodyError> {
     let body = text(request)?;
-    let items: Vec<Value> = serde_json::from_str(body).map_err(|_| ForwardedBodyError::Shape {
-        expected: "an array",
-        body: body.to_owned(),
+    let items: Vec<Value> = serde_json::from_str(body).map_err(|source| ForwardedBodyError::Shape {
+        expected: JsonShape::Array,
+        source,
     })?;
     items
         .iter()
-        .map(|item| Entity::<Output>::parse(&item.to_string(), Lossless::Normalized).map_err(|error| ForwardedBodyError::Document(error.to_string())))
+        .map(|item| Entity::<Output>::parse(&item.to_string(), Lossless::Normalized).map_err(ForwardedBodyError::Entity))
         .collect()
 }
 
@@ -80,9 +99,9 @@ pub fn entities(request: &Request) -> Result<Vec<Entity<Output>>, ForwardedBodyE
 /// Returns [`ForwardedBodyError`] when the body is not an object of attributes the model reads.
 pub fn fragment(request: &Request) -> Result<Entity<Output>, ForwardedBodyError> {
     let body = text(request)?;
-    let members: Map<String, Value> = serde_json::from_str(body).map_err(|_| ForwardedBodyError::Shape {
-        expected: "an object",
-        body: body.to_owned(),
+    let members: Map<String, Value> = serde_json::from_str(body).map_err(|source| ForwardedBodyError::Shape {
+        expected: JsonShape::Object,
+        source,
     })?;
     placeholder(members.into_iter().filter(|(name, _)| !matches!(name.as_str(), "id" | "type" | "@context")))
 }
@@ -94,9 +113,9 @@ pub fn fragment(request: &Request) -> Result<Entity<Output>, ForwardedBodyError>
 /// Returns [`ForwardedBodyError`] when the body is not one attribute the model reads.
 pub fn attribute(request: &Request, name: &str) -> Result<Entity<Output>, ForwardedBodyError> {
     let body = text(request)?;
-    let member: Map<String, Value> = serde_json::from_str(body).map_err(|_| ForwardedBodyError::Shape {
-        expected: "an object",
-        body: body.to_owned(),
+    let member: Map<String, Value> = serde_json::from_str(body).map_err(|source| ForwardedBodyError::Shape {
+        expected: JsonShape::Object,
+        source,
     })?;
     placeholder([(name.to_owned(), Value::Object(member))])
 }
@@ -107,7 +126,7 @@ pub fn attribute(request: &Request, name: &str) -> Result<Entity<Output>, Forwar
 ///
 /// Returns [`ForwardedBodyError`] when the body is not a temporal entity the model reads.
 pub fn evolution(request: &Request) -> Result<TemporalEntity<Output>, ForwardedBodyError> {
-    TemporalEntity::<Output>::parse(text(request)?, Lossless::Normalized).map_err(|error| ForwardedBodyError::Document(error.to_string()))
+    TemporalEntity::<Output>::parse(text(request)?, Lossless::Normalized).map_err(ForwardedBodyError::Evolution)
 }
 
 /// The evolutions of the temporal fragment `request` carries, as the evolutions of a placeholder temporal entity.
@@ -117,12 +136,12 @@ pub fn evolution(request: &Request) -> Result<TemporalEntity<Output>, ForwardedB
 /// Returns [`ForwardedBodyError`] when the body is not an object of evolutions the model reads.
 pub fn evolution_fragment(request: &Request) -> Result<TemporalEntity<Output>, ForwardedBodyError> {
     let body = text(request)?;
-    let members: Map<String, Value> = serde_json::from_str(body).map_err(|_| ForwardedBodyError::Shape {
-        expected: "an object",
-        body: body.to_owned(),
+    let members: Map<String, Value> = serde_json::from_str(body).map_err(|source| ForwardedBodyError::Shape {
+        expected: JsonShape::Object,
+        source,
     })?;
     let wrapped = wrapped(members.into_iter().filter(|(name, _)| !matches!(name.as_str(), "id" | "type" | "@context")));
-    TemporalEntity::<Output>::parse(&wrapped, Lossless::Normalized).map_err(|error| ForwardedBodyError::Document(error.to_string()))
+    TemporalEntity::<Output>::parse(&wrapped, Lossless::Normalized).map_err(ForwardedBodyError::Evolution)
 }
 
 /// The subscription copy `request` carries: a Create Subscription request (clause 5.8.1.4), read as the input
@@ -132,17 +151,20 @@ pub fn evolution_fragment(request: &Request) -> Result<TemporalEntity<Output>, F
 ///
 /// Returns [`ForwardedBodyError`] when the body is not a subscription the model reads.
 pub fn subscription(request: &Request) -> Result<Subscription<Input>, ForwardedBodyError> {
-    Subscription::<Input>::parse(text(request)?).map_err(|error| ForwardedBodyError::Document(error.to_string()))
+    Subscription::<Input>::parse(text(request)?).map_err(ForwardedBodyError::Subscription)
 }
 
 /// The placeholder entity holding `attributes`.
 fn placeholder(attributes: impl IntoIterator<Item = (String, Value)>) -> Result<Entity<Output>, ForwardedBodyError> {
-    Entity::<Output>::parse(&wrapped(attributes), Lossless::Normalized).map_err(|error| ForwardedBodyError::Document(error.to_string()))
+    Entity::<Output>::parse(&wrapped(attributes), Lossless::Normalized).map_err(ForwardedBodyError::Entity)
 }
 
 /// The text of an object holding the placeholder id and type, then `members`.
 fn wrapped(members: impl IntoIterator<Item = (String, Value)>) -> String {
-    let mut wrapped = Map::from_iter([("id".to_owned(), Value::from(FRAGMENT_ID)), ("type".to_owned(), Value::from(FRAGMENT_TYPE))]);
+    let mut wrapped = Map::from_iter([
+        ("id".to_owned(), Value::from(FRAGMENT_ID.as_str())),
+        ("type".to_owned(), Value::from(FRAGMENT_TYPE)),
+    ]);
     wrapped.extend(members);
     Value::Object(wrapped).to_string()
 }

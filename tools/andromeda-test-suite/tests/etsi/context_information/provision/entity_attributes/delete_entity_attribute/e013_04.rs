@@ -10,7 +10,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
-use ngsi_ld::model::{Entity, NgsiLdMediaType};
+use ngsi_ld::model::{APPLICATION_JSON, Entity, NgsiLdMediaType};
 use serde_json::json;
 
 /// Pins: Check that one can delete a scope from an entity
@@ -30,7 +30,7 @@ async fn e013_04_delete_scope_from_an_entity() -> Result<()> {
     create_entity_plain(&broker, &entity).await?;
     // `AttributeName` refuses `scope`, a name the core @context reserves, so the target is written as text.
     let deletion = request_to(&broker, Method::DELETE, &format!("entities/{id}/attrs/scope?deleteAll=false"))?;
-    let deleted = broker.send_unchecked(content_type(deletion, "application/json")).await;
+    let deleted = broker.send_unchecked(content_type(deletion, &APPLICATION_JSON)?).await;
     verify_that!(&deleted, answered(StatusCode::NO_CONTENT))?;
     expect_that!(deleted?.body().len(), eq(0));
 

@@ -14,6 +14,7 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         ContextDelivery,
+        headers::ContentType,
         operation::{CreateEntity, PartialAttributeUpdate},
     },
     model::{Attribute, AttributeName, Entity, Property, Relationship},
@@ -56,7 +57,7 @@ async fn e044_01_01_patch_entity_attribute() -> Result<()> {
     let patch = Attribute::from(Property::builder("BMW").build()?).into_patch().into();
     let update = PartialAttributeUpdate::builder().id(&id).name(&brand).attribute(&patch).build();
     let answer = client
-        .send_unchecked(content_type(client.unchecked(&update)?, "application/merge-patch+json"))
+        .send_unchecked(content_type(client.unchecked(&update)?, &ContentType::MergePatch.media_type())?)
         .await;
     expect_that!(&answer, answered(StatusCode::NO_CONTENT));
 

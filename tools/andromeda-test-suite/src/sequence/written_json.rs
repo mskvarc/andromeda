@@ -12,8 +12,8 @@ const MARKER: char = '\u{0}';
 ///
 /// # Errors
 ///
-/// Returns the parser's message when `text` is not JSON.
-pub fn read(text: &str) -> Result<Json, String> {
+/// Returns the parser's error when `text` is not JSON.
+pub fn read(text: &str) -> Result<Json, serde_json::Error> {
     let mut marked = String::with_capacity(text.len() + 16);
     let mut characters = text.char_indices().peekable();
     let mut in_string = false;
@@ -51,27 +51,47 @@ pub fn read(text: &str) -> Result<Json, String> {
             other => marked.push(other),
         }
     }
-    serde_json::from_str(&marked).map_err(|error| error.to_string())
+    serde_json::from_str(&marked)
 }
 
 /// The JSON text of a document [`read`] gave, each number written as it was read.
 #[must_use]
 pub fn write(document: &Json) -> String {
+    let mut text = String::new();
+    write_into(document, &mut text);
+    text
+}
+
+/// Appends the JSON text of `document` to `text`.
+fn write_into(document: &Json, text: &mut String) {
     match document {
-        Json::String(text) => match text.strip_prefix(MARKER) {
-            Some(number) => number.to_owned(),
-            None => Json::String(text.clone()).to_string(),
+        Json::String(string) => match string.strip_prefix(MARKER) {
+            Some(number) => text.push_str(number),
+            None => text.push_str(&Json::String(string.clone()).to_string()),
         },
-        Json::Array(items) => format!("[{}]", items.iter().map(write).collect::<Vec<_>>().join(",")),
-        Json::Object(members) => format!(
-            "{{{}}}",
-            members
-                .iter()
-                .map(|(name, value)| format!("{}:{}", Json::String(name.clone()), write(value)))
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        other @ (Json::Null | Json::Bool(_) | Json::Number(_)) => other.to_string(),
+        Json::Array(items) => {
+            text.push('[');
+            for (position, item) in items.iter().enumerate() {
+                if position > 0 {
+                    text.push(',');
+                }
+                write_into(item, text);
+            }
+            text.push(']');
+        }
+        Json::Object(members) => {
+            text.push('{');
+            for (position, (name, value)) in members.iter().enumerate() {
+                if position > 0 {
+                    text.push(',');
+                }
+                text.push_str(&Json::String(name.clone()).to_string());
+                text.push(':');
+                write_into(value, text);
+            }
+            text.push('}');
+        }
+        other @ (Json::Null | Json::Bool(_) | Json::Number(_)) => text.push_str(&other.to_string()),
     }
 }
 
@@ -92,8 +112,8 @@ mod tests {
     fn a_document_is_written_back_with_its_numbers() -> Result<()> {
         let read = |text: &str| read(text).ok().or_fail();
         verify_that!(
-            write(&read(r#"{"v": -0.130000000000000005, "s": "1 \" 2"}"#)?),
-            eq(r#"{"v":-0.130000000000000005,"s":"1 \" 2"}"#)
+            write(&read(r#"{"s": "1 \" 2", "v": -0.130000000000000005}"#)?),
+            eq(r#"{"s":"1 \" 2","v":-0.130000000000000005}"#)
         )
     }
 }

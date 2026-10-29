@@ -15,6 +15,7 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         ContextDelivery,
+        headers::ContentType,
         operation::{CreateSubscription, UpdateSubscription},
     },
     model::{NgsiLdMediaType, Representation},
@@ -61,7 +62,7 @@ async fn e044_02_01_patch_subscription() -> Result<()> {
         .build()?;
     let update = UpdateSubscription { id: &id, fragment: &fragment };
     let answer = client
-        .send_unchecked(content_type(client.unchecked(&update)?, "application/merge-patch+json"))
+        .send_unchecked(content_type(client.unchecked(&update)?, &ContentType::MergePatch.media_type())?)
         .await;
     expect_that!(&answer, answered(StatusCode::NO_CONTENT));
 

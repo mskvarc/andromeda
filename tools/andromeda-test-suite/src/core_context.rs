@@ -1,11 +1,12 @@
 //! The NGSI-LD core `@context` the stack's brokers serve, as the `@context` a request body names (clause 5.5.7).
 
-use crate::config::{ConfigError, SuiteConfig};
+use crate::{config::SuiteConfig, config_error::ConfigError};
 use iri_rs::{IriBuf, IriRefBuf};
 use ngsi_ld::{
     http::headers::{Link, LinkBuildError},
     model::{Context, ContextEntry},
 };
+use url::Url;
 
 /// Why the core `@context` cannot be named.
 #[derive(Debug, thiserror::Error)]
@@ -15,7 +16,7 @@ pub enum CoreContextError {
     Config(#[from] ConfigError),
     /// The configured URL is not an IRI.
     #[error("the core @context URL {0} is not an IRI")]
-    NotAnIri(String),
+    NotAnIri(Url),
     /// The core `@context` URL cannot be carried in a `Link` header.
     #[error(transparent)]
     Link(#[from] LinkBuildError),
@@ -23,8 +24,9 @@ pub enum CoreContextError {
 
 /// The configured core `@context` URL as an IRI.
 fn core_iri() -> Result<IriBuf, CoreContextError> {
-    let url = SuiteConfig::get().map_err(Clone::clone)?.core_context().as_str();
-    IriBuf::new(url.to_owned()).map_err(|_| CoreContextError::NotAnIri(url.to_owned()))
+    let url = SuiteConfig::get().map_err(Clone::clone)?.core_context();
+    // clone: the error names the URL the configuration keeps
+    IriBuf::new(url.as_str().to_owned()).map_err(|_| CoreContextError::NotAnIri(url.clone()))
 }
 
 /// The core `@context` written as a string: `"@context": "<core>"`.

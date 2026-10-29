@@ -1,13 +1,13 @@
 //! ETSI `006_03`: a batch delete whose body is not JSON, and one whose body is an empty array, are refused with 400
 //! (clause 5.6.10).
 
-use crate::suite_keywords::{LD_JSON, ld_json_body_client, post_text, refused, with_doubled_separator};
+use crate::suite_keywords::{ld_json_body_client, post_text, refused, with_doubled_separator};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::{UncheckedDocument, operation::BatchDelete},
-    model::{Entity, ErrorType, Lossless},
+    model::{APPLICATION_LD_JSON, Entity, ErrorType, Lossless},
 };
 
 /// Pins: Check that one cannot delete a batch of entities with an invalid request
@@ -35,6 +35,6 @@ async fn e006_03_01_invalid_json() -> Result<()> {
 #[tokio::test]
 async fn e006_03_02_empty_json() -> Result<()> {
     let broker = broker::front()?;
-    let request = post_text(&broker, "entityOperations/delete", LD_JSON, "[]")?;
+    let request = post_text(&broker, "entityOperations/delete", &APPLICATION_LD_JSON, "[]")?;
     refused(&broker, request, ErrorType::BadRequestData).await
 }

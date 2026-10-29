@@ -41,7 +41,7 @@ async fn e046_39_01_delete_entity_and_check_previous_values_in_notification() ->
     let expected = json!({
         "type": "Building",
         "deletedAt": ANY_SYSTEM_TIME,
-        "vocabProperty": {"type": "VocabProperty", "previousVocab": "monument", "vocab": NGSI_LD_NULL},
+        "vocabProperty": {"type": "VocabProperty", "previousVocab": "monument", "vocab": NGSI_LD_NULL.as_str()},
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
 

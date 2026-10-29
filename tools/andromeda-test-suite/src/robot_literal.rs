@@ -15,14 +15,14 @@ pub enum LiteralError {
     #[error("the body is not UTF-8")]
     Utf8(#[from] str::Utf8Error),
     /// The body holds a backslash, which the literal reads as an escape.
-    #[error("the body holds a backslash: {0}")]
-    Backslash(String),
+    #[error("the body holds a backslash at byte {0}")]
+    Backslash(usize),
     /// The body holds `'''`, which ends the literal.
-    #[error("the body holds ''': {0}")]
-    TripleQuote(String),
+    #[error("the body holds ''' at byte {0}")]
+    TripleQuote(usize),
     /// The body ends with `'`, which ends the literal.
-    #[error("the body ends with ': {0}")]
-    FinalQuote(String),
+    #[error("the body ends with '")]
+    FinalQuote,
     /// The body is not JSON.
     #[error("the body is not JSON")]
     Json(#[from] serde_json::Error),
@@ -35,14 +35,14 @@ pub enum LiteralError {
 /// Returns [`LiteralError`] when the body breaks the literal or is not JSON.
 pub fn read(body: &[u8]) -> Result<Value, LiteralError> {
     let text = str::from_utf8(body)?;
-    if text.contains('\\') {
-        return Err(LiteralError::Backslash(text.to_owned()));
+    if let Some(at) = text.find('\\') {
+        return Err(LiteralError::Backslash(at));
     }
-    if text.contains("'''") {
-        return Err(LiteralError::TripleQuote(text.to_owned()));
+    if let Some(at) = text.find("'''") {
+        return Err(LiteralError::TripleQuote(at));
     }
     if text.ends_with('\'') {
-        return Err(LiteralError::FinalQuote(text.to_owned()));
+        return Err(LiteralError::FinalQuote);
     }
     Ok(serde_json::from_str(text)?)
 }

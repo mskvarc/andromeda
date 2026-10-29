@@ -12,7 +12,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::{
     http::operation::RegisterContextSource,
-    model::ErrorType,
+    model::{APPLICATION_LD_JSON, ErrorType},
     registration::{CSourceRegistration, RegistrationId, RegistrationInfo},
 };
 
@@ -37,5 +37,5 @@ async fn e033_08_01_no_context_with_json_ld_content_type() -> Result<()> {
     // The tenant's client carries no `@context` at all: neither a `Link` nor a body member, as the case sends it.
     let _registration = Cleanup::of(&tenant).registration_of(&registration);
     let request = tenant.unchecked(&RegisterContextSource { registration: &registration })?;
-    refused(&tenant, content_type(request, "application/ld+json"), ErrorType::BadRequestData).await
+    refused(&tenant, content_type(request, &APPLICATION_LD_JSON)?, ErrorType::BadRequestData).await
 }

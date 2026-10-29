@@ -13,7 +13,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
-use ngsi_ld::subscription::SubscriptionId;
+use ngsi_ld::{model::APPLICATION_JSON, subscription::SubscriptionId};
 
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /entities/{entityId})
@@ -43,7 +43,7 @@ async fn e049_01_02_get_subscription() -> Result<()> {
     let broker = broker::front()?;
     let id = namespace.urn_text("Subscription", 1);
     let request = request_to(&broker, Method::GET, &format!("subscriptions/{id}"))?;
-    let request = content_type(request, "application/json").append_header(ACCEPT, HeaderValue::from_static("application/xml"));
+    let request = content_type(request, &APPLICATION_JSON)?.append_header(ACCEPT, HeaderValue::from_static("application/xml"));
     expect_that!(&broker.send_unchecked(request).await, answered(StatusCode::NOT_ACCEPTABLE));
     let subscription: SubscriptionId = id.parse()?;
     broker.subscriptions().delete(&subscription).send().await.any_answer();

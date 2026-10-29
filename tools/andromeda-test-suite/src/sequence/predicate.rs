@@ -5,6 +5,7 @@
 //! string and a number) fails the check whether negated or not.
 
 use crate::sequence::{
+    placeholder_name::PlaceholderName,
     queried::Queried,
     variables::{TemplateError, Variables},
 };
@@ -80,7 +81,10 @@ impl Expected {
             Expected::Integer(integer) => Queried::Integer(*integer),
             Expected::Float(float) => Queried::Float(*float),
             Expected::Text(template) => Queried::String(variables.fill(template)?),
-            Expected::Variable(name) => variables.get(name).cloned().ok_or_else(|| TemplateError::Unset(name.clone()))?,
+            Expected::Variable(name) => variables
+                .get(name)
+                .cloned()
+                .ok_or_else(|| TemplateError::Unset(PlaceholderName::new(name.as_str())))?,
         })
     }
 }
@@ -135,19 +139,19 @@ pub enum Predicate {
 }
 
 /// Why a predicate cannot be evaluated.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PredicateError {
     /// The predicate does not apply to the kind of value.
     #[error("{predicate} does not apply to {value}")]
     Inapplicable {
         /// The predicate.
-        predicate: String,
+        predicate: Predicate,
         /// The value.
-        value: String,
+        value: Queried,
     },
     /// The regular expression is not valid.
-    #[error("{0} is not a regular expression: {1}")]
-    Pattern(String, String),
+    #[error("the filled pattern is not a regular expression")]
+    Pattern(#[source] regex::Error),
     /// A template cannot be filled.
     #[error(transparent)]
     Template(#[from] TemplateError),
@@ -160,9 +164,10 @@ impl Predicate {
     ///
     /// Returns [`PredicateError`] when the predicate does not apply to the kind of `value`.
     pub fn holds(&self, value: &Queried, variables: &Variables) -> Result<bool, PredicateError> {
+        // clone: the error names the predicate and value the caller keeps
         let inapplicable = || PredicateError::Inapplicable {
-            predicate: self.to_string(),
-            value: value.to_string(),
+            predicate: self.clone(),
+            value: value.clone(),
         };
         if matches!(value, Queried::Nothing) {
             return Ok(false);
@@ -198,7 +203,7 @@ impl Predicate {
             Predicate::Matches(template) => match value {
                 Queried::String(subject) => {
                     let expression = variables.fill(template)?;
-                    let pattern = Regex::new(&expression).map_err(|error| PredicateError::Pattern(expression, error.to_string()))?;
+                    let pattern = Regex::new(&expression).map_err(PredicateError::Pattern)?;
                     Ok(pattern.is_match(subject))
                 }
                 Queried::Nothing

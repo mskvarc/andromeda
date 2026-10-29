@@ -18,7 +18,7 @@ use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{
     http::{UncheckedDocument, operation::Overwrite},
-    model::{Attribute, AttributeName, DatasetId, Entity, EntityFragment, EntityId, EntityTypeName, Input, Lossless, Property, Relationship},
+    model::{APPLICATION_JSON, Attribute, AttributeName, DatasetId, Entity, EntityFragment, EntityId, EntityTypeName, Input, Lossless, Property, Relationship},
     registration::{CSourceRegistration, EntityInfo, OperationGroup, RegistrationInfo, RegistrationMode},
 };
 use serde_json::{Value, json};
@@ -55,7 +55,7 @@ impl DeletedInstances {
 pub(crate) async fn delete_attribute_instance(client: &BrokerClient, id: &EntityId, name: &str, instances: DeletedInstances) -> Result<()> {
     let target = format!("entities/{id}/attrs/{name}?deleteAll={}", instances.parameter());
     let deletion = request_to(client, Method::DELETE, &target)?;
-    let answer = client.send_unchecked(content_type(deletion, "application/json")).await;
+    let answer = client.send_unchecked(content_type(deletion, &APPLICATION_JSON)?).await;
     verify_that!(&answer, answered(StatusCode::NO_CONTENT))
 }
 

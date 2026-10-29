@@ -1,13 +1,12 @@
 //! ETSI `051_08`: deleting the core `@context`, with no `reload` or `reload=false`, is refused with 404
 //! `ResourceNotFound`, the core `@context` being no stored context (clause 5.13.5).
 
-use crate::jsonld_context::stored_contexts::CORE_CONTEXT;
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::operation::ContextDeletion,
-    model::{ContextId, ErrorType},
+    model::{CORE_CONTEXT, ContextId, ErrorType},
 };
 
 /// Deletes the core `@context` with `deletion` in a tenant of the case's own, and requires 404 `ResourceNotFound` with
@@ -15,7 +14,7 @@ use ngsi_ld::{
 async fn refused_core_deletion(deletion: ContextDeletion) -> Result<()> {
     let namespace = Namespace::fresh();
     let tenant = broker::private_tenant(&broker::front()?, &namespace).await?;
-    let core: ContextId = CORE_CONTEXT.parse()?;
+    let core: ContextId = CORE_CONTEXT.as_str().parse()?;
     let deleted = tenant.with_responses().contexts().delete(&core).deletion(deletion).send().await;
     expect_that!(&deleted, problem(StatusCode::NOT_FOUND, ErrorType::ResourceNotFound).with_distinct_detail());
     Ok(())

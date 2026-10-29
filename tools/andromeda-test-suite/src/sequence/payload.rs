@@ -7,7 +7,7 @@
 //! or a padded template may be written as one JSON string. A count is a number or a variable of the test, either plus
 //! or minus a number.
 
-use crate::sequence::{queried::Queried, variables::Variables};
+use crate::sequence::{placeholder_name::PlaceholderName, queried::Queried, variables::Variables};
 use serde_json::Value as Json;
 use std::{
     f64::consts::TAU,
@@ -28,13 +28,13 @@ const ORDINATE_DIGITS: usize = 9;
 pub enum PayloadError {
     /// A template names a part the payload does not define.
     #[error("the payload names the part {0}, which it does not define")]
-    UnknownPart(String),
-    /// A template is not closed.
-    #[error("a placeholder in {0:?} is not closed")]
-    Unclosed(String),
+    UnknownPart(PlaceholderName),
+    /// The placeholder opened at this byte of a template is not closed.
+    #[error("the placeholder at byte {0} of a template is not closed")]
+    Unclosed(usize),
     /// A count names a variable that is not set or does not hold a number.
     #[error("the count variable {0} is not set to a number")]
-    CountVariable(String),
+    CountVariable(PlaceholderName),
     /// A count falls below zero, or a ring below the two positions that close one.
     #[error("the count {0} cannot be drawn")]
     Count(i64),
@@ -92,7 +92,7 @@ impl Count {
                 .get(name)
                 .and_then(Queried::template_text)
                 .and_then(|text| text.parse::<i64>().ok())
-                .ok_or_else(|| PayloadError::CountVariable(name.clone()))?,
+                .ok_or_else(|| PayloadError::CountVariable(PlaceholderName::new(name.as_str())))?,
         };
         let total = base.saturating_add(self.offset);
         usize::try_from(total).map_err(|_| PayloadError::Count(total))
@@ -244,7 +244,7 @@ impl Payload {
         while let Some(start) = rest.find("{{") {
             filled.push_str(&rest[..start]);
             let after = &rest[start + 2..];
-            let end = after.find("}}").ok_or_else(|| PayloadError::Unclosed(template.to_owned()))?;
+            let end = after.find("}}").ok_or(PayloadError::Unclosed(template.len() - rest.len() + start))?;
             let name = &after[..end];
             if name == "ns" {
                 filled.push_str(&variables.get(name).and_then(Queried::template_text).unwrap_or_default());
@@ -254,7 +254,7 @@ impl Payload {
                     .iter()
                     .find(|(defined, _)| defined == name)
                     .map(|(_, part)| part)
-                    .ok_or_else(|| PayloadError::UnknownPart(name.to_owned()))?;
+                    .ok_or_else(|| PayloadError::UnknownPart(PlaceholderName::new(name)))?;
                 filled.push_str(&self.render_part(part, variables)?);
             }
             rest = &after[end + 2..];
@@ -328,6 +328,7 @@ fn ordinate(value: f64) -> String {
 mod tests {
     use crate::sequence::{
         payload::{Count, Part, Payload, PayloadError},
+        placeholder_name::PlaceholderName,
         variables::Variables,
     };
     use googletest::prelude::*;
@@ -379,13 +380,16 @@ mod tests {
     fn an_undefined_part_is_an_error() {
         expect_that!(
             Payload::new("{{missing}}").render(&variables()),
-            err(eq(&PayloadError::UnknownPart("missing".to_owned())))
+            err(eq(&PayloadError::UnknownPart(PlaceholderName::new("missing"))))
         );
     }
 
     #[gtest]
     fn a_count_variable_that_is_not_set_is_an_error() {
         let payload = Payload::new("{{x}}").part("x", Part::repeat("a", Count::of("nope")));
-        expect_that!(payload.render(&variables()), err(eq(&PayloadError::CountVariable("nope".to_owned()))));
+        expect_that!(
+            payload.render(&variables()),
+            err(eq(&PayloadError::CountVariable(PlaceholderName::new("nope"))))
+        );
     }
 }

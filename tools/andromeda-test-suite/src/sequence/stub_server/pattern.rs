@@ -4,7 +4,7 @@
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value as Json;
-use serde_json_path::JsonPath;
+use serde_json_path::{JsonPath, ParseError};
 use std::collections::BTreeMap;
 use url::form_urlencoded;
 use wiremock::Request;
@@ -65,17 +65,17 @@ pub struct BodyPattern {
 }
 
 /// Why a pattern is not valid.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum PatternError {
     /// A regular expression is not valid.
-    #[error("{0} is not a regular expression: {1}")]
-    Regex(String, String),
+    #[error("a pattern is not a regular expression: {0}")]
+    Regex(#[source] regex::Error),
     /// A JSON path is not valid.
-    #[error("{0} is not a JSONPath: {1}")]
-    JsonPath(String, String),
+    #[error("a pattern is not a JSONPath: {0}")]
+    JsonPath(#[source] ParseError),
     /// The JSON an `equalToJson` pattern names is not valid.
-    #[error("{0} is not JSON: {1}")]
-    Json(String, String),
+    #[error("an equalToJson pattern is not JSON: {0}")]
+    Json(#[source] serde_json::Error),
     /// A pattern states no requirement the server knows.
     #[error("a pattern states no known requirement")]
     Empty,
@@ -191,7 +191,7 @@ impl BodyPattern {
             };
         }
         if let Some(text) = &self.equal_to_json {
-            let expected = serde_json::from_str::<Json>(text).map_err(|error| PatternError::Json(text.clone(), error.to_string()))?;
+            let expected = serde_json::from_str::<Json>(text).map_err(PatternError::Json)?;
             let extra = if self.ignore_extra_elements {
                 ExtraElements::Ignored
             } else {
@@ -207,7 +207,7 @@ impl BodyPattern {
 /// reads it: a filter selector applied to an object tests the object itself, where RFC 9535 tests the object's
 /// member values. Every other selector reads as RFC 9535 defines it.
 fn selects(expression: &str, document: &Json) -> Result<bool, PatternError> {
-    let parse = |text: &str| JsonPath::parse(text).map_err(|error| PatternError::JsonPath(expression.to_owned(), error.to_string()));
+    let parse = |text: &str| JsonPath::parse(text).map_err(PatternError::JsonPath);
     let Some((start, end)) = first_filter(expression) else {
         return Ok(!parse(expression)?.query(document).all().is_empty());
     };
@@ -302,7 +302,7 @@ fn json_equal(expected: &Json, actual: &Json, extra: ExtraElements) -> bool {
 
 /// The regular expression `pattern`, anchored to match the whole subject.
 fn whole(pattern: &str) -> Result<Regex, PatternError> {
-    Regex::new(&format!("^(?:{pattern})$")).map_err(|error| PatternError::Regex(pattern.to_owned(), error.to_string()))
+    Regex::new(&format!("^(?:{pattern})$")).map_err(PatternError::Regex)
 }
 
 #[cfg(test)]

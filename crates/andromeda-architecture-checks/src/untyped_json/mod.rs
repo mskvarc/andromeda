@@ -64,7 +64,10 @@ pub fn untyped_json_sites(workspace_root: &str) -> Vec<UntypedJsonSite> {
     let sources: Vec<_> = workspace_sources(Path::new(workspace_root))
         .into_iter()
         .filter(|source| {
-            !source.workspace_path.contains("/tests/") && !source.workspace_path.ends_with("build.rs") && !source.workspace_path.ends_with("tests.rs")
+            !source.is_black_box_suite()
+                && !source.workspace_path.contains("/tests/")
+                && !source.workspace_path.ends_with("build.rs")
+                && !source.workspace_path.ends_with("tests.rs")
         })
         .collect();
     let positioned: Vec<_> = sources

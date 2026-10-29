@@ -40,7 +40,10 @@ pub fn configuration_ownership_violations(workspace_root: &str) -> Vec<String> {
     workspace_sources(Path::new(workspace_root))
         .into_iter()
         .filter(|source| {
-            !source.workspace_path.contains("/tests/") && !source.workspace_path.ends_with("build.rs") && !source.workspace_path.ends_with("tests.rs")
+            !source.is_black_box_suite()
+                && !source.workspace_path.contains("/tests/")
+                && !source.workspace_path.ends_with("build.rs")
+                && !source.workspace_path.ends_with("tests.rs")
         })
         .flat_map(|source| {
             source_violations(&source.workspace_path, &source.syntax)

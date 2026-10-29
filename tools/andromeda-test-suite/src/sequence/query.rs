@@ -1,12 +1,7 @@
 //! What a check or a capture reads from an answer: a source (status, a header, the body, a JSON path) and the filters
 //! applied to it in order.
 
-use crate::sequence::{
-    answer::Answer,
-    peer_certificate::CertificateField,
-    queried::Queried,
-    variables::{TemplateError, Variables},
-};
+use crate::sequence::{answer::Answer, peer_certificate::CertificateField, queried::Queried, query_error::QueryError, variables::Variables};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
@@ -19,34 +14,6 @@ use std::{
 
 /// The characters `urlEncode` keeps as they are: the unreserved characters of RFC 3986 and `/`.
 const URL_ENCODE_KEPT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~').remove(b'/');
-
-/// Why a query yields no value to check.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum QueryError {
-    /// The body is not UTF-8 text.
-    #[error("the body is not UTF-8 text")]
-    NotText,
-    /// The body, or the string a JSON path filter reads, is not JSON.
-    #[error("{0} is not JSON: {1}")]
-    NotJson(String, String),
-    /// The JSON path expression is not valid.
-    #[error("{0} is not a JSONPath expression: {1}")]
-    Expression(String, String),
-    /// The regular expression is not valid.
-    #[error("{0} is not a regular expression: {1}")]
-    Pattern(String, String),
-    /// A filter cannot read the value it is given.
-    #[error("{filter} cannot read {value}")]
-    Unreadable {
-        /// The filter.
-        filter: String,
-        /// The value.
-        value: String,
-    },
-    /// A template of the query cannot be filled.
-    #[error(transparent)]
-    Template(#[from] TemplateError),
-}
 
 /// Where a query reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +38,7 @@ enum Source {
 
 /// A filter, applied to what the source or the previous filter yields.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Filter {
+pub enum Filter {
     /// The number of items of a list or bytes of a body.
     Count,
     /// The nodes a JSON path selects in the JSON text of a string.
@@ -271,7 +238,7 @@ impl Source {
             Source::Body => text(answer).map(|body| Queried::String(body.to_owned())),
             Source::Bytes => Ok(Queried::Bytes(answer.body.clone())),
             Source::JsonPath(expression) => {
-                let document = serde_json::from_str::<Json>(text(answer)?).map_err(|error| QueryError::NotJson("the body".to_owned(), error.to_string()))?;
+                let document = serde_json::from_str::<Json>(text(answer)?).map_err(QueryError::BodyNotJson)?;
                 select(&variables.fill(expression)?, &document)
             }
             Source::Duration => Ok(Queried::Integer(i64::try_from(answer.duration.as_millis()).unwrap_or(i64::MAX))),
@@ -291,31 +258,42 @@ fn text(answer: &Answer) -> Result<&str, QueryError> {
 
 /// The nodes `expression` selects in `document`.
 fn select(expression: &str, document: &Json) -> Result<Queried, QueryError> {
-    let path = JsonPath::parse(expression).map_err(|error| QueryError::Expression(expression.to_owned(), error.to_string()))?;
+    let path = JsonPath::parse(expression).map_err(QueryError::Expression)?;
     Ok(Queried::of_nodes(&path.query(document).all()))
 }
 
 /// The regular expression `pattern`.
 fn pattern(pattern: &str) -> Result<Regex, QueryError> {
-    Regex::new(pattern).map_err(|error| QueryError::Pattern(pattern.to_owned(), error.to_string()))
+    Regex::new(pattern).map_err(QueryError::Pattern)
 }
 
 impl Filter {
     /// What the filter makes of `value`.
     fn apply(&self, value: Queried, variables: &Variables) -> Result<Queried, QueryError> {
-        let unreadable = |value: &Queried| QueryError::Unreadable {
-            filter: self.to_string(),
-            value: value.to_string(),
+        // clone: the error names the filter the query keeps
+        let unreadable = |value: Queried| QueryError::Unreadable {
+            filter: Box::new(self.clone()),
+            value: Box::new(value),
         };
         match (self, value) {
             (Filter::Count, Queried::List(items)) => Ok(Queried::Integer(i64::try_from(items.len()).unwrap_or(i64::MAX))),
             (Filter::Count, Queried::Bytes(bytes)) => Ok(Queried::Integer(i64::try_from(bytes.len()).unwrap_or(i64::MAX))),
             (Filter::JsonPath(expression), Queried::String(json)) => {
-                let document = serde_json::from_str::<Json>(&json).map_err(|error| QueryError::NotJson(format!("{json:?}"), error.to_string()))?;
+                let document = match serde_json::from_str::<Json>(&json) {
+                    Ok(document) => document,
+                    Err(source) => {
+                        return Err(QueryError::ValueNotJson {
+                            value: Box::new(Queried::String(json)),
+                            source,
+                        });
+                    }
+                };
                 select(&variables.fill(expression)?, &document)
             }
             (Filter::JsonPath(expression), value @ (Queried::Object(_) | Queried::List(_))) => {
-                let document = value.to_json().ok_or_else(|| unreadable(&value))?;
+                let Some(document) = value.to_json() else {
+                    return Err(unreadable(value));
+                };
                 select(&variables.fill(expression)?, &document)
             }
             (Filter::Regex(expression), Queried::String(subject)) => Ok(pattern(&variables.fill(expression)?)?
@@ -337,27 +315,28 @@ impl Filter {
             }
             (Filter::Nth(index), Queried::List(items)) => {
                 let length = items.len();
-                items.into_iter().nth(*index).ok_or_else(|| QueryError::Unreadable {
-                    filter: self.to_string(),
-                    value: format!("a list of {length}"),
+                items.into_iter().nth(*index).ok_or_else(|| QueryError::PastTheEnd {
+                    // clone: the error names the filter the query keeps
+                    filter: Box::new(self.clone()),
+                    length,
                 })
             }
             (Filter::ToInt, Queried::String(digits)) => digits
                 .trim()
                 .parse::<i64>()
                 .map(Queried::Integer)
-                .map_err(|_| unreadable(&Queried::String(digits))),
+                .map_err(|_| unreadable(Queried::String(digits))),
             (Filter::ToInt, Queried::Integer(integer)) => Ok(Queried::Integer(integer)),
             #[expect(clippy::cast_possible_truncation, reason = "toInt truncates a float toward zero")]
             (Filter::ToInt, Queried::Float(float)) => Ok(Queried::Integer(float.trunc() as i64)),
             (Filter::ToDate(format), Queried::String(written)) => NaiveDateTime::parse_from_str(&written, format)
                 .map(|naive| Queried::Date(naive.and_utc()))
                 .or_else(|_| DateTime::parse_from_str(&written, format).map(|instant| Queried::Date(instant.with_timezone(&Utc))))
-                .map_err(|_| unreadable(&Queried::String(written))),
+                .map_err(|_| unreadable(Queried::String(written))),
             (Filter::Format(format), Queried::Date(instant)) => Ok(Queried::String(instant.format(format).to_string())),
             (Filter::DaysAfterNow, Queried::Date(instant)) => Ok(Queried::Integer((instant - Utc::now()).num_days())),
             (Filter::UrlEncode, Queried::String(subject)) => Ok(Queried::String(utf8_percent_encode(&subject, URL_ENCODE_KEPT).to_string())),
-            (_, value) => Err(unreadable(&value)),
+            (_, value) => Err(unreadable(value)),
         }
     }
 }

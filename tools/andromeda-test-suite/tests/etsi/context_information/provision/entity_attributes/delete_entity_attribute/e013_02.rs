@@ -12,11 +12,12 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
+use ngsi_ld::model::APPLICATION_JSON;
 
 /// A `DELETE` of `target`, written as the ETSI keyword writes it and sent as `application/json` without a `Link`,
 /// requiring `status`.
 async fn refused_delete(broker: &BrokerClient, target: &str, status: StatusCode) -> Result<()> {
-    answered_with(broker, content_type(request_to(broker, Method::DELETE, target)?, "application/json"), status).await
+    answered_with(broker, content_type(request_to(broker, Method::DELETE, target)?, &APPLICATION_JSON)?, status).await
 }
 
 /// Pins: Check that one cannot delete an attribute from an entity with invalid/missing ids

@@ -9,6 +9,33 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Number, Value as Json};
 use std::fmt::{self, Display};
 
+/// The kind of a [`Queried`] value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+pub enum QueriedKind {
+    /// No value.
+    #[strum(serialize = "none")]
+    Nothing,
+    /// JSON `null`.
+    Null,
+    /// A boolean.
+    Boolean,
+    /// An integer.
+    Integer,
+    /// A float.
+    Float,
+    /// A string.
+    String,
+    /// A list.
+    List,
+    /// An object.
+    Object,
+    /// Bytes.
+    Bytes,
+    /// A date.
+    Date,
+}
+
 /// A value a query or a filter yields.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Queried {
@@ -83,20 +110,20 @@ impl Queried {
         }
     }
 
-    /// The name of the value's kind, for failure messages.
+    /// The value's kind, for failure messages.
     #[must_use]
-    pub const fn kind(&self) -> &'static str {
+    pub const fn kind(&self) -> QueriedKind {
         match self {
-            Queried::Nothing => "none",
-            Queried::Null => "null",
-            Queried::Bool(_) => "boolean",
-            Queried::Integer(_) => "integer",
-            Queried::Float(_) => "float",
-            Queried::String(_) => "string",
-            Queried::List(_) => "list",
-            Queried::Object(_) => "object",
-            Queried::Bytes(_) => "bytes",
-            Queried::Date(_) => "date",
+            Queried::Nothing => QueriedKind::Nothing,
+            Queried::Null => QueriedKind::Null,
+            Queried::Bool(_) => QueriedKind::Boolean,
+            Queried::Integer(_) => QueriedKind::Integer,
+            Queried::Float(_) => QueriedKind::Float,
+            Queried::String(_) => QueriedKind::String,
+            Queried::List(_) => QueriedKind::List,
+            Queried::Object(_) => QueriedKind::Object,
+            Queried::Bytes(_) => QueriedKind::Bytes,
+            Queried::Date(_) => QueriedKind::Date,
         }
     }
 

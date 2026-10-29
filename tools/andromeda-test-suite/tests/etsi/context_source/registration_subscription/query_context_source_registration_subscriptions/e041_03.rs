@@ -1,11 +1,14 @@
 //! ETSI `041_03`: a query pages through the Context Source Registration Subscriptions of the tenant, and the `Link`
 //! field of each page names the pages before and after it (clause 5.11.5).
 
-use crate::suite_keywords::{LD_JSON, PageLink, create_registration_subscription_triple, expect_page_links, page_link};
+use crate::suite_keywords::{PageLink, create_registration_subscription_triple, expect_page_links, page_link};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
-use ngsi_ld::{http::headers::RelationType, model::NgsiLdMediaType};
+use ngsi_ld::{
+    http::headers::RelationType,
+    model::{APPLICATION_LD_JSON, NgsiLdMediaType},
+};
 use serde_json::{Value, json};
 
 /// Pins: Check that one can query context source registration subscriptions with providing offset and limit
@@ -44,8 +47,8 @@ async fn e041_03_01_query_second_subscription() -> Result<()> {
         1,
         expect_one_subscription,
         &[
-            page_link("/ngsi-ld/v1/csourceSubscriptions?limit=1&offset=0", RelationType::Prev, LD_JSON)?,
-            page_link("/ngsi-ld/v1/csourceSubscriptions?limit=1&offset=2", RelationType::Next, LD_JSON)?,
+            page_link("/ngsi-ld/v1/csourceSubscriptions?limit=1&offset=0", RelationType::Prev, &APPLICATION_LD_JSON)?,
+            page_link("/ngsi-ld/v1/csourceSubscriptions?limit=1&offset=2", RelationType::Next, &APPLICATION_LD_JSON)?,
         ],
     )
     .await
@@ -86,7 +89,11 @@ async fn e041_03_02_query_last_subscription() -> Result<()> {
         2,
         2,
         expect_one_subscription,
-        &[page_link("/ngsi-ld/v1/csourceSubscriptions?limit=2&offset=0", RelationType::Prev, LD_JSON)?],
+        &[page_link(
+            "/ngsi-ld/v1/csourceSubscriptions?limit=2&offset=0",
+            RelationType::Prev,
+            &APPLICATION_LD_JSON,
+        )?],
     )
     .await
 }

@@ -44,7 +44,7 @@ async fn e046_22_07_check_that_a_notification_is_sent_with_matching_entity() -> 
                 "name": {"dataset": {
                     german.as_str(): "Eiffelturm",
                     "@none": "Eiffel Tower",
-                    french.as_str(): NGSI_LD_NULL,
+                    french.as_str(): NGSI_LD_NULL.as_str(),
                 }},
                 "locatedAt": {"dataset": {
                     french.as_str(): namespace.urn_text("Ville", "Paris"),

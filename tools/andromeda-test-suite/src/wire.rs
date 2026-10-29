@@ -9,9 +9,10 @@ use http::{
     Method,
     Response,
     Uri,
-    header::{ACCEPT, CONTENT_TYPE, VARY},
+    header::{ACCEPT, CONTENT_TYPE, InvalidHeaderValue, VARY},
     uri::InvalidUri,
 };
+use mediatype::MediaType;
 use ngsi_ld::{
     client::{Answering, Client, ClientError, Received, Transport},
     http::{
@@ -21,16 +22,17 @@ use ngsi_ld::{
     },
 };
 use serde_json::Value;
+use url::Url;
 
 /// Why a wire value could not be built.
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
-    /// The target is not a URI.
-    #[error("{0} is not a request target")]
-    Target(String, #[source] InvalidUri),
+    /// A path on the API root is not a URI.
+    #[error("a path on {0} is not a request target")]
+    Target(Url, #[source] InvalidUri),
     /// The client refused to build the request it starts from.
-    #[error("the request could not be built: {0}")]
-    Request(String),
+    #[error("the request could not be built")]
+    Request(#[source] RequestError),
 }
 
 /// The URI of `path` (a path with its query, relative to the API root) on the broker `client` speaks to, written
@@ -40,8 +42,9 @@ pub enum WireError {
 ///
 /// Returns [`WireError::Target`] when the joined text is not a URI.
 pub fn api_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) -> Result<Uri, WireError> {
-    let text = format!("{}{path}", client.endpoint().base_url());
-    text.parse().map_err(|error| WireError::Target(text, error))
+    let base = client.endpoint().base_url();
+    // clone: the error names the API root the client keeps
+    format!("{base}{path}").parse().map_err(|error| WireError::Target(base.clone(), error))
 }
 
 /// A request with `method` to `path` (relative to the API root, with its query) on the broker `client` speaks to,
@@ -52,9 +55,7 @@ pub fn api_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) ->
 ///
 /// Returns [`WireError`] when the target is not a URI.
 pub fn request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Method, path: &str) -> Result<UncheckedRequest, WireError> {
-    let start = client
-        .unchecked(&RetrieveEntityTypes::builder().build())
-        .map_err(|error: ClientError<T::Error>| WireError::Request(error.to_string()))?;
+    let start = UncheckedRequest::try_from_operation(&RetrieveEntityTypes::builder().build(), client.endpoint()).map_err(WireError::Request)?;
     Ok(start
         .method(method)
         .uri(api_uri(client, path)?)
@@ -82,11 +83,14 @@ pub async fn send_to<T: Transport, M: Answering, O: Operation + Sync>(
 
 /// `request` with its `Content-Type` replaced by `media_type`, written as given: a test of a media type the broker
 /// must refuse names one the typed operations never send.
-#[must_use]
-pub fn content_type(request: UncheckedRequest, media_type: &'static str) -> UncheckedRequest {
-    request
+///
+/// # Errors
+///
+/// Returns [`InvalidHeaderValue`] when `media_type` holds a parameter value no header field can carry.
+pub fn content_type(request: UncheckedRequest, media_type: &MediaType<'_>) -> Result<UncheckedRequest, InvalidHeaderValue> {
+    Ok(request
         .remove_header(&CONTENT_TYPE)
-        .append_header(CONTENT_TYPE, HeaderValue::from_static(media_type))
+        .append_header(CONTENT_TYPE, HeaderValue::try_from(media_type.to_string())?))
 }
 
 /// The body of `received` as a JSON tree, for an exact comparison or a read of one member.

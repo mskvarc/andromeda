@@ -48,7 +48,7 @@ impl RemoteContexts {
     ///
     /// # Errors
     ///
-    /// Returns [`CallbackError::Url`] when `path` breaks the URL.
+    /// Returns [`CallbackError::Join`] when `path` breaks the URL.
     pub fn url(&self, path: &str) -> Result<Url, CallbackError> {
         self.server.url(path)
     }

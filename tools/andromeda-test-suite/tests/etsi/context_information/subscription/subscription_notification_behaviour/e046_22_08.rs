@@ -40,16 +40,16 @@ async fn e046_22_08_check_that_a_notification_is_sent_with_matching_entity() -> 
             matches_document(json!({
                 "type": "Building",
                 "name": [
-                    {"type": "Property", "value": NGSI_LD_NULL},
+                    {"type": "Property", "value": NGSI_LD_NULL.as_str()},
                     {
                         "type": "Property",
                         "datasetId": namespace.urn_text("Dataset", "french-name"),
-                        "value": NGSI_LD_NULL,
+                        "value": NGSI_LD_NULL.as_str(),
                     },
                     {
                         "type": "Property",
                         "datasetId": namespace.urn_text("Dataset", "german-name"),
-                        "value": NGSI_LD_NULL,
+                        "value": NGSI_LD_NULL.as_str(),
                     },
                 ],
                 "locatedAt": [

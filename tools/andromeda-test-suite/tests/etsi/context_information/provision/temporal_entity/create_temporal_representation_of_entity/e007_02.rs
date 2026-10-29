@@ -2,7 +2,7 @@
 //! 5.6.11).
 
 use crate::{
-    suite_keywords::{LD_JSON, post_empty, with_doubled_separator},
+    suite_keywords::{post_empty, with_doubled_separator},
     suite_payloads::vehicle_speed_fuel_level_on,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::api_uri};
@@ -10,7 +10,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::{ContextDelivery, operation::CreateOrUpdateTemporalEvolution},
-    model::ErrorType,
+    model::{APPLICATION_LD_JSON, ErrorType},
 };
 
 /// Pins: Check that one cannot create a temporal entity with an empty/invalid json/id
@@ -37,7 +37,7 @@ async fn e007_02_01_create_a_temporal_entity_with_an_invalid_json() -> Result<()
 #[tokio::test]
 async fn e007_02_02_create_a_temporal_entity_with_an_empty_json() -> Result<()> {
     let broker = broker::front()?;
-    let answer = broker.send_unchecked(post_empty(&broker, "temporal/entities", LD_JSON)?).await;
+    let answer = broker.send_unchecked(post_empty(&broker, "temporal/entities", &APPLICATION_LD_JSON)?).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest).with_title());
     Ok(())
 }

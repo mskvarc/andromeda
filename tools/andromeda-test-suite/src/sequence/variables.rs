@@ -1,7 +1,10 @@
 //! The values a test fills its `{{name}}` placeholders from: the stack's addresses, the namespace, and every value a
 //! capture took from an answer.
 
-use crate::sequence::queried::Queried;
+use crate::sequence::{
+    placeholder_name::PlaceholderName,
+    queried::{Queried, QueriedKind},
+};
 use chrono::{SecondsFormat, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -11,13 +14,13 @@ use uuid::Uuid;
 pub enum TemplateError {
     /// The template names a variable no one set.
     #[error("the variable {0} is not set")]
-    Unset(String),
-    /// A placeholder is not closed.
-    #[error("a placeholder in {0:?} is not closed")]
-    Unclosed(String),
+    Unset(PlaceholderName),
+    /// The placeholder opened at this byte of the template is not closed.
+    #[error("the placeholder at byte {0} of the template is not closed")]
+    Unclosed(usize),
     /// The variable holds a value no template can place.
     #[error("the variable {0} holds {1}, which a template cannot place")]
-    Unplaceable(String, String),
+    Unplaceable(PlaceholderName, QueriedKind),
 }
 
 /// The named values of one test.
@@ -56,7 +59,7 @@ impl Variables {
         while let Some(start) = rest.find("{{") {
             filled.push_str(&rest[..start]);
             let after = &rest[start + 2..];
-            let end = after.find("}}").ok_or_else(|| TemplateError::Unclosed(template.to_owned()))?;
+            let end = after.find("}}").ok_or(TemplateError::Unclosed(template.len() - rest.len() + start))?;
             let name = after[..end].trim();
             filled.push_str(&self.placed(name)?);
             rest = &after[end + 2..];
@@ -71,10 +74,10 @@ impl Variables {
             "newUuid" => Ok(Uuid::new_v4().to_string()),
             "newDate" => Ok(Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)),
             other => {
-                let value = self.values.get(other).ok_or_else(|| TemplateError::Unset(other.to_owned()))?;
+                let value = self.values.get(other).ok_or_else(|| TemplateError::Unset(PlaceholderName::new(other)))?;
                 value
                     .template_text()
-                    .ok_or_else(|| TemplateError::Unplaceable(other.to_owned(), value.kind().to_owned()))
+                    .ok_or_else(|| TemplateError::Unplaceable(PlaceholderName::new(other), value.kind()))
             }
         }
     }
@@ -83,6 +86,7 @@ impl Variables {
 #[cfg(test)]
 mod tests {
     use crate::sequence::{
+        placeholder_name::PlaceholderName,
         queried::Queried,
         variables::{TemplateError, Variables},
     };
@@ -98,7 +102,10 @@ mod tests {
 
     #[gtest]
     fn an_unset_variable_is_an_error() {
-        expect_that!(Variables::default().fill("{{nope}}"), err(eq(&TemplateError::Unset("nope".to_owned()))));
+        expect_that!(
+            Variables::default().fill("{{nope}}"),
+            err(eq(&TemplateError::Unset(PlaceholderName::new("nope"))))
+        );
     }
 
     #[gtest]

@@ -4,6 +4,12 @@
 use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{Router, extract::OriginalUri, http::Method};
+use thiserror::Error;
+
+/// A request method the addressed resource does not serve.
+#[derive(Debug, Error)]
+#[error("{0} is not defined for this resource")]
+struct UnservedMethod(Method);
 
 /// Register the wrong-method document as the method-not-allowed fallback of an
 /// assembled router, so every resource the router serves answers a method it
@@ -20,7 +26,7 @@ pub fn registered_on(router: Router) -> Router {
 /// `OriginalUri` the outermost router recorded, not from the routed URI whose
 /// mount prefix the nesting stripped.
 async fn problem_document(method: Method, OriginalUri(uri): OriginalUri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::MethodNotAllowed, format!("{method} is not defined for this resource")).with_instance(uri)
+    ClassifiedReport::public(NgsiLdErrorType::MethodNotAllowed, UnservedMethod(method).to_string()).with_instance(uri)
 }
 
 #[cfg(test)]

@@ -65,7 +65,7 @@ async fn e046_22_01_check_that_a_notification_is_sent_with_matching_entity() -> 
                 "almostFull": false,
                 "subCategory": "tourism",
                 "airQualityLevel": 4,
-                "name": NGSI_LD_NULL,
+                "name": NGSI_LD_NULL.as_str(),
             }))
             .hiding_everywhere("id")
         )

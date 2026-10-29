@@ -11,13 +11,13 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::Method;
-use ngsi_ld::model::ErrorType;
+use ngsi_ld::model::{APPLICATION_JSON, ErrorType};
 
 /// Sends the `DELETE` of `target` as `application/json` and requires the 400 `BadRequestData` refusal with a title.
 async fn refused_deletion(broker: &BrokerClient, target: &str) -> Result<()> {
     refused(
         broker,
-        content_type(request_to(broker, Method::DELETE, target)?, "application/json"),
+        content_type(request_to(broker, Method::DELETE, target)?, &APPLICATION_JSON)?,
         ErrorType::BadRequestData,
     )
     .await

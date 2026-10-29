@@ -8,7 +8,7 @@
 use crate::{
     body_pattern::BodyPattern,
     callback_server::{CallbackError, CallbackServer},
-    eventually::{Poll, TimedOut, delivery_deadline, eventually},
+    eventually::{Arrivals, Poll, TimedOut, delivery_deadline, eventually},
     header_condition::HeaderCondition,
 };
 use bytes::Bytes;
@@ -41,7 +41,7 @@ pub enum SinkError {
     Server(#[from] CallbackError),
     /// The awaited notification did not arrive.
     #[error(transparent)]
-    TimedOut(#[from] TimedOut),
+    TimedOut(#[from] TimedOut<Arrivals>),
 }
 
 /// Why a received body is not a notification.
@@ -279,7 +279,10 @@ impl NotificationSink {
         eventually(delivery_deadline(), || async move {
             match self.received_matching(n, patterns, headers).await {
                 Ok(received) if received.len() >= k => Poll::Ready(Ok(received)),
-                Ok(received) => Poll::Pending(format!("endpoint {n} holds {} matching notifications, {k} awaited", received.len())),
+                Ok(received) => Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: k,
+                }),
                 Err(error) => Poll::Ready(Err(error)),
             }
         })
@@ -295,7 +298,10 @@ impl NotificationSink {
         eventually(delivery_deadline(), || async move {
             match self.received(n).await {
                 Ok(mut received) if received.len() >= k => Poll::Ready(Ok(received.swap_remove(k - 1))),
-                Ok(received) => Poll::Pending(format!("endpoint {n} holds {} notifications, notification {k} awaited", received.len())),
+                Ok(received) => Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: k,
+                }),
                 Err(error) => Poll::Ready(Err(error)),
             }
         })
@@ -312,7 +318,10 @@ impl NotificationSink {
         eventually(delivery_deadline(), || async move {
             match self.received(n).await {
                 Ok(received) if received.len() >= k => Poll::Ready(Ok(received)),
-                Ok(received) => Poll::Pending(format!("endpoint {n} holds {} notifications, {k} awaited", received.len())),
+                Ok(received) => Poll::Pending(Arrivals {
+                    held: received.len(),
+                    awaited: k,
+                }),
                 Err(error) => Poll::Ready(Err(error)),
             }
         })

@@ -1,7 +1,7 @@
 //! ETSI `003_03`: a batch whose body is not JSON, or is an empty array, is refused as a whole (clause 5.6.7).
 
 use crate::{
-    suite_keywords::{LD_JSON, post_text, refused, with_doubled_separator},
+    suite_keywords::{post_text, refused, with_doubled_separator},
     suite_payloads::bare_building,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
@@ -10,7 +10,7 @@ use http::StatusCode;
 use iri_rs::{IriBuf, IriRefBuf};
 use ngsi_ld::{
     http::{ContextDelivery, operation::BatchCreate},
-    model::{Context, ContextEntry, ErrorType},
+    model::{APPLICATION_LD_JSON, Context, ContextEntry, ErrorType},
 };
 
 /// The `@context` of `vocabulary` followed by the ETSI core context v1.8, the two references the invalid body names.
@@ -51,7 +51,7 @@ async fn e003_03_02_empty_json() -> Result<()> {
     let broker = broker::front()?;
     refused(
         &broker,
-        post_text(&broker, "entityOperations/create", LD_JSON, "[]")?,
+        post_text(&broker, "entityOperations/create", &APPLICATION_LD_JSON, "[]")?,
         ErrorType::BadRequestData,
     )
     .await

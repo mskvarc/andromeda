@@ -21,13 +21,18 @@ pub enum HostedContextError {
     NoLocation,
     /// The `Location` does not resolve against the broker's API root.
     #[error("the location {0} does not resolve against the broker")]
-    Location(String, #[source] url::ParseError),
+    Location(IriRefBuf, #[source] url::ParseError),
     /// The served URL is not an IRI reference.
     #[error("the context URL {0} is not an IRI")]
     NotAnIri(Url),
-    /// A listing names no URL holding the text, or several.
-    #[error("the listing names {1} URLs holding {0}, not one")]
-    NotListedOnce(String, usize),
+    /// A listing names no URL holding the text sought, or several.
+    #[error("the listing names {holding} URLs holding the text sought, not one: {listed:?}")]
+    NotListedOnce {
+        /// How many listed URLs hold the text.
+        holding: usize,
+        /// The URLs the listing names.
+        listed: Vec<Url>,
+    },
     /// The URL's last path segment is not the identifier of a stored context.
     #[error("the listed URL {0} names no stored context")]
     NotStored(Url),
@@ -61,7 +66,8 @@ impl HostedContext {
             .endpoint()
             .base_url()
             .join(location.as_str())
-            .map_err(|error| HostedContextError::Location(location.to_string(), error))?;
+            // clone: the answer keeps its location; the error owns its own copy
+            .map_err(|error| HostedContextError::Location(location.clone(), error))?;
         Ok(HostedContext { id, url })
     }
 
@@ -75,10 +81,11 @@ impl HostedContext {
     pub fn listed(listed: &[Url], text: &str) -> Result<HostedContext, HostedContextError> {
         let mut holding = listed.iter().filter(|url| url.as_str().contains(text));
         let (Some(url), None) = (holding.next(), holding.next()) else {
-            return Err(HostedContextError::NotListedOnce(
-                text.to_owned(),
-                listed.iter().filter(|url| url.as_str().contains(text)).count(),
-            ));
+            return Err(HostedContextError::NotListedOnce {
+                holding: listed.iter().filter(|url| url.as_str().contains(text)).count(),
+                // The listing keeps its URLs; the error owns its own copy.
+                listed: listed.to_vec(),
+            });
         };
         let id = url
             .path_segments()

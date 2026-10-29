@@ -12,7 +12,10 @@ use andromeda_test_suite::{
     wire::{api_uri, content_type},
 };
 use googletest::prelude::*;
-use ngsi_ld::{http::operation::CreateEntity, model::ErrorType};
+use ngsi_ld::{
+    http::operation::CreateEntity,
+    model::{APPLICATION_JSON, ErrorType},
+};
 
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
 /// "application/json" and the request payload body (as JSON) contains a "@context" term
@@ -26,6 +29,6 @@ async fn e001_06_01_payload_context_with_json_content_type() -> Result<()> {
     let entity = building_simple_attributes(&namespace, 1)?;
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let create = CreateEntity::builder().entity(&entity).build();
-    let request = content_type(client.unchecked(&create)?, "application/json").uri(api_uri(&client, "entities/")?);
+    let request = content_type(client.unchecked(&create)?, &APPLICATION_JSON)?.uri(api_uri(&client, "entities/")?);
     refused(&client, request, ErrorType::BadRequestData).await
 }

@@ -6,20 +6,21 @@
 //! the suite reads the environment. A value a test needs that the stack does not name fails the test with the key it
 //! should have been given.
 
+use crate::config_error::{ConfigError, ConfigKey};
 use figment2::{Figment, providers::Env};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
     net::{IpAddr, UdpSocket},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use strum::IntoStaticStr;
 use url::{Host, Url};
 
 /// The prefix every key of the suite's configuration carries in the environment.
-const PREFIX: &str = "ANDROMEDA_TEST_SUITE__";
+pub(crate) const PREFIX: &str = "ANDROMEDA_TEST_SUITE__";
 
 /// A broker of a stack, by the role the stack gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, IntoStaticStr)]
@@ -204,20 +205,6 @@ pub struct SuiteConfig {
     delivery_deadline_seconds: Option<u64>,
 }
 
-/// Why a value the test needs is not available.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ConfigError {
-    /// The environment does not describe a configuration.
-    #[error("the suite configuration in the {PREFIX}* environment is invalid: {0}")]
-    Invalid(String),
-    /// The stack names no value for the key.
-    #[error("the stack sets no {0}")]
-    Missing(String),
-    /// The address the brokers reach the test process by could not be found.
-    #[error("the address the brokers reach this process by could not be found: {0}")]
-    CallbackHost(String),
-}
-
 /// The configuration, read once per test process.
 static CONFIG: OnceLock<Result<SuiteConfig, ConfigError>> = OnceLock::new();
 
@@ -238,7 +225,7 @@ impl SuiteConfig {
 
     /// Reads the configuration `figment` holds.
     fn read(figment: &Figment) -> Result<SuiteConfig, ConfigError> {
-        figment.extract().map_err(|error| ConfigError::Invalid(error.to_string()))
+        figment.extract().map_err(|error| ConfigError::Invalid(Box::new(error)))
     }
 
     /// The longest a positive wait waits, when the stack sets it.
@@ -290,7 +277,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] on a stack that runs none.
     pub fn mqtt(&self) -> Result<&MqttSettings, ConfigError> {
-        self.mqtt.as_ref().ok_or_else(|| ConfigError::Missing(format!("{PREFIX}MQTT__*")))
+        self.mqtt.as_ref().ok_or(ConfigError::Missing(ConfigKey::Mqtt))
     }
 
     /// The NGSI-LD core `@context` the brokers answer with.
@@ -311,9 +298,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] on a stack without the prefixed broker.
     pub fn api_root_prefixed(&self) -> Result<&Url, ConfigError> {
-        self.api_root_prefixed
-            .as_ref()
-            .ok_or_else(|| ConfigError::Missing(format!("{PREFIX}API_ROOT_PREFIXED")))
+        self.api_root_prefixed.as_ref().ok_or(ConfigError::Missing(ConfigKey::ApiRootPrefixed))
     }
 
     /// Each host a URL may name and the host the test process connects to in its place.
@@ -327,7 +312,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] on a stack that names none.
     pub fn stack_dir(&self) -> Result<&Path, ConfigError> {
-        self.stack_dir.as_deref().ok_or_else(|| ConfigError::Missing(format!("{PREFIX}STACK_DIR")))
+        self.stack_dir.as_deref().ok_or(ConfigError::Missing(ConfigKey::StackDir))
     }
 
     /// The host the brokers reach the test process by.
@@ -349,13 +334,16 @@ impl SuiteConfig {
     /// The local address of the route to the front broker.
     fn discover_callback_host(&self) -> Result<Host<String>, ConfigError> {
         let front = self.broker(BrokerRole::Front)?;
-        let host = front.host_str().ok_or_else(|| ConfigError::CallbackHost(format!("{front} names no host")))?;
+        // clone: the error names the front broker the configuration keeps
+        let host = front.host_str().ok_or_else(|| ConfigError::FrontWithoutHost(front.clone()))?;
         let port = front.port_or_known_default().unwrap_or(80);
-        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|error| ConfigError::CallbackHost(error.to_string()))?;
-        socket
-            .connect((host, port))
-            .map_err(|error| ConfigError::CallbackHost(format!("{host}:{port}: {error}")))?;
-        let local = socket.local_addr().map_err(|error| ConfigError::CallbackHost(error.to_string()))?;
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|error| ConfigError::RouteSocket(Arc::new(error)))?;
+        socket.connect((host, port)).map_err(|error| ConfigError::NoRoute {
+            // clone: the error names the front broker the configuration keeps
+            front: front.clone(),
+            source: Arc::new(error),
+        })?;
+        let local = socket.local_addr().map_err(|error| ConfigError::RouteSocket(Arc::new(error)))?;
         Ok(match local.ip() {
             IpAddr::V4(address) => Host::Ipv4(address),
             IpAddr::V6(address) => Host::Ipv6(address),
@@ -364,13 +352,16 @@ impl SuiteConfig {
 }
 
 /// The error for the key `name` of the section `section`.
-fn missing(section: &str, name: &'static str) -> ConfigError {
-    ConfigError::Missing(format!("{PREFIX}{section}__{name}"))
+const fn missing(section: &'static str, name: &'static str) -> ConfigError {
+    ConfigError::Missing(ConfigKey::Entry { section, name })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{BrokerRole, Budget, ConfigError, PeerRole, SuiteConfig};
+    use crate::{
+        config::{BrokerRole, Budget, PeerRole, SuiteConfig},
+        config_error::ConfigError,
+    };
     use figment2::{Figment, providers::Serialized, value::Value};
     use googletest::prelude::*;
     use url::{Host, Url};
@@ -420,10 +411,10 @@ mod tests {
     #[gtest]
     fn a_malformed_url_is_refused_with_its_key() -> Result<()> {
         let result = SuiteConfig::read(&figment(&[("BROKERS__FRONT", "not a url"), REQUIRED[1], REQUIRED[2]]));
-        let Err(ConfigError::Invalid(message)) = result else {
+        let Err(ConfigError::Invalid(error)) = result else {
             return fail!("a malformed broker URL was accepted");
         };
-        verify_that!(message, contains_substring("front"))
+        verify_that!(error.to_string(), contains_substring("front"))
     }
 
     #[gtest]

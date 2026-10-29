@@ -5,17 +5,20 @@
 //! The model builds an `UncheckedDocument` from an entity alone; subscriptions, registrations, temporal entities and
 //! fragments reach one through their rendering.
 
-use ngsi_ld::{http::UncheckedDocument, model::RawJson};
+use ngsi_ld::{
+    http::UncheckedDocument,
+    model::{InvalidJson, RawJson},
+};
 
 /// Why a rendering cannot become an unchecked document.
 #[derive(Debug, thiserror::Error)]
 pub enum UncheckedDocumentError {
     /// The rendering is not a JSON object.
     #[error("a rendered document is not a JSON object: {0}")]
-    NotAnObject(String),
+    NotAnObject(RawJson, #[source] serde_json::Error),
     /// A member of the rendering is not JSON text the model reads back.
-    #[error("a rendered member is not JSON: {0}")]
-    Member(String),
+    #[error("a rendered member is not JSON")]
+    Member(#[source] InvalidJson),
 }
 
 /// The unchecked document holding every member of `rendered`, a document the model wrote.
@@ -25,9 +28,12 @@ pub enum UncheckedDocumentError {
 /// Returns [`UncheckedDocumentError`] when `rendered` is not a JSON object.
 pub fn from_rendered(rendered: &RawJson) -> Result<UncheckedDocument, UncheckedDocumentError> {
     let text = rendered.to_string();
-    let members: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).map_err(|_| UncheckedDocumentError::NotAnObject(text.clone()))?;
+    let members: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).map_err(|error| {
+        // clone: the error names the rendering the caller keeps
+        UncheckedDocumentError::NotAnObject(rendered.clone(), error)
+    })?;
     members.iter().try_fold(UncheckedDocument::empty(), |document, (name, value)| {
-        let raw: RawJson = value.to_string().parse().map_err(|_| UncheckedDocumentError::Member(name.clone()))?;
+        let raw: RawJson = value.to_string().parse().map_err(UncheckedDocumentError::Member)?;
         Ok(document.set_member(name, &raw))
     })
 }

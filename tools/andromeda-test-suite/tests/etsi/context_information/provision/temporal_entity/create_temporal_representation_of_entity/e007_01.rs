@@ -16,7 +16,10 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::StatusCode;
-use ngsi_ld::http::{headers::Accept, operation::CreateOrUpdateTemporalEvolution};
+use ngsi_ld::{
+    http::{headers::Accept, operation::CreateOrUpdateTemporalEvolution},
+    model::APPLICATION_JSON,
+};
 use serde_json::json;
 
 /// Pins: Check that one can create a temporal representation of an entity
@@ -79,7 +82,7 @@ async fn e007_01_02_create_a_temporal_entity_with_no_context() -> Result<()> {
     let broker = broker::front()?;
     let evolution = vehicle_speed_fuel_level_on(&namespace, 1, "2020-09-01")?;
     let operation = CreateOrUpdateTemporalEvolution::builder().entity(&evolution).build();
-    let request = content_type(broker.unchecked(&operation)?.uri(api_uri(&broker, "temporal/entities/")?), "application/json");
+    let request = content_type(broker.unchecked(&operation)?.uri(api_uri(&broker, "temporal/entities/")?), &APPLICATION_JSON)?;
     let created = broker.send_unchecked(request).await;
     verify_that!(&created, answered(StatusCode::CREATED))?;
     expect_that!(created?.body().len(), eq(0));

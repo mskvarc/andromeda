@@ -2,7 +2,7 @@
 //! holds the NGSI-LD Null for them (clauses 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{LD_JSON, create_entity, delete_entities, retrieve_entity_json},
+    suite_keywords::{create_entity, delete_entities, retrieve_entity_json},
     suite_payloads::bare_building,
 };
 use andromeda_test_suite::{
@@ -18,7 +18,7 @@ use http::StatusCode;
 use indexmap::IndexMap;
 use ngsi_ld::{
     http::{UncheckedDocument, operation::MergeEntity},
-    model::{Entity, EntityFragment, Input, Lossless, NgsiLdMediaType, RawJson, Value},
+    model::{APPLICATION_LD_JSON, Entity, EntityFragment, Input, Lossless, NgsiLdMediaType, RawJson, Value},
 };
 use serde_json::json;
 
@@ -56,7 +56,7 @@ async fn merge_building(broker: &BrokerClient, vocabulary: &Vocabulary, namespac
     let document = UncheckedDocument::from_entity(&bare_building(namespace, 1)?, Lossless::Normalized)
         .set_member("@context", &context_member(vocabulary)?)
         .set_member("buildingDetails", &details.parse::<RawJson>()?);
-    let request = content_type(broker.unchecked(&operation)?.document_as_is(&document), LD_JSON);
+    let request = content_type(broker.unchecked(&operation)?.document_as_is(&document), &APPLICATION_LD_JSON)?;
     let answer = broker.send_unchecked(request).await;
     verify_that!(&answer, answered(StatusCode::NO_CONTENT))?;
     expect_that!(answer?.body().len(), eq(0));

@@ -19,13 +19,10 @@ use http::StatusCode;
 use ngsi_ld::{
     client::Received,
     http::{Page, headers::RelationType},
-    model::Output,
+    model::{APPLICATION_JSON, Output},
     registration::{CSourceRegistration, RegistrationId, RegistrationInfo},
 };
 use serde_json::{Value, json};
-
-/// The media type the broker gives the page links of a query answered as `application/json`.
-const JSON: &str = "application/json";
 
 /// The cases' setup: the Vehicle and parking registration `-1`, the registration `-2` of every `Building` located at
 /// the point -8.521, 41.2 and the [`building_registration`] `-3`; answers the vocabulary and the cleanup that deletes
@@ -98,7 +95,11 @@ async fn e037_11_01_query_first_registration() -> Result<()> {
     expect_that!(registration_types(&received.body)?, elements_are![eq(&json!("ContextSourceRegistration"))]);
     expect_page_links(
         received.head.headers(),
-        &[page_link("/ngsi-ld/v1/csourceRegistrations?limit=1&offset=1", RelationType::Next, JSON)?],
+        &[page_link(
+            "/ngsi-ld/v1/csourceRegistrations?limit=1&offset=1",
+            RelationType::Next,
+            &APPLICATION_JSON,
+        )?],
     )?;
     delete_registrations(&broker, &namespace, &[1, 2, 3]).await
 }
@@ -128,7 +129,11 @@ async fn e037_11_02_query_last_registration() -> Result<()> {
     expect_that!(registration_types(&received.body)?, elements_are![eq(&json!("ContextSourceRegistration"))]);
     expect_page_links(
         received.head.headers(),
-        &[page_link("/ngsi-ld/v1/csourceRegistrations?limit=1&offset=0", RelationType::Prev, JSON)?],
+        &[page_link(
+            "/ngsi-ld/v1/csourceRegistrations?limit=1&offset=0",
+            RelationType::Prev,
+            &APPLICATION_JSON,
+        )?],
     )?;
     delete_registrations(&broker, &namespace, &[1, 2, 3]).await
 }

@@ -10,13 +10,13 @@ use ngsi_ld::{
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
-/// The broker answered the whole success.
+/// The broker answered the whole success, with the outcome answering it.
 #[derive(Debug, thiserror::Error)]
-#[error("the broker answered the whole success, not a partial one: {0}")]
-pub struct Whole(String);
+#[error("the broker answered the whole success, not a partial one: {0:?}")]
+pub struct Whole<O: Debug>(O);
 
 /// An outcome that is the whole success or a partial one.
-pub trait PartialSuccess {
+pub trait PartialSuccess: Debug + Sized {
     /// The report a partial success carries.
     type Report;
 
@@ -25,16 +25,16 @@ pub trait PartialSuccess {
     /// # Errors
     ///
     /// Returns [`Whole`] when the success is whole.
-    fn partial(self) -> Result<Self::Report, Whole>;
+    fn partial(self) -> Result<Self::Report, Whole<Self>>;
 }
 
 impl PartialSuccess for CreateOutcome {
     type Report = BatchOperationResult;
 
-    fn partial(self) -> Result<BatchOperationResult, Whole> {
+    fn partial(self) -> Result<BatchOperationResult, Whole<Self>> {
         match self {
             CreateOutcome::PartiallyCreated { result, .. } => Ok(result),
-            whole @ CreateOutcome::Created { .. } => Err(Whole(format!("{whole:?}"))),
+            whole @ CreateOutcome::Created { .. } => Err(Whole(whole)),
         }
     }
 }
@@ -42,10 +42,10 @@ impl PartialSuccess for CreateOutcome {
 impl PartialSuccess for BatchOutcome {
     type Report = BatchOperationResult;
 
-    fn partial(self) -> Result<BatchOperationResult, Whole> {
+    fn partial(self) -> Result<BatchOperationResult, Whole<Self>> {
         match self {
             BatchOutcome::Partial(result) => Ok(result),
-            whole @ BatchOutcome::Done => Err(Whole(format!("{whole:?}"))),
+            whole @ BatchOutcome::Done => Err(Whole(whole)),
         }
     }
 }
@@ -53,10 +53,10 @@ impl PartialSuccess for BatchOutcome {
 impl PartialSuccess for BatchCreateOutcome {
     type Report = BatchOperationResult;
 
-    fn partial(self) -> Result<BatchOperationResult, Whole> {
+    fn partial(self) -> Result<BatchOperationResult, Whole<Self>> {
         match self {
             BatchCreateOutcome::Partial(result) => Ok(result),
-            whole @ BatchCreateOutcome::Created(_) => Err(Whole(format!("{whole:?}"))),
+            whole @ BatchCreateOutcome::Created(_) => Err(Whole(whole)),
         }
     }
 }
@@ -64,10 +64,10 @@ impl PartialSuccess for BatchCreateOutcome {
 impl PartialSuccess for UpsertOutcome {
     type Report = BatchOperationResult;
 
-    fn partial(self) -> Result<BatchOperationResult, Whole> {
+    fn partial(self) -> Result<BatchOperationResult, Whole<Self>> {
         match self {
             UpsertOutcome::Partial(result) => Ok(result),
-            whole @ (UpsertOutcome::Created(_) | UpsertOutcome::Updated) => Err(Whole(format!("{whole:?}"))),
+            whole @ (UpsertOutcome::Created(_) | UpsertOutcome::Updated) => Err(Whole(whole)),
         }
     }
 }
@@ -75,23 +75,23 @@ impl PartialSuccess for UpsertOutcome {
 impl PartialSuccess for UpdateOutcome {
     type Report = UpdateResult;
 
-    fn partial(self) -> Result<UpdateResult, Whole> {
+    fn partial(self) -> Result<UpdateResult, Whole<Self>> {
         match self {
             UpdateOutcome::Partial(result) => Ok(result),
-            whole @ UpdateOutcome::Done => Err(Whole(format!("{whole:?}"))),
+            whole @ UpdateOutcome::Done => Err(Whole(whole)),
         }
     }
 }
 
 /// Why the answer to an unchecked request holds no report of a partial success.
 #[derive(Debug, thiserror::Error)]
-pub enum UnreportedError {
+pub enum UnreportedError<E: Debug> {
     /// The broker answered a success other than 207 Multi-Status.
     #[error("the broker answered {0}, not 207 Multi-Status")]
     Status(StatusCode),
     /// The broker refused the request or the transport failed.
-    #[error("the request failed: {0}")]
-    Failed(String),
+    #[error("the request failed: {0:?}")]
+    Failed(Box<ClientError<E>>),
     /// The body is not the report the operation answers.
     #[error("the 207 body is not a report: {0}")]
     Body(#[from] serde_json::Error),
@@ -103,8 +103,8 @@ pub enum UnreportedError {
 /// # Errors
 ///
 /// Returns [`UnreportedError`] when the answer is not a 207 or its body is not a report of type `R`.
-pub fn reported<R: DeserializeOwned, E: Debug>(answer: Result<Response<Bytes>, ClientError<E>>) -> Result<R, UnreportedError> {
-    let response = answer.map_err(|error| UnreportedError::Failed(format!("{error:?}")))?;
+pub fn reported<R: DeserializeOwned, E: Debug>(answer: Result<Response<Bytes>, ClientError<E>>) -> Result<R, UnreportedError<E>> {
+    let response = answer.map_err(|error| UnreportedError::Failed(Box::new(error)))?;
     if response.status() != StatusCode::MULTI_STATUS {
         return Err(UnreportedError::Status(response.status()));
     }
@@ -139,7 +139,7 @@ mod tests {
 
     #[gtest]
     fn another_success_status_is_no_report() -> Result<()> {
-        let report: StdResult<UpdateResult, UnreportedError> = reported(answer(StatusCode::NO_CONTENT, ""));
+        let report: StdResult<UpdateResult, UnreportedError<io::Error>> = reported(answer(StatusCode::NO_CONTENT, ""));
         verify_that!(report, err(displays_as(contains_substring("204"))))
     }
 

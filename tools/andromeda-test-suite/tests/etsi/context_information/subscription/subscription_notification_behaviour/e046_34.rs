@@ -40,7 +40,7 @@ async fn e046_34_01_show_changes_for_deletion_of_property() -> Result<()> {
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
-    expected["name"] = json!({"type": "Property", "value": NGSI_LD_NULL, "previousValue": "Eiffel Tower"});
+    expected["name"] = json!({"type": "Property", "value": NGSI_LD_NULL.as_str(), "previousValue": "Eiffel Tower"});
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
 
     teardown(&broker::front()?, &id, &building).await;
@@ -75,7 +75,7 @@ async fn e046_34_02_show_changes_for_deletion_of_relationship() -> Result<()> {
     expected["locatedAt"] = json!({
         "type": "Relationship",
         "previousObject": namespace.urn_text("City", "Paris"),
-        "object": NGSI_LD_NULL,
+        "object": NGSI_LD_NULL.as_str(),
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
 
@@ -110,7 +110,7 @@ async fn e046_34_03_show_changes_for_deletion_of_geo_property() -> Result<()> {
     let mut expected = street_building_document(&namespace);
     expected["location"] = json!({
         "type": "GeoProperty",
-        "value": NGSI_LD_NULL,
+        "value": NGSI_LD_NULL.as_str(),
         "previousValue": {"type": "Point", "coordinates": [-8.5, 41.2]},
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));
@@ -146,7 +146,7 @@ async fn e046_34_04_show_changes_for_deletion_of_language_property() -> Result<(
     let mut expected = street_building_document(&namespace);
     expected["street"] = json!({
         "type": "LanguageProperty",
-        "languageMap": {"@none": NGSI_LD_NULL},
+        "languageMap": {"@none": NGSI_LD_NULL.as_str()},
         "previousLanguageMap": {"fr": "Grand Place", "nl": "Grote Markt"},
     });
     expect_that!(data_item(&body, &building.id), some(matches_document(expected).hiding_everywhere("id")));

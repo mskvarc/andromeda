@@ -27,9 +27,6 @@ use ngsi_ld::{
 use serde_json::{Value, json};
 use url::Url;
 
-/// The core `@context` the ETSI delete cases name, as their requests write it.
-pub(crate) const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-
 /// A context the broker stored: the identifier it gave it and the `Location` it named.
 #[derive(Debug)]
 pub(crate) struct StoredContext {

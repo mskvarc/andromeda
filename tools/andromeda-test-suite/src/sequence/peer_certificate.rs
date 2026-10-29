@@ -4,15 +4,17 @@
 
 use x509_parser::{
     certificate::X509Certificate,
+    error::X509Error,
+    nom,
     objects::{oid_registry, oid2abbrev},
     prelude::FromDer,
     x509::X509Name,
 };
 
 /// Why a presented certificate cannot be read.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("the presented certificate is not DER X.509: {0}")]
-pub struct CertificateError(String);
+#[derive(Debug, thiserror::Error)]
+#[error("the presented certificate is not DER X.509")]
+pub struct CertificateError(#[source] nom::Err<X509Error>);
 
 /// A field of a certificate a check reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
@@ -44,7 +46,7 @@ impl PeerCertificate {
     ///
     /// Returns [`CertificateError`] when `der` is not a DER-encoded X.509 certificate.
     pub fn from_der(der: &[u8]) -> Result<PeerCertificate, CertificateError> {
-        let (_, certificate) = X509Certificate::from_der(der).map_err(|error| CertificateError(error.to_string()))?;
+        let (_, certificate) = X509Certificate::from_der(der).map_err(CertificateError)?;
         Ok(PeerCertificate {
             subject: one_line(certificate.subject()),
             issuer: one_line(certificate.issuer()),

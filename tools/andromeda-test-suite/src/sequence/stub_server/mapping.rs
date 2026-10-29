@@ -51,9 +51,9 @@ pub struct StubResponse {
     body: Option<String>,
     /// How long to wait before answering, in milliseconds.
     fixed_delay_milliseconds: Option<u64>,
-    /// The transformers applied; only `response-template` is known.
+    /// The transformers applied; a mapping naming any other is not a stub mapping.
     #[serde(default)]
-    transformers: Vec<String>,
+    transformers: Vec<Transformer>,
 }
 
 /// The value or values of one stub response header.
@@ -76,8 +76,16 @@ impl HeaderValues {
     }
 }
 
+/// A transformer a stub response applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Transformer {
+    /// Renders the response's templates from the request.
+    ResponseTemplate,
+}
+
 /// Why a stub cannot answer.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum StubError {
     /// The request pattern is not valid.
     #[error(transparent)]
@@ -85,9 +93,9 @@ pub enum StubError {
     /// The response template is not one the server renders.
     #[error(transparent)]
     Template(#[from] TemplateError),
-    /// A transformer other than `response-template` is named.
-    #[error("the transformer {0} is not known")]
-    Transformer(String),
+    /// More than one transformer is named, where the server applies only `response-template`.
+    #[error("{0} transformers are named, and the server applies only response-template")]
+    Transformers(usize),
 }
 
 impl StubMapping {
@@ -116,8 +124,8 @@ impl StubResponse {
     pub fn answer(&self) -> Result<ResponseTemplate, StubError> {
         let templated = match self.transformers.as_slice() {
             [] => false,
-            [only] if only == "response-template" => true,
-            [other, ..] => return Err(StubError::Transformer(other.clone())),
+            [Transformer::ResponseTemplate] => true,
+            several @ [_, _, ..] => return Err(StubError::Transformers(several.len())),
         };
         let fill = |text: &str| if templated { render(text) } else { Ok(text.to_owned()) };
         let mut answer = ResponseTemplate::new(self.status);

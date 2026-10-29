@@ -8,7 +8,8 @@
 
 use crate::{
     broker::{BrokerClient, SuiteTransport},
-    config::{BrokerRole, ConfigError, SuiteConfig},
+    config::{BrokerRole, HostName, SuiteConfig},
+    config_error::ConfigError,
     exchange_log::ExchangeLog,
 };
 use ngsi_ld::{
@@ -54,8 +55,8 @@ pub enum TlsError {
     #[error("{0} is not a certificate or key")]
     Pem(PathBuf, #[source] reqwest::Error),
     /// A host the stack maps cannot be resolved.
-    #[error("the host {0} cannot be resolved")]
-    Resolve(String, #[source] io::Error),
+    #[error("the host {} cannot be resolved", .0.host())]
+    Resolve(HostName, #[source] io::Error),
     /// The HTTP client could not be built.
     #[error("the HTTP client could not be built")]
     Http(#[source] reqwest::Error),
@@ -165,9 +166,10 @@ fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
 async fn resolved(config: &SuiteConfig) -> Result<Vec<(String, Vec<SocketAddr>)>, TlsError> {
     let mut resolved = Vec::new();
     for (name, target) in config.connect_to() {
-        let target = target.host().to_string();
-        let addresses = lookup_host((target.as_str(), 0))
+        let host = target.host().to_string();
+        let addresses = lookup_host((host.as_str(), 0))
             .await
+            // clone: the error names the host the configuration keeps
             .map_err(|error| TlsError::Resolve(target.clone(), error))?;
         resolved.push((name.host().to_string(), addresses.collect()));
     }

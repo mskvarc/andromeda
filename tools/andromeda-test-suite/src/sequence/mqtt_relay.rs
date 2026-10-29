@@ -9,6 +9,7 @@
 
 use rumqttc::v5::{
     AsyncClient,
+    ClientError,
     Event,
     MqttOptions,
     mqttbytes::{
@@ -19,16 +20,17 @@ use rumqttc::v5::{
 use serde_json::{Map, Value as Json, json};
 use std::time::Duration;
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
+use url::Host;
 
 /// Why the relay could not start.
 #[derive(Debug, thiserror::Error)]
 pub enum RelayError {
     /// The subscription could not be sent.
     #[error("the relay could not subscribe on {0}")]
-    Subscribe(String),
+    Subscribe(Host<String>, #[source] Box<ClientError>),
     /// The broker did not acknowledge the subscription in time.
     #[error("the MQTT broker {0} did not acknowledge the relay's subscription")]
-    NotAcknowledged(String),
+    NotAcknowledged(Host<String>),
 }
 
 /// The longest the relay waits for a broker to acknowledge its subscription.
@@ -58,11 +60,11 @@ impl MqttRelay {
     /// # Errors
     ///
     /// Returns [`RelayError`] when a broker does not acknowledge in time.
-    pub async fn start(hosts: &[String], observer_port: u16, namespace: &str, stub_server: &str) -> Result<MqttRelay, RelayError> {
+    pub async fn start(hosts: &[&Host<String>], observer_port: u16, namespace: &str, stub_server: &str) -> Result<MqttRelay, RelayError> {
         let http = reqwest::Client::new();
         let mut brokers = Vec::with_capacity(hosts.len());
         for host in hosts {
-            let mut options = MqttOptions::new(format!("relay-{namespace}-{host}"), host.as_str(), observer_port);
+            let mut options = MqttOptions::new(format!("relay-{namespace}-{host}"), host.to_string(), observer_port);
             options.set_keep_alive(Duration::from_secs(30));
             let (client, mut event_loop) = AsyncClient::new(options, 64);
             let (acknowledged, subscribed) = oneshot::channel();
@@ -95,10 +97,12 @@ impl MqttRelay {
             client
                 .subscribe(format!("+/{namespace}/#"), QoS::ExactlyOnce)
                 .await
-                .map_err(|_| RelayError::Subscribe(host.clone()))?;
+                // clone: the error names the host the configuration keeps
+                .map_err(|error| RelayError::Subscribe((*host).clone(), Box::new(error)))?;
             match timeout(SUBSCRIPTION_DEADLINE, subscribed).await {
                 Ok(Ok(())) => brokers.push(Relayed { client, driver }),
-                Ok(Err(_)) | Err(_) => return Err(RelayError::NotAcknowledged(host.clone())),
+                // clone: the error names the host the configuration keeps
+                Ok(Err(_)) | Err(_) => return Err(RelayError::NotAcknowledged((*host).clone())),
             }
         }
         Ok(MqttRelay { brokers })
