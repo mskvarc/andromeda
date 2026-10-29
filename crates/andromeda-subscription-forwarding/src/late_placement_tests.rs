@@ -74,6 +74,24 @@ async fn a_registration_matching_after_creation_receives_the_copy_a_registration
     pretty_assertions::assert_eq!(without_id(late.clone()), without_id(at_creation.clone())); // clone: each comparison owns the copy it strips
 }
 
+/// Clause 5.8.1.4: an expired subscription sends no notification, so a
+/// companion notification handled while the expiry withdraws its copies places
+/// none at a source it already relieved.
+#[tokio::test]
+async fn a_companion_notification_for_an_expired_subscription_places_nothing() {
+    let source = SubscribingSource::start(&identifier(SOURCE)).await;
+    let scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"watchedAttributes": [SPEED], "status": "expired"}),
+        registrations: vec![source.stored()],
+        ..SceneSpec::default()
+    })
+    .await;
+
+    scene.post(&newly_matching(&source.notified())).await.expect("the notification is handled");
+
+    pretty_assertions::assert_eq!(source.placed().await, Vec::<Value>::new());
+}
+
 /// A registration deleted before its companion notification is handled has had
 /// its copies torn down with it, so nothing is placed for it.
 #[tokio::test]

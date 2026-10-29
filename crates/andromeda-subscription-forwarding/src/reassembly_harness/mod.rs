@@ -1,6 +1,6 @@
 //! A broker's distributed subscription side wired to in-memory doubles, for
 //! tests of what it does with a notification posted under a forwarded copy's
-//! identifier.
+//! identifier, and with the lifecycle of the local subscription.
 //!
 //! The scene holds one local subscription delivering to an `http://` endpoint
 //! that a loopback receiver serves, so what the subscriber is sent is read off
@@ -40,7 +40,7 @@ use andromeda_federation::{FederationService, local_entity_type::LocalEntityType
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
@@ -50,8 +50,9 @@ use andromeda_subscription::{
     deleted_members::DeletedMembers,
     endpoint_admission::SubscriptionEndpointValidator,
     endpoint_refusal::EndpointRefusal,
+    error::SubscriptionError,
     filter_admission::SubscriptionFilterAdmission,
-    forwarding_hook::ForwardedCopy,
+    forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook},
     lifecycle::SubscriptionService,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -287,19 +288,44 @@ impl ReassemblyScene {
         self.maps.copies_asked()
     }
 
-    /// Place a reduced copy of the local subscription at `registration`'s
-    /// source the way the subscription's creation places it at a registration
-    /// that already matches.
-    pub(crate) async fn place_as_at_creation(&self, registration: &ContextSourceRegistration) -> Result<(), SubscriptionForwardingError> {
-        let stored = self
-            .service
+    /// The subscriptions deleted from the store, companions included.
+    pub(crate) fn deleted_subscriptions(&self) -> Vec<Identifier> {
+        self.subscriptions.deleted()
+    }
+
+    /// The registrations whose copy mapping was removed.
+    pub(crate) fn removed_mappings(&self) -> Vec<Identifier> {
+        self.maps.removed()
+    }
+
+    /// The local subscription as the store holds it.
+    async fn stored(&self) -> Subscription {
+        self.service
             .subscriptions
             .get(&ContextTarget::Live, &local_subscription())
             .await
             .expect("the store answers")
-            .expect("the local subscription is stored");
+            .expect("the local subscription is stored")
+            .subscription
+    }
+
+    /// Place a reduced copy of the local subscription at `registration`'s
+    /// source the way the subscription's creation places it at a registration
+    /// that already matches.
+    pub(crate) async fn place_as_at_creation(&self, registration: &ContextSourceRegistration) -> Result<(), SubscriptionForwardingError> {
         self.service
-            .apply_forward_decision(&stored.subscription, registration, ForwardDecision::Create, &DeletedMembers::default())
+            .apply_forward_decision(&self.stored().await, registration, ForwardDecision::Create, &DeletedMembers::default())
             .await
+    }
+
+    /// Tell the service the expiry sweep transitioned the local subscription.
+    pub(crate) async fn expire(&self) -> Result<(), SubscriptionError> {
+        SubscriptionForwardingHook::expired(&self.service, &local_subscription()).await
+    }
+
+    /// Tell the service the local subscription was updated to the state the
+    /// store holds, deleting no member.
+    pub(crate) async fn update_to_stored(&self) -> Result<(), SubscriptionError> {
+        SubscriptionForwardingHook::updated(&self.service, &self.stored().await, &DeletedMembers::default()).await
     }
 }

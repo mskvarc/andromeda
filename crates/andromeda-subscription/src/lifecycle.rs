@@ -302,11 +302,17 @@ where
         result
     }
 
-    /// Transition subscriptions due at `cutoff` and publish one variant-owned deletion change for each.
+    /// Transition subscriptions due at `cutoff`, publish one variant-owned
+    /// deletion change for each, and withdraw what each left at the context
+    /// sources. A failing forwarding hook is logged rather than returned: the
+    /// transition stands either way.
     pub(crate) async fn expire_due(&self, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
         let identifiers = self.repo.expire_due(target, cutoff).await?;
         for identifier in &identifiers {
             self.emit_change(self.variant.make_deleted(target.clone(), identifier.clone())).await; // clone: the policy outcome and change sink each own the branch and identifier.
+            if target.permits_federation() {
+                self.run_hook(identifier, |hook| hook.expired(identifier)).await;
+            }
         }
         Ok(identifiers)
     }

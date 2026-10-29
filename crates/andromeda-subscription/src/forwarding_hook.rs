@@ -10,6 +10,12 @@
 //! forwarding mappings together with the subscription itself, so what the
 //! deletion must tear down elsewhere is captured as a [`SubscriptionTeardown`]
 //! before the local row goes, and handed back to the hook once it has.
+//!
+//! An expiry keeps the row, which an update with a future `expiresAt` makes
+//! active again (clause 5.8.2.4), and its mappings with it. Clause 5.8.1.4
+//! stops every notification once a subscription expires, so the hook withdraws
+//! the companion and every forwarded copy then, leaving the context sources as
+//! a deletion would; a revived subscription is provisioned afresh by its update.
 
 use crate::{deleted_members::DeletedMembers, error::SubscriptionError};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
@@ -91,5 +97,13 @@ pub trait SubscriptionForwardingHook: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        Self: 'async_trait;
+
+    /// The subscription `id` expired; its row and forwarding mappings still
+    /// exist, and everything it left standing elsewhere is withdrawn.
+    fn expired<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
         Self: 'async_trait;
 }

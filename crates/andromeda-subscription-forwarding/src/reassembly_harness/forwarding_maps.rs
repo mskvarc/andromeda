@@ -10,7 +10,10 @@ use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 /// The mappings of one local subscription, which they name by `local`.
 pub(crate) struct ForwardingMaps {
@@ -27,6 +30,8 @@ pub(crate) struct ForwardingMaps {
     pub(crate) copies: Vec<ForwardedCopy>,
     /// How many times the copies of `local` were asked for.
     copies_asked: AtomicUsize,
+    /// The registrations whose copy mapping was removed, in the order they were.
+    removed: Mutex<Vec<Identifier>>,
 }
 
 impl ForwardingMaps {
@@ -40,12 +45,18 @@ impl ForwardingMaps {
             companion,
             copies,
             copies_asked: AtomicUsize::new(0),
+            removed: Mutex::new(Vec::new()),
         }
     }
 
     /// How many times the copies of the local subscription were asked for.
     pub(crate) fn copies_asked(&self) -> usize {
         self.copies_asked.load(Ordering::SeqCst)
+    }
+
+    /// The registrations whose copy mapping was removed, in the order they were.
+    pub(crate) fn removed(&self) -> Vec<Identifier> {
+        self.removed.lock().expect("the removal record is never poisoned").clone() // clone: the caller owns its snapshot
     }
 }
 
@@ -81,7 +92,8 @@ impl SubscriptionForwardingStore for ForwardingMaps {
         Ok((*remote_subscription == self.copy).then(|| (self.local.clone(), self.sender.clone())))
     }
 
-    async fn remove_forwarded(&self, _local: &Identifier, _registration: &Identifier) -> Result<(), SubscriptionForwardingError> {
+    async fn remove_forwarded(&self, _local: &Identifier, registration: &Identifier) -> Result<(), SubscriptionForwardingError> {
+        self.removed.lock().expect("the removal record is never poisoned").push(registration.clone()); // clone: the record owns the identifier
         Ok(())
     }
 }

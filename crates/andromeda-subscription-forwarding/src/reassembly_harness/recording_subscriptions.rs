@@ -15,13 +15,17 @@ use andromeda_subscription::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 /// The surrogate key the one stored subscription is stored under.
 const KEY: i64 = 1;
 
-/// A store holding one subscription, whose notification slot is always free
-/// and whose claims and successful deliveries are counted.
+/// A store holding one subscription, whose notification slot is always free,
+/// whose claims and successful deliveries are counted, and which records every
+/// subscription deleted from it.
 pub(crate) struct RecordingSubscriptions {
     /// The subscription in the form the store keeps it.
     document: Value,
@@ -29,6 +33,8 @@ pub(crate) struct RecordingSubscriptions {
     claims: AtomicUsize,
     /// How many deliveries were recorded as successful.
     successes: AtomicUsize,
+    /// The subscriptions deleted, in the order they were.
+    deleted: Mutex<Vec<Identifier>>,
 }
 
 impl RecordingSubscriptions {
@@ -38,7 +44,13 @@ impl RecordingSubscriptions {
             document,
             claims: AtomicUsize::new(0),
             successes: AtomicUsize::new(0),
+            deleted: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The subscriptions deleted, in the order they were.
+    pub(crate) fn deleted(&self) -> Vec<Identifier> {
+        self.deleted.lock().expect("the deletion record is never poisoned").clone() // clone: the caller owns its snapshot
     }
 
     /// How many notification slots were claimed.
@@ -64,8 +76,9 @@ impl SubscriptionStore for RecordingSubscriptions {
         Err(SubscriptionError::StoreUnavailable)
     }
 
-    async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
-        Err(SubscriptionError::StoreUnavailable)
+    async fn delete(&self, _target: &ContextTarget, id: &Identifier) -> Result<u64, SubscriptionError> {
+        self.deleted.lock().expect("the deletion record is never poisoned").push(id.clone()); // clone: the record owns the identifier
+        Ok(1)
     }
 
     async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {

@@ -6,6 +6,7 @@ use crate::{
     error::SubscriptionForwardingError,
     inbound::InboundCsourceNotification,
     minted_subscription_id::mint_subscription_id,
+    participation::stays_local,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
 };
@@ -19,6 +20,7 @@ use andromeda_ngsi_ld_model::{
     subscription::Subscription,
 };
 use andromeda_subscription::{deleted_members::DeletedMembers, forwarding_hook::ForwardedCopy};
+use chrono::Utc;
 use tracing::{debug, warn};
 
 /// What one registration named in a companion notification calls for.
@@ -188,6 +190,12 @@ impl SubscriptionForwardingService {
             return Ok(());
         };
         let subscription = stored.subscription;
+        // An expiry withdraws the copies before the companion, so a
+        // notification the companion sent meanwhile places nothing.
+        if stays_local(&subscription, Utc::now()) {
+            debug!(subscription = %local, "companion notification for a subscription out of distributed operations");
+            return Ok(());
+        }
         let Some(trigger) = notification.trigger_reason else {
             return Ok(());
         };

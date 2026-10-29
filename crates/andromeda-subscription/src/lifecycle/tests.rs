@@ -15,7 +15,7 @@ use crate::{
     subscription_validation_reason::SubscriptionValidationReason,
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_context_space::context_target::ContextTarget;
+use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -83,33 +83,39 @@ fn generated_subscription_identifiers_are_ngsi_ld_urns() {
     ));
 }
 
-/// One observable step of a subscription deletion.
+/// One observable step of a subscription deletion or expiry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DeletionStep {
+enum TeardownStep {
     /// The hook read what the deletion must tear down.
     TeardownCaptured,
     /// The store deleted the subscription row.
     RowDeleted,
     /// The hook was told the row is gone, with the teardown it was handed.
     TornDown(SubscriptionTeardown),
+    /// The store transitioned the due subscriptions to expired.
+    RowsExpired,
+    /// The hook was told this subscription expired.
+    Withdrawn(Identifier),
 }
 
-/// The order the deletion steps happened in, shared by the store and the hook.
-type DeletionLog = Arc<Mutex<Vec<DeletionStep>>>;
+/// The order the steps happened in, shared by the store and the hook.
+type TeardownLog = Arc<Mutex<Vec<TeardownStep>>>;
 
-fn record(log: &DeletionLog, step: DeletionStep) {
-    log.lock().expect("the deletion log is never poisoned").push(step);
+fn record(log: &TeardownLog, step: TeardownStep) {
+    log.lock().expect("the teardown log is never poisoned").push(step);
 }
 
-/// A store whose only exercised operation is `delete`, which reports
-/// `rows_deleted` and logs the step.
+/// A store whose only exercised operations are `delete`, which reports
+/// `rows_deleted`, and `expire_due`, which transitions `expiring`; each logs
+/// its step.
 struct DeletingStore {
-    log: DeletionLog,
+    log: TeardownLog,
     rows_deleted: u64,
+    expiring: Vec<Identifier>,
 }
 
 fn unused(method: &str) -> SubscriptionError {
-    panic!("{}", format!("DeletingStore::{method} is not exercised by the deletion tests"))
+    panic!("{}", format!("DeletingStore::{method} is not exercised by the teardown tests"))
 }
 
 #[async_trait]
@@ -123,7 +129,7 @@ impl SubscriptionStore for DeletingStore {
     }
 
     async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
-        record(&self.log, DeletionStep::RowDeleted);
+        record(&self.log, TeardownStep::RowDeleted);
         Ok(self.rows_deleted)
     }
 
@@ -155,7 +161,8 @@ impl SubscriptionStore for DeletingStore {
     }
 
     async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
-        Err(unused("expire_due"))
+        record(&self.log, TeardownStep::RowsExpired);
+        Ok(self.expiring.clone()) // clone: every sweep hands back its own list
     }
 
     async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
@@ -191,9 +198,9 @@ impl SubscriptionStore for DeletingStore {
     }
 }
 
-/// A hook that hands out a fixed teardown and logs every deletion step.
+/// A hook that hands out a fixed teardown and logs every teardown step.
 struct RecordingHook {
-    log: DeletionLog,
+    log: TeardownLog,
     teardown: SubscriptionTeardown,
 }
 
@@ -208,14 +215,19 @@ impl SubscriptionForwardingHook for RecordingHook {
     }
 
     async fn teardown_of(&self, _id: &Identifier) -> Result<SubscriptionTeardown, SubscriptionError> {
-        record(&self.log, DeletionStep::TeardownCaptured);
+        record(&self.log, TeardownStep::TeardownCaptured);
         // clone: every call hands the caller its own copy of the fixed plan.
         Ok(self.teardown.clone())
     }
 
     async fn deleted(&self, _id: &Identifier, teardown: &SubscriptionTeardown) -> Result<(), SubscriptionError> {
         // clone: the log keeps what the hook was handed for the assertion.
-        record(&self.log, DeletionStep::TornDown(teardown.clone()));
+        record(&self.log, TeardownStep::TornDown(teardown.clone()));
+        Ok(())
+    }
+
+    async fn expired(&self, id: &Identifier) -> Result<(), SubscriptionError> {
+        record(&self.log, TeardownStep::Withdrawn(id.clone())); // clone: the log keeps the identifier for the assertion
         Ok(())
     }
 }
@@ -242,12 +254,17 @@ fn captured_teardown() -> SubscriptionTeardown {
     }
 }
 
-fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubscriptionVariant> {
+fn service(log: &TeardownLog, rows_deleted: u64) -> SubscriptionService<CsrSubscriptionVariant> {
+    expiring_service(log, rows_deleted, Vec::new())
+}
+
+fn expiring_service(log: &TeardownLog, rows_deleted: u64, expiring: Vec<Identifier>) -> SubscriptionService<CsrSubscriptionVariant> {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
     // clone: the store and the hook each hold the shared log.
     let store = DeletingStore {
         log: Arc::clone(log),
         rows_deleted,
+        expiring,
     };
     let hook = RecordingHook {
         log: Arc::clone(log),
@@ -270,16 +287,16 @@ fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
 /// handed to the hook unchanged after it has.
 #[tokio::test]
 async fn a_deletion_captures_its_teardown_before_the_row_and_hands_it_over_after() {
-    let log = DeletionLog::default();
+    let log = TeardownLog::default();
     let deleted = service(&log, 1).delete(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:local")).await;
     assert!(deleted.is_ok(), "{deleted:?}");
-    let steps = log.lock().expect("the deletion log is never poisoned").clone();
+    let steps = log.lock().expect("the teardown log is never poisoned").clone();
     assert_eq!(
         steps,
         vec![
-            DeletionStep::TeardownCaptured,
-            DeletionStep::RowDeleted,
-            DeletionStep::TornDown(captured_teardown()),
+            TeardownStep::TeardownCaptured,
+            TeardownStep::RowDeleted,
+            TeardownStep::TornDown(captured_teardown()),
         ]
     );
 }
@@ -288,11 +305,52 @@ async fn a_deletion_captures_its_teardown_before_the_row_and_hands_it_over_after
 /// nothing is torn down for a subscription that did not exist.
 #[tokio::test]
 async fn deleting_an_unknown_subscription_tears_nothing_down() {
-    let log = DeletionLog::default();
+    let log = TeardownLog::default();
     let deleted = service(&log, 0).delete(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:unknown")).await;
     assert!(matches!(deleted, Err(SubscriptionError::NotFound { .. })), "{deleted:?}");
-    let steps = log.lock().expect("the deletion log is never poisoned").clone();
-    assert_eq!(steps, vec![DeletionStep::TeardownCaptured, DeletionStep::RowDeleted]);
+    let steps = log.lock().expect("the teardown log is never poisoned").clone();
+    assert_eq!(steps, vec![TeardownStep::TeardownCaptured, TeardownStep::RowDeleted]);
+}
+
+/// Clause 5.8.1.4: an expired subscription sends no notification, so each one
+/// the sweep transitions is withdrawn from the context sources after its row
+/// is marked expired, as a deletion would be.
+#[tokio::test]
+async fn an_expiry_withdraws_every_expired_subscription_after_the_transition() {
+    let log = TeardownLog::default();
+    let expiring = vec![uri("urn:ngsi-ld:Subscription:first"), uri("urn:ngsi-ld:Subscription:second")];
+    // clone: the store hands the list back and the assertion compares against it.
+    let expired = expiring_service(&log, 0, expiring.clone()).expire_due(&ContextTarget::Live, Utc::now()).await;
+    assert_eq!(expired.ok(), Some(expiring));
+    let steps = log.lock().expect("the teardown log is never poisoned").clone();
+    assert_eq!(
+        steps,
+        vec![
+            TeardownStep::RowsExpired,
+            TeardownStep::Withdrawn(uri("urn:ngsi-ld:Subscription:first")),
+            TeardownStep::Withdrawn(uri("urn:ngsi-ld:Subscription:second")),
+        ]
+    );
+}
+
+fn snapshot_target() -> ContextTarget {
+    ContextTarget::Snapshot(SnapshotTarget::published(
+        SnapshotKey::try_from(3).expect("a positive key"),
+        uri("urn:ngsi-ld:Snapshot:branch"),
+    ))
+}
+
+/// A Snapshot branch takes no part in federation, so its expiry withdraws
+/// nothing from the context sources.
+#[tokio::test]
+async fn an_expiry_in_a_snapshot_withdraws_nothing() {
+    let log = TeardownLog::default();
+    let expired = expiring_service(&log, 0, vec![uri("urn:ngsi-ld:Subscription:first")])
+        .expire_due(&snapshot_target(), Utc::now())
+        .await;
+    assert!(expired.is_ok(), "{expired:?}");
+    let steps = log.lock().expect("the teardown log is never poisoned").clone();
+    assert_eq!(steps, vec![TeardownStep::RowsExpired]);
 }
 
 /// The core context release a subscriber chose explicitly for its
@@ -591,7 +649,7 @@ async fn a_subscription_created_without_its_type_is_refused_on_both_kinds() {
         "{entity:?}"
     );
     assert_eq!(*written.lock().expect("the written context is never poisoned"), None);
-    let csource = service(&DeletionLog::default(), 0)
+    let csource = service(&TeardownLog::default(), 0)
         .create(&ContextTarget::Live, body(), SubscriptionContext::CoreOnly, &[])
         .await;
     assert!(

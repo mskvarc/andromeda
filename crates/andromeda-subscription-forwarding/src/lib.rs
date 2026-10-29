@@ -15,6 +15,13 @@
 pub mod companion;
 /// Failures of the distributed subscription side.
 pub mod error;
+/// What an expired subscription leaves at the context sources.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod expiry_withdrawal_tests;
 /// Placing, updating and removing reduced copies at context sources.
 pub mod forwarder;
 /// The invariants the distributed subscription side relies on.
@@ -35,6 +42,8 @@ pub mod mapping;
 mod minted_subscription_id;
 /// Narrowing a re-assembled entity to what the local subscription delivers.
 mod notification_narrowing;
+/// Whether a local subscription holds a companion and forwarded copies.
+mod participation;
 /// Re-assembling an inbound notification for the local subscriber.
 pub mod reassembly;
 /// The distributed subscription side wired to in-memory doubles.
@@ -72,6 +81,8 @@ mod relayed_join;
 mod relayed_join_tests;
 /// The service tying the parts together.
 pub mod service;
+/// Tearing down what a local subscription left at the context sources.
+mod teardown;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
