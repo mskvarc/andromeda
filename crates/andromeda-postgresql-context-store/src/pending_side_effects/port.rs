@@ -15,7 +15,7 @@ use andromeda_context_commit::{
 };
 use andromeda_entity::{
     error::EntityError,
-    side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
+    side_effect_queue::{LeasedSideEffect, SideEffectQueue},
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::name_resolution::names_of;
@@ -33,7 +33,7 @@ use uuid::Uuid;
 /// The statement name the side-effect lease claim is observed under.
 const SIDE_EFFECT_CLAIM: StatementName = StatementName("pending-side-effect-claim");
 /// The statement name every claimant-guarded release of a failed attempt
-/// (retry, dead-letter) is observed under.
+/// (a retry, or the dead letter of an unreadable job) is observed under.
 ///
 /// A replay that succeeds releases nothing: its commit removes the job as the
 /// first statement of the replay transaction.
@@ -80,16 +80,6 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
     }
 
-    async fn mark_dead(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, attempt: DeadLetterAttempt) -> Result<LeaseAcknowledgement, EntityError> {
-        let result = observe_statement(
-            SIDE_EFFECT_RELEASE,
-            mark_dead_statement(id.as_uuid(), *owner, error, attempt).to_query().execute(self.pool()),
-        )
-        .await
-        .map_err(|error| persistence(&error))?;
-        Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
-    }
-
     async fn purge_dead_before(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityError> {
         let result = purge_dead_statement(cutoff)
             .to_query()
@@ -121,10 +111,15 @@ impl PendingSideEffectsRepository {
     /// leased, undecodable and invisible to every other worker, so a failure to
     /// retire is reported rather than passed over.
     async fn retire_unreadable(&self, id: SideEffectJobId, owner: &LeaseHolder, detail: &str) {
-        match self.mark_dead(id, owner, detail, DeadLetterAttempt::Failed).await {
+        let retired = observe_statement(
+            SIDE_EFFECT_RELEASE,
+            mark_dead_statement(id.as_uuid(), *owner, detail).to_query().execute(self.pool()),
+        )
+        .await;
+        match retired.map(|result| LeaseAcknowledgement::of_guarded_update(result.rows_affected())) {
             Ok(LeaseAcknowledgement::Applied) => {}
             Ok(LeaseAcknowledgement::Lost) => error!(job_id = %id, event = "pending_side_effect_mark_dead_lease_lost"),
-            Err(mark_error) => error!(error = %mark_error, job_id = %id, event = "pending_side_effect_mark_dead_failed"),
+            Err(mark_error) => error!(error = %persistence(&mark_error), job_id = %id, event = "pending_side_effect_mark_dead_failed"),
         }
     }
 }
@@ -165,9 +160,9 @@ fn persistence(error: &sqlx::Error) -> EntityError {
 /// Reclaiming a row that still carries a lease counts an attempt. Such a row's
 /// previous attempt ended without releasing it -- the worker crashed, or its
 /// lease lapsed before its replay could lock the job -- so nothing else
-/// recorded it, and without this count a job that never finishes inside its
-/// lease would be reclaimed forever under the attempt ceiling. A row released
-/// by a retry holds no lease, and its failed attempt was already counted then.
+/// recorded it, and without this count the backoff and the stuck report of the
+/// job's next failure would leave those attempts out. A row released by a
+/// retry holds no lease, and its failed attempt was already counted then.
 /// `attempt_count` is in no index, so the count keeps the claim heap-only.
 fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
@@ -219,7 +214,7 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
 /// its rollback restores the row with the lapsed lease still on it, and the
 /// release must still record the failure and the backoff. A time guard would
 /// find nothing, drop both, and leave the row to be reclaimed at once with no
-/// backoff until the attempt ceiling dead-lettered it with no diagnostic.
+/// backoff and no diagnostic.
 ///
 /// The claimant alone is enough because of three invariants the drain keeps:
 /// every claim rewrites `claimed_by`, so a job another worker reclaimed after
@@ -258,24 +253,17 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
         .to_owned()
 }
 
-/// Retire the job permanently, releasing the lease in the same statement.
+/// Retire an unreadable job permanently, counting the failed read as its
+/// attempt and releasing the lease in the same statement.
 ///
 /// An exhausted row holds no lease: `chk_pse_exhausted_state` rejects a row that
 /// carries `exhausted_at` together with any claim column, so the lease is
 /// released here rather than in a later statement. The diagnostic is cut to the
-/// bound `chk_pse_last_error_length` states. The attempt count grows only by an
-/// attempt no statement counted yet, so a dead letter keeps the exact number of
-/// attempts the job received.
-fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str, attempt: DeadLetterAttempt) -> UpdateStatement {
-    let mut statement = Query::update();
-    match attempt {
-        DeadLetterAttempt::Failed => {
-            statement.value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1));
-        }
-        DeadLetterAttempt::AlreadyCounted => {}
-    }
-    statement
+/// bound `chk_pse_last_error_length` states.
+fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateStatement {
+    Query::update()
         .table(PendingSideEffects::Table)
+        .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
         .value(PendingSideEffects::ExhaustedAt, Expr::current_timestamp())
         .value(
             PendingSideEffects::LastError,
@@ -291,8 +279,8 @@ fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str, attempt: DeadL
 /// Remove jobs dead-lettered before `cutoff`.
 ///
 /// The retention clock is `exhausted_at`, the instant the job was dead-lettered:
-/// a job that retried for longer than the retention window is still kept for
-/// that window once it gives up. `idx_pse_exhausted_at` is the partial index on
+/// a job queued for longer than the retention window is still kept for that
+/// window once it is retired. `idx_pse_exhausted_at` is the partial index on
 /// `exhausted_at WHERE exhausted_at IS NOT NULL` this range scan runs on; an
 /// exhausted row holds no lease (`chk_pse_exhausted_state`), so no worker can be
 /// mid-flight on a row this removes.
@@ -315,7 +303,7 @@ mod tests {
         repo::PendingSideEffectsRepository,
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
-    use andromeda_entity::side_effect_queue::{DeadLetterAttempt, SideEffectQueue};
+    use andromeda_entity::side_effect_queue::SideEffectQueue;
     use chrono::Utc;
     use sea_query::{PostgresQueryBuilder, Value};
     use uuid::Uuid;
@@ -341,8 +329,8 @@ mod tests {
     /// that neither settled nor released it, so the claim counts that attempt;
     /// a row a retry released holds no lease and its attempt was counted by the
     /// retry, so it is claimed without a second count. Without the first, a job
-    /// whose replay never finishes inside its lease is reclaimed forever under
-    /// the attempt ceiling.
+    /// whose replay never finishes inside its lease would retry its next
+    /// failure as though those attempts never happened.
     #[test]
     fn reclaiming_a_lapsed_lease_counts_the_attempt_that_left_it() {
         let sql = lease_batch_statement(holder(), 1, 30.0).to_string(PostgresQueryBuilder);
@@ -366,8 +354,7 @@ mod tests {
     fn every_release_is_guarded_by_the_claimant_and_not_by_the_clock() {
         for sql in [
             nack_statement(Uuid::nil(), holder(), "boom", Utc::now()).to_string(PostgresQueryBuilder),
-            mark_dead_statement(Uuid::nil(), holder(), "boom", DeadLetterAttempt::Failed).to_string(PostgresQueryBuilder),
-            mark_dead_statement(Uuid::nil(), holder(), "boom", DeadLetterAttempt::AlreadyCounted).to_string(PostgresQueryBuilder),
+            mark_dead_statement(Uuid::nil(), holder(), "boom").to_string(PostgresQueryBuilder),
         ] {
             assert!(sql.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
             assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
@@ -386,25 +373,16 @@ mod tests {
 
     #[test]
     fn marking_dead_retires_the_row_and_releases_the_lease() {
-        let sql = mark_dead_statement(Uuid::nil(), holder(), "boom", DeadLetterAttempt::Failed).to_string(PostgresQueryBuilder);
+        let sql = mark_dead_statement(Uuid::nil(), holder(), "boom").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""exhausted_at" = CURRENT_TIMESTAMP"#), "{sql}");
         assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
     }
 
-    /// The attempt that failed is counted as it dead-letters the job.
+    /// The read that failed is counted as the attempt that retires the job.
     #[test]
-    fn a_failed_attempt_that_dead_letters_a_job_is_counted() {
-        let sql = mark_dead_statement(Uuid::nil(), holder(), "boom", DeadLetterAttempt::Failed).to_string(PostgresQueryBuilder);
+    fn the_failed_read_that_retires_a_job_is_counted() {
+        let sql = mark_dead_statement(Uuid::nil(), holder(), "boom").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
-    }
-
-    /// A job dead-lettered at its ceiling without a new attempt keeps the exact
-    /// count its retries and reclaims recorded.
-    #[test]
-    fn dead_lettering_already_counted_attempts_leaves_the_count_exact() {
-        let sql = mark_dead_statement(Uuid::nil(), holder(), "boom", DeadLetterAttempt::AlreadyCounted).to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("attempt_count"), "{sql}");
-        assert!(sql.contains(r#""exhausted_at" = CURRENT_TIMESTAMP"#), "{sql}");
     }
 
     #[test]
@@ -422,7 +400,7 @@ mod tests {
         let detail = "\u{e9}".repeat(3000);
         for statement in [
             nack_statement(Uuid::nil(), holder(), &detail, Utc::now()),
-            mark_dead_statement(Uuid::nil(), holder(), &detail, DeadLetterAttempt::Failed),
+            mark_dead_statement(Uuid::nil(), holder(), &detail),
         ] {
             let (_, values) = statement.build(PostgresQueryBuilder);
             let written = values

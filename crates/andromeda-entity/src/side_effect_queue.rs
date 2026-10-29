@@ -53,23 +53,6 @@ pub struct LeasedSideEffect {
     pub base_ordinal: WriteOrdinal,
 }
 
-/// Whether dead-lettering a job records an attempt of its own.
-///
-/// `pending_side_effects.attempt_count` counts every attempt a job received,
-/// and a dead letter keeps it as the evidence of how many that was, so the
-/// dead-lettering says whether it ends an attempt that is not counted yet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DeadLetterAttempt {
-    /// The job is dead-lettered by the attempt that just failed, which no
-    /// statement counted yet.
-    Failed,
-    /// The job is dead-lettered without a new attempt: every attempt it had was
-    /// already counted, by the retries that released it and by the claims
-    /// that reclaimed its lapsed leases, so the stored count is exact as it
-    /// stands.
-    AlreadyCounted,
-}
-
 /// Draining the durable side-effect queue.
 pub trait SideEffectQueue: Send + Sync + 'static {
     /// Lease up to `batch_size` due jobs for `lease_seconds`.
@@ -78,10 +61,12 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     /// lease belonged to, since nothing else recorded it.
     ///
     /// A job whose stored payload cannot be read back is dead-lettered by the
-    /// implementation rather than returned, so one unreadable entry cannot
-    /// stall the queue behind it; the implementation claims again in its
-    /// place, so a result shorter than `batch_size` means the queue held no
-    /// more due jobs.
+    /// implementation rather than returned, since no replay can ever apply
+    /// it, so one unreadable entry cannot stall the queue behind it; the
+    /// implementation claims again in its place, so a result shorter than
+    /// `batch_size` means the queue held no more due jobs. That is the only
+    /// way a job leaves the queue other than its own replay: a job that fails
+    /// is released for a retry however often it failed.
     fn lease_batch<'life0, 'life1, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
@@ -120,31 +105,14 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Dead-letter a job that has exhausted its attempts, counting the attempt
-    /// that exhausted it when `attempt` says it is not counted yet.
-    ///
-    /// Guarded by `owner` still being the job's claimant, exactly as
-    /// [`Self::nack`].
-    fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        id: SideEffectJobId,
-        owner: &'life1 LeaseHolder,
-        error: &'life2 str,
-        attempt: DeadLetterAttempt,
-    ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-
     /// Remove jobs dead-lettered before `cutoff`, returning how many were
     /// removed.
     ///
-    /// A dead job is kept as evidence of a batch whose deferred side effects
-    /// never landed; this is the retention sweep that bounds how long, counted
-    /// from the instant the job was dead-lettered rather than from when it was
-    /// enqueued. It touches no live row and holds no lease.
+    /// A dead job, one whose stored payload could not be read back, is kept
+    /// as evidence of a batch whose deferred side effects never landed; this
+    /// is the retention sweep that bounds how long, counted from the instant
+    /// the job was dead-lettered rather than from when it was enqueued. It
+    /// touches no live row and holds no lease.
     fn purge_dead_before<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, EntityError>>
     where
         'life0: 'async_trait,

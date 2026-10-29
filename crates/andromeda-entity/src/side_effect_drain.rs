@@ -26,12 +26,14 @@
 //! drain still being the job's claimant, not by the lease still being live,
 //! which is what lets a failure after a lapsed lease still be recorded.
 //!
-//! Every attempt counts toward the configured ceiling exactly once, including
-//! one that ends without a word, a crash, or a lease that lapsed before the
-//! replay could lock its job. The claim counts those, and a job whose permitted
-//! attempts all ended that way is dead-lettered when it is next claimed,
-//! without counting an attempt it did not make, instead of being reclaimed
-//! forever.
+//! A job is never dead-lettered for failing. It carries the notifications of a
+//! write the broker already accepted, and every matching change is notified
+//! (ETSI GS CIM 009 v1.9.1 clause 5.8.6), so a job that keeps failing is
+//! retried on the capped backoff for as long as it fails. Every attempt counts
+//! exactly once, including one that ends without a word, a crash, or a lease
+//! that lapsed before the replay could lock its job: the claim counts those.
+//! Each failed attempt from `stuck_after` on is reported stuck, so an operator
+//! sees a job that is not getting through.
 //!
 //! The notifications a job still owes are settled by this broker's own delivery
 //! mode ([`SideEffectNotificationRoute`]). Under durable delivery they become
@@ -45,9 +47,8 @@ use crate::{
     committed_side_effect::CommittedSideEffect,
     entity_invariant::EntityInvariant,
     error::EntityError,
-    side_effect_exhaustion::SideEffectExhaustion,
     side_effect_notification::{SideEffectNotificationRoute, owed_subscription_matches},
-    side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
+    side_effect_queue::{LeasedSideEffect, SideEffectQueue},
     side_effect_replay::replay_writes,
 };
 use andromeda_context_commit::{
@@ -79,11 +80,12 @@ pub struct EntitySideEffectDrainConfig {
     pub lease_seconds: i32,
     /// Maximum jobs one bounded pass claims, one after another.
     pub batch_size: NonZeroU32,
-    /// Attempts permitted before dead-lettering, counting attempts that ended
-    /// without settling or releasing the job.
-    pub max_attempts: u16,
+    /// Failed attempts from which a job is reported stuck on every further
+    /// failure, counting attempts that ended without settling or releasing the
+    /// job. The job stays queued and retried either way.
+    pub stuck_after: NonZeroU32,
     /// The wait before a failed job is claimable again, read from the
-    /// attempt that failed.
+    /// attempt that failed and capped at the schedule's ceiling.
     pub retry_schedule: BackoffSchedule,
     /// The worker identity recorded on queue leases.
     ///
@@ -116,7 +118,7 @@ pub struct EntitySideEffectDrain {
 enum JobSettlement {
     /// The replay committed and removed the job.
     Settled,
-    /// The job was retried, dead-lettered, or left to the worker holding it now.
+    /// The job was retried, or left to the worker holding it now.
     Unsettled,
 }
 
@@ -156,7 +158,7 @@ impl EntitySideEffectDrain {
     /// rely on.
     ///
     /// A replay that fails is not an error of the pass: the job is released for
-    /// a retry, or dead-lettered, with the failure as its diagnostic.
+    /// a retry with the failure as its diagnostic.
     ///
     /// # Errors
     ///
@@ -188,8 +190,7 @@ impl EntitySideEffectDrain {
         })
     }
 
-    /// Replay one claimed job, or dead-letter it when its permitted attempts
-    /// were already spent, and record how it ended.
+    /// Replay one claimed job and record how it ended.
     async fn process(&self, lease: LeasedSideEffect, clock: &LeasePassClock) -> Result<JobSettlement, EntityError> {
         let LeasedSideEffect {
             id,
@@ -198,10 +199,6 @@ impl EntitySideEffectDrain {
             record,
             base_ordinal,
         } = lease;
-        if attempts >= i32::from(self.config.max_attempts) {
-            self.retire_lapsed(id, attempts).await?;
-            return Ok(JobSettlement::Unsettled);
-        }
         let lease = JobLease {
             job: id,
             holder: self.config.lease_holder,
@@ -231,48 +228,36 @@ impl EntitySideEffectDrain {
         }
     }
 
-    /// Dead-letter a job whose permitted attempts all ended without settling
-    /// or releasing it.
-    ///
-    /// Such attempts leave no diagnostic of their own, the worker crashed, or
-    /// its lease lapsed before its replay could lock the job, so the reason
-    /// recorded is the ceiling itself. No attempt is made here, and every one
-    /// the job had is already counted, so the dead letter keeps `attempts` as
-    /// its exact count.
-    async fn retire_lapsed(&self, id: SideEffectJobId, attempts: i32) -> Result<(), EntityError> {
-        let detail = SideEffectExhaustion {
-            attempts,
-            ceiling: self.config.max_attempts,
-        }
-        .to_string();
-        let acknowledgement = self
-            .queue
-            .mark_dead(id, &self.config.lease_holder, &detail, DeadLetterAttempt::AlreadyCounted)
-            .await?;
-        self.record_release(id, acknowledgement, QueueOutcome::Exhausted);
+    /// Release a job whose replay failed back to the queue, at the policy
+    /// backoff from the instant of the release, however many attempts it has
+    /// had.
+    async fn release_failed(&self, id: SideEffectJobId, attempts: i32, error: &EntityError, clock: &LeasePassClock) -> Result<(), EntityError> {
+        let attempt = RetryNumber::try_from(attempts.saturating_add(1)).map_err(|refused| EntityError::from(EntityInvariant::RetryNumber(refused)))?;
+        self.report_if_stuck(id, attempt, error);
+        let backoff = self.config.retry_schedule.delay(attempt);
+        let retry_at =
+            clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::from(EntityInvariant::BackoffOutOfRange(conversion)))?;
+        let acknowledgement = self.queue.nack(id, &self.config.lease_holder, &error.to_string(), retry_at).await?;
+        self.record_release(id, acknowledgement, QueueOutcome::Retried);
         Ok(())
     }
 
-    /// Release a job whose replay failed: back to the queue at the policy
-    /// backoff from the instant of the release, or into the dead letters once
-    /// the attempt that failed was the last one permitted.
-    async fn release_failed(&self, id: SideEffectJobId, attempts: i32, error: &EntityError, clock: &LeasePassClock) -> Result<(), EntityError> {
-        let attempt = u16::try_from(attempts.saturating_add(1)).map_err(|conversion| EntityError::from(EntityInvariant::AttemptCountOutOfRange(conversion)))?;
-        let detail = error.to_string();
-        let (acknowledgement, outcome) = if attempt >= self.config.max_attempts {
-            (
-                self.queue.mark_dead(id, &self.config.lease_holder, &detail, DeadLetterAttempt::Failed).await?,
-                QueueOutcome::Exhausted,
-            )
-        } else {
-            let retry = RetryNumber::try_from(u32::from(attempt)).map_err(|refused| EntityError::from(EntityInvariant::RetryNumber(refused)))?;
-            let backoff = self.config.retry_schedule.delay(retry);
-            let retry_at =
-                clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::from(EntityInvariant::BackoffOutOfRange(conversion)))?;
-            (self.queue.nack(id, &self.config.lease_holder, &detail, retry_at).await?, QueueOutcome::Retried)
-        };
-        self.record_release(id, acknowledgement, outcome);
-        Ok(())
+    /// Report a job whose failed attempts have reached the stuck threshold.
+    ///
+    /// `attempt` is the failed attempt being released, counted with every one
+    /// before it.
+    fn report_if_stuck(&self, id: SideEffectJobId, attempt: RetryNumber, error: &EntityError) {
+        if attempt.get() < self.config.stuck_after.get() {
+            return;
+        }
+        tracing::warn!(
+            job_id = %id,
+            attempts = attempt.get(),
+            stuck_after = self.config.stuck_after.get(),
+            %error,
+            event = "pending_side_effect_stuck"
+        );
+        record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::Stuck, 1);
     }
 
     /// Record how a release ended, or that the lease it needed was lost.
@@ -343,8 +328,8 @@ impl EntitySideEffectDrain {
         sink.publish(changes).await;
     }
 
-    /// Remove dead-lettered jobs created before `cutoff`, returning how many
-    /// were removed.
+    /// Remove jobs dead-lettered before `cutoff` for a stored payload that
+    /// could not be read back, returning how many were removed.
     ///
     /// # Errors
     ///
@@ -368,7 +353,7 @@ mod tests {
         error::EntityError,
         side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
         side_effect_notification::SideEffectNotificationRoute,
-        side_effect_queue::{DeadLetterAttempt, LeasedSideEffect, SideEffectQueue},
+        side_effect_queue::{LeasedSideEffect, SideEffectQueue},
     };
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
@@ -407,16 +392,18 @@ mod tests {
     };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
+    use andromeda_telemetry::{error::TelemetryError, names::QUEUE_OUTCOMES_TOTAL, recorder::TelemetryRecorder};
     use chrono::{DateTime, TimeZone, Utc};
     use futures::{future, future::BoxFuture};
     use serde_json::json;
     use std::{
         collections::VecDeque,
+        iter,
         num::NonZeroU32,
         sync::{Arc, Mutex},
         time::Duration,
     };
-    use tokio::time::sleep;
+    use tokio::{runtime::Builder, time::sleep};
     use uuid::Uuid;
 
     /// Records every change event published to the sink, so a test can assert
@@ -456,6 +443,9 @@ mod tests {
     /// so a test can assert delivery resumed the job's stored identity and
     /// ordinal base rather than minting a fresh one, and the writes it replayed.
     struct FixedCommitter {
+        /// How the first replays end, one disposition each, before every later
+        /// replay ends as `disposition` says.
+        leading: Mutex<VecDeque<CommitDisposition>>,
         disposition: CommitDisposition,
         /// How long every replay runs before it ends as `disposition` says.
         duration: Duration,
@@ -470,10 +460,20 @@ mod tests {
 
         fn lasting(disposition: CommitDisposition, duration: Duration) -> FixedCommitter {
             FixedCommitter {
+                leading: Mutex::new(VecDeque::new()),
                 disposition,
                 duration,
                 replays: Mutex::new(Vec::new()),
                 replayed_writes: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// A committer whose first `failures` replays fail before every later
+        /// one applies.
+        fn failing_then_applying(failures: usize) -> FixedCommitter {
+            FixedCommitter {
+                leading: Mutex::new(iter::repeat_n(CommitDisposition::Failed, failures).collect()),
+                ..FixedCommitter::new(CommitDisposition::Applied)
             }
         }
     }
@@ -493,7 +493,13 @@ mod tests {
                 sleep(self.duration).await;
                 let outcomes = writes.iter().map(|_| WriteOutcome::NoEntityChange).collect();
                 self.replayed_writes.lock().expect("the test lock is not poisoned").extend(writes);
-                match self.disposition {
+                let disposition = self
+                    .leading
+                    .lock()
+                    .expect("the test lock is not poisoned")
+                    .pop_front()
+                    .unwrap_or(self.disposition);
+                match disposition {
                     CommitDisposition::Applied => Ok(outcomes),
                     CommitDisposition::Failed => Err(CommitError::Persistence(PersistenceFailure::Unavailable)),
                     CommitDisposition::LeaseLost => Err(CommitError::ReplayLeaseLost { job: replay.lease.job }),
@@ -509,7 +515,6 @@ mod tests {
         leased: Mutex<VecDeque<LeasedSideEffect>>,
         claim_widths: Mutex<Vec<u32>>,
         retried: Mutex<Vec<(SideEffectJobId, DateTime<Utc>)>>,
-        dead: Mutex<Vec<(SideEffectJobId, String, DeadLetterAttempt)>>,
     }
 
     impl RecordingQueue {
@@ -524,8 +529,12 @@ mod tests {
             }
         }
 
-        fn dead_jobs(&self) -> Vec<SideEffectJobId> {
-            self.dead.lock().expect("the test lock is not poisoned").iter().map(|(id, _, _)| *id).collect()
+        fn offer(&self, lease: LeasedSideEffect) {
+            self.leased.lock().expect("the test lock is not poisoned").push_back(lease);
+        }
+
+        fn retried_jobs(&self) -> Vec<SideEffectJobId> {
+            self.retried.lock().expect("the test lock is not poisoned").iter().map(|(id, _)| *id).collect()
         }
     }
 
@@ -569,25 +578,6 @@ mod tests {
             })
         }
 
-        fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            id: SideEffectJobId,
-            _owner: &'life1 LeaseHolder,
-            error: &'life2 str,
-            attempt: DeadLetterAttempt,
-        ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-            Self: 'async_trait,
-        {
-            Box::pin(async move {
-                self.dead.lock().expect("the test lock is not poisoned").push((id, error.to_owned(), attempt));
-                Ok(LeaseAcknowledgement::Applied)
-            })
-        }
-
         fn purge_dead_before<'life0, 'async_trait>(&'life0 self, _cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, EntityError>>
         where
             'life0: 'async_trait,
@@ -620,7 +610,7 @@ mod tests {
         EntitySideEffectDrainConfig {
             lease_seconds: 30,
             batch_size: NonZeroU32::MIN,
-            max_attempts: 3,
+            stuck_after: NonZeroU32::new(3).expect("a positive threshold"),
             retry_schedule: BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling),
             lease_holder: lease_holder(),
         }
@@ -731,59 +721,119 @@ mod tests {
         Ok(())
     }
 
+    /// The failure that reaches the stuck threshold is retried like any other:
+    /// the job owes notifications of an accepted write, so it is never
+    /// dead-lettered for failing.
     #[tokio::test]
-    async fn exhausted_failure_is_dead_lettered() -> Result<(), EntityError> {
+    async fn a_failure_at_the_stuck_threshold_is_retried() -> Result<(), EntityError> {
         let lease = lease(2);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        pretty_assertions::assert_eq!(queue.dead_jobs(), vec![id]);
-        let dead = queue.dead.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(
-            dead[0].2,
-            DeadLetterAttempt::Failed,
-            "the attempt that failed is counted as it dead-letters the job"
-        );
+        pretty_assertions::assert_eq!(queue.retried_jobs(), vec![id]);
         Ok(())
     }
 
-    /// A job whose every permitted attempt ended without settling or releasing
-    /// it, each lease lapsed before its replay could lock the job, and each
-    /// reclaim counted the attempt, is dead-lettered when it is next claimed,
-    /// not replayed and reclaimed forever, and without counting an attempt it
-    /// did not make.
+    /// A job whose attempts are past the threshold, however they ended, is
+    /// still replayed when it is claimed.
     #[tokio::test]
-    async fn a_job_whose_permitted_attempts_all_lapsed_is_dead_lettered_without_a_replay() -> Result<(), EntityError> {
-        let lease = lease(3);
+    async fn a_job_past_its_stuck_threshold_is_still_replayed() -> Result<(), EntityError> {
+        let lease = lease(7);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
-        pretty_assertions::assert_eq!(outcome.completed, 0);
-        assert!(
-            committer.replays.lock().expect("the test lock is not poisoned").is_empty(),
-            "a job past its ceiling is not replayed again"
-        );
-        let dead = queue.dead.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(dead.iter().map(|(job, _, _)| *job).collect::<Vec<_>>(), vec![id]);
-        pretty_assertions::assert_eq!(dead[0].2, DeadLetterAttempt::AlreadyCounted, "no attempt was made, so none is counted");
-        assert!(
-            dead[0].1.contains("ceiling is 3"),
-            "the dead letter names the ceiling it reached: {}",
-            dead[0].1
-        );
+        pretty_assertions::assert_eq!(outcome.completed, 1);
+        let replays = committer.replays.lock().expect("the test lock is not poisoned");
+        pretty_assertions::assert_eq!(replays.iter().map(|replay| replay.lease).collect::<Vec<JobLease>>(), vec![job_lease(id)]);
         Ok(())
     }
 
-    /// One attempt below the ceiling still earns a replay.
+    /// Past the threshold the backoff stops growing: a failure after many
+    /// attempts waits the schedule's ceiling, 300 seconds, and no attempt
+    /// count is too large to schedule.
     #[tokio::test]
-    async fn a_job_below_its_attempt_ceiling_is_still_replayed() -> Result<(), EntityError> {
+    async fn a_failure_after_many_attempts_waits_the_capped_backoff() -> Result<(), EntityError> {
+        for attempts in [100_000, i32::MAX] {
+            let queue = Arc::new(RecordingQueue::with_lease(lease(attempts)));
+            let now = Utc::now();
+            drain(Arc::clone(&queue), CommitDisposition::Failed).execute(now).await?;
+            let retried = queue.retried.lock().expect("the test lock is not poisoned");
+            let ceiling = chrono::Duration::seconds(300);
+            assert!(
+                retried[0].1 >= now + ceiling && retried[0].1 < now + ceiling + chrono::Duration::seconds(1),
+                "a job with {attempts} attempts is due one capped backoff after its release: {}",
+                retried[0].1
+            );
+        }
+        Ok(())
+    }
+
+    /// A job that fails more times than the threshold stays queued and is
+    /// retried until it applies, and then its owed change reaches the sink
+    /// once. Every failed attempt from the third on, the threshold, is counted
+    /// stuck: attempts 3, 4 and 5 of five failures.
+    #[test]
+    fn a_job_failing_past_its_stuck_threshold_is_retried_until_it_applies() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        let runtime = Builder::new_current_thread().enable_time().build().expect("a test runtime");
+        let failures = 5;
+        let first = lease_with_change_event();
+        let id = first.id;
+        let queue = Arc::new(RecordingQueue::with_lease(first));
+        let committer = Arc::new(FixedCommitter::failing_then_applying(failures));
+        let sink = Arc::new(RecordingSink::default());
+        let drain = EntitySideEffectDrain::new(
+            Arc::clone(&queue) as Arc<dyn SideEffectQueue>,
+            Arc::clone(&committer) as Arc<dyn ContextCommitter>,
+            SideEffectNotificationRoute::Live(Arc::clone(&sink) as Arc<dyn EntityChangeSink>),
+            drain_config(),
+        );
+        let completed = recorder.record_locally(|| {
+            runtime.block_on(async {
+                let mut completed = 0;
+                for attempts in 0..=failures {
+                    if attempts > 0 {
+                        let mut again = lease_with_change_event();
+                        again.id = id;
+                        again.attempts = i32::try_from(attempts).expect("a small attempt count");
+                        queue.offer(again);
+                    }
+                    completed += drain.execute(Utc::now()).await.expect("a pass over a recording queue").completed;
+                }
+                completed
+            })
+        });
+        pretty_assertions::assert_eq!(completed, 1, "the job applied on its sixth attempt");
+        pretty_assertions::assert_eq!(queue.retried_jobs(), vec![id; failures], "every failure released the job for a retry");
+        pretty_assertions::assert_eq!(committer.replays.lock().expect("the test lock is not poisoned").len(), failures + 1);
+        pretty_assertions::assert_eq!(sink.count(), 1, "the owed change is published once, by the replay that applied");
+        let rendered = recorder.render();
+        assert!(
+            rendered.contains(&format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"pending-side-effects\",outcome=\"stuck\"}} 3")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"pending-side-effects\",outcome=\"retried\"}} 5")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"pending-side-effects\",outcome=\"completed\"}} 1")),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("outcome=\"exhausted\""), "{rendered}");
+        Ok(())
+    }
+
+    /// One attempt below the threshold still earns a replay.
+    #[tokio::test]
+    async fn a_job_below_its_stuck_threshold_is_still_replayed() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease(2)));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
-        pretty_assertions::assert_eq!(queue.dead_jobs(), Vec::<SideEffectJobId>::new());
+        pretty_assertions::assert_eq!(queue.retried_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
     }
 
@@ -849,15 +899,14 @@ mod tests {
     }
 
     /// A replay whose lease passed to another worker commits nothing, so it is
-    /// neither completed nor retried nor dead-lettered here: the reclaiming
-    /// worker, not this one, owns the job's outcome.
+    /// neither completed nor retried here: the reclaiming worker, not this
+    /// one, owns the job's outcome.
     #[tokio::test]
     async fn a_replay_refused_for_a_lost_lease_is_neither_completed_nor_retried() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease(0)));
         let outcome = drain(Arc::clone(&queue), CommitDisposition::LeaseLost).execute(Utc::now()).await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
-        assert!(queue.retried.lock().expect("the test lock is not poisoned").is_empty());
-        pretty_assertions::assert_eq!(queue.dead_jobs(), Vec::<SideEffectJobId>::new());
+        pretty_assertions::assert_eq!(queue.retried_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
     }
 

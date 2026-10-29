@@ -197,8 +197,6 @@ pub mod residual_predicate;
 pub mod side_effect;
 /// Bounded at-least-once drain for durable entity side effects.
 pub mod side_effect_drain;
-/// Why a drained side-effect job is dead-lettered without a failed replay.
-mod side_effect_exhaustion;
 /// Settling the notifications a drained side-effect job still owes.
 pub mod side_effect_notification;
 /// The durable side-effect queue port.

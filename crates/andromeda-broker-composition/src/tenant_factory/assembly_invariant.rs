@@ -6,7 +6,7 @@
 
 use andromeda_configuration::schema::temporal::storage::StorageDaysError;
 use andromeda_delivery::error::TransportError;
-use andromeda_entity::{configured_policy::SideEffectAttemptsAboveCeiling, error::EntityError};
+use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonymError;
 use andromeda_notification::error::NotificationError;
@@ -28,7 +28,7 @@ pub(super) enum RetentionSetting {
     /// How long an event no delivery references is kept.
     #[display("notification delivery orphan-event age")]
     NotificationOrphanEvent,
-    /// How long a dead-lettered side-effect job is kept.
+    /// How long a side-effect job retired for an unreadable payload is kept.
     #[display("pending side-effect dead-letter age")]
     SideEffectDeadLetter,
     /// How far back temporal history is retained.
@@ -66,9 +66,6 @@ pub(super) enum AssemblyInvariant {
     /// valid.
     #[error("the pending side-effect retry schedule is not valid: {0}")]
     SideEffectRetry(#[source] BackoffScheduleError),
-    /// The pending side-effect attempt ceiling is above what a job counts.
-    #[error("the pending side-effect attempt ceiling is not valid: {0}")]
-    SideEffectAttempts(#[source] SideEffectAttemptsAboveCeiling),
     /// The temporal storage policy the configuration names is not valid.
     #[error("the temporal storage policy is not valid: {0}")]
     StoragePolicy(#[from] StorageDaysError),

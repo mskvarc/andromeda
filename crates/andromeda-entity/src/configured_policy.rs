@@ -73,28 +73,6 @@ pub const fn filter_complexity_limits(limits: &RequestLimitsConfig) -> FilterCom
     FilterComplexityLimits::new(limits.max_q_comparisons, limits.max_q_nesting)
 }
 
-/// The configured side-effect attempt ceiling is above what a job counts.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-#[error("entity.side_effects.queue.max_attempts ({configured}) must not exceed {ceiling}, the most attempts a side-effect job counts")]
-pub struct SideEffectAttemptsAboveCeiling {
-    /// The configured ceiling.
-    pub configured: u32,
-    /// The most attempts a side-effect job counts.
-    pub ceiling: u16,
-}
-
-/// The attempts a side-effect job is given before it is dead-lettered.
-///
-/// # Errors
-///
-/// Returns [`SideEffectAttemptsAboveCeiling`] when the configured ceiling is
-/// above what a job counts; the configuration loader asks, so a broker never
-/// starts with one.
-pub fn side_effect_max_attempts(config: &SideEffectsConfig) -> Result<u16, SideEffectAttemptsAboveCeiling> {
-    let configured = config.queue.max_attempts.get();
-    u16::try_from(configured).map_err(|_| SideEffectAttemptsAboveCeiling { configured, ceiling: u16::MAX })
-}
-
 /// The schedule a failed side-effect job is retried on: doubling from
 /// `retry_interval` up to `max_retry_interval`.
 ///
@@ -137,12 +115,10 @@ mod tests {
     use crate::configured_policy::{
         AttributeNestingAboveDecodable,
         FilterNestingAboveParsed,
-        SideEffectAttemptsAboveCeiling,
         check_attribute_nesting,
         check_filter_nesting,
         filter_complexity_limits,
         payload_budget,
-        side_effect_max_attempts,
         side_effect_retry_schedule,
     };
     use andromeda_configuration::{
@@ -151,7 +127,6 @@ mod tests {
     };
     use andromeda_retry::schedule_error::BackoffScheduleError;
     use pretty_assertions::assert_eq;
-    use std::num::NonZeroU32;
 
     #[test]
     fn the_default_budgets_admit_one_million_values_and_positions() {
@@ -203,20 +178,5 @@ mod tests {
     #[test]
     fn the_default_side_effect_retries_double_from_two_seconds_to_five_minutes() {
         assert!(side_effect_retry_schedule(&SideEffectsConfig::default()).is_ok());
-    }
-
-    #[test]
-    fn an_attempt_ceiling_past_what_a_job_counts_is_refused_and_the_largest_kept() {
-        let mut config = SideEffectsConfig::default();
-        config.queue.max_attempts = NonZeroU32::new(65_536).expect("a positive ceiling");
-        assert_eq!(
-            side_effect_max_attempts(&config),
-            Err(SideEffectAttemptsAboveCeiling {
-                configured: 65_536,
-                ceiling: u16::MAX,
-            })
-        );
-        config.queue.max_attempts = NonZeroU32::new(65_535).expect("a positive ceiling");
-        assert_eq!(side_effect_max_attempts(&config), Ok(u16::MAX));
     }
 }

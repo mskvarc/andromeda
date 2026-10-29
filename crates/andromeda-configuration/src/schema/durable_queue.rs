@@ -41,12 +41,13 @@ pub struct DurableQueue {
     /// Jobs one pass claims at most.
     #[schemars(description = "The most jobs one pass claims.")]
     pub batch_size: NonZeroU32,
-    /// Attempts after which a job that keeps failing leaves the retry path:
-    /// a side effect or a delivery is dead-lettered, a temporal history
-    /// intent is reported stuck and stays claimable, since it is the only
-    /// record of history the broker accepted.
+    /// Attempts after which a job that keeps failing is given up or reported:
+    /// a notification delivery is dead-lettered, while a side-effect job or a
+    /// temporal history intent is reported stuck on every further failure and
+    /// stays claimable, since it is the only record of notifications or
+    /// history the broker accepted.
     #[schemars(
-        description = "Attempts after which a job that keeps failing leaves the retry path. A side effect or a notification delivery is dead-lettered; a temporal history intent is reported stuck and stays claimable, since it is the only record of history the broker accepted. `entity.side_effects.queue` accepts at most 65535 and `notifications.delivery.queue` at most 2147483647."
+        description = "Attempts after which a job that keeps failing is given up or reported. A notification delivery is dead-lettered. A side-effect job or a temporal history intent is reported stuck on each further failure and keeps being retried, never waiting longer than the longest retry delay, since it holds the notifications or the history of a write the broker already accepted. `notifications.delivery.queue` accepts at most 2147483647."
     )]
     pub max_attempts: NonZeroU32,
     /// The delay before the first retry of a failed job, in human-readable

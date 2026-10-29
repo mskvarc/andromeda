@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 /// How long a dead-lettered side-effect job is kept.
 ///
-/// A job that succeeds is removed by its own replay; only one that ran out of
-/// attempts stays, as evidence of a batch whose side effects never landed.
+/// A job that succeeds is removed by its own replay, and one that fails is
+/// retried for as long as it fails; only one whose stored payload cannot be
+/// read back is dead-lettered, as evidence of a batch whose side effects never
+/// landed.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How long a dead-lettered side-effect job is kept, and how often expired ones are removed.")]
 #[serde(deny_unknown_fields)]
@@ -16,7 +18,7 @@ pub struct SideEffectRetentionConfig {
     /// How long a dead-lettered job is kept, in human-readable form
     /// (`"7days"`).
     #[schemars(
-        description = "How long a job that ran out of attempts is kept, as a record of a batch whose notifications were never raised. A job that succeeds is removed by its own replay."
+        description = "How long a job whose stored changes cannot be read back is kept, as a record of a batch whose notifications were never raised. A job that succeeds is removed by its own replay, and one that fails is retried for as long as it fails."
     )]
     pub dead_letter_after: HumanDuration,
     /// How often expired dead-lettered jobs are removed, in human-readable
@@ -42,9 +44,10 @@ impl Default for SideEffectRetentionConfig {
 #[serde(deny_unknown_fields)]
 pub struct SideEffectsConfig {
     /// How the queue is polled, claimed and retried. A job is retried on a
-    /// delay that doubles from `retry_interval`.
+    /// delay that doubles from `retry_interval` up to `max_retry_interval`,
+    /// however often it fails.
     #[schemars(
-        description = "How the queue is polled, claimed and retried. A failed job's retry delay doubles from `entity.side_effects.queue.retry_interval`."
+        description = "How the queue is polled, claimed and retried. A failed job is retried on a delay that doubles from `entity.side_effects.queue.retry_interval` up to `entity.side_effects.queue.max_retry_interval`, however often it fails, and is never dropped."
     )]
     pub queue: DurableQueue,
     /// How long a dead-lettered job is kept.

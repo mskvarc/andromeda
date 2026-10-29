@@ -11,10 +11,8 @@ use andromeda_configuration::broker_config::BrokerConfig;
 use andromeda_entity::configured_policy::{
     AttributeNestingAboveDecodable,
     FilterNestingAboveParsed,
-    SideEffectAttemptsAboveCeiling,
     check_attribute_nesting,
     check_filter_nesting,
-    side_effect_max_attempts,
     side_effect_retry_schedule,
 };
 use andromeda_federation::cooldown_policy::cooldown_schedule;
@@ -58,9 +56,6 @@ pub enum SectionAdmissionError {
     /// The side-effect queue's retry delays do not bound a retry schedule.
     #[error("invalid configuration: entity.side_effects.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     EntitySideEffectRetry(#[source] BackoffScheduleError),
-    /// The side-effect queue's attempt ceiling is above what a job counts.
-    #[error("invalid configuration: {0}")]
-    EntitySideEffectAttempts(#[from] SideEffectAttemptsAboveCeiling),
     /// A cooldown that holds sources back needs a positive window, and an
     /// exponential one a cap no shorter than its first window.
     #[error(
@@ -95,7 +90,6 @@ pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError
     check_attribute_nesting(&config.request_limits)?;
     check_filter_nesting(&config.request_limits)?;
     side_effect_retry_schedule(&config.entity.side_effects).map_err(SectionAdmissionError::EntitySideEffectRetry)?;
-    side_effect_max_attempts(&config.entity.side_effects)?;
     cooldown_schedule(&config.federation.cooldown).map_err(SectionAdmissionError::FederationCooldown)?;
     check_delivery_policy(&config.notifications.delivery)?;
     let identity = &config.federation.identity;

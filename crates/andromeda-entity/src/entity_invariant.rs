@@ -13,7 +13,6 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::node_refusal::RefusedNode;
 use andromeda_retry::retry_number::RetryNumberError;
-use std::num::TryFromIntError;
 use thiserror::Error;
 
 /// An entity policy invariant that did not hold.
@@ -53,9 +52,6 @@ pub enum EntityInvariant {
     /// A JSON literal merged into a stored one could not be written back.
     #[error("a merged JSON literal could not be written: {0}")]
     LiteralMerge(#[source] JsonLiteralError),
-    /// A durable side-effect job's attempt count left the range a retry counts in.
-    #[error("a durable side-effect attempt count is out of range: {0}")]
-    AttemptCountOutOfRange(#[source] TryFromIntError),
     /// A durable side-effect attempt count names no retry.
     #[error("a durable side-effect attempt count names no retry: {0}")]
     RetryNumber(#[source] RetryNumberError),

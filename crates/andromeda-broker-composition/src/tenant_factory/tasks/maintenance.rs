@@ -16,7 +16,7 @@ use andromeda_context_commit::{committer::ContextCommitter, context_change_event
 use andromeda_entity::{
     NotificationWriteConfig,
     change_sink::EntityChangeSink,
-    configured_policy::{side_effect_max_attempts, side_effect_retry_schedule},
+    configured_policy::side_effect_retry_schedule,
     error::EntityError,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
     side_effect_notification::SideEffectNotificationRoute,
@@ -90,7 +90,7 @@ pub(super) fn register_entity_side_effects(
         EntitySideEffectDrainConfig {
             lease_seconds: i32::try_from(side_effects.queue.lease_timeout.duration().as_secs()).unwrap_or(i32::MAX),
             batch_size: side_effects.queue.batch_size,
-            max_attempts: side_effect_max_attempts(side_effects).map_err(AssemblyInvariant::SideEffectAttempts)?,
+            stuck_after: side_effects.queue.max_attempts,
             retry_schedule: side_effect_retry_schedule(side_effects).map_err(AssemblyInvariant::SideEffectRetry)?,
             lease_holder: LeaseHolder::mint(),
         },
@@ -190,7 +190,8 @@ fn register_entity_side_effect_drain(
     supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
 }
 
-/// Register the periodic reap of dead-lettered side-effect jobs.
+/// Register the periodic reap of side-effect jobs dead-lettered because their
+/// stored payload could not be read back.
 ///
 /// A dead job is retained as evidence for `dead_letter_after`; this schedule
 /// removes older ones every `cadence`. It is `Observed` rather than
