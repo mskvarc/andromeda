@@ -64,11 +64,29 @@ fn admitted(sub: &CompiledSubscription, entities: Vec<EntityState>, linked: &Lin
 mod tests {
     use crate::interval_match::{admitted, standing_at};
     use andromeda_context_commit::subscription_key::SubscriptionKey;
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
+    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+    use andromeda_ngsi_ld_entity::{
+        entity_state::EntityState,
+        queried::linked_states::LinkedStates,
+        reads::{
+            attribute_change::{AttributeChange, AttributeChangeKind},
+            attribute_instance_key::AttributeInstanceKey,
+        },
+    };
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-    use andromeda_ngsi_ld_model::subscription::Subscription;
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        subscription::Subscription,
+    };
     use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
-    use andromeda_subscription::{compilation::compile_subscription, stored_subscription::StoredSubscription};
+    use andromeda_subscription::{
+        cache::SubscriptionCache,
+        change_filters::{ChangedStates, HopResolution, narrow_by_change_filters},
+        compilation::compile_subscription,
+        compiled::CompiledSubscription,
+        stored_subscription::StoredSubscription,
+    };
+    use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -95,14 +113,17 @@ mod tests {
     /// The entities `subscription` notifies of, as they stand at `at`, a hop
     /// crossing into `linked`.
     fn filtered(subscription: Subscription, entities: Vec<EntityState>, at: DateTime<Utc>, linked: &LinkedStates) -> Vec<EntityState> {
-        let compiled = compile_subscription(
+        admitted(&compiled(subscription), standing_at(entities, at), linked)
+    }
+
+    fn compiled(subscription: Subscription) -> CompiledSubscription {
+        compile_subscription(
             &StoredSubscription {
                 key: SubscriptionKey::try_from(1).expect("a valid key"),
                 subscription,
             },
             LanguageMatching::TagEquality,
-        );
-        admitted(&compiled, standing_at(entities, at), linked)
+        )
     }
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -246,5 +267,125 @@ mod tests {
 
         assert_eq!(refused, Vec::<EntityState>::new());
         assert_eq!(kept, vec![vehicle("2030-01-01T00:00:00Z")]);
+    }
+
+    /// A Vehicle with a `speed` of 20 until `expires_at`, a `location` in
+    /// Heidelberg and the scope `/Spain`.
+    fn located_vehicle(expires_at: &str) -> EntityState {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.org/Vehicle"],
+            SPEED: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
+                "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": expires_at}]
+            }],
+            "https://uri.etsi.org/ngsi-ld/location": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 8.684_783}, {"@value": 49.406_132}]}]
+                }]
+            }],
+            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Spain"}]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+    }
+
+    /// A periodic subscription whose only entity filter is `member`.
+    fn filtering_on(member: &str, filter: &Value) -> Subscription {
+        let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
+        subscription["q"] = Value::Null;
+        subscription[member] = filter.clone(); // clone: the fixture document owns the member it sets
+        serde_json::from_value(subscription).expect("valid subscription")
+    }
+
+    /// Whether the periodic notification at `at` carries the entity.
+    fn interval_carries(subscription: Subscription, entity: EntityState, at: DateTime<Utc>) -> bool {
+        !filtered(subscription, vec![entity], at, &LinkedStates::new()).is_empty()
+    }
+
+    /// Whether the creation of the entity notifies the subscription. A
+    /// Snapshot branch has no spatial index, so the `geoQ` predicate decides.
+    fn change_notifies(subscription: Subscription, entity: &EntityState) -> bool {
+        let target = ContextTarget::Snapshot(SnapshotTarget::published(
+            SnapshotKey::try_from(3).expect("positive key"),
+            "urn:ngsi-ld:Snapshot:parity".parse().expect("valid snapshot uri"),
+        ));
+        let creation = EntityChange::new(
+            EntityLifecycle::Created,
+            vec![AttributeChange {
+                key: AttributeInstanceKey {
+                    attr: SPEED.parse().expect("valid attribute name"),
+                    dataset_id: None,
+                },
+                kind: AttributeChangeKind::Created,
+            }],
+        );
+        let states = ChangedStates {
+            current: Some(entity),
+            previous: None,
+        };
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        !narrow_by_change_filters(
+            &cache,
+            &target,
+            vec![Arc::new(compiled(subscription))],
+            &creation,
+            states,
+            &[],
+            HopResolution::Deferred,
+        )
+        .is_empty()
+    }
+
+    /// Clause 5.8.6: a periodic notification and a change-driven one decide
+    /// `q`, `geoQ`, `scopeQ` and `csf` alike, so one entity is kept or
+    /// refused by both.
+    #[test]
+    fn an_interval_and_a_change_keep_and_refuse_the_same_entity_by_each_filter() {
+        let at = instant("2029-01-01T00:00:00Z");
+        let live = "2099-01-01T00:00:00Z";
+        let near = json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"});
+        let far = json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"});
+        let cases = [
+            ("q", json!(format!("\"{SPEED}\">10")), json!(format!("\"{SPEED}\">30"))),
+            ("csf", json!(format!("\"{SPEED}\">10")), json!(format!("\"{SPEED}\">30"))),
+            ("scopeQ", json!("/Spain"), json!("/France")),
+            ("geoQ", near, far),
+        ];
+        for (member, kept, refused) in cases {
+            assert_eq!(
+                (
+                    member,
+                    interval_carries(filtering_on(member, &kept), located_vehicle(live), at),
+                    change_notifies(filtering_on(member, &kept), &located_vehicle(live)),
+                ),
+                (member, true, true),
+            );
+            assert_eq!(
+                (
+                    member,
+                    interval_carries(filtering_on(member, &refused), located_vehicle(live), at),
+                    change_notifies(filtering_on(member, &refused), &located_vehicle(live)),
+                ),
+                (member, false, false),
+            );
+        }
+    }
+
+    /// Clause 4.22: an instance past its `expiresAt` is invalid on both paths,
+    /// so a filter reading it refuses the entity on both.
+    #[test]
+    fn an_interval_and_a_change_refuse_an_entity_whose_instance_has_expired() {
+        let filter = || filtering_on("csf", &json!(format!("\"{SPEED}\">10")));
+        let expired = "2020-01-01T00:00:00Z";
+        assert_eq!(
+            (
+                interval_carries(filter(), located_vehicle(expired), instant("2029-01-01T00:00:00Z")),
+                change_notifies(filter(), &located_vehicle(expired)),
+            ),
+            (false, false)
+        );
     }
 }

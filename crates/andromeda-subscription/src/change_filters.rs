@@ -53,8 +53,8 @@ pub enum HopResolution<'a> {
     Resolved(&'a LinkedStates),
 }
 
-/// The candidates whose `q`, `geoQ` and `scopeQ` hold on a state the change is
-/// filtered against, in candidate order.
+/// The candidates whose `q`, `geoQ`, `scopeQ` and `csf` hold on a state the
+/// change is filtered against, in candidate order.
 ///
 /// With no state to read, no filter can be evaluated and the candidates stand.
 /// Either state is read as it stands now, without its expired instances
