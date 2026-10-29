@@ -98,7 +98,7 @@ impl SpatialWatermark {
         let read = self.source.locations_changed_since(horizon).await?;
         for location in read.locations {
             let placements = self.placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form));
-            self.index.replace_entity(location.entity_id, placements);
+            self.index.replace_entity(Arc::new(location.entity_id), placements);
         }
         state.horizon = Some(read.horizon);
         state.served_through = round;

@@ -17,7 +17,10 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
 use rstar::{AABB, RTree};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// The set of partitions one rebuild covers: every entity type of one tenant
 /// under one `GeoProperty`.
@@ -113,7 +116,7 @@ impl SpatialEntityIndex {
     /// never finds it missing from a partition it belongs to throughout. A
     /// geometry with no bounding rectangle cannot be indexed and is dropped.
     /// Each geometry is borrowed: the tree keeps only its projection.
-    pub fn replace_entity<'g>(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
+    pub fn replace_entity<'g>(&self, entity_id: Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.replace(entity_id, entries);
     }
@@ -126,7 +129,7 @@ impl SpatialEntityIndex {
     /// pending sees it wherever the change may leave it. A later
     /// [`SpatialEntityIndex::replace_entity`] or [`SpatialEntityIndex::remove`]
     /// settles it.
-    pub fn anticipate_entity<'g>(&self, entity_id: Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
+    pub fn anticipate_entity<'g>(&self, entity_id: Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.augment(entity_id, entries);
     }
@@ -154,11 +157,11 @@ impl SpatialEntityIndex {
 }
 
 /// The tree entries of one entity's placements, grouped by partition.
-fn entries_of<'g>(entity_id: &Identifier, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
+fn entries_of<'g>(entity_id: &Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
     placements
         .into_iter()
-        // clone: each entry owns the identifier the back-index is keyed by
-        .filter_map(|(key, geometry)| SpatialEntry::new(entity_id.clone(), geometry).map(|entry| (key, vec![entry])))
+        // clone: a reference-count bump, every entry shares the identifier the back-index is keyed by
+        .filter_map(|(key, geometry)| SpatialEntry::new(Arc::clone(entity_id), geometry).map(|entry| (key, vec![entry])))
         .collect()
 }
 
@@ -261,7 +264,7 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &PlanarGeome
             Refinement::EnvelopeOnly => true,
         })
         // clone: the returned set owns its identifiers, which outlive the tree borrow
-        .map(|entry| entry.entity_id.clone())
+        .map(|entry| Identifier::clone(&entry.entity_id))
         .collect()
 }
 
@@ -289,6 +292,7 @@ mod tests {
     use std::{
         collections::{HashMap, HashSet},
         str::FromStr,
+        sync::Arc,
     };
 
     fn location() -> AttributeName {
@@ -299,8 +303,13 @@ mod tests {
         SpatialKey::new(TenantRef::UnnamedDefault, IriBuf::from(iri!("https://example.org/Vehicle")), location())
     }
 
-    fn uri(raw: &str) -> Identifier {
-        raw.parse().expect("a well-formed URI")
+    fn uri(raw: &str) -> Arc<Identifier> {
+        Arc::new(raw.parse().expect("a well-formed URI"))
+    }
+
+    /// The set a query answers with when it finds exactly these entities.
+    fn identifiers<const N: usize>(ids: [Arc<Identifier>; N]) -> HashSet<Identifier> {
+        ids.into_iter().map(Arc::unwrap_or_clone).collect()
     }
 
     fn point(x: f64, y: f64) -> GeometryForm {
@@ -355,7 +364,7 @@ mod tests {
         let index = seeded();
         let id = uri("https://example.org/vehicles/1");
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(identifiers([id])));
     }
 
     #[test]
@@ -363,7 +372,7 @@ mod tests {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Vehicle:A");
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(identifiers([id])));
     }
 
     #[test]
@@ -390,7 +399,7 @@ mod tests {
         };
 
         assert_eq!(index.query(&key(), &tight, &point(0.0, 0.0)), Some(HashSet::new()));
-        assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0)), Some(identifiers([id])));
     }
 
     fn near(max_distance: Option<&str>, min_distance: Option<&str>) -> GeoRel {
@@ -437,7 +446,7 @@ mod tests {
 
         assert_eq!(
             index.query(&key(), &near(Some("1000"), Some("300")), &point(0.0, 0.0)),
-            Some(HashSet::from([close, inside]))
+            Some(identifiers([close, inside]))
         );
     }
 
@@ -450,7 +459,7 @@ mod tests {
         let id = uri("urn:ngsi-ld:Building:east");
         let east_square = GeometryForm::Polygon(boxes(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)]).remove(0));
         index.replace_entity(id.clone(), [(key(), &east_square)]);
-        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(identifiers([id])));
     }
 
     /// Whether an envelope candidate is within the distance is the store's
@@ -461,7 +470,7 @@ mod tests {
         // About 184 m from Bremen, in the corner of the 150 m box.
         let id = uri("urn:ngsi-ld:Building:corner");
         index.replace_entity(id.clone(), [(key(), &point(8.8091, 53.0770))]);
-        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen()), Some(identifiers([id])));
     }
 
     #[test]
@@ -480,7 +489,7 @@ mod tests {
         index.replace_entity(west.clone(), [(key(), &point(-179.9995, -17.0))]);
         assert_eq!(
             index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)),
-            Some(HashSet::from([east, west]))
+            Some(identifiers([east, west]))
         );
     }
 
@@ -490,7 +499,7 @@ mod tests {
         let id = uri("urn:ngsi-ld:Building:straddling");
         let cut = GeometryForm::MultiPolygon(boxes(&[(179.9990, -17.0005, 180.0, -16.9995), (-180.0, -17.0005, -179.9990, -16.9995)]));
         index.replace_entity(id.clone(), [(key(), &cut)]);
-        assert_eq!(index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0)), Some(identifiers([id])));
     }
 
     #[test]
@@ -539,7 +548,7 @@ mod tests {
 
         index.rebuild(&TenantRef::UnnamedDefault, &location(), HashMap::new(), snapshot);
 
-        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(identifiers([id])));
     }
 
     #[test]
@@ -552,16 +561,16 @@ mod tests {
         // clone: each assertion owns the identifier it compares against
         assert_eq!(
             index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)),
-            Some(HashSet::from([id.clone()]))
+            Some(identifiers([id.clone()]))
         );
         assert_eq!(
             index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)),
-            Some(HashSet::from([id.clone()]))
+            Some(identifiers([id.clone()]))
         );
 
         index.replace_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
         assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)), Some(HashSet::new()));
-        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)), Some(identifiers([id])));
     }
 
     #[test]
@@ -569,7 +578,7 @@ mod tests {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Building:Hall");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(identifiers([id])));
     }
 
     /// `equals` is answered by the envelope test alone.
@@ -587,8 +596,8 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
-        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id.clone()])));
-        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(identifiers([id.clone()])));
+        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(identifiers([id])));
         assert_eq!(index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0)), Some(HashSet::new()));
     }
 
@@ -602,12 +611,9 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
 
         // clone: each assertion owns the identifier it compares against
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id.clone()])));
-        assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)),
-            Some(HashSet::from([id.clone()]))
-        );
-        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(identifiers([id.clone()])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(identifiers([id.clone()])));
+        assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0)), Some(identifiers([id])));
     }
 
     #[test]
@@ -618,7 +624,7 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(HashSet::new()));
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(identifiers([id])));
     }
 
     #[test]
@@ -626,6 +632,6 @@ mod tests {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Region:A");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(HashSet::from([id])));
+        assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(identifiers([id])));
     }
 }

@@ -56,7 +56,7 @@ pub(super) fn uri(raw: &str) -> Identifier {
 /// far from the origin, so the scope is warm before any test writes.
 pub(super) fn warm_index() -> Arc<SpatialEntityIndex> {
     let index = Arc::new(SpatialEntityIndex::new());
-    let parked = SpatialEntry::new(uri("urn:ngsi-ld:Vehicle:parked"), point(90.0).form()).expect("a point has a bounding rectangle");
+    let parked = SpatialEntry::new(Arc::new(uri("urn:ngsi-ld:Vehicle:parked")), point(90.0).form()).expect("a point has a bounding rectangle");
     let placement = placement();
     index.rebuild(
         placement.tenant(),

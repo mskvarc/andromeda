@@ -59,11 +59,47 @@ mod tests {
         routing::get,
     };
     use serde_json::Value;
-    use std::{error::Error, future::pending, time::Duration};
+    use std::{
+        error::Error,
+        future::pending,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
     use tower::ServiceExt;
 
     fn bounded(router: Router, limit: Duration) -> Router {
         router.layer(from_fn_with_state(RequestDeadline::new(limit), answer_within_deadline))
+    }
+
+    /// Raises its flag once dropped, standing in for the rows and connections a
+    /// handler holds.
+    struct Held(Arc<AtomicBool>);
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_outliving_its_deadline_has_released_what_its_handler_held_when_answered() -> Result<(), Box<dyn Error>> {
+        let released = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&released);
+        let handler = move || {
+            let held = Held(Arc::clone(&flag));
+            async move {
+                let _held = held;
+                pending::<StatusCode>().await
+            }
+        };
+        let router = bounded(Router::new().route("/ngsi-ld/v1/entities", get(handler)), Duration::from_millis(20));
+        let response = router.oneshot(Request::get("/ngsi-ld/v1/entities?georel=near").body(Body::empty())?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(released.load(Ordering::SeqCst), "the handler still holds its state after the deadline answered");
+        Ok(())
     }
 
     #[tokio::test]

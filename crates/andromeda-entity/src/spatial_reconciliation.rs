@@ -10,7 +10,7 @@ use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
     key::SpatialKey,
 };
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 use tracing::info;
 
 /// Result of a rebuild pass.
@@ -44,12 +44,10 @@ pub async fn rebuild_location_index(
     let read = source.locations().await?;
     let mut partitions: HashMap<SpatialKey, Vec<SpatialEntry>> = HashMap::new();
     for location in read.locations {
+        let entity_id = Arc::new(location.entity_id);
         for (key, geometry) in placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form)) {
-            // clone: each partition's entry owns the identifier
-            partitions
-                .entry(key)
-                .or_default()
-                .extend(SpatialEntry::new(location.entity_id.clone(), geometry));
+            // clone: a reference-count bump, every partition's entry shares the identifier
+            partitions.entry(key).or_default().extend(SpatialEntry::new(Arc::clone(&entity_id), geometry));
         }
     }
     let partition_count = partitions.len();
