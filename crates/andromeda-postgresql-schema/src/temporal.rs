@@ -148,6 +148,18 @@ pub enum RowstoreHistoryChunks {
     KeptAt,
 }
 
+/// The `rebuilt_history_chunks` table: the rowstore chunks of
+/// `attribute_history` whose indexes maintenance rebuilt after they closed.
+#[derive(Iden, Clone, Copy)]
+pub enum RebuiltHistoryChunks {
+    /// Table name: `rebuilt_history_chunks`
+    Table,
+    /// The chunk's start on the time dimension, which names it
+    RangeStart,
+    /// When its indexes were rebuilt
+    RebuiltAt,
+}
+
 /// The `scope_history` table - the temporal evolution of an entity's scopes.
 #[derive(Iden, Clone, Copy)]
 pub enum ScopeHistory {

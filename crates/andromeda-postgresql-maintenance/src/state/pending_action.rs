@@ -142,7 +142,7 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
 fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<MaintenanceTarget> {
     let is_gin = |action: &PendingAction| match action.target {
         MaintenanceTarget::Index(index) => index.canary().is_some(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => false,
+        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => false,
     };
     let is_due = |action: &PendingAction| action.cooldown_until.is_none_or(|until| until <= now);
     if pending.iter().all(is_gin) {

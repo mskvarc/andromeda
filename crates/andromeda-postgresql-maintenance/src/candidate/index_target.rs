@@ -15,7 +15,10 @@ use strum::{Display, EnumString, IntoStaticStr};
 /// the claim expression, so it is never a heap-only update and adds an entry
 /// to each of them. An index a row enters once, and one on a table a claim
 /// does not update, frees space only as fast as the queue's retention reaps
-/// rows, and new entries take that space back.
+/// rows, and new entries take that space back. Every index of the temporal
+/// stream catalogue is a target: a write that grows a stream's value extent or
+/// shape mask changes an indexed column, so it is never a heap-only update and
+/// adds an entry to each of them.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, Iden, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum IndexTarget {
@@ -55,6 +58,16 @@ pub enum IndexTarget {
     /// Identifier trigram GIN, measured by its density: a pending list
     /// flushed into its posting trees leaves their pages part full.
     IdxEntitiesIdTrgm,
+    /// The stream catalogue's primary key.
+    PkTemporalAttributeStreams,
+    /// The stream catalogue's grain constraint index.
+    UqTemporalAttributeStreamsGrain,
+    /// The stream catalogue's attribute-led index.
+    IdxTemporalAttributeStreamsAttributeNameKeyEntityKey,
+    /// The stream catalogue's value extent `GiST`.
+    IdxTemporalAttributeStreamsValueExtent,
+    /// The stream catalogue's shape mask index.
+    IdxTemporalAttributeStreamsAttributeNameKeyShapeMask,
 }
 
 /// The column whose non-null rows a density-measured GIN covers: each such GIN
@@ -97,7 +110,7 @@ impl DensityColumn {
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
-    pub const ALL: [IndexTarget; 17] = [
+    pub const ALL: [IndexTarget; 22] = [
         IndexTarget::UqCurrentAttributesGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -115,10 +128,15 @@ impl IndexTarget {
         IndexTarget::IdxNotificationDeliveriesSubscription,
         IndexTarget::PkNotificationDeliveries,
         IndexTarget::IdxEntitiesIdTrgm,
+        IndexTarget::PkTemporalAttributeStreams,
+        IndexTarget::UqTemporalAttributeStreamsGrain,
+        IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey,
+        IndexTarget::IdxTemporalAttributeStreamsValueExtent,
+        IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask,
     ];
 
     /// Indexes eligible for direct physical bloat probing.
-    pub const PROBEABLE: [IndexTarget; 12] = [
+    pub const PROBEABLE: [IndexTarget; 17] = [
         IndexTarget::UqCurrentAttributesGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -131,6 +149,11 @@ impl IndexTarget {
         IndexTarget::IdxNotificationDeliveriesEvent,
         IndexTarget::IdxNotificationDeliveriesSubscription,
         IndexTarget::PkNotificationDeliveries,
+        IndexTarget::PkTemporalAttributeStreams,
+        IndexTarget::UqTemporalAttributeStreamsGrain,
+        IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey,
+        IndexTarget::IdxTemporalAttributeStreamsValueExtent,
+        IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask,
     ];
 
     /// The GIN index queued together with this probeable B-tree, its bloat
@@ -160,7 +183,12 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries
-            | IndexTarget::IdxEntitiesIdTrgm => None,
+            | IndexTarget::IdxEntitiesIdTrgm
+            | IndexTarget::PkTemporalAttributeStreams
+            | IndexTarget::UqTemporalAttributeStreamsGrain
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+            | IndexTarget::IdxTemporalAttributeStreamsValueExtent
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => None,
         }
     }
 
@@ -185,7 +213,12 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries
-            | IndexTarget::IdxEntitiesIdTrgm => None,
+            | IndexTarget::IdxEntitiesIdTrgm
+            | IndexTarget::PkTemporalAttributeStreams
+            | IndexTarget::UqTemporalAttributeStreamsGrain
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+            | IndexTarget::IdxTemporalAttributeStreamsValueExtent
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => None,
         }
     }
 
@@ -210,7 +243,12 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
-            | IndexTarget::PkNotificationDeliveries => None,
+            | IndexTarget::PkNotificationDeliveries
+            | IndexTarget::PkTemporalAttributeStreams
+            | IndexTarget::UqTemporalAttributeStreamsGrain
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+            | IndexTarget::IdxTemporalAttributeStreamsValueExtent
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => None,
         }
     }
 
@@ -236,6 +274,11 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries => HeapTarget::NotificationDeliveries,
             IndexTarget::IdxEntitiesIdTrgm => HeapTarget::Entities,
+            IndexTarget::PkTemporalAttributeStreams
+            | IndexTarget::UqTemporalAttributeStreamsGrain
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+            | IndexTarget::IdxTemporalAttributeStreamsValueExtent
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => HeapTarget::TemporalAttributeStreams,
         }
     }
 
@@ -260,6 +303,11 @@ impl IndexTarget {
             IndexTarget::IdxNotificationDeliveriesSubscription => "idx_notification_deliveries_subscription",
             IndexTarget::PkNotificationDeliveries => "pk_notification_deliveries",
             IndexTarget::IdxEntitiesIdTrgm => "idx_entities_id_trgm",
+            IndexTarget::PkTemporalAttributeStreams => "pk_temporal_attribute_streams",
+            IndexTarget::UqTemporalAttributeStreamsGrain => "uq_temporal_attribute_streams_grain",
+            IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey => "idx_temporal_attribute_streams_attribute_name_key_entity_key",
+            IndexTarget::IdxTemporalAttributeStreamsValueExtent => "idx_temporal_attribute_streams_value_extent",
+            IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => "idx_temporal_attribute_streams_attribute_name_key_shape_mask",
         }
     }
 
@@ -411,6 +459,30 @@ mod tests {
                 target.reindex_statement(branch),
                 reindex_index_concurrently(Alias::new("snap_7"), Alias::new(target.relation_name()))
             );
+        }
+    }
+
+    /// A history write that grows a stream's value extent or shape mask
+    /// adds an entry to every index of the stream catalogue, so each is probed
+    /// and rebuilt under the catalogue's own gates.
+    #[test]
+    fn every_stream_catalogue_index_is_probed_under_the_catalogue_heap() {
+        let catalogue = IndexTarget::ALL
+            .into_iter()
+            .filter(|target| target.heap() == HeapTarget::TemporalAttributeStreams)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            catalogue.iter().map(|target| target.relation_name()).collect::<Vec<_>>(),
+            [
+                "pk_temporal_attribute_streams",
+                "uq_temporal_attribute_streams_grain",
+                "idx_temporal_attribute_streams_attribute_name_key_entity_key",
+                "idx_temporal_attribute_streams_value_extent",
+                "idx_temporal_attribute_streams_attribute_name_key_shape_mask",
+            ]
+        );
+        for target in catalogue {
+            assert!(IndexTarget::PROBEABLE.contains(&target), "{target}");
         }
     }
 }

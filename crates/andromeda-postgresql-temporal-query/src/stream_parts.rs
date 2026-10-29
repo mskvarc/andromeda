@@ -2,22 +2,19 @@
 //! streams a statement reads them for.
 //!
 //! Every attribute stream (an attribute and a `datasetId`) is read on its own
-//! in a LATERAL over the Entity's streams, so the stream-led axis indexes
-//! serve each read. A stream's recorded rows and its queued entries are parts
-//! read one by one and only then joined, so an order, a limit or a bound
-//! reaches the index of each part; on `createdAt` and `modifiedAt` the
-//! recorded rows are two parts, those stamped at their write instant and the
-//! rest.
+//! in a LATERAL over the Entity's streams, so the stream-led axis and
+//! placement indexes serve each read. A stream's recorded rows and its queued
+//! entries are parts read one by one and only then joined, so an order, a
+//! limit or a bound reaches the index of each part.
 
 use crate::alias::{Ah, An};
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::{
     HistoryBranch,
     HistoryOf,
     HistoryStream,
     attribute_rows::stream_rows,
     grain::HistoryGrain,
-    stream_parts::stream_attribute_parts,
+    stream_parts::whole_stream_parts,
 };
 use andromeda_postgresql_schema::name_dictionary::AttributeNames;
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
@@ -44,15 +41,14 @@ pub(crate) fn wrapped(read: SelectStatement) -> SelectStatement {
     wrapped
 }
 
-/// The parts of the stream under `st` a read on the axis `compiled` names
-/// takes: the first, and every other after it.
-pub(crate) fn stream_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> (SelectStatement, impl Iterator<Item = SelectStatement>) {
-    stream_attribute_parts(branch, &HistoryStream::under(St), compiled.window.timeproperty).into_reads()
+/// The parts of the stream under `st`: the first, and every other after it.
+fn stream_parts(branch: &HistoryBranch) -> (SelectStatement, impl Iterator<Item = SelectStatement>) {
+    whole_stream_parts(branch, &HistoryStream::under(St)).into_reads()
 }
 
 /// `read` of every part of the stream under `st`, the reads joined.
-pub(crate) fn over_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SelectStatement {
-    let (first, others) = stream_parts(branch, compiled);
+pub(crate) fn over_parts(branch: &HistoryBranch, read: impl Fn(TableRef) -> SelectStatement) -> SelectStatement {
+    let (first, others) = stream_parts(branch);
     let mut joined = wrapped(read(under_ah(first)));
     for other in others {
         joined.union(UnionType::All, wrapped(read(under_ah(other))));
@@ -61,8 +57,8 @@ pub(crate) fn over_parts(branch: &HistoryBranch, compiled: &CompiledTemporalQuer
 }
 
 /// Whether `read` of any part of the stream under `st` returns a row.
-pub(crate) fn in_any_part(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, read: impl Fn(TableRef) -> SelectStatement) -> SimpleExpr {
-    let (first, others) = stream_parts(branch, compiled);
+pub(crate) fn in_any_part(branch: &HistoryBranch, read: impl Fn(TableRef) -> SelectStatement) -> SimpleExpr {
+    let (first, others) = stream_parts(branch);
     others.fold(Expr::exists(read(under_ah(first))), |any, other| any.or(Expr::exists(read(under_ah(other)))))
 }
 

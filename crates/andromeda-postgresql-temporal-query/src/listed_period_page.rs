@@ -18,8 +18,10 @@ use crate::{
     aggregation::PeriodOrder,
     aggregation_grid::{BucketEnd, BucketStart},
     alias::Ah,
+    axis::axis_bound,
     period_edge::{listed_ends, listed_starts, stream_bound},
 };
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     aggregate::{count_all, row_number},
@@ -52,10 +54,10 @@ fn group_order(index: usize) -> Alias {
 
 /// The instances under `ah` within the listed period under [`PagePeriod`]:
 /// from its start, before its end.
-pub(crate) fn within_page_period(axis: AttributeHistory) -> Condition {
+pub(crate) fn within_page_period(timeproperty: TimeProp) -> Condition {
     Condition::all()
-        .add(Expr::col((Ah, axis)).gte(Expr::col((PagePeriod, BucketStart))))
-        .add(Expr::col((Ah, axis)).lt(Expr::col((PagePeriod, BucketEnd))))
+        .add(axis_bound(timeproperty, |instant| instant.gte(Expr::col((PagePeriod, BucketStart)))))
+        .add(axis_bound(timeproperty, |instant| instant.lt(Expr::col((PagePeriod, BucketEnd)))))
 }
 
 /// The periods the edge listed, one row each: its start, its end and its
@@ -152,6 +154,7 @@ mod tests {
         alias::Ah,
         listed_period_page::{each_listed_period, placed_among_listed_periods, within_page_period},
     };
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
     use andromeda_postgresql_seaquery::aggregate::count_all;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -243,7 +246,7 @@ mod tests {
     fn the_rows_of_a_listed_period_run_from_its_start_to_before_its_end() {
         let sql = Query::select()
             .expr(Expr::val(1))
-            .cond_where(within_page_period(AttributeHistory::ObservedAt))
+            .cond_where(within_page_period(TimeProp::Observed))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(

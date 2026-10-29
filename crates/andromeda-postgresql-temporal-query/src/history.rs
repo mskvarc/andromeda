@@ -13,13 +13,13 @@
 use crate::{
     aggregation::build_aggregation_query,
     alias::{Ah, An},
-    axis::axis_column,
+    axis::{axis_column, axis_window},
     stream_page::{Walk, last_n_history, project_whole_streams, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
-    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget, window::TimeInterval},
+    temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget},
 };
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
@@ -67,17 +67,10 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
 /// axis asks for those rows and no others; the deletion is recognised by the
 /// axis itself rather than by a sentinel value.
 pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
-    let axis = axis_column(compiled.window.timeproperty);
-    let mut condition = Condition::all().add(Expr::col((Ah, axis)).is_not_null());
-
-    match compiled.window.interval {
-        TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(Expr::col((Ah, axis)).lt(instant)),
-        TimeInterval::After(instant) => condition = condition.add(Expr::col((Ah, axis)).gte(instant)),
-        TimeInterval::Between { from, to } => {
-            condition = condition.add(Expr::col((Ah, axis)).gte(from)).add(Expr::col((Ah, axis)).lt(to));
-        }
-    }
+    let timeproperty = compiled.window.timeproperty;
+    let mut condition = Condition::all()
+        .add(Expr::col((Ah, axis_column(timeproperty))).is_not_null())
+        .add(axis_window(timeproperty, &compiled.window.interval));
 
     // The `attrs` selection narrows by the dictionary keys its names resolved
     // to, on the source's own grain column.
@@ -215,7 +208,12 @@ mod tests {
         dataset::DatasetSelector,
         entity_selection::EntitySelection,
         scope::query::ScopeQuery,
-        temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        temporal::{
+            aggregation_period::AggregationPeriod,
+            instance_selection::InstanceSelection,
+            representation::Representation,
+            window::{TemporalWindow, TimeInterval},
+        },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{
@@ -711,33 +709,37 @@ mod tests {
         build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
-    /// Clause 4.8: an appended instance is created and modified at its write
-    /// instant, so a page on `createdAt` or `modifiedAt` orders and limits
-    /// those rows on `recorded_at`, which the stream's write-clock index
-    /// returns in order, and the rest apart; neither part leaves the page to
-    /// the axis's BRIN index.
+    /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` on every
+    /// instance, so a page on either reads each stream's recorded rows in one
+    /// part, ordered on the axis's placement, which its stream-led index
+    /// keys, and bounded on both the column and the placement.
     #[test]
-    fn a_system_time_page_reads_the_rows_stamped_at_their_write_instant_on_the_write_clock() {
+    fn a_system_time_page_reads_one_recorded_part_ordered_on_the_placement() {
         for (axis, column) in [(TimeProp::Created, "created_at"), (TimeProp::Modified, "modified_at")] {
             let sql = recorded_sql_on(axis, InstancePage::Forward { size: 100 }, one_day());
-            let limited = format!(r#"ORDER BY "ah"."{column}" ASC LIMIT 100"#);
-            assert_eq!(sql.matches(&limited).count(), 2, "an edge read per part: {sql}");
-            let stamped = format!(r#""rh"."recorded_at" AS "{column}""#);
-            let apart = format!(r#""rh"."{column}" IS DISTINCT FROM "rh"."recorded_at""#);
-            assert_eq!(sql.matches(&stamped).count(), 3, "edge, continuation and kept reads: {sql}");
-            assert_eq!(sql.matches(&apart).count(), 3, "edge, continuation and kept reads: {sql}");
-            assert!(sql.contains(") OR EXISTS(SELECT 1 FROM"), "the stream continues in either part: {sql}");
+            let placement = format!(r#"COALESCE("ah"."{column}", "ah"."deleted_at")"#);
+            assert_eq!(sql.matches(&format!("ORDER BY {placement} ASC LIMIT 100")).count(), 1, "one edge read: {sql}");
+            assert!(sql.contains(&format!(r#""ah"."{column}" >= '"#)), "{sql}");
+            assert!(sql.contains(&format!("{placement} >= '")), "{sql}");
+            assert!(sql.contains(&format!(r#""ah"."{column}" <= COALESCE("stream_edge"."edge""#)), "{sql}");
+            assert!(sql.contains(&format!(r#"{placement} <= COALESCE("stream_edge"."edge""#)), "{sql}");
+            assert!(!sql.contains("DISTINCT FROM") && !sql.contains(r#""rh"."recorded_at" AS"#), "{sql}");
+            assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM"), "one part to continue in: {sql}");
         }
     }
 
-    /// A `lastN` on a system-time axis takes the last `n` of each part and
-    /// then the last `n` of both.
+    /// A `lastN` on a system-time axis takes the last `n` of the recorded
+    /// part on its placement, and the last `n` of the parts joined on the
+    /// instant they project.
     #[test]
-    fn a_system_time_last_n_takes_the_last_instances_of_each_part() {
+    fn a_system_time_last_n_takes_the_last_instances_on_the_placement() {
         let sql = recorded_sql_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
-        assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
-        assert!(sql.contains(r#""rh"."recorded_at" AS "modified_at""#), "{sql}");
-        assert!(sql.contains(r#""rh"."modified_at" IS DISTINCT FROM "rh"."recorded_at""#), "{sql}");
+        assert_eq!(sql.matches("LIMIT 5").count(), 2, "the part and the join: {sql}");
+        assert!(
+            sql.contains(r#"ORDER BY COALESCE("ah"."modified_at", "ah"."deleted_at") DESC, "ah"."recorded_at" DESC"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"ORDER BY "latest"."modified_at" DESC, "latest"."recorded_at" DESC"#), "{sql}");
     }
 
     /// `observedAt` is the client's instant, so a page on it reads each

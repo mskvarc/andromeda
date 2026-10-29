@@ -102,6 +102,10 @@ pub enum CatalogCounter {
     UncompressedBytes,
     /// The OID of a history chunk.
     ChunkOid,
+    /// Closed rowstore history chunks whose indexes await their rebuild.
+    AwaitingChunks,
+    /// Bytes of every index of a history chunk.
+    ChunkIndexBytes,
     /// Entries `pg_stat_statements` evicted, or the entries it may hold.
     StatementEvictions,
 }

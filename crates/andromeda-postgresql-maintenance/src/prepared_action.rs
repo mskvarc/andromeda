@@ -4,7 +4,8 @@
 //! A fixed target names its relation at compile time; a columnstore target
 //! works on whichever of its chunks is the oldest partial one, read from the
 //! catalogue in the visit that acts on it, never from configuration or a
-//! request.
+//! request, and a rowstore target on its oldest closed chunk awaiting a
+//! rebuild, read the same way.
 //!
 //! An action qualifies on the sample that queued it and runs on a later pass,
 //! when autovacuum may already have done the work. The reading taken before a
@@ -22,6 +23,7 @@ use crate::{
     error::MaintenanceError,
     inspection::{self, HeapSample},
     policy::{DeferralReason, PolicyProfile, SafetyGates},
+    rowstore_rebuild,
     safety_gate_inspection::{self, GateScope},
     statistics_freshness::{self, HeapStatistics, StatisticsFreshness},
 };
@@ -105,6 +107,22 @@ pub(crate) async fn prepare_action(connection: &mut PgConnection, row: BranchTar
                 relation: chunk.relation,
             }
         }
+        MaintenanceTarget::Rowstore(table) => {
+            let Some((awaiting, _)) = rowstore_rebuild::oldest_awaiting_chunk(connection, table, profile).await? else {
+                return Ok(Preparation::Lapsed(DeferralReason::BelowThreshold));
+            };
+            PreparedAction {
+                gates: safety_gate_inspection::safety_gates(connection, GateScope::Chunk { table, chunk: &awaiting.chunk }).await?,
+                baseline: ActionBaseline::Rowstore {
+                    table,
+                    chunk: awaiting.chunk.oid,
+                    range_start: awaiting.range_start,
+                    before_bytes: rowstore_rebuild::chunk_index_bytes(connection, awaiting.chunk.oid).await?,
+                },
+                statement: awaiting.rebuild_statement(),
+                relation: awaiting.chunk.relation,
+            }
+        }
     };
     Ok(Preparation::Ready(prepared))
 }
@@ -145,6 +163,10 @@ pub(crate) async fn read_comparison(connection: &mut PgConnection, branch: Branc
         },
         ActionBaseline::Columnstore { chunk } => ActionComparison::Columnstore {
             after: columnstore_partiality::chunk_partiality(connection, chunk).await?,
+        },
+        ActionBaseline::Rowstore { chunk, before_bytes, .. } => ActionComparison::Rowstore {
+            before_bytes,
+            after_bytes: rowstore_rebuild::chunk_index_bytes(connection, chunk).await?,
         },
     })
 }

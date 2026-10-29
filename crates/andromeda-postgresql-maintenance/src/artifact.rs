@@ -1,6 +1,16 @@
 //! Validation of PostgreSQL concurrent-reindex recovery artifacts.
+//!
+//! A concurrent rebuild interrupted before it completes leaves the index it
+//! was building, named `<index>_ccnew[digits]`, invalid beside the original;
+//! one interrupted after the swap leaves the original as `<index>_ccold`. An
+//! allowlisted index's artifact sits in its branch schema, and a history
+//! chunk's sits beside the chunk, which the catalogue read pairs it with.
 
-use crate::{branch::Branch, candidate::index_target::IndexTarget};
+use crate::{
+    branch::Branch,
+    candidate::{history_table::HistoryTable, index_target::IndexTarget},
+    columnstore_partiality::HistoryChunk,
+};
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, drop_index_concurrently};
 use sea_query::Alias;
 
@@ -13,26 +23,53 @@ pub(crate) enum ArtifactKind {
     Old,
 }
 
-/// A catalog name proven to belong to one exact allowlisted index.
+/// What an artifact was left by: the rebuild of an allowlisted index, or the
+/// rebuild of every index of a history chunk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ArtifactOwner {
+    /// An allowlisted index, in the schema of `branch`.
+    Index {
+        /// The branch whose schema holds the artifact.
+        branch: Branch,
+        /// The allowlisted index the artifact belongs to.
+        index: IndexTarget,
+    },
+    /// A chunk of a history hypertable, in the schema holding the chunk.
+    Chunk {
+        /// The chunk's hypertable.
+        table: HistoryTable,
+        /// The chunk the artifact was built on.
+        chunk: HistoryChunk,
+        /// The schema holding the artifact.
+        schema: String,
+    },
+}
+
+/// A catalog name proven to be a concurrent-reindex artifact of one owner.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtifactIndexName {
-    /// The branch whose schema holds the artifact.
-    branch: Branch,
+    /// What left the artifact.
+    owner: ArtifactOwner,
     /// Exact catalog name.
     name: String,
-    /// Allowlisted index the artifact belongs to.
-    owner: IndexTarget,
 }
 
 impl ArtifactIndexName {
     /// The concurrently safe drop command for the validated identifier.
     pub(crate) fn drop_statement(&self) -> MaintenanceCommand {
-        drop_index_concurrently(self.branch.schema(), Alias::new(&self.name))
+        match &self.owner {
+            ArtifactOwner::Index { branch, .. } => drop_index_concurrently(branch.schema(), Alias::new(&self.name)),
+            ArtifactOwner::Chunk { schema, .. } => drop_index_concurrently(Alias::new(schema), Alias::new(&self.name)),
+        }
     }
 
-    /// The branch whose schema holds the artifact.
+    /// The branch whose schema holds the artifact: a history chunk's is the
+    /// live branch, the only one holding hypertables.
     pub(crate) const fn branch(&self) -> Branch {
-        self.branch
+        match &self.owner {
+            ArtifactOwner::Index { branch, .. } => *branch,
+            ArtifactOwner::Chunk { .. } => Branch::Live,
+        }
     }
 
     /// Borrow the catalog identifier for structured reporting.
@@ -40,9 +77,9 @@ impl ArtifactIndexName {
         &self.name
     }
 
-    /// Return the allowlisted index that created this artifact.
-    pub(crate) const fn owner(&self) -> IndexTarget {
-        self.owner
+    /// What left the artifact.
+    pub(crate) const fn owner(&self) -> &ArtifactOwner {
+        &self.owner
     }
 }
 
@@ -50,7 +87,7 @@ impl ArtifactIndexName {
 /// catalog name to drop and the documented class it belongs to.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecoveryArtifact {
-    /// Catalog name proven to belong to one allowlisted index.
+    /// Catalog name proven to be an artifact of its owner.
     pub(crate) name: ArtifactIndexName,
     /// Whether the artifact is the incomplete replacement or the obsolete original.
     pub(crate) kind: ArtifactKind,
@@ -60,27 +97,46 @@ impl RecoveryArtifact {
     /// Recognize only `<allowlisted>_ccnew[digits]` and
     /// `<allowlisted>_ccold[digits]` names, in the schema of `branch`.
     pub(crate) fn parse(branch: Branch, name: &str) -> Option<RecoveryArtifact> {
-        IndexTarget::ALL.into_iter().find_map(|target| {
-            let suffix = name.strip_prefix(target.relation_name())?;
-            let kind_and_digits = suffix
-                .strip_prefix("_ccnew")
-                .map(|digits| (ArtifactKind::New, digits))
-                .or_else(|| suffix.strip_prefix("_ccold").map(|digits| (ArtifactKind::Old, digits)))?;
-            let (kind, digits) = kind_and_digits;
-            if digits.bytes().all(|byte| byte.is_ascii_digit()) {
-                Some(RecoveryArtifact {
-                    name: ArtifactIndexName {
-                        branch,
-                        name: name.to_owned(),
-                        owner: target,
-                    },
-                    kind,
-                })
-            } else {
-                None
-            }
+        IndexTarget::ALL.into_iter().find_map(|index| {
+            let kind = artifact_kind(name.strip_prefix(index.relation_name())?)?;
+            Some(RecoveryArtifact {
+                name: ArtifactIndexName {
+                    owner: ArtifactOwner::Index { branch, index },
+                    name: name.to_owned(),
+                },
+                kind,
+            })
         })
     }
+
+    /// Recognize an invalid index the catalogue reports on `chunk` of `table`,
+    /// in `schema`, by a `_ccnew[digits]` or `_ccold[digits]` suffix after a
+    /// non-empty name.
+    pub(crate) fn of_chunk(table: HistoryTable, chunk: HistoryChunk, schema: String, name: &str) -> Option<RecoveryArtifact> {
+        let kind = [("_ccnew", ArtifactKind::New), ("_ccold", ArtifactKind::Old)]
+            .into_iter()
+            .find_map(|(marker, kind)| {
+                let (base, digits) = name.rsplit_once(marker)?;
+                (!base.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())).then_some(kind)
+            })?;
+        Some(RecoveryArtifact {
+            name: ArtifactIndexName {
+                owner: ArtifactOwner::Chunk { table, chunk, schema },
+                name: name.to_owned(),
+            },
+            kind,
+        })
+    }
+}
+
+/// The artifact class a name's suffix after its index name marks:
+/// `_ccnew` or `_ccold` followed by digits alone.
+fn artifact_kind(suffix: &str) -> Option<ArtifactKind> {
+    let (kind, digits) = suffix
+        .strip_prefix("_ccnew")
+        .map(|digits| (ArtifactKind::New, digits))
+        .or_else(|| suffix.strip_prefix("_ccold").map(|digits| (ArtifactKind::Old, digits)))?;
+    digits.bytes().all(|byte| byte.is_ascii_digit()).then_some(kind)
 }
 
 #[cfg(test)]
@@ -93,6 +149,8 @@ mod tests {
     use crate::{
         artifact::{ArtifactKind, RecoveryArtifact},
         branch::Branch,
+        candidate::history_table::HistoryTable,
+        columnstore_partiality::HistoryChunk,
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_seaquery::maintenance::drop_index_concurrently;
@@ -140,5 +198,47 @@ mod tests {
             artifact.name.drop_statement(),
             drop_index_concurrently(Alias::new("snap_42"), Alias::new("idx_ca_value_number_ccnew"))
         );
+    }
+
+    fn chunk() -> HistoryChunk {
+        HistoryChunk {
+            oid: 16_384,
+            relation: "_timescaledb_internal._hyper_1_2_chunk".to_owned(),
+        }
+    }
+
+    /// An interrupted chunk rebuild leaves `<index>_ccnew` beside the chunk;
+    /// it is dropped from the chunk's schema, in the live branch.
+    #[test]
+    fn a_chunk_rebuild_artifact_is_dropped_from_the_chunk_schema() {
+        let Some(artifact) = RecoveryArtifact::of_chunk(
+            HistoryTable::AttributeHistory,
+            chunk(),
+            "_timescaledb_internal".to_owned(),
+            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_at_ccnew",
+        ) else {
+            panic!("a ccnew index on a chunk is an artifact");
+        };
+        assert_eq!(artifact.kind, ArtifactKind::New);
+        assert_eq!(artifact.name.branch(), Branch::Live);
+        assert_eq!(
+            artifact.name.drop_statement(),
+            drop_index_concurrently(
+                Alias::new("_timescaledb_internal"),
+                Alias::new("_hyper_1_2_chunk_idx_attribute_history_stream_observed_at_ccnew")
+            )
+        );
+    }
+
+    #[test]
+    fn an_invalid_chunk_index_without_an_artifact_suffix_is_not_recovered() {
+        for name in [
+            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_at",
+            "_ccnew",
+            "_hyper_1_2_chunk_x_ccold_y",
+        ] {
+            let artifact = RecoveryArtifact::of_chunk(HistoryTable::AttributeHistory, chunk(), "_timescaledb_internal".to_owned(), name);
+            assert!(artifact.is_none(), "{name}");
+        }
     }
 }

@@ -18,7 +18,6 @@
 use crate::{
     aggregation_grid::AggregationGrid,
     alias::Ah,
-    axis::axis_column,
     listed_period_page::within_page_period,
     period_edge::{PagedWalk, ProbedPeriods, page_edge, stream_bound},
     stream_page::{Walk, latest_instances},
@@ -117,7 +116,7 @@ enum Paging {
 fn unpaged_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, aggregated: &Condition, last_n: Option<NonZeroU32>) -> SelectStatement {
     match last_n {
         Some(n) => latest_instances(branch, compiled, aggregated, n, every_column),
-        None => over_parts(branch, compiled, |part| {
+        None => over_parts(branch, |part| {
             let mut rows = admitted(part, aggregated);
             every_column(&mut rows);
             rows
@@ -132,9 +131,9 @@ fn unpaged_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, aggreg
 fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &AggregationGrid, paged: PagedWalk) -> AggregatedStreamRead {
     let StreamProbes { branch, compiled, .. } = *probes;
     // clone: the page's rows are the aggregated instances on the kept side of the edge.
-    let kept = aggregated.clone().add(probes.kept_side(paged.walk, stream_bound()));
+    let kept = aggregated.clone().add(probes.kept_side(paged.walk, &stream_bound()));
     let every_kept = |kept: &Condition| {
-        over_parts(branch, compiled, |part| {
+        over_parts(branch, |part| {
             let mut rows = admitted(part, kept);
             every_column(&mut rows);
             rows
@@ -152,7 +151,7 @@ fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &Aggregat
         ),
         (PeriodGrid::Calendar, None) => (
             ProbedPeriods::Listed,
-            StreamRows::OfEachListedPeriod(every_kept(&kept.add(within_page_period(axis_column(compiled.window.timeproperty))))),
+            StreamRows::OfEachListedPeriod(every_kept(&kept.add(within_page_period(compiled.window.timeproperty)))),
         ),
     };
     AggregatedStreamRead {
@@ -370,16 +369,17 @@ mod tests {
         );
     }
 
-    /// Every part of a live stream (on `createdAt`, the rows stamped at their
-    /// write instant, the rest, and the queued entries) is read ordered and
-    /// limited on its own before the parts are joined, so each limit reaches
-    /// its index.
+    /// Every part of a live stream (its recorded rows and its queued
+    /// entries) is read ordered and limited on its own before the parts are
+    /// joined, so each limit reaches its index; on `createdAt` the order is
+    /// the placement the stream-led index keys.
     #[test]
     fn each_part_of_a_live_stream_is_ordered_and_limited_on_its_own() {
         let page = InstancePage::Periods { budget: budget() };
         let live = sql_on(&HistoryBranch::live(), &aggregated("PT1H", TimeProp::Created, page));
-        pretty_assertions::assert_eq!(edge_of(&live).matches(r#"ORDER BY "ah"."created_at" ASC LIMIT 1000001"#).count(), 3, "{live}");
-        pretty_assertions::assert_eq!(edge_of(&live).matches(r#"ORDER BY "ah"."created_at" ASC LIMIT 1)"#).count(), 9, "{live}");
+        let placement = r#"ORDER BY COALESCE("ah"."created_at", "ah"."deleted_at") ASC"#;
+        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{placement} LIMIT 1000001")).count(), 2, "{live}");
+        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{placement} LIMIT 1)")).count(), 6, "{live}");
         let recorded = sql_of(&aggregated("PT1H", TimeProp::Observed, page));
         pretty_assertions::assert_eq!(
             edge_of(&recorded).matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1000001"#).count(),

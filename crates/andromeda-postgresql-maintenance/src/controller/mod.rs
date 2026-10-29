@@ -22,6 +22,7 @@ use crate::{
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
     replication_slot,
+    rowstore_rebuild,
     state::{self, RegisteredTenant, branch_rows, open_breach, pending_action, tenant_inspection},
     statement_statistics,
     timescale_observation,
@@ -209,11 +210,15 @@ impl MaintenanceController {
         let sampling = branch_sampling::sample_branches(self.config.mode, platform, &mut connection, tenant, &branches, profile).await?;
 
         report_invalid_indexes(tenant, &invalid, &branches);
-        if let Some(artifact) = invalid
+        let branch_artifact = invalid
             .iter()
             .filter(|index| branches.contains(&index.branch()))
-            .find_map(InvalidIndex::recovery_artifact)
-        {
+            .find_map(InvalidIndex::recovery_artifact);
+        let artifact = match branch_artifact {
+            Some(artifact) => Some(artifact),
+            None => rowstore_rebuild::chunk_artifacts(&mut connection).await?.into_iter().next(),
+        };
+        if let Some(artifact) = artifact {
             return action::recover_artifact(self.config.mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
         }
         if let Some(row) = pending_before_sampling {

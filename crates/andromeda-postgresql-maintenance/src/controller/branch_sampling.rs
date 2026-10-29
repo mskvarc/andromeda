@@ -19,6 +19,7 @@ use crate::{
     observation::ObservationLevel,
     observed_heap::WatchedHeap,
     policy::PolicyProfile,
+    rowstore_rebuild,
     state::{RegisteredTenant, target_record},
     statistics_freshness::{self, HeapStatistics},
 };
@@ -61,6 +62,7 @@ pub(crate) async fn sample_branches(
         let heap_samples = inspection::heap_samples(connection, branch, profile).await?;
         let statistics = statistics_freshness::heap_statistics(connection, branch).await?;
         let partiality = columnstore_partiality::partiality_samples(connection, branch).await?;
+        let rebuilds = rowstore_rebuild::rebuild_samples(connection, branch, profile).await?;
         let coverage = gin_density::gin_coverage(connection, branch).await?;
         let probe_states = target_record::index_probe_states(platform, tenant, branch).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, branch, &index_sizes, &coverage, profile).await?;
@@ -74,6 +76,7 @@ pub(crate) async fn sample_branches(
             }))
             .chain(density_samples)
             .chain(partiality.into_iter().map(CatalogSample::of_partiality))
+            .chain(rebuilds.into_iter().map(CatalogSample::of_rebuild))
             .collect::<Vec<_>>();
         let flagged = catalog_sampling::record_catalog_samples(mode, platform, tenant, branch, &samples, profile).await?;
         sampling.flagged = strongest(sampling.flagged, flagged);

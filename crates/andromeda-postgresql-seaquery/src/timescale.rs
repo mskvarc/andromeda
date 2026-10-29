@@ -6,7 +6,7 @@
 //! the one crate sanctioned to write a dialect fragment, with every
 //! caller-supplied value passed as a bound expression rather than interpolated.
 
-use crate::{cast::cast, columnstore_chunk::KeptChunks, literal::text_literal, maintenance::total_relation_size, pg_type::PostgresType};
+use crate::{cast::cast, columnstore_chunk::ListedChunks, literal::text_literal, maintenance::total_relation_size, pg_type::PostgresType};
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
@@ -193,7 +193,7 @@ pub fn chunk_span_statement(hypertables: &[&str]) -> SelectStatement {
 /// no such chunk, or without the columnstore, has no row. The hypertable names
 /// are fixed catalogue names bound as values.
 #[must_use]
-pub fn rowstore_chunk_size_statement(hypertables: &[&str], kept: &KeptChunks) -> SelectStatement {
+pub fn rowstore_chunk_size_statement(hypertables: &[&str], kept: &ListedChunks) -> SelectStatement {
     let chunk = cast(
         Expr::cust_with_exprs(
             "format('%I.%I', $1, $2)",
@@ -260,7 +260,7 @@ pub fn set_chunk_time_interval(hypertable: &str, days: SimpleExpr) -> SimpleExpr
 #[cfg(test)]
 mod tests {
     use crate::{
-        columnstore_chunk::KeptChunks,
+        columnstore_chunk::ListedChunks,
         timescale::{
             chunk_interval_statement,
             chunk_span_statement,
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn the_largest_rowstore_chunk_is_read_per_hypertable_over_unconverted_chunks_of_columnstore_hypertables() {
-        let kept = KeptChunks {
+        let kept = ListedChunks {
             table: Alias::new("kept").into_iden(),
             range_start: Alias::new("since").into_iden(),
         };

@@ -205,6 +205,7 @@ mod tests {
                 HeapTarget::NotificationEvents,
                 HeapTarget::NotificationDeliveries,
                 HeapTarget::EntitySearch,
+                HeapTarget::TemporalAttributeStreams,
             ]
         );
         assert_eq!(Branch::Snapshot(key(7)).qualified("entities"), "snap_7.entities");

@@ -7,6 +7,7 @@ use andromeda_postgresql_schema::{
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::SnapshotNotificationOutbox,
     subscriptions::SubscriptionDeliveryState,
+    temporal::TemporalAttributeStreams,
 };
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, analyze, vacuum_non_truncating};
 use sea_query::{DynIden, IntoIden};
@@ -34,12 +35,15 @@ pub enum HeapTarget {
     SnapshotNotificationOutbox,
     /// The entity search projection, rewritten with its entity.
     EntitySearch,
+    /// The temporal stream catalogue, whose value extent and shape mask a
+    /// history write grows.
+    TemporalAttributeStreams,
 }
 
 impl HeapTarget {
     /// Every heap relation eligible for cheap sampling, catch-up vacuum and
     /// `ANALYZE`.
-    pub const ALL: [HeapTarget; 9] = [
+    pub const ALL: [HeapTarget; 10] = [
         HeapTarget::CurrentAttributes,
         HeapTarget::Entities,
         HeapTarget::SubscriptionDeliveryState,
@@ -49,6 +53,7 @@ impl HeapTarget {
         HeapTarget::TemporalAppendIntents,
         HeapTarget::SnapshotNotificationOutbox,
         HeapTarget::EntitySearch,
+        HeapTarget::TemporalAttributeStreams,
     ];
 
     /// The exact database identifier created by tenant migrations.
@@ -64,6 +69,7 @@ impl HeapTarget {
             HeapTarget::TemporalAppendIntents => "temporal_append_intents",
             HeapTarget::SnapshotNotificationOutbox => "snapshot_notification_outbox",
             HeapTarget::EntitySearch => "entity_search",
+            HeapTarget::TemporalAttributeStreams => "temporal_attribute_streams",
         }
     }
 
@@ -90,6 +96,7 @@ impl HeapTarget {
             HeapTarget::TemporalAppendIntents => TemporalAppendIntents::Table.into_iden(),
             HeapTarget::SnapshotNotificationOutbox => SnapshotNotificationOutbox::Table.into_iden(),
             HeapTarget::EntitySearch => EntitySearch::Table.into_iden(),
+            HeapTarget::TemporalAttributeStreams => TemporalAttributeStreams::Table.into_iden(),
         }
     }
 
@@ -102,7 +109,8 @@ impl HeapTarget {
             | HeapTarget::SubscriptionDeliveryState
             | HeapTarget::NotificationEvents
             | HeapTarget::NotificationDeliveries
-            | HeapTarget::EntitySearch => RelationPresence::EveryBranch,
+            | HeapTarget::EntitySearch
+            | HeapTarget::TemporalAttributeStreams => RelationPresence::EveryBranch,
             HeapTarget::PendingSideEffects | HeapTarget::TemporalAppendIntents | HeapTarget::SnapshotNotificationOutbox => RelationPresence::LiveOnly,
         }
     }
@@ -161,6 +169,7 @@ mod tests {
                 "temporal_append_intents",
                 "snapshot_notification_outbox",
                 "entity_search",
+                "temporal_attribute_streams",
             ]
         );
     }

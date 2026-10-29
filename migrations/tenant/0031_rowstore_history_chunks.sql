@@ -25,3 +25,16 @@ create table rowstore_history_chunks (
     constraint chk_rowstore_history_chunks_row_count check (row_count >= 0),
     constraint chk_rowstore_history_chunks_stream_count check (stream_count >= 0 and stream_count <= row_count)
 );
+
+-- The rowstore chunks of `attribute_history` whose indexes the maintenance
+-- controller rebuilt after the chunk closed, one row each, keyed by the
+-- chunk's start on the time dimension. A chunk's indexes reach the density
+-- of appends in write order, and a closed chunk receives no more appends, so
+-- one rebuild packs them for good and the controller rebuilds each chunk
+-- once. A row whose chunk retention has dropped is removed after the next
+-- rebuild.
+create table rebuilt_history_chunks (
+    range_start timestamptz not null,
+    rebuilt_at timestamptz not null,
+    constraint pk_rebuilt_history_chunks primary key (range_start)
+);

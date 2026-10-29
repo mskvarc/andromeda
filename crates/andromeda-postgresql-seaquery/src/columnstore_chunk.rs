@@ -45,25 +45,35 @@ pub struct OverdueChunks;
 #[iden = "oldest_range_end"]
 pub struct OldestRangeEnd;
 
-/// The relation listing the chunks the converter keeps in the rowstore, by
-/// their start on the time dimension.
+/// A relation listing chunks by their start on the time dimension, such as
+/// the chunks the converter keeps in the rowstore.
 #[derive(Clone, Debug)]
-pub struct KeptChunks {
+pub struct ListedChunks {
     /// The relation.
     pub table: DynIden,
     /// Its column holding a kept chunk's `range_start`.
     pub range_start: DynIden,
 }
 
-impl KeptChunks {
+impl ListedChunks {
     /// `range_start NOT IN (SELECT <range_start> FROM <table>)`: the chunk
-    /// whose `range_start` the view reports is not kept in the rowstore.
+    /// whose `range_start` the view reports is not listed.
     pub(crate) fn excludes(&self, range_start: SimpleExpr) -> SimpleExpr {
-        let kept = Query::select()
+        range_start.not_in_subquery(self.starts())
+    }
+
+    /// `range_start IN (SELECT <range_start> FROM <table>)`: the chunk whose
+    /// `range_start` the view reports is listed.
+    pub(crate) fn includes(&self, range_start: SimpleExpr) -> SimpleExpr {
+        range_start.in_subquery(self.starts())
+    }
+
+    /// `SELECT <range_start> FROM <table>`.
+    fn starts(&self) -> SelectStatement {
+        Query::select()
             .column(self.range_start.clone()) // clone: the subquery owns the column it projects
             .from(self.table.clone()) // clone: the subquery owns the relation it reads
-            .to_owned();
-        range_start.not_in_subquery(kept)
+            .to_owned()
     }
 }
 
@@ -75,7 +85,7 @@ impl KeptChunks {
 /// from `timescaledb_information.chunks`. The hypertable name is a fixed
 /// catalogue name bound as a value; the cutoff is a bound value.
 #[must_use]
-pub fn overdue_rowstore_chunks_statement(hypertable: &str, cutoff: SimpleExpr, kept: &KeptChunks) -> SelectStatement {
+pub fn overdue_rowstore_chunks_statement(hypertable: &str, cutoff: SimpleExpr, kept: &ListedChunks) -> SelectStatement {
     Query::select()
         .expr_as(Func::count(Expr::col(Asterisk)), OverdueChunks)
         .expr_as(Func::min(Expr::col(Chunks::RangeEnd)), OldestRangeEnd)
@@ -193,7 +203,7 @@ fn chunk_is_partial(chunk: SimpleExpr) -> SimpleExpr {
 
 /// `format('%I.%I', chunk_schema, chunk_name)`: a chunk's relation, quoted
 /// where its schema or name needs it.
-fn chunk_relation() -> SimpleExpr {
+pub(crate) fn chunk_relation() -> SimpleExpr {
     Expr::cust_with_exprs("format('%I.%I', $1, $2)", [Expr::col(Chunks::ChunkSchema), Expr::col(Chunks::ChunkName)])
 }
 
@@ -234,7 +244,7 @@ pub fn chunk_partiality_statement(chunk_oid: i64) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::columnstore_chunk::{
-        KeptChunks,
+        ListedChunks,
         chunk_partiality_statement,
         columnstore_licensed,
         emptied_rowstore_indexes_statement,
@@ -245,8 +255,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
 
-    fn kept() -> KeptChunks {
-        KeptChunks {
+    fn kept() -> ListedChunks {
+        ListedChunks {
             table: Alias::new("kept").into_iden(),
             range_start: Alias::new("since").into_iden(),
         }

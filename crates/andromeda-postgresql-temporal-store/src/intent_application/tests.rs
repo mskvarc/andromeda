@@ -1212,14 +1212,12 @@ fn a_replaced_instance_is_sought_across_every_dataset_of_its_attribute() {
 }
 
 /// The replacement is read rather than deleted in place, so the delete that
-/// follows can bind each replaced row's stream and write identity.
+/// follows can bind each replaced row's stream, write clock and `instanceId`.
 #[test]
-fn a_replacement_reads_the_segment_and_write_identity_of_each_replaced_row() {
+fn a_replacement_reads_the_segment_write_clock_and_instance_id_of_each_replaced_row() {
     let instances = in_role(StepRole::Replace);
     assert!(
-        instances.starts_with(
-            r#"SELECT "attribute_history"."stream_key", "attribute_history"."recorded_at", "attribute_history"."write_id", "attribute_history"."write_ordinal" FROM"#
-        ),
+        instances.starts_with(r#"SELECT "attribute_history"."stream_key", "attribute_history"."recorded_at", "attribute_history"."verbatim_instance_id" FROM"#),
         "{instances}"
     );
     assert!(!instances.contains("DELETE"), "{instances}");

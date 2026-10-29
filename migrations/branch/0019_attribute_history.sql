@@ -137,8 +137,6 @@ with (
     autovacuum_vacuum_insert_scale_factor = 0.05
 );
 
-create index idx_attribute_history_stream_recorded_at on attribute_history (stream_key, recorded_at desc);
-
 create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc)
 where
     observed_at is not null;
@@ -157,6 +155,14 @@ where
 -- NULL placement passes, so that index holds only the rows it can return.
 -- Every instance carries `createdAt` and `modifiedAt` (clause 4.8), so the
 -- other two hold every row.
+--
+-- The broker stamps both at an appended row's write instant, so an index of
+-- either column alone would repeat its placement for every row but a
+-- deletion's. A page on `createdAt` or `modifiedAt` therefore reads the
+-- placement index too: it orders on the placement and bounds both the
+-- placement and the column, which agree on every row carrying the axis. The
+-- bound on the column is what excludes a columnstore chunk by its range on
+-- the axis.
 create index idx_attribute_history_stream_observed_placement on attribute_history (stream_key, (coalesce(observed_at, deleted_at)) desc)
 where
     coalesce(observed_at, deleted_at) is not null;
@@ -165,27 +171,12 @@ create index idx_attribute_history_stream_created_placement on attribute_history
 
 create index idx_attribute_history_stream_modified_placement on attribute_history (stream_key, (coalesce(modified_at, deleted_at)) desc);
 
--- The broker stamps `createdAt` and `modifiedAt` itself (clause 4.8), and an
--- appended row records both at its write instant, so a stream's rows in
--- `created_at` or `modified_at` order are, with few exceptions, its rows in
--- `recorded_at` order. A page on either axis reads those rows through the
--- write-clock index above, and the exceptions through these: a modified
--- instance, a row a Snapshot captured from a Context Source with the
--- source's own system times, or one recorded without them. On a write that
--- appends, neither takes an entry.
-create index idx_attribute_history_stream_created_apart on attribute_history (stream_key, created_at desc)
-where
-    created_at is distinct from recorded_at;
-
-create index idx_attribute_history_stream_modified_apart on attribute_history (stream_key, modified_at desc)
-where
-    modified_at is distinct from recorded_at;
-
 create index idx_attribute_history_stream_generated_instance on attribute_history (stream_key, generated_instance_id)
 where
     generated_instance_id is not null;
 
 -- A lookup only; `attribute_history_instance_claims` carries the uniqueness.
+-- A replacing write removes the row it replaces through it.
 create index idx_attribute_history_stream_verbatim_instance on attribute_history (stream_key, verbatim_instance_id)
 where
     verbatim_instance_id is not null;

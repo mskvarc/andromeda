@@ -15,13 +15,13 @@
 //! cut and a reader never infers it from a column that is missing.
 //!
 //! Every represented instance carries an instant on the requested axis, so the
-//! axis index, which holds those instances alone, serves every read here, and
-//! a page, a walk over every page and the last `n` instances all hold the same
-//! instances (clauses 5.7.3.4 and 6.3.10).
+//! stream-led index a part is ordered and bounded on serves every read here,
+//! and a page, a walk over every page and the last `n` instances all hold the
+//! same instances (clauses 5.7.3.4 and 6.3.10).
 
 use crate::{
     alias::Ah,
-    axis::axis_column,
+    axis::{axis_bound, axis_column, axis_order},
     history::project_base_columns,
     stream_parts::{admitted, entity_streams, in_any_part, over_parts},
 };
@@ -102,17 +102,17 @@ impl Walk {
 /// previous page ended on, and counting them could stall a resumed walk on
 /// that one instant.
 fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, walk: Walk, size: u32) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
-    let candidates = over_parts(branch, compiled, |part| {
+    let timeproperty = compiled.window.timeproperty;
+    let candidates = over_parts(branch, |part| {
         let mut candidate = admitted(part, condition);
-        candidate.expr_as(Expr::col((Ah, axis)), Edge);
+        candidate.expr_as(Expr::col((Ah, axis_column(timeproperty))), Edge);
         match (walk, compiled.window.interval) {
             (Walk::Forward, TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. }) => {
-                candidate.and_where(Expr::col((Ah, axis)).gt(lower));
+                candidate.and_where(axis_bound(timeproperty, |instant| instant.gt(lower)));
             }
             (Walk::Forward, TimeInterval::Unbounded | TimeInterval::Before(_)) | (Walk::Backward, _) => {}
         }
-        candidate.order_by((Ah, axis), walk.order()).limit(u64::from(size));
+        candidate.order_by_expr(axis_order(timeproperty), walk.order()).limit(u64::from(size));
         candidate
     });
     let mut edge_row = Query::select();
@@ -124,13 +124,13 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
         .limit(1);
 
     let edge = Expr::col((EdgeRow, Edge));
-    let beyond = in_any_part(branch, compiled, |part| {
+    let beyond = in_any_part(branch, |part| {
         let mut beyond = admitted(part, condition);
-        beyond.expr(int_literal(1)).and_where(match walk {
+        beyond.expr(int_literal(1)).and_where(axis_bound(timeproperty, |instant| match walk {
             // clone: the edge bounds every part's instances and is projected.
-            Walk::Forward => Expr::col((Ah, axis)).gt(edge.clone()),
-            Walk::Backward => Expr::col((Ah, axis)).lt(edge.clone()),
-        });
+            Walk::Forward => instant.gt(edge.clone()),
+            Walk::Backward => instant.lt(edge.clone()),
+        }));
         beyond
     });
 
@@ -149,16 +149,15 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
 /// the window (most streams of a broker beside a few dense ones) reads the
 /// stream's rows first and finds the edge again for every one of them.
 fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, condition: &Condition, walk: Walk) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
     let edge = Expr::col((StreamEdge, Edge));
-    let mut kept = over_parts(branch, compiled, |part| {
+    let mut kept = over_parts(branch, |part| {
         let mut rows = admitted(part, condition);
         project_base_columns(&mut rows);
-        rows.and_where(match walk {
+        rows.and_where(axis_bound(compiled.window.timeproperty, |instant| match walk {
             // clone: the edge bounds every part's instances.
-            Walk::Forward => Expr::col((Ah, axis)).lte(or_end_of_time(edge.clone())),
-            Walk::Backward => Expr::col((Ah, axis)).gte(or_start_of_time(edge.clone())),
-        });
+            Walk::Forward => instant.lte(or_end_of_time(edge.clone())),
+            Walk::Backward => instant.gte(or_start_of_time(edge.clone())),
+        }));
         rows
     });
     kept.offset(0);
@@ -210,14 +209,14 @@ pub(crate) fn walked_history(
     select
 }
 
-/// Order `select` most recent first on `axis` over the columns under `alias`,
-/// ties broken on the hypertable's unique key so two instances sharing an
-/// instant are kept or dropped the same way on every execution.
-fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, axis: AttributeHistory) {
+/// Order `select` most recent first on `instant` and then on the columns
+/// under `alias`, ties broken on the hypertable's unique key so two instances
+/// sharing an instant are kept or dropped the same way on every execution.
+fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, instant: SimpleExpr) {
     let alias = alias.into_iden();
     // clone: every ordering key names the alias.
     select
-        .order_by((alias.clone(), axis), Order::Desc)
+        .order_by_expr(instant, Order::Desc)
         .order_by((alias.clone(), AttributeHistory::RecordedAt), Order::Desc)
         .order_by((alias.clone(), AttributeHistory::WriteId), Order::Desc)
         .order_by((alias, AttributeHistory::WriteOrdinal), Order::Desc);
@@ -233,18 +232,18 @@ pub(crate) fn latest_instances(
     n: NonZeroU32,
     project: fn(&mut SelectStatement),
 ) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
+    let timeproperty = compiled.window.timeproperty;
     let limit = u64::from(n.get());
-    let candidates = over_parts(branch, compiled, |part| {
+    let candidates = over_parts(branch, |part| {
         let mut latest = admitted(part, condition);
         project(&mut latest);
-        most_recent_first(&mut latest, Ah, axis);
+        most_recent_first(&mut latest, Ah, axis_order(timeproperty));
         latest.limit(limit);
         latest
     });
     let mut latest = Query::select();
     latest.expr(Expr::col((Latest, Asterisk))).from_subquery(candidates, Latest);
-    most_recent_first(&mut latest, Latest, axis);
+    most_recent_first(&mut latest, Latest, Expr::col((Latest, axis_column(timeproperty))));
     latest.limit(limit);
     latest
 }

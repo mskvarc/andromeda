@@ -28,8 +28,6 @@ pub(crate) enum ObservedHeap {
     /// The entities of each type, on either side, rewritten as entities change
     /// type or lose a side.
     EntityTypeMembers,
-    /// One row per temporal attribute stream, garbage-collected by retention.
-    TemporalAttributeStreams,
     /// Verbatim `instanceId` claims, claimed and released with their rows.
     AttributeHistoryInstanceClaims,
     /// Scope changes, whose superseded rows retention deletes.
@@ -44,13 +42,12 @@ pub(crate) enum ObservedHeap {
 
 impl ObservedHeap {
     /// Every observed heap.
-    pub(crate) const ALL: [ObservedHeap; 11] = [
+    pub(crate) const ALL: [ObservedHeap; 10] = [
         ObservedHeap::AttributeCensus,
         ObservedHeap::EntityTypeAttributeCensus,
         ObservedHeap::EntityTypeCensus,
         ObservedHeap::StreamTypeCensus,
         ObservedHeap::EntityTypeMembers,
-        ObservedHeap::TemporalAttributeStreams,
         ObservedHeap::AttributeHistoryInstanceClaims,
         ObservedHeap::ScopeHistory,
         ObservedHeap::RegistrationDeliveryState,
@@ -71,7 +68,6 @@ impl ObservedHeap {
             | ObservedHeap::EntityTypeCensus
             | ObservedHeap::StreamTypeCensus
             | ObservedHeap::EntityTypeMembers
-            | ObservedHeap::TemporalAttributeStreams
             | ObservedHeap::AttributeHistoryInstanceClaims
             | ObservedHeap::ScopeHistory => RelationPresence::EveryBranch,
             ObservedHeap::RegistrationDeliveryState | ObservedHeap::RegistrationInformation | ObservedHeap::SnapshotPreparation => RelationPresence::LiveOnly,
@@ -161,7 +157,6 @@ mod tests {
                 "entity_type_census",
                 "stream_type_census",
                 "entity_type_members",
-                "temporal_attribute_streams",
                 "attribute_history_instance_claims",
                 "scope_history",
                 "registration_delivery_state",

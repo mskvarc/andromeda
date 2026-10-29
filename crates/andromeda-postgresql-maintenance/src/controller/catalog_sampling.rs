@@ -1,7 +1,7 @@
 //! Cheap catalog evidence recorded on every visit: each heap's dead-tuple
 //! estimate, each density-measured GIN's density, the freshness of each
-//! heap's planner statistics and the partial chunks of each history
-//! hypertable.
+//! heap's planner statistics, and the partial chunks and the closed rowstore
+//! chunks awaiting a rebuild of each history hypertable.
 
 use crate::{
     branch::{Branch, BranchTarget},
@@ -10,7 +10,8 @@ use crate::{
     controller::{PassOutcome, idle_gates},
     error::MaintenanceError,
     inspection::HeapSample,
-    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, decide_analyze, decide_recompression},
+    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, decide_analyze, decide_recompression, decide_rowstore_rebuild},
+    rowstore_rebuild::RowstoreRebuild,
     state::{RegisteredTenant, target_record},
     statistics_freshness::HeapStatistics,
 };
@@ -37,6 +38,8 @@ pub(crate) enum SampleEvidence {
     Statistics(HeapStatistics),
     /// A history hypertable's partial chunks.
     Partiality(ColumnstorePartiality),
+    /// A history hypertable's closed rowstore chunks awaiting a rebuild.
+    Rebuild(RowstoreRebuild),
 }
 
 impl CatalogSample {
@@ -61,6 +64,14 @@ impl CatalogSample {
         CatalogSample {
             target: MaintenanceTarget::Columnstore(partiality.table),
             evidence: SampleEvidence::Partiality(partiality),
+        }
+    }
+
+    /// A history hypertable's closed rowstore chunks awaiting a rebuild.
+    pub(crate) const fn of_rebuild(rebuild: RowstoreRebuild) -> CatalogSample {
+        CatalogSample {
+            target: MaintenanceTarget::Rowstore(rebuild.table),
+            evidence: SampleEvidence::Rebuild(rebuild),
         }
     }
 }
@@ -99,6 +110,12 @@ pub(crate) async fn record_catalog_samples(
                 let decision = decide_recompression(mode, profile, target_state, partiality.state(), idle_gates(), now);
                 target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), partial_chunks = partiality.partial_chunks, oldest_uncompressed_bytes = partiality.oldest_uncompressed_bytes, decision = ?decision, "PostgreSQL maintenance columnstore sample completed");
+                decision
+            }
+            SampleEvidence::Rebuild(rebuild) => {
+                let decision = decide_rowstore_rebuild(mode, profile, target_state, rebuild.state(), idle_gates(), now);
+                target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
+                info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), awaiting_chunks = rebuild.awaiting_chunks, oldest_index_bytes = rebuild.oldest_index_bytes, decision = ?decision, "PostgreSQL maintenance rowstore sample completed");
                 decision
             }
         };

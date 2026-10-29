@@ -66,6 +66,7 @@ pub mod relation_truncation;
 pub mod returning_image;
 pub mod row_rejection;
 pub mod row_ties;
+pub mod rowstore_chunk;
 pub mod scalar_subquery;
 pub mod schema_definition;
 pub mod schema_migration;

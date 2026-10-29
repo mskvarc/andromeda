@@ -61,6 +61,7 @@ mod platform_relations;
 pub mod policy;
 mod prepared_action;
 mod replication_slot;
+mod rowstore_rebuild;
 mod safety_gate_inspection;
 mod state;
 mod statement_statistics;

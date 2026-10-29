@@ -10,7 +10,8 @@ compact_code_registry! {
     /// statistics, refreshed by `ANALYZE` rather than by vacuum, are a target of
     /// their own, labelled with the heap's name and a `_statistics` suffix, and
     /// a history hypertable's columnstore is labelled with its name and a
-    /// `_columnstore` suffix.
+    /// `_columnstore` suffix, and its kept rowstore chunks with its name and a
+    /// `_rowstore` suffix.
     MaintenanceTargetCode {
         frozen_prefix: 13,
         frozen_digest: 0xe988_1329_b9bc_1c59,
@@ -87,6 +88,22 @@ compact_code_registry! {
             AttributeHistoryColumnstore = 35, "attribute_history_columnstore";
             /// The entities' identifier trigram index.
             IdxEntitiesIdTrgm = 36, "idx_entities_id_trgm";
+            /// The temporal attribute stream catalogue's heap.
+            TemporalAttributeStreams = 37, "temporal_attribute_streams";
+            /// The temporal attribute stream catalogue's planner statistics.
+            TemporalAttributeStreamsStatistics = 38, "temporal_attribute_streams_statistics";
+            /// The stream catalogue's primary key index.
+            PkTemporalAttributeStreams = 39, "pk_temporal_attribute_streams";
+            /// The stream catalogue's grain constraint index.
+            UqTemporalAttributeStreamsGrain = 40, "uq_temporal_attribute_streams_grain";
+            /// The stream catalogue's attribute-led index.
+            IdxTemporalAttributeStreamsAttributeNameKeyEntityKey = 41, "idx_temporal_attribute_streams_attribute_name_key_entity_key";
+            /// The stream catalogue's value extent index.
+            IdxTemporalAttributeStreamsValueExtent = 42, "idx_temporal_attribute_streams_value_extent";
+            /// The stream catalogue's shape mask index.
+            IdxTemporalAttributeStreamsAttributeNameKeyShapeMask = 43, "idx_temporal_attribute_streams_attribute_name_key_shape_mask";
+            /// The attribute history hypertable's kept rowstore chunks.
+            AttributeHistoryRowstore = 44, "attribute_history_rowstore";
         }
     }
 }
@@ -98,7 +115,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 36);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 44);
         assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -113,11 +130,14 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::PkNotificationDeliveries.code(), 34);
         assert_eq!(MaintenanceTargetCode::AttributeHistoryColumnstore.code(), 35);
         assert_eq!(MaintenanceTargetCode::IdxEntitiesIdTrgm.code(), 36);
+        assert_eq!(MaintenanceTargetCode::TemporalAttributeStreams.code(), 37);
+        assert_eq!(MaintenanceTargetCode::IdxTemporalAttributeStreamsValueExtent.code(), 42);
+        assert_eq!(MaintenanceTargetCode::AttributeHistoryRowstore.code(), 44);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(37).is_err());
+        assert!(MaintenanceTargetCode::try_from(45).is_err());
     }
 }

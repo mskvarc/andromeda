@@ -117,17 +117,16 @@ fn verbatim_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Sele
     select
 }
 
-/// The history rows the entries replace, by stream and write identity: a
-/// client that supplied its own `instanceId` (clause 4.5.7) names one
-/// instance of the attribute across every `datasetId`, so the row holding it
-/// on any sibling stream goes first.
+/// The history rows the entries replace, by stream, write clock and
+/// `instanceId`: a client that supplied its own `instanceId` (clause 4.5.7)
+/// names one instance of the attribute across every `datasetId`, so the row
+/// holding it on any sibling stream goes first.
 pub(crate) fn replaced_instances_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut replaced = verbatim_entries(source, schema);
     replaced
         .column((AttributeHistory::Table, AttributeHistory::StreamKey))
         .column((AttributeHistory::Table, AttributeHistory::RecordedAt))
-        .column((AttributeHistory::Table, AttributeHistory::WriteId))
-        .column((AttributeHistory::Table, AttributeHistory::WriteOrdinal))
+        .column((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId))
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S2)
         .from(qualified(schema, AttributeHistory::Table))
         .and_where(Expr::col((S2, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))

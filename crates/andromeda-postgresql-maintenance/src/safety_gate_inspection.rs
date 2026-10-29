@@ -60,7 +60,7 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
                     vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?),
                 ),
                 MaintenanceTarget::Statistics(target) => (branch.qualified(target.relation_name()), None, None),
-                MaintenanceTarget::Columnstore(table) => (branch.qualified(table.relation_name()), None, None),
+                MaintenanceTarget::Columnstore(table) | MaintenanceTarget::Rowstore(table) => (branch.qualified(table.relation_name()), None, None),
             }
         }
         GateScope::Chunk { table, chunk } => (

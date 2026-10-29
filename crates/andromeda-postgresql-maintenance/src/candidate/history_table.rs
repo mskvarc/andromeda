@@ -1,7 +1,8 @@
-//! The temporal history hypertables whose chunks the columnstore converts.
+//! The temporal history hypertables whose chunks the columnstore converts and
+//! whose closed rowstore chunks have their indexes rebuilt.
 
-use andromeda_postgresql_schema::temporal::RowstoreHistoryChunks;
-use andromeda_postgresql_seaquery::columnstore_chunk::KeptChunks;
+use andromeda_postgresql_schema::temporal::{RebuiltHistoryChunks, RowstoreHistoryChunks};
+use andromeda_postgresql_seaquery::columnstore_chunk::ListedChunks;
 use sea_query::IntoIden;
 use strum::{Display, EnumString, IntoStaticStr};
 
@@ -33,11 +34,23 @@ impl HistoryTable {
     /// The relation listing the chunks the broker's conversion sweep keeps in
     /// the rowstore for good, which are neither overdue nor ever converted.
     #[must_use]
-    pub fn kept_chunks(self) -> KeptChunks {
+    pub fn kept_chunks(self) -> ListedChunks {
         match self {
-            HistoryTable::AttributeHistory => KeptChunks {
+            HistoryTable::AttributeHistory => ListedChunks {
                 table: RowstoreHistoryChunks::Table.into_iden(),
                 range_start: RowstoreHistoryChunks::RangeStart.into_iden(),
+            },
+        }
+    }
+
+    /// The relation listing the closed rowstore chunks whose indexes
+    /// maintenance has rebuilt.
+    #[must_use]
+    pub fn rebuilt_chunks(self) -> ListedChunks {
+        match self {
+            HistoryTable::AttributeHistory => ListedChunks {
+                table: RebuiltHistoryChunks::Table.into_iden(),
+                range_start: RebuiltHistoryChunks::RangeStart.into_iden(),
             },
         }
     }

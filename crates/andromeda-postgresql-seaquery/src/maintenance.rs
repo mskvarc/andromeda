@@ -29,6 +29,12 @@ pub enum MaintenanceCommand {
     /// the caller's transaction, under a `SHARE` lock on the relation and an
     /// `ACCESS EXCLUSIVE` lock on each index, all released at its end.
     ReindexTable(TableName),
+    /// `REINDEX TABLE CONCURRENTLY schema.relation`: every index of the
+    /// relation rebuilt beside the one it replaces, under a
+    /// `SHARE UPDATE EXCLUSIVE` lock no read or write conflicts with. It runs
+    /// outside any transaction block, and an interrupted run leaves the
+    /// invalid indexes it was building.
+    ReindexTableConcurrently(TableName),
     /// `DROP INDEX CONCURRENTLY schema.index`, for recovery artifacts.
     DropIndexConcurrently(TableName),
     /// `VACUUM (TRUNCATE FALSE, PARALLEL 0) schema.relation`: an ordinary
@@ -56,6 +62,7 @@ impl RenderedCommand for MaintenanceCommand {
         match self {
             MaintenanceCommand::ReindexIndexConcurrently(index) => format!("REINDEX INDEX CONCURRENTLY {}", quoted_table(index)),
             MaintenanceCommand::ReindexTable(relation) => format!("REINDEX TABLE {}", quoted_table(relation)),
+            MaintenanceCommand::ReindexTableConcurrently(relation) => format!("REINDEX TABLE CONCURRENTLY {}", quoted_table(relation)),
             MaintenanceCommand::DropIndexConcurrently(index) => format!("DROP INDEX CONCURRENTLY {}", quoted_table(index)),
             MaintenanceCommand::VacuumNonTruncating(relation) => format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) {}", quoted_table(relation)),
             MaintenanceCommand::VacuumAnalyze(relation) => format!("VACUUM ANALYZE {}", quoted_table(relation)),
@@ -80,6 +87,11 @@ pub fn reindex_index_concurrently(schema: impl IntoIden, index: impl IntoIden) -
 /// `REINDEX TABLE schema.relation`.
 pub fn reindex_table(schema: impl IntoIden, relation: impl IntoIden) -> MaintenanceCommand {
     MaintenanceCommand::ReindexTable(qualified(schema, relation))
+}
+
+/// `REINDEX TABLE CONCURRENTLY schema.relation`.
+pub fn reindex_table_concurrently(schema: impl IntoIden, relation: impl IntoIden) -> MaintenanceCommand {
+    MaintenanceCommand::ReindexTableConcurrently(qualified(schema, relation))
 }
 
 /// `DROP INDEX CONCURRENTLY schema.index` for recovery artifacts.
@@ -269,6 +281,7 @@ mod tests {
             recompress_chunk,
             reindex_index_concurrently,
             reindex_table,
+            reindex_table_concurrently,
             session_settings,
             storage_parameter,
             transaction_age,
@@ -343,6 +356,11 @@ mod tests {
         assert_eq!(
             reindex_table(Alias::new("_timescaledb_internal"), Alias::new("_hyper_1_2_chunk")).rendered(),
             "REINDEX TABLE \"_timescaledb_internal\".\"_hyper_1_2_chunk\""
+        );
+
+        assert_eq!(
+            reindex_table_concurrently(Alias::new("_timescaledb_internal"), Alias::new("_hyper_1_2_chunk")).rendered(),
+            "REINDEX TABLE CONCURRENTLY \"_timescaledb_internal\".\"_hyper_1_2_chunk\""
         );
     }
 

@@ -230,7 +230,7 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
             // clone: the budget is read on the kept side of the count edge, which the edge also weighs.
             // `OFFSET 0` keeps the bound a column the probe compares with.
             budget_bound.expr_as(open_bound(walk, count_edge.clone()), Bound).offset(0);
-            let kept = probes.kept_side(walk, Expr::col((BudgetBound, Bound)));
+            let kept = probes.kept_side(walk, &Expr::col((BudgetBound, Bound)));
             let mut budget = Query::select();
             budget
                 .expr(budget_edge)
@@ -273,7 +273,7 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
     let continues = match paged.last_n {
         None => cut().is_not_null(),
         Some(n) => {
-            let kept = probes.kept_side(walk, Expr::col((EdgeBound, Bound)));
+            let kept = probes.kept_side(walk, &Expr::col((EdgeBound, Bound)));
             let filled = probes.instant(walk, Some(&kept), u64::from(n.get()) - 1);
             cut().is_not_null().and(Expr::exists(filled).not())
         }

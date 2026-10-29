@@ -21,6 +21,11 @@ const ANALYZE_COOLDOWN: ChronoDuration = ChronoDuration::hours(1);
 /// qualifying duration.
 const RECOMPRESSION_COOLDOWN: ChronoDuration = ChronoDuration::zero();
 
+/// Cooldown after a completed rowstore chunk rebuild, whatever the profile:
+/// none. Each chunk is rebuilt once and recorded, so the next candidate is
+/// another chunk, and the controller acts at most once per visit.
+const ROWSTORE_REBUILD_COOLDOWN: ChronoDuration = ChronoDuration::zero();
+
 /// Whether a completed action achieved what it was queued for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionVerdict {
@@ -39,22 +44,25 @@ pub enum ActionVerdict {
 /// A vacuum of a heap left empty is effective. A rebuild of an index probed or
 /// queued through a canary is always effective: its free space was measured,
 /// not inferred. A completed analyze is effective, and so is a recompression
-/// that left its chunk whole.
+/// that left its chunk whole and a rebuild of a closed rowstore chunk, whose
+/// indexes no further append loosens.
 pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, comparison: ActionComparison) -> ActionVerdict {
     match comparison {
         ActionComparison::Index { before_bytes, after_bytes } => match target {
             MaintenanceTarget::Index(index) if index.density_column().is_some() && before_bytes.saturating_sub(after_bytes) < profile.minimum_reclaim_bytes => {
                 ActionVerdict::Ineffective
             }
-            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => {
-                ActionVerdict::Effective
-            }
+            MaintenanceTarget::Index(_)
+            | MaintenanceTarget::Heap(_)
+            | MaintenanceTarget::Statistics(_)
+            | MaintenanceTarget::Columnstore(_)
+            | MaintenanceTarget::Rowstore(_) => ActionVerdict::Effective,
         },
         ActionComparison::Heap { after, .. } => match after.dead_percent() {
             Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
             Some(_) | None => ActionVerdict::Effective,
         },
-        ActionComparison::Statistics { .. } => ActionVerdict::Effective,
+        ActionComparison::Statistics { .. } | ActionComparison::Rowstore { .. } => ActionVerdict::Effective,
         ActionComparison::Columnstore { after } => match after {
             ChunkPartiality::Whole => ActionVerdict::Effective,
             ChunkPartiality::Partial => ActionVerdict::Ineffective,
@@ -76,8 +84,9 @@ pub enum ActionEnding {
 
 /// The cooldown deadline an action's ending sets on its target.
 ///
-/// A completed analyze cools down for [`ANALYZE_COOLDOWN`] and a completed
-/// recompression for [`RECOMPRESSION_COOLDOWN`] in every profile. A failure
+/// A completed analyze cools down for [`ANALYZE_COOLDOWN`], a completed
+/// recompression for [`RECOMPRESSION_COOLDOWN`] and a completed rowstore chunk
+/// rebuild for [`ROWSTORE_REBUILD_COOLDOWN`] in every profile. A failure
 /// follows the profile's failure backoff, so a rebuild that keeps failing
 /// stops leaving an artifact to recover on every visit. A backoff past what a
 /// calendar duration represents is past [`FAILURE_BACKOFF_CEILING`].
@@ -86,10 +95,15 @@ pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending:
     now + match (target, ending) {
         (MaintenanceTarget::Statistics(_), ActionEnding::Completed(_)) => ANALYZE_COOLDOWN,
         (MaintenanceTarget::Columnstore(_), ActionEnding::Completed(_)) => RECOMPRESSION_COOLDOWN,
+        (MaintenanceTarget::Rowstore(_), ActionEnding::Completed(_)) => ROWSTORE_REBUILD_COOLDOWN,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Effective)) => profile.successful_cooldown,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Ineffective)) => profile.ineffective_cooldown,
         (
-            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_),
+            MaintenanceTarget::Index(_)
+            | MaintenanceTarget::Heap(_)
+            | MaintenanceTarget::Statistics(_)
+            | MaintenanceTarget::Columnstore(_)
+            | MaintenanceTarget::Rowstore(_),
             ActionEnding::Failed { consecutive_failures },
         ) => ChronoDuration::from_std(profile.failure_backoff.delay(consecutive_failures)).unwrap_or(FAILURE_BACKOFF_CEILING),
     }
@@ -203,5 +217,21 @@ mod tests {
             assert_eq!(cooldown_after(profile, recompression, ActionEnding::Completed(verdict), now), now);
         }
         assert_eq!(cooldown_after(profile, recompression, failure(1), now), now + profile.ineffective_cooldown);
+    }
+
+    /// A rebuilt closed chunk is recorded and never a candidate again, so its
+    /// rebuild is effective and leaves no cooldown before the next chunk.
+    #[test]
+    fn a_rowstore_chunk_rebuild_is_effective_and_never_cools_down() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let rebuild = MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory);
+        let comparison = ActionComparison::Rowstore {
+            before_bytes: 120,
+            after_bytes: 100,
+        };
+        assert_eq!(action_verdict(profile, rebuild, comparison), ActionVerdict::Effective);
+        let now = Utc::now();
+        assert_eq!(cooldown_after(profile, rebuild, ActionEnding::Completed(ActionVerdict::Effective), now), now);
+        assert_eq!(cooldown_after(profile, rebuild, failure(1), now), now + profile.ineffective_cooldown);
     }
 }

@@ -6,14 +6,16 @@
 //! report nothing for every vacuum; its dead-tuple count measures it instead.
 //! An analyze is measured by the tuples modified since the heap's last
 //! analyze, which it resets; it reclaims nothing. A recompression is measured
-//! by whether its chunk is still partial after it.
+//! by whether its chunk is still partial after it, and a rebuild of a closed
+//! rowstore chunk by the physical bytes of every index of the chunk.
 
 use crate::{
-    candidate::{heap_target::HeapTarget, index_target::IndexTarget},
+    candidate::{heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
     catalog_counter::percent,
     columnstore_partiality::ChunkPartiality,
 };
 use andromeda_telemetry::maintenance::ActionEffect;
+use chrono::{DateTime, Utc};
 
 /// Dead and live tuple counts of one heap, from its cumulative statistics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +65,18 @@ pub(crate) enum ActionBaseline {
         /// The chunk's OID.
         chunk: u32,
     },
+    /// A closed rowstore history chunk about to have its indexes rebuilt.
+    Rowstore {
+        /// The chunk's hypertable.
+        table: HistoryTable,
+        /// The chunk's OID.
+        chunk: u32,
+        /// The chunk's start on the time dimension, recorded once it is
+        /// rebuilt.
+        range_start: DateTime<Utc>,
+        /// Physical bytes of the chunk's indexes before the rebuild.
+        before_bytes: u64,
+    },
 }
 
 /// One action's target read immediately before and after it.
@@ -95,6 +109,14 @@ pub(crate) enum ActionComparison {
         /// while the recompression ran leaves it partial.
         after: ChunkPartiality,
     },
+    /// A rebuild of a closed rowstore chunk's indexes, compared by their
+    /// physical bytes.
+    Rowstore {
+        /// Physical bytes of the chunk's indexes before the rebuild.
+        before_bytes: u64,
+        /// Physical bytes of the chunk's indexes after the rebuild.
+        after_bytes: u64,
+    },
 }
 
 impl ActionComparison {
@@ -103,7 +125,9 @@ impl ActionComparison {
     /// rose, because writes outran the action, reports zero.
     pub(crate) const fn effect(self) -> Option<ActionEffect> {
         match self {
-            ActionComparison::Index { before_bytes, after_bytes } => Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes))),
+            ActionComparison::Index { before_bytes, after_bytes } | ActionComparison::Rowstore { before_bytes, after_bytes } => {
+                Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes)))
+            }
             ActionComparison::Heap { before, after } => Some(ActionEffect::RemovedDeadTuples(before.dead.saturating_sub(after.dead))),
             ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => None,
         }
@@ -113,7 +137,9 @@ impl ActionComparison {
     /// a recompression and an empty heap.
     pub(crate) fn post_vacuum_dead_percent(self) -> Option<u8> {
         match self {
-            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => None,
+            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } | ActionComparison::Rowstore { .. } => {
+                None
+            }
             ActionComparison::Heap { after, .. } => after.dead_percent(),
         }
     }
@@ -187,5 +213,15 @@ mod tests {
             after: TupleCounts { dead: 0, live: 0 },
         };
         assert_eq!(emptied.post_vacuum_dead_percent(), None);
+    }
+
+    #[test]
+    fn a_rowstore_chunk_rebuild_reclaims_the_bytes_its_indexes_shed() {
+        let comparison = ActionComparison::Rowstore {
+            before_bytes: 346 * MIB,
+            after_bytes: 316 * MIB,
+        };
+        assert_eq!(comparison.effect(), Some(ActionEffect::ReclaimedBytes(30 * MIB)));
+        assert_eq!(comparison.post_vacuum_dead_percent(), None);
     }
 }

@@ -23,13 +23,13 @@
 //! against "any Value of such instances".
 
 use crate::{
-    history_source::{HistoryBranch, HistoryOf, HistoryStream, stream_parts::whole_stream_parts},
+    history_source::{HistoryBranch, HistoryOf, HistoryStream, placement::placement, stream_parts::whole_stream_parts},
     q_predicate::history_aliases::HistoryAliases,
 };
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::row_ties::first_row_with_ties;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Func, Iden, Order, Query, SelectStatement, SimpleExpr, UnionType};
+use sea_query::{Asterisk, Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr, UnionType};
 use typed_builder::TypedBuilder;
 
 /// The column holding the instant a row of the in-effect read is placed at.
@@ -72,7 +72,7 @@ impl InEffectInstance<'_> {
     /// The rows of `part` at its latest placement at or before the start,
     /// each with its placement.
     fn latest(&self, part: SelectStatement, aliases: &HistoryAliases) -> SelectStatement {
-        let placed = self.placement(&aliases.placed_instance());
+        let placed = placement(aliases.placed_instance(), self.axis);
         let mut read = Query::select();
         read.column((aliases.placed_instance(), Asterisk))
             .expr_as(placed.clone(), Placed) // clone: the placement is projected, bounded and ordered on
@@ -87,13 +87,6 @@ impl InEffectInstance<'_> {
         let mut tied = Query::select();
         tied.column(Asterisk).from(first_row_with_ties(read, order, Order::Desc, aliases.placement()));
         tied
-    }
-
-    /// `COALESCE(axis, deleted_at)` of the row under `row`, written as the
-    /// placement indexes declare it so the planner matches them to it.
-    fn placement(&self, row: &Alias) -> SimpleExpr {
-        // clone: each column reference takes the borrowed alias by value.
-        Func::coalesce([SeaExpr::col((row.clone(), self.axis)), SeaExpr::col((row.clone(), AttributeHistory::DeletedAt))]).into()
     }
 
     /// Whether the instance read under the instance alias is placed strictly

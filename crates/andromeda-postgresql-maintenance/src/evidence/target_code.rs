@@ -41,6 +41,18 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription) => MaintenanceTargetCode::IdxNotificationDeliveriesSubscription,
         MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries) => MaintenanceTargetCode::PkNotificationDeliveries,
         MaintenanceTarget::Index(IndexTarget::IdxEntitiesIdTrgm) => MaintenanceTargetCode::IdxEntitiesIdTrgm,
+        MaintenanceTarget::Index(IndexTarget::PkTemporalAttributeStreams) => MaintenanceTargetCode::PkTemporalAttributeStreams,
+        MaintenanceTarget::Index(IndexTarget::UqTemporalAttributeStreamsGrain) => MaintenanceTargetCode::UqTemporalAttributeStreamsGrain,
+        MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey) => {
+            MaintenanceTargetCode::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+        }
+        MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsValueExtent) => MaintenanceTargetCode::IdxTemporalAttributeStreamsValueExtent,
+        MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask) => {
+            MaintenanceTargetCode::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask
+        }
+        MaintenanceTarget::Heap(HeapTarget::TemporalAttributeStreams) => MaintenanceTargetCode::TemporalAttributeStreams,
+        MaintenanceTarget::Statistics(HeapTarget::TemporalAttributeStreams) => MaintenanceTargetCode::TemporalAttributeStreamsStatistics,
+        MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryRowstore,
         MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryColumnstore,
     }
 }
@@ -83,6 +95,18 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::IdxNotificationDeliveriesSubscription => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription),
         MaintenanceTargetCode::PkNotificationDeliveries => MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries),
         MaintenanceTargetCode::IdxEntitiesIdTrgm => MaintenanceTarget::Index(IndexTarget::IdxEntitiesIdTrgm),
+        MaintenanceTargetCode::PkTemporalAttributeStreams => MaintenanceTarget::Index(IndexTarget::PkTemporalAttributeStreams),
+        MaintenanceTargetCode::UqTemporalAttributeStreamsGrain => MaintenanceTarget::Index(IndexTarget::UqTemporalAttributeStreamsGrain),
+        MaintenanceTargetCode::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey => {
+            MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey)
+        }
+        MaintenanceTargetCode::IdxTemporalAttributeStreamsValueExtent => MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsValueExtent),
+        MaintenanceTargetCode::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask => {
+            MaintenanceTarget::Index(IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask)
+        }
+        MaintenanceTargetCode::TemporalAttributeStreams => MaintenanceTarget::Heap(HeapTarget::TemporalAttributeStreams),
+        MaintenanceTargetCode::TemporalAttributeStreamsStatistics => MaintenanceTarget::Statistics(HeapTarget::TemporalAttributeStreams),
+        MaintenanceTargetCode::AttributeHistoryRowstore => MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory),
         MaintenanceTargetCode::AttributeHistoryColumnstore => MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory),
     }
 }
@@ -103,7 +127,8 @@ mod tests {
             .map(MaintenanceTarget::Index)
             .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Heap))
             .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Statistics))
-            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Columnstore));
+            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Columnstore))
+            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Rowstore));
         for target in targets {
             assert_eq!(target_of(stored_target(target)), target);
         }
@@ -113,8 +138,8 @@ mod tests {
     }
 
     /// The registry's label is the relation name the controller inspects, with
-    /// a suffix for a heap's statistics and a hypertable's columnstore, since a
-    /// label names one target.
+    /// a suffix for a heap's statistics and a hypertable's columnstore and
+    /// rowstore chunks, since a label names one target.
     #[test]
     fn the_stored_label_of_a_target_is_its_relation_name() {
         for code in MaintenanceTargetCode::ALL {
@@ -123,6 +148,7 @@ mod tests {
                 MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) => target.relation_name().to_owned(),
                 MaintenanceTarget::Statistics(heap) => format!("{}_statistics", heap.relation_name()),
                 MaintenanceTarget::Columnstore(table) => format!("{}_columnstore", table.relation_name()),
+                MaintenanceTarget::Rowstore(table) => format!("{}_rowstore", table.relation_name()),
             };
             assert_eq!(code.label(), expected);
         }

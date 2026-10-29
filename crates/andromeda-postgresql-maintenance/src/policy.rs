@@ -1,6 +1,11 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::{columnstore_partiality::ChunkPartiality, statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
+use crate::{
+    columnstore_partiality::ChunkPartiality,
+    rowstore_rebuild::RebuildAwaiting,
+    statistics_freshness::StatisticsFreshness,
+    vacuum_horizon::HorizonHolderKind,
+};
 use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -326,6 +331,27 @@ pub(crate) fn decide_recompression(
     }
 }
 
+/// Apply cooldown and load gates to a history hypertable's closed rowstore
+/// chunks, which qualify for their rebuild on one sample: a closed chunk's
+/// indexes do not change between samples, so a breach duration would only
+/// delay the rebuild, and the candidate already holds the relation floor.
+pub(crate) fn decide_rowstore_rebuild(
+    mode: MaintenanceMode,
+    profile: PolicyProfile,
+    state: TargetState,
+    awaiting: RebuildAwaiting,
+    gates: SafetyGates,
+    now: DateTime<Utc>,
+) -> PolicyDecision {
+    if let Some(decision) = gated_decision(mode, profile, state, gates, now) {
+        return decision;
+    }
+    match awaiting {
+        RebuildAwaiting::Awaiting => newly_qualified(mode),
+        RebuildAwaiting::None => PolicyDecision::Deferred(DeferralReason::BelowThreshold),
+    }
+}
+
 /// The decision every target takes before its own qualification: deferred in
 /// its cooldown or by a load gate, and acted on once pending. `None` leaves
 /// the target to its qualification.
@@ -393,7 +419,9 @@ mod tests {
             decide,
             decide_analyze,
             decide_recompression,
+            decide_rowstore_rebuild,
         },
+        rowstore_rebuild::RebuildAwaiting,
         statistics_freshness::StatisticsFreshness,
         vacuum_horizon::HorizonHolderKind,
     };
@@ -772,6 +800,50 @@ mod tests {
         );
         assert_eq!(
             decide_recompression(MaintenanceMode::Automatic, profile, pending, ChunkPartiality::Partial, idle_gates(), now),
+            PolicyDecision::Act
+        );
+    }
+
+    /// A closed chunk's indexes do not change between samples, so the first
+    /// sample that finds one awaiting its rebuild queues it, with no breach
+    /// run; observe mode only reports it.
+    #[test]
+    fn a_chunk_awaiting_its_rebuild_qualifies_on_one_sample() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let now = Utc::now();
+        let fresh = TargetState::default();
+        assert_eq!(
+            decide_rowstore_rebuild(MaintenanceMode::Automatic, profile, fresh, RebuildAwaiting::Awaiting, idle_gates(), now),
+            PolicyDecision::Queued
+        );
+        assert_eq!(
+            decide_rowstore_rebuild(MaintenanceMode::Observe, profile, fresh, RebuildAwaiting::Awaiting, idle_gates(), now),
+            PolicyDecision::WouldAct
+        );
+        assert_eq!(
+            decide_rowstore_rebuild(MaintenanceMode::Automatic, profile, fresh, RebuildAwaiting::None, idle_gates(), now),
+            PolicyDecision::Deferred(DeferralReason::BelowThreshold)
+        );
+    }
+
+    #[test]
+    fn a_pending_chunk_rebuild_acts_unless_a_gate_defers_it() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let pending = TargetState {
+            is_action_pending: true,
+            ..TargetState::default()
+        };
+        let locked = SafetyGates {
+            waiting_relation_lock: true,
+            ..idle_gates()
+        };
+        assert_eq!(
+            decide_rowstore_rebuild(MaintenanceMode::Automatic, profile, pending, RebuildAwaiting::Awaiting, locked, now),
+            PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)
+        );
+        assert_eq!(
+            decide_rowstore_rebuild(MaintenanceMode::Automatic, profile, pending, RebuildAwaiting::Awaiting, idle_gates(), now),
             PolicyDecision::Act
         );
     }

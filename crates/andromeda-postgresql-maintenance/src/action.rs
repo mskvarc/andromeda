@@ -1,9 +1,9 @@
 //! Cancellation-aware execution and recovery for qualified maintenance work.
 
 use crate::{
-    action_measurement::ActionComparison,
+    action_measurement::{ActionBaseline, ActionComparison},
     action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
-    artifact::RecoveryArtifact,
+    artifact::{ArtifactOwner, RecoveryArtifact},
     branch::{Branch, BranchTarget},
     candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
     controller::PassOutcome,
@@ -13,6 +13,7 @@ use crate::{
     inspection,
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
     prepared_action::{Preparation, prepare_action, read_comparison},
+    rowstore_rebuild,
     safety_gate_inspection::{self, GateScope},
     state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
@@ -38,8 +39,11 @@ pub(crate) async fn recover_artifact(
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
     let branch = artifact.name.branch();
-    let row = BranchTarget::new(branch, MaintenanceTarget::Index(artifact.name.owner()))?;
-    let gates = safety_gate_inspection::safety_gates(tenant_connection, GateScope::Target(row)).await?;
+    let scope = match artifact.name.owner() {
+        ArtifactOwner::Index { branch, index } => GateScope::Target(BranchTarget::new(*branch, MaintenanceTarget::Index(*index))?),
+        ArtifactOwner::Chunk { table, chunk, .. } => GateScope::Chunk { table: *table, chunk },
+    };
+    let gates = safety_gate_inspection::safety_gates(tenant_connection, scope).await?;
     if let Some(reason) = safety_deferral(profile, gates) {
         tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
         info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
@@ -171,6 +175,12 @@ pub(crate) async fn execute_pending(
                 ActionComparison::Columnstore { after } => {
                     info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, chunk = prepared.relation.as_str(), partiality_after = ?after, verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                 }
+                ActionComparison::Rowstore { before_bytes, after_bytes } => {
+                    if let ActionBaseline::Rowstore { table, range_start, .. } = baseline {
+                        rowstore_rebuild::record_rebuilt(tenant_connection, table, range_start).await?;
+                    }
+                    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, chunk = prepared.relation.as_str(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                }
             }
             Ok(PassOutcome::Acted)
         }
@@ -287,8 +297,14 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries
-            | IndexTarget::IdxEntitiesIdTrgm,
-        ) => MaintenanceAction::Reindex,
+            | IndexTarget::IdxEntitiesIdTrgm
+            | IndexTarget::PkTemporalAttributeStreams
+            | IndexTarget::UqTemporalAttributeStreamsGrain
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey
+            | IndexTarget::IdxTemporalAttributeStreamsValueExtent
+            | IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask,
+        )
+        | MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory) => MaintenanceAction::Reindex,
         MaintenanceTarget::Heap(
             HeapTarget::CurrentAttributes
             | HeapTarget::Entities
@@ -298,7 +314,8 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | HeapTarget::PendingSideEffects
             | HeapTarget::TemporalAppendIntents
             | HeapTarget::SnapshotNotificationOutbox
-            | HeapTarget::EntitySearch,
+            | HeapTarget::EntitySearch
+            | HeapTarget::TemporalAttributeStreams,
         ) => MaintenanceAction::Vacuum,
         MaintenanceTarget::Statistics(
             HeapTarget::CurrentAttributes
@@ -309,7 +326,8 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | HeapTarget::PendingSideEffects
             | HeapTarget::TemporalAppendIntents
             | HeapTarget::SnapshotNotificationOutbox
-            | HeapTarget::EntitySearch,
+            | HeapTarget::EntitySearch
+            | HeapTarget::TemporalAttributeStreams,
         ) => MaintenanceAction::Analyze,
         MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory) => MaintenanceAction::Recompress,
     }

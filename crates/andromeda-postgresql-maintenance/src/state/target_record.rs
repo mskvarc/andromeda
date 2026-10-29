@@ -174,7 +174,7 @@ pub(crate) async fn record_decision(
     statement.to_query().execute(&mut *connection).await?;
     let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) => None,
+        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => None,
     };
     if decision == PolicyDecision::Queued
         && let Some(gin) = paired_gin
@@ -223,7 +223,7 @@ fn action_completion_update(
     comparison: ActionComparison,
 ) -> Result<UpdateStatement, MaintenanceError> {
     let (before_bytes, after_bytes, dead_tuples_before, dead_tuples_after) = match comparison {
-        ActionComparison::Index { before_bytes, after_bytes } => (
+        ActionComparison::Index { before_bytes, after_bytes } | ActionComparison::Rowstore { before_bytes, after_bytes } => (
             Some(persisted_count(before_bytes, CatalogCounter::BeforeBytes)?),
             Some(persisted_count(after_bytes, CatalogCounter::AfterBytes)?),
             None,

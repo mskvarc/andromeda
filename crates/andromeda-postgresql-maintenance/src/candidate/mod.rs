@@ -22,6 +22,9 @@ pub enum MaintenanceTarget {
     /// The partially converted chunks of one history hypertable, recompressed
     /// one chunk at a time, the oldest first.
     Columnstore(HistoryTable),
+    /// The closed rowstore chunks of one history hypertable, each chunk's
+    /// indexes rebuilt once, the oldest chunk first.
+    Rowstore(HistoryTable),
 }
 
 impl MaintenanceTarget {
@@ -32,7 +35,7 @@ impl MaintenanceTarget {
         match self {
             MaintenanceTarget::Index(target) => target.relation_name(),
             MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.relation_name(),
-            MaintenanceTarget::Columnstore(table) => table.relation_name(),
+            MaintenanceTarget::Columnstore(table) | MaintenanceTarget::Rowstore(table) => table.relation_name(),
         }
     }
 
@@ -44,7 +47,7 @@ impl MaintenanceTarget {
         match self {
             MaintenanceTarget::Index(target) => target.heap().presence(),
             MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.presence(),
-            MaintenanceTarget::Columnstore(_) => RelationPresence::LiveOnly,
+            MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => RelationPresence::LiveOnly,
         }
     }
 }
@@ -106,6 +109,17 @@ mod tests {
             (IndexTarget::IdxNotificationDeliveriesSubscription, HeapTarget::NotificationDeliveries),
             (IndexTarget::PkNotificationDeliveries, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxEntitiesIdTrgm, HeapTarget::Entities),
+            (IndexTarget::PkTemporalAttributeStreams, HeapTarget::TemporalAttributeStreams),
+            (IndexTarget::UqTemporalAttributeStreamsGrain, HeapTarget::TemporalAttributeStreams),
+            (
+                IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyEntityKey,
+                HeapTarget::TemporalAttributeStreams,
+            ),
+            (IndexTarget::IdxTemporalAttributeStreamsValueExtent, HeapTarget::TemporalAttributeStreams),
+            (
+                IndexTarget::IdxTemporalAttributeStreamsAttributeNameKeyShapeMask,
+                HeapTarget::TemporalAttributeStreams,
+            ),
         ];
         assert_eq!(IndexTarget::ALL.map(|target| (target, target.heap())), expected);
         for (index, heap) in expected {

@@ -8,9 +8,16 @@
 //! decompress every batch of every converted chunk. So the rows are found by a
 //! read, which the join narrows through the compressed segment index, and
 //! removed by a delete that binds their streams, the span of their instants and
-//! their exact identities.
+//! each stream's replaced `instanceId`. A client-supplied `instanceId` names
+//! one row of its stream, as the instance claims hold it unique across the
+//! attribute of the Entity the stream records.
 
-use crate::{decompression_allowance::allow_confined_decompression, error::TemporalStoreError};
+use crate::{
+    decompression_allowance::allow_confined_decompression,
+    error::TemporalStoreError,
+    stored_history_error::{HistoryTable, StoredHistoryError},
+};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -22,51 +29,48 @@ use andromeda_postgresql_seaquery::{
 use chrono::{DateTime, Utc};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, Query};
 use sqlx::{PgConnection, Row, postgres::PgRow};
-use uuid::Uuid;
 
-/// The `UNNEST` source of the replaced identities.
+/// The `UNNEST` source of the replaced instances.
 #[derive(Iden, Clone, Copy)]
 #[iden = "replaced"]
 struct Replaced;
 
-/// The replaced row's `recorded_at` in the identity source.
+/// The replaced row's `stream_key` in the instance source.
 #[derive(Iden, Clone, Copy)]
-#[iden = "recorded_at"]
-struct ReplacedRecordedAt;
+#[iden = "stream_key"]
+struct ReplacedStreamKey;
 
-/// The replaced row's `write_id` in the identity source.
+/// The replaced row's `verbatim_instance_id` in the instance source.
 #[derive(Iden, Clone, Copy)]
-#[iden = "write_id"]
-struct ReplacedWriteId;
+#[iden = "verbatim_instance_id"]
+struct ReplacedVerbatimInstanceId;
 
-/// The replaced row's `write_ordinal` in the identity source.
-#[derive(Iden, Clone, Copy)]
-#[iden = "write_ordinal"]
-struct ReplacedWriteOrdinal;
-
-/// One history row a replacement removes: its stream and its write identity.
+/// One history row a replacement removes: its stream, its write clock and
+/// the client-supplied `instanceId` it holds.
 ///
-/// The identity read projects these four columns in this order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The identity read projects these three columns in this order.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ReplacedRow {
     /// The stream the row is segmented by.
     stream_key: i64,
-    /// The row's write clock.
+    /// The row's write clock, which confines the delete to the chunks and
+    /// batches whose span holds it.
     recorded_at: DateTime<Utc>,
-    /// The write the row was recorded by.
-    write_id: Uuid,
-    /// The row's position within its write.
-    write_ordinal: i32,
+    /// The client-supplied `instanceId` the row holds.
+    verbatim_instance_id: Identifier,
 }
 
 impl ReplacedRow {
     /// Decode one row of an identity read.
-    fn of(row: &PgRow) -> Result<ReplacedRow, sqlx::Error> {
+    fn of(row: &PgRow) -> Result<ReplacedRow, TemporalStoreError> {
+        let raw: String = row.try_get(2)?;
         Ok(ReplacedRow {
             stream_key: row.try_get(0)?,
             recorded_at: row.try_get(1)?,
-            write_id: row.try_get(2)?,
-            write_ordinal: row.try_get(3)?,
+            verbatim_instance_id: raw.parse::<Identifier>().map_err(|source| StoredHistoryError::VerbatimInstanceId {
+                table: HistoryTable::AttributeHistory,
+                source,
+            })?,
         })
     }
 }
@@ -74,47 +78,39 @@ impl ReplacedRow {
 /// The delete of exactly `rows`, which must not be empty.
 fn delete_statement(schema: Option<&DynIden>, rows: &[ReplacedRow]) -> DeleteStatement {
     let mut statement = Query::delete().from_table(qualified(schema, AttributeHistory::Table)).to_owned();
-    let streams = rows.iter().map(|row| row.stream_key).collect::<Vec<i64>>();
-    let instants = rows.iter().map(|row| row.recorded_at).collect::<Vec<DateTime<Utc>>>();
-    let earliest = instants.iter().min().copied();
-    let latest = instants.iter().max().copied();
-    let columns = identity_columns();
-    let identities = Query::select()
-        .column((Replaced, ReplacedRecordedAt))
-        .column((Replaced, ReplacedWriteId))
-        .column((Replaced, ReplacedWriteOrdinal))
+    let streams = || rows.iter().map(|row| row.stream_key).collect::<Vec<i64>>();
+    let earliest = rows.iter().map(|row| row.recorded_at).min();
+    let latest = rows.iter().map(|row| row.recorded_at).max();
+    let columns = instance_columns();
+    let instances = Query::select()
+        .column((Replaced, ReplacedStreamKey))
+        .column((Replaced, ReplacedVerbatimInstanceId))
         .from_function(
             unnest_call([
-                (&columns[0], Expr::val(instants)),
-                (&columns[1], Expr::val(rows.iter().map(|row| row.write_id).collect::<Vec<Uuid>>())),
-                (&columns[2], Expr::val(rows.iter().map(|row| row.write_ordinal).collect::<Vec<i32>>())),
+                (&columns[0], Expr::val(streams())),
+                (
+                    &columns[1],
+                    Expr::val(rows.iter().map(|row| row.verbatim_instance_id.as_str().to_owned()).collect::<Vec<String>>()),
+                ),
             ]),
             Replaced,
         )
         .to_owned();
-    statement.and_where(Expr::col(AttributeHistory::StreamKey).eq(any(Expr::val(streams))));
+    statement.and_where(Expr::col(AttributeHistory::StreamKey).eq(any(Expr::val(streams()))));
     if let (Some(earliest), Some(latest)) = (earliest, latest) {
         statement
             .and_where(Expr::col(AttributeHistory::RecordedAt).gte(earliest))
             .and_where(Expr::col(AttributeHistory::RecordedAt).lte(latest));
     }
-    statement.and_where(
-        Expr::tuple([
-            Expr::col(AttributeHistory::RecordedAt),
-            Expr::col(AttributeHistory::WriteId),
-            Expr::col(AttributeHistory::WriteOrdinal),
-        ])
-        .in_subquery(identities),
-    );
+    statement.and_where(Expr::tuple([Expr::col(AttributeHistory::StreamKey), Expr::col(AttributeHistory::VerbatimInstanceId)]).in_subquery(instances));
     statement
 }
 
-/// The columns of the identity source, in projection order.
-fn identity_columns() -> [UnnestColumn; 3] {
+/// The columns of the instance source, in projection order.
+fn instance_columns() -> [UnnestColumn; 2] {
     [
-        UnnestColumn::new(ReplacedRecordedAt, PostgresType::TimestamptzArray),
-        UnnestColumn::new(ReplacedWriteId, PostgresType::UuidArray),
-        UnnestColumn::new(ReplacedWriteOrdinal, PostgresType::IntegerArray),
+        UnnestColumn::new(ReplacedStreamKey, PostgresType::BigintArray),
+        UnnestColumn::new(ReplacedVerbatimInstanceId, PostgresType::TextArray),
     ]
 }
 
@@ -130,13 +126,13 @@ fn identity_columns() -> [UnnestColumn; 3] {
 /// Returns [`TemporalStoreError::Database`] when a row does not decode or a
 /// statement fails.
 pub(crate) async fn remove_replaced(connection: &mut PgConnection, schema: Option<&DynIden>, rows: &[PgRow]) -> Result<Vec<i64>, TemporalStoreError> {
-    let replaced = rows.iter().map(ReplacedRow::of).collect::<Result<Vec<ReplacedRow>, sqlx::Error>>()?;
+    let replaced = rows.iter().map(ReplacedRow::of).collect::<Result<Vec<ReplacedRow>, TemporalStoreError>>()?;
     if replaced.is_empty() {
         return Ok(Vec::new());
     }
     allow_confined_decompression(connection).await?;
     UnnestAliased::new(delete_statement(schema, &replaced))
-        .with_columns(Replaced, &identity_columns())
+        .with_columns(Replaced, &instance_columns())
         .to_query()
         .execute(connection)
         .await?;
@@ -162,7 +158,6 @@ mod tests {
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
-    use uuid::Uuid;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
@@ -173,34 +168,37 @@ mod tests {
             ReplacedRow {
                 stream_key: 11,
                 recorded_at: instant("2026-05-02T00:00:00Z"),
-                write_id: Uuid::nil(),
-                write_ordinal: 3,
+                verbatim_instance_id: "urn:x:instance:a".parse().expect("a valid identifier"),
             },
             ReplacedRow {
                 stream_key: 12,
                 recorded_at: instant("2026-04-01T00:00:00Z"),
-                write_id: Uuid::max(),
-                write_ordinal: 0,
+                verbatim_instance_id: "urn:x:instance:b".parse().expect("a valid identifier"),
             },
         ]
     }
 
+    /// The streams and the span of instants confine the converted batches the
+    /// delete decompresses; each stream's `instanceId` names the row, which
+    /// the stream-led verbatim instance index finds in a rowstore chunk.
     #[test]
-    fn a_replaced_instance_is_removed_by_its_stream_its_instant_span_and_its_exact_identity() {
+    fn a_replaced_instance_is_removed_by_its_stream_its_instant_span_and_its_instance_id() {
         let (sql, values) = delete_statement(None, &rows()).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"DELETE FROM "attribute_history" WHERE "stream_key" = ANY($1) AND "recorded_at" >= $2 AND "recorded_at" <= $3 AND ("recorded_at", "write_id", "write_ordinal") IN (SELECT "replaced"."recorded_at", "replaced"."write_id", "replaced"."write_ordinal" FROM UNNEST($4::timestamptz[], $5::uuid[], $6::integer[]) AS "replaced")"#
+            r#"DELETE FROM "attribute_history" WHERE "stream_key" = ANY($1) AND "recorded_at" >= $2 AND "recorded_at" <= $3 AND ("stream_key", "verbatim_instance_id") IN (SELECT "replaced"."stream_key", "replaced"."verbatim_instance_id" FROM UNNEST($4::bigint[], $5::text[]) AS "replaced")"#
         );
         let bound = format!("{values:?}");
         assert!(bound.contains("2026-04-01") && bound.contains("2026-05-02"), "{bound}");
-        assert_eq!(values.0.len(), 6, "{bound}");
+        assert!(bound.contains("urn:x:instance:a") && bound.contains("urn:x:instance:b"), "{bound}");
+        assert_eq!(values.0.len(), 5, "{bound}");
     }
 
     #[test]
     fn each_stream_a_replacement_removed_rows_from_is_named_once() {
         let mut replaced = rows();
-        replaced.push(replaced[0]);
+        // clone: the same row replaced twice names its stream once.
+        replaced.push(replaced[0].clone());
         assert_eq!(replaced_streams(&replaced), vec![11, 12]);
     }
 
