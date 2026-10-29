@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
-use std::iter::once;
+use std::{collections::HashMap, iter::once};
 
 /// One attribute member as the walk writes it.
 #[derive(Debug, Clone, Copy)]
@@ -133,8 +133,11 @@ impl<'a> NotifiedMember<'a> {
         if matches!(held, Some(AttributeValue::NgsiLdNull)) {
             return Some(NotifiedMember::NgsiLdNull);
         }
-        let previous = changes.previous.and_then(|previous| previous.attribute_member(name)).map(sources);
-        let previous = previous.as_deref().unwrap_or_default();
+        let previous = changes
+            .previous
+            .and_then(|previous| previous.attribute_member(name))
+            .map(PreviousInstances::of)
+            .unwrap_or_default();
         let held_sources = held.map(sources).unwrap_or_default();
         let held_instances = held_sources.iter().map(|&source| NotifiedInstance {
             source,
@@ -144,7 +147,7 @@ impl<'a> NotifiedMember<'a> {
                     HeldAttributes::Current => ReportedValue::Held,
                 },
                 deleted_at: None,
-                previous: previous_of(source, previous),
+                previous: previous.of_instance(source),
             },
         });
         let deleted_sources = changes
@@ -156,7 +159,7 @@ impl<'a> NotifiedMember<'a> {
                 report: InstanceReport {
                     value: ReportedValue::Deleted,
                     deleted_at: *deleted_at,
-                    previous: previous_of(source, previous),
+                    previous: previous.of_instance(source),
                 },
             })
         });
@@ -184,13 +187,26 @@ fn sources(member: &AttributeValue) -> Vec<&Attribute> {
     member.instances().collect()
 }
 
-/// The previous instance of the same `datasetId` as `source`.
-fn previous_of<'a>(source: &Attribute, previous: &[&'a Attribute]) -> Option<&'a Attribute> {
-    let dataset_id = source.dataset_id().map(Identifier::as_str);
-    previous
-        .iter()
-        .copied()
-        .find(|candidate| candidate.dataset_id().map(Identifier::as_str) == dataset_id)
+/// The instances of one member before the change, by `datasetId` (`None`
+/// for the default instance), so the previous instance of each reported one
+/// is one lookup however many instances the member holds.
+#[derive(Debug, Default)]
+struct PreviousInstances<'a>(HashMap<Option<&'a str>, &'a Attribute>);
+
+impl<'a> PreviousInstances<'a> {
+    /// The instances `member` held, the first of each `datasetId` kept.
+    fn of(member: &'a AttributeValue) -> PreviousInstances<'a> {
+        let mut by_dataset = HashMap::new();
+        for instance in member.instances() {
+            by_dataset.entry(instance.dataset_id().map(Identifier::as_str)).or_insert(instance);
+        }
+        PreviousInstances(by_dataset)
+    }
+
+    /// The previous instance of the same `datasetId` as `source`.
+    fn of_instance(&self, source: &Attribute) -> Option<&'a Attribute> {
+        self.0.get(&source.dataset_id().map(Identifier::as_str)).copied()
+    }
 }
 
 /// The previous instance `previous` as the value member it gives an instance

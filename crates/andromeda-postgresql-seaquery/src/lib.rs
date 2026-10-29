@@ -51,6 +51,7 @@ pub mod jsonb;
 pub mod literal;
 pub mod ltree;
 pub mod maintenance;
+pub mod nullable_text_key;
 pub mod open_instant;
 pub mod operator;
 pub mod pg_array;

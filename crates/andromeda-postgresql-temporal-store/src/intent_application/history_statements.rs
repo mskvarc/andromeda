@@ -30,7 +30,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
-    pg_operator::PgBinaryOperator,
+    nullable_text_key::same_nullable_text_key,
     postgis::{bounding_box_contains, st_collect, st_collect_rows, st_envelope},
 };
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
@@ -102,7 +102,10 @@ fn entries_with_stream(source: &StagedSource<'_>, schema: Option<&DynIden>) -> S
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
         .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
         .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
-        .and_where(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(entry(TemporalEntry::DatasetId)));
+        .and_where(same_nullable_text_key(
+            Expr::col((S, TemporalAttributeStreams::DatasetId)),
+            entry(TemporalEntry::DatasetId),
+        ));
     select
 }
 

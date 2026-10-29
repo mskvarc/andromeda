@@ -245,7 +245,10 @@ mod tests {
         );
         assert!(pending.contains(r#""pe"."entity_id" = "st"."entity_id""#), "{pending}");
         assert!(pending.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{pending}");
-        assert!(pending.contains(r#"("pe"."dataset_id" IS NOT DISTINCT FROM "st"."dataset_id")"#), "{pending}");
+        assert!(
+            pending.contains(r#"COALESCE("pe"."dataset_id", '') = COALESCE("st"."dataset_id", '')"#),
+            "{pending}"
+        );
     }
 
     /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` itself,

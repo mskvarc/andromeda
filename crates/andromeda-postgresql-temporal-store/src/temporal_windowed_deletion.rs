@@ -415,25 +415,33 @@ mod tests {
         assert!(!all.contains("\"an\".\"name\""), "{all}");
     }
 
-    /// The dataset filter renders `IS NULL`, `= ANY`, an `OR` of both, or nothing.
+    /// The dataset filter renders the grain key's equality to the empty string,
+    /// its membership in the named datasets with or without the empty string,
+    /// or nothing.
     #[test]
     fn the_dataset_filter_renders_its_predicate() {
         let default_only = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::DefaultOnly, TimeInterval::Unbounded, false));
-        assert!(default_only.contains("\"dataset_id\" IS NULL"), "{default_only}");
+        assert!(default_only.contains(r#"COALESCE("s"."dataset_id", '') = ('')"#), "{default_only}");
         let named = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::NamedOnly(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(named.contains("\"dataset_id\" = ANY("), "{named}");
+        assert!(
+            named.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:1'])"#),
+            "{named}"
+        );
         let both = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::DefaultOrNamed(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(both.contains("OR") && both.contains("IS NULL"), "{both}");
+        assert!(
+            both.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:1',''])"#),
+            "{both}"
+        );
         let unfiltered = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::Unfiltered, TimeInterval::Unbounded, false));
         assert!(!unfiltered.contains("\"dataset_id\""), "{unfiltered}");
     }

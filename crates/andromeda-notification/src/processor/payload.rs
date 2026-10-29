@@ -442,5 +442,7 @@ pub(crate) mod notified_entity;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod notified_entity_tests;
+/// The attribute instances a narrowed selection carries.
+pub(crate) mod selected_instances;
 /// What of a notified entity state one notification carries.
 pub(crate) mod selection;

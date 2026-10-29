@@ -189,7 +189,7 @@ mod tests {
         for fragment in [
             r#"UNION ALL (SELECT * FROM ((SELECT "qi".*, COALESCE("qi"."observed_at", "qi"."deleted_at") AS "placed" FROM (SELECT"#,
             r#""pe"."entity_id" = "qs"."entity_id""#,
-            r#"("pe"."dataset_id" IS NOT DISTINCT FROM "qs"."dataset_id")"#,
+            r#"COALESCE("pe"."dataset_id", '') = COALESCE("qs"."dataset_id", '')"#,
             r#"ORDER BY "placed" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE"#,
             r#""rh"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "qs"."entity_id""#,
         ] {

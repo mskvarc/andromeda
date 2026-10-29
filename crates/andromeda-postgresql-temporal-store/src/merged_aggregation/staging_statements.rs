@@ -29,6 +29,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
+    nullable_text_key::same_nullable_text_key,
     pg_operator::PgBinaryOperator,
     temporary_table::{TemporaryCopy, TemporarySchema},
 };
@@ -226,10 +227,10 @@ pub(crate) fn copy_history(snapshot: Option<&DynIden>, entity_id: &Identifier, c
             temporary(TemporalAttributeStreams::Table).alias(StagedStream),
             Condition::all()
                 .add(Expr::col((StagedStream, TemporalAttributeStreams::AttributeNameKey)).equals((Local, HistoryGrain::AttributeNameKey)))
-                .add(
-                    SimpleExpr::from(Expr::col((StagedStream, TemporalAttributeStreams::DatasetId)))
-                        .not_distinct_from(Expr::col((Local, HistoryGrain::DatasetId))),
-                ),
+                .add(same_nullable_text_key(
+                    Expr::col((StagedStream, TemporalAttributeStreams::DatasetId)),
+                    Expr::col((Local, HistoryGrain::DatasetId)),
+                )),
         );
     match copied {
         CopiedHistory::Window { timeproperty, interval } => {

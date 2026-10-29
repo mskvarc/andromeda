@@ -795,7 +795,7 @@ fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitr
     assert!(
         existing.ends_with(concat!(
             r#"FROM "grains" WHERE NOT "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
-            r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO NOTHING RETURNING "entity_key", "attribute_name_key""#
+            r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO NOTHING RETURNING "entity_key", "attribute_name_key""#
         )),
         "{existing}"
     );
@@ -1017,7 +1017,9 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
         "every stream carries its evolution's key: {streams}"
     );
     assert!(
-        streams.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO NOTHING RETURNING "entity_key", "attribute_name_key") "#),
+        streams.contains(
+            r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO NOTHING RETURNING "entity_key", "attribute_name_key") "#
+        ),
         "{streams}"
     );
     let untyped = |entries: Vec<TemporalAppendEntry>| {

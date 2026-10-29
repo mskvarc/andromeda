@@ -23,6 +23,7 @@ use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntent
 use andromeda_postgresql_seaquery::{
     bit_string::bit_union_of_rows,
     branch::qualified,
+    nullable_text_key::nullable_text_key,
     pg_array::{any, array_of_subquery, has_elements},
     postgis::{st_collect_rows, st_envelope},
     unnest::unnest_of,
@@ -99,12 +100,22 @@ struct FirstOrdinal;
 #[iden = "extent_geometry"]
 struct ExtentGeometry;
 
-/// The grain a stream is unique on, which a stream insert arbitrates on.
+/// The grain a stream is keyed by.
 const GRAIN_COLUMNS: [TemporalAttributeStreams; 3] = [
     TemporalAttributeStreams::EntityKey,
     TemporalAttributeStreams::AttributeNameKey,
     TemporalAttributeStreams::DatasetId,
 ];
+
+/// The arbiter of a stream insert: the grain as its unique index keys it, the
+/// default instance as the empty string, and an insert of a stream already
+/// held writes nothing.
+fn existing_grain_kept() -> OnConflict {
+    OnConflict::columns([TemporalAttributeStreams::EntityKey, TemporalAttributeStreams::AttributeNameKey])
+        .expr(nullable_text_key(Expr::col(TemporalAttributeStreams::DatasetId)))
+        .do_nothing()
+        .to_owned()
+}
 
 /// The catalogue columns a stream is inserted with beside its grain.
 const SEEDED_COLUMNS: [TemporalAttributeStreams; 2] = [TemporalAttributeStreams::ShapeMask, TemporalAttributeStreams::ValueExtent];
@@ -225,7 +236,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &StagedSource<'_>, schema
     )
     .cte(CommonTableExpression::new().table_name(CreatedStreams).query(streams_of(created())?).to_owned());
     let mut existing_streams = streams_of(created().not())?;
-    existing_streams.on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned());
+    existing_streams.on_conflict(existing_grain_kept());
     with.cte(CommonTableExpression::new().table_name(ExistingStreams).query(existing_streams).to_owned())
         .cte(
             CommonTableExpression::new()
@@ -362,6 +373,6 @@ pub(crate) fn untyped_streams_statement(source: &StagedSource<'_>, schema: Optio
         .into_table(qualified(schema, TemporalAttributeStreams::Table))
         .columns(GRAIN_COLUMNS.into_iter().chain(SEEDED_COLUMNS))
         .select_from(select)?
-        .on_conflict(OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned());
+        .on_conflict(existing_grain_kept());
     counted_stream_addition(schema, statement)
 }

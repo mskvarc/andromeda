@@ -5,7 +5,7 @@
 //! what every reader and writer of the relation relies on, so their declared
 //! text is pinned here.
 
-use crate::repository::{PinError, constraint, constraint_definition, function_definition, index_definition, schema, trigger, written};
+use crate::repository::{PinError, constraint_definition, function_definition, index, index_definition, schema, trigger, written};
 use andromeda_sql::{
     declared_schema::{DeclaredSchema, ResolvedType, column::ColumnSource, constraint::ConstraintKind, declared_type::BuiltinType},
     migration_set::MigrationSet,
@@ -107,14 +107,20 @@ fn every_value_kind_pins_exactly_one_column() -> Result<(), PinError> {
     Ok(())
 }
 
+/// The grain keys the default instance as the empty string, which no
+/// `datasetId` may be, so it compares with plain equality.
 #[test]
 fn the_grain_is_entity_attribute_and_dataset() -> Result<(), PinError> {
     let schema = schema()?;
-    let grain = constraint(&schema, "uq_current_attributes_grain")?;
-    assert_eq!((grain.table(), grain.kind()), (TABLE, ConstraintKind::Unique));
+    let grain = index(&schema, "uq_current_attributes_grain")?;
+    assert!(grain.is_unique(), "the grain is unique");
     assert_eq!(
-        written(&schema, grain.origin(), grain.definition()),
-        "unique nulls not distinct (entity_key, attribute_name_key, dataset_id)"
+        index_definition(&schema, "uq_current_attributes_grain")?,
+        format!("on {TABLE} (entity_key, attribute_name_key, (coalesce(dataset_id, '')))")
+    );
+    assert_eq!(
+        constraint_definition(&schema, "chk_current_attributes_dataset_id_not_empty")?,
+        "check (dataset_id <> '')"
     );
     Ok(())
 }

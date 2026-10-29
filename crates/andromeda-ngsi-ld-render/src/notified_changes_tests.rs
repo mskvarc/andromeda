@@ -93,6 +93,24 @@ fn an_entity_deletion_reports_the_previous_value_of_every_instance() {
     assert!(document["rooms"].get("previousObject").is_none(), "clause 4.5.22.2 prohibits previousObject");
 }
 
+/// Clause 5.8.6 with `showChanges` at 50,000 instances: every instance
+/// carries the previous value of its own `datasetId`. Results only, no
+/// elapsed time.
+#[test]
+fn every_instance_of_fifty_thousand_carries_its_own_previous_value() {
+    let instances: Vec<Value> = (0..50_000)
+        .map(|index| json!({"type": "Property", "value": index, "datasetId": format!("urn:ngsi-ld:Dataset:{index}")}))
+        .collect();
+    let notified = entity(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": instances}));
+    let document = rendered(&notified, entity_deletion(Some(&notified)), ResponseFormat::Normalized);
+    let speed = document["speed"].as_array().expect("every instance is reported");
+    assert_eq!(speed.len(), 50_000);
+    for (index, instance) in speed.iter().enumerate() {
+        assert_eq!(instance["datasetId"], json!(format!("urn:ngsi-ld:Dataset:{index}")));
+        assert_eq!(instance["previousValue"], json!(index));
+    }
+}
+
 /// Clause 4.5.4: a deleted instance's simplified value is the Null, kept in
 /// the one member the language, vocabulary and JSON families keep.
 #[test]

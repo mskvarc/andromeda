@@ -16,7 +16,12 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::{current::Entities, temporal::TemporalAttributeStreams};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
+use andromeda_postgresql_seaquery::{
+    branch::qualified,
+    nullable_text_key::{is_null_text_key, nullable_text_key},
+    pg_array::any,
+    statement::Statement,
+};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
 
@@ -91,8 +96,9 @@ enum DatasetSelector<'a> {
 
 /// The identifiers of the streams a deletion addresses, locked for update.
 ///
-/// The default instance is addressed by the absence of a `datasetId`, never by
-/// a sentinel value, so a stream with no dataset is matched by `IS NULL`.
+/// The `datasetId` is compared as the grain index keys it, so one stream of
+/// an attribute with many is found by an index probe rather than by reading
+/// every stream of the attribute.
 fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey, dataset: DatasetSelector<'_>) -> SelectStatement {
     let mut statement = Query::select();
     statement.column((S, TemporalAttributeStreams::StreamKey));
@@ -103,10 +109,10 @@ fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, att
     match dataset {
         DatasetSelector::AllStreams => {}
         DatasetSelector::Named(dataset_id) => {
-            statement.and_where(Expr::col((S, TemporalAttributeStreams::DatasetId)).eq(dataset_id));
+            statement.and_where(nullable_text_key(Expr::col((S, TemporalAttributeStreams::DatasetId))).eq(dataset_id));
         }
         DatasetSelector::Default => {
-            statement.and_where(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null());
+            statement.and_where(is_null_text_key(Expr::col((S, TemporalAttributeStreams::DatasetId))));
         }
     }
     statement.lock_with_tables(LockType::Update, [S]);
@@ -143,11 +149,11 @@ mod tests {
         }
     }
     #[test]
-    fn the_default_instance_is_addressed_by_absence_rather_than_by_a_value() {
+    fn one_stream_is_addressed_by_the_grain_index_key() {
         let default = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Default).to_string(PostgresQueryBuilder);
         let named = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Named("urn:d")).to_string(PostgresQueryBuilder);
-        assert!(default.contains("\"dataset_id\" IS NULL"), "{default}");
-        assert!(named.contains("\"dataset_id\" ="), "{named}");
+        assert!(default.contains(r#"COALESCE("s"."dataset_id", '') = ('')"#), "{default}");
+        assert!(named.contains(r#"COALESCE("s"."dataset_id", '') = 'urn:d'"#), "{named}");
     }
 
     #[test]

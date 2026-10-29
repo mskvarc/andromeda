@@ -11,13 +11,18 @@
 //! reduces "every Entity within the payload body ... down to only contain the
 //! defined entity members listed", clause 5.7.1.5's sentence verbatim.
 
+use crate::processor::payload::selected_instances::{Kept, Narrowed, SelectedInstances};
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::attribute_iri_index::AttributeIriIndex};
 use andromeda_ngsi_ld_vocabulary::prefix;
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// What a subscription selects of every entity it is notified of.
 #[derive(Clone, Copy, Debug)]
@@ -91,10 +96,10 @@ pub(crate) enum EntityMembers {
 pub(crate) enum Selection {
     /// The state as it is held.
     Whole,
-    /// The listed attribute instances, in the state's stored order.
+    /// The selected attribute instances, in the state's stored order.
     Narrowed {
         /// The instances carried.
-        instances: Vec<AttributeInstanceKey>,
+        instances: SelectedInstances,
         /// Whether the entity's own members are carried.
         members: EntityMembers,
     },
@@ -104,19 +109,14 @@ impl Selection {
     /// What `rule` selects of `state`.
     pub(crate) fn of(state: &EntityState, rule: SelectionRule<'_>) -> Selection {
         let mut narrowed = rule.entity_members() != EntityMembers::Kept;
-        let mut instances = Vec::new();
+        let mut instances = SelectedInstances::new();
         for (name, held) in state.attributes().iter() {
-            let attribute_kept = rule.keeps_attribute(name);
-            for (dataset_id, _instance) in held.iter() {
-                if attribute_kept && rule.keeps_instance(name, dataset_id) {
-                    instances.push(AttributeInstanceKey {
-                        attr: name.clone(),              // clone: the selection names the instance it keeps
-                        dataset_id: dataset_id.cloned(), // clone: same
-                    });
-                } else {
-                    narrowed = true;
-                }
-            }
+            let kept = if rule.keeps_attribute(name) {
+                instances.keep(name, held, |dataset_id| rule.keeps_instance(name, dataset_id))
+            } else {
+                Kept::None
+            };
+            narrowed = narrowed || kept != Kept::Every;
         }
         if narrowed {
             Selection::Narrowed {
@@ -131,7 +131,7 @@ impl Selection {
     /// The entity's identity alone: its `id` and its types.
     pub(crate) const fn identity() -> Selection {
         Selection::Narrowed {
-            instances: Vec::new(),
+            instances: SelectedInstances::new(),
             members: EntityMembers::Dropped,
         }
     }
@@ -139,14 +139,8 @@ impl Selection {
     /// The instances of `previous` the change touched, for the `showChanges`
     /// previous values of a creation or modification (clause 5.8.6).
     pub(crate) fn touched(previous: &EntityState, change: &EntityChange) -> Selection {
-        let instances = change
-            .instances
-            .iter()
-            .filter(|touched| held_instance(previous, &touched.key))
-            .map(|touched| touched.key.clone()) // clone: the selection names the instance it keeps
-            .collect();
         Selection::Narrowed {
-            instances,
+            instances: held_of(previous, change.instances.iter().map(|touched| &touched.key)),
             members: EntityMembers::Dropped,
         }
     }
@@ -164,21 +158,11 @@ impl Selection {
         deleted: impl IntoIterator<Item = &'k AttributeInstanceKey>,
         rule: SelectionRule<'_>,
     ) -> Option<Selection> {
-        let wanted: Vec<&AttributeInstanceKey> = deleted
+        let wanted = deleted
             .into_iter()
             .filter(|key| rule.keeps_attribute(&key.attr) && rule.keeps_instance(&key.attr, key.dataset_id.as_ref()))
-            .filter(|key| !held_instance(current, key))
-            .collect();
-        let instances: Vec<AttributeInstanceKey> = previous
-            .attributes()
-            .iter()
-            .flat_map(|(name, held)| held.iter().map(move |(dataset_id, _instance)| (name, dataset_id)))
-            .filter(|(name, dataset_id)| wanted.iter().any(|key| &key.attr == *name && key.dataset_id.as_ref() == *dataset_id))
-            .map(|(name, dataset_id)| AttributeInstanceKey {
-                attr: name.clone(),              // clone: the selection names the instance it keeps
-                dataset_id: dataset_id.cloned(), // clone: same
-            })
-            .collect();
+            .filter(|key| !held_instance(current, key));
+        let instances = held_of(previous, wanted);
         (!instances.is_empty()).then_some(Selection::Narrowed {
             instances,
             members: EntityMembers::Dropped,
@@ -193,22 +177,19 @@ impl Selection {
             Selection::Whole => return Cow::Borrowed(source),
             Selection::Narrowed { instances, members } => (instances, *members),
         };
-        let mut kept: HashMap<&AttributeName, Vec<Option<&Identifier>>> = HashMap::new();
-        for key in instances {
-            kept.entry(&key.attr).or_default().push(key.dataset_id.as_ref());
-        }
         let mut attributes = Attributes::new();
         for (name, held) in source.attributes().iter_shared() {
-            let Some(datasets) = kept.get(name) else { continue };
-            if held.iter().all(|(dataset_id, _instance)| datasets.contains(&dataset_id)) {
-                // clone: the narrowed state names the attribute it shares
-                attributes.insert_shared(name.clone(), Arc::clone(held));
-            } else {
-                // clone: the narrowed state owns the kept instances of an attribute it does not keep whole
-                let mut narrowed = (**held).clone();
-                if narrowed.retain(|dataset_id, _instance| datasets.contains(&dataset_id)) {
-                    attributes.insert(name.clone(), narrowed); // clone: the narrowed state names the attribute
+            let Some(selection) = instances.get(name) else { continue };
+            match selection.narrow(held) {
+                Narrowed::Whole => {
+                    // clone: the narrowed state names the attribute it shares
+                    attributes.insert_shared(name.clone(), Arc::clone(held));
                 }
+                Narrowed::Part(narrowed) => {
+                    // clone: the narrowed state names the attribute
+                    attributes.insert(name.clone(), narrowed);
+                }
+                Narrowed::Nothing => {}
             }
         }
         // clone: the narrowed state owns the entity's own members it keeps
@@ -228,6 +209,23 @@ impl Selection {
     }
 }
 
+/// The instances `keys` name that `state` holds, grouped by attribute so that
+/// an attribute no key names is never walked and each held instance is
+/// looked up once.
+fn held_of<'k>(state: &EntityState, keys: impl IntoIterator<Item = &'k AttributeInstanceKey>) -> SelectedInstances {
+    let mut named: HashMap<&AttributeName, HashSet<Option<&Identifier>>> = HashMap::new();
+    for key in keys {
+        named.entry(&key.attr).or_default().insert(key.dataset_id.as_ref());
+    }
+    let mut instances = SelectedInstances::new();
+    for (name, datasets) in named {
+        if let Some(held) = state.attributes().get(name.as_str()) {
+            instances.keep(name, held, |dataset_id| datasets.contains(&dataset_id));
+        }
+    }
+    instances
+}
+
 /// Whether `state` holds the instance `key` names.
 fn held_instance(state: &EntityState, key: &AttributeInstanceKey) -> bool {
     state
@@ -243,7 +241,10 @@ fn held_instance(state: &EntityState, key: &AttributeInstanceKey) -> bool {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::processor::payload::selection::{EntityMembers, Selection, SelectionRule};
+    use crate::processor::payload::{
+        selected_instances::{AttributeSelection, SelectedInstances},
+        selection::{EntityMembers, Selection, SelectionRule},
+    };
     use andromeda_linked_retrieval::narrowing::{list::ListInForce, list_terms::ListTerms};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -258,7 +259,7 @@ mod tests {
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
-    use std::{borrow::Cow, sync::Arc};
+    use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
     const SPEED: &str = "https://example.com/speed";
     const NAME: &str = "https://example.com/name";
@@ -569,12 +570,66 @@ mod tests {
                 },
             ],
         );
+        let named = SelectedInstances::from(BTreeMap::from([(
+            SPEED.parse().expect("valid attribute name"),
+            AttributeSelection::Instances(vec![Some(NAMED.parse().expect("valid dataset URI"))]),
+        )]));
         assert_eq!(
             Selection::touched(&previous, &change),
             Selection::Narrowed {
-                instances: vec![key(SPEED, Some(NAMED))],
+                instances: named,
                 members: EntityMembers::Dropped,
             }
+        );
+    }
+
+    /// Deleting every instance of an attribute selects it whole, and the
+    /// rendering of the deleted instances shares it rather than copying it.
+    #[test]
+    fn a_deletion_of_every_instance_selects_the_attribute_whole() {
+        let previous = vehicle();
+        let current = EntityState::new(previous.id().clone(), previous.types().clone());
+        let deleted = [key(SPEED, None), key(SPEED, Some(NAMED))];
+        let selection = Selection::deleted(&previous, &current, &deleted, rule(ListInForce::Unrestricted, None)).expect("deleted instances");
+        let Selection::Narrowed { instances, .. } = &selection else {
+            panic!("a deletion is narrowed: {selection:?}");
+        };
+        let speed: AttributeName = SPEED.parse().expect("valid attribute name");
+        assert_eq!(instances.get(&speed), Some(&AttributeSelection::Whole));
+        let selected = selection.apply(&previous);
+        let (Some(kept), Some(source)) = (selected.attributes().get_shared(SPEED), previous.attributes().get_shared(SPEED)) else {
+            panic!("the speed is kept");
+        };
+        assert!(Arc::ptr_eq(kept, source));
+        assert!(selected.attributes().get(NAME).is_none());
+    }
+
+    /// Clause 5.8.6 at 50,000 instances: deleting every one, or every other
+    /// one, reports exactly those instances. Results only, no elapsed time.
+    #[test]
+    fn a_deletion_among_fifty_thousand_instances_reports_exactly_the_deleted_ones() {
+        let instances: Vec<Value> = (0..50_000)
+            .map(|index| property(&json!(index), Some(&format!("urn:ngsi-ld:Dataset:{index}"))))
+            .collect();
+        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.com/Vehicle"], SPEED: instances}]);
+        let previous = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes");
+        let empty = EntityState::new(previous.id().clone(), previous.types().clone());
+        let every: Vec<AttributeInstanceKey> = (0..50_000).map(|index| key(SPEED, Some(&format!("urn:ngsi-ld:Dataset:{index}")))).collect();
+        let selection = Selection::deleted(&previous, &empty, &every, rule(ListInForce::Unrestricted, None)).expect("deleted instances");
+        assert_eq!(datasets_of(&selection.apply(&previous), SPEED).len(), 50_000);
+
+        let mut remaining = previous.clone();
+        let speed = remaining.attributes_mut().get_mut(SPEED).expect("the speed is held");
+        speed.retain(|dataset_id, _| dataset_id.is_some_and(|dataset_id| dataset_id.as_str().ends_with(['1', '3', '5', '7', '9'])));
+        let selection = Selection::deleted(&previous, &remaining, &every, rule(ListInForce::Unrestricted, None)).expect("deleted instances");
+        let reported = selection.apply(&previous);
+        let reported = datasets_of(&reported, SPEED);
+        assert_eq!(reported.len(), 25_000);
+        assert!(
+            reported
+                .iter()
+                .all(|dataset| dataset.is_some_and(|dataset| dataset.ends_with(['0', '2', '4', '6', '8']))),
+            "only the deleted instances are reported"
         );
     }
 }

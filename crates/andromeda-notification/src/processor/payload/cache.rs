@@ -206,13 +206,13 @@ pub(super) async fn cached_linked_graph(
 mod tests {
     use crate::processor::payload::{
         cache::{LinkedKey, NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
+        selected_instances::{AttributeSelection, SelectedInstances},
         selection::{EntityMembers, Selection},
     };
-    use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use serde_json::json;
-    use std::{num::NonZeroU32, sync::Arc};
+    use std::{collections::BTreeMap, num::NonZeroU32, sync::Arc};
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Thing"})).expect("entity")
@@ -249,10 +249,7 @@ mod tests {
     /// `notification.attributes` list selects it.
     fn listed(attribute: &str) -> RenderingKey {
         let selection = Selection::Narrowed {
-            instances: vec![AttributeInstanceKey {
-                attr: attribute.parse().expect("valid attribute name"),
-                dataset_id: None,
-            }],
+            instances: SelectedInstances::from(BTreeMap::from([(attribute.parse().expect("valid attribute name"), AttributeSelection::Whole)])),
             members: EntityMembers::Unscoped,
         };
         RenderingKey::new(NotifiedSource::Notified, selection, None, SysAttrsInclusion::Strip, Reading::AsRecorded)

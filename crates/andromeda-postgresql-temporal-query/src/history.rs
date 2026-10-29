@@ -402,8 +402,9 @@ mod tests {
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,
-    /// which the stream catalogue holds as a NULL column, so it cannot be tested
-    /// by the same membership predicate as a named dataset.
+    /// which the stream catalogue holds as a NULL column and its grain index
+    /// keys as the empty string, so `@none` beside named datasets is one
+    /// membership test.
     #[test]
     fn dataset_id_none_selects_the_default_instance() {
         let selectors = |raw: &[&str]| -> Vec<DatasetSelector> { raw.iter().map(|entry| DatasetSelector::parse(entry).expect("valid")).collect() };
@@ -411,20 +412,24 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
-        assert!(!sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
+        assert!(sql.contains(r#"COALESCE("ah"."dataset_id", '') = ('')"#), "{sql}");
+        assert!(!sql.contains("= ANY(ARRAY ['urn"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
-        assert!(!sql.contains("\"ah\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(
+            sql.contains(r#"COALESCE("ah"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#),
+            "{sql}"
+        );
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"dataset_id\" = ANY"), "{sql}");
-        assert!(sql.contains("OR \"ah\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(
+            sql.contains(r#"COALESCE("ah"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#),
+            "{sql}"
+        );
     }
 
     #[test]
@@ -681,7 +686,7 @@ mod tests {
         assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
         assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
         assert!(sql.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{sql}");
-        assert!(sql.contains(r#"("pe"."dataset_id" IS NOT DISTINCT FROM "st"."dataset_id")"#), "{sql}");
+        assert!(sql.contains(r#"COALESCE("pe"."dataset_id", '') = COALESCE("st"."dataset_id", '')"#), "{sql}");
     }
 
     /// Every instance of a stream carries its attribute's name, so the name is

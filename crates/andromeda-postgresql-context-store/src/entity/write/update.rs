@@ -446,7 +446,7 @@ mod tests {
         );
         assert!(sql.contains(r#"FROM "ents" JOIN "instances" ON "instances"."id" = "ents"."id""#), "{sql}");
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO UPDATE SET"#),
             "{sql}"
         );
         assert!(

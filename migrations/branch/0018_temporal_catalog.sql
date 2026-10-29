@@ -53,12 +53,23 @@ create table temporal_attribute_streams (
     -- once the clearing has committed.
     shape_mask bit(80) compression lz4 not null default b'0'::bit(80),
     constraint pk_temporal_attribute_streams primary key (stream_key),
-    -- `INCLUDE (stream_key)` makes stream resolution index-only: every append
-    -- resolves its grain to a stream key, the hottest catalog read there is.
-    constraint uq_temporal_attribute_streams_grain unique nulls not distinct (entity_key, attribute_name_key, dataset_id) include (stream_key),
     constraint fk_temporal_attribute_streams_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
-    constraint chk_temporal_attribute_streams_dataset_id_length check (octet_length(dataset_id) <= 1024)
+    constraint chk_temporal_attribute_streams_dataset_id_length check (octet_length(dataset_id) <= 1024),
+    -- The empty string is the grain's key for the default instance, so no
+    -- `datasetId` may be it.
+    constraint chk_temporal_attribute_streams_dataset_id_not_empty check (dataset_id <> '')
 );
+
+-- The grain, its default instance keyed as the empty string. A grain compared
+-- with `is not distinct from` is joined by testing every pair of rows, so
+-- resolving the streams of one write costs the product of the grains it
+-- names and the streams its Entity holds; keyed by `coalesce`, the same join
+-- is a hash join or an index probe. Every statement spells the grain as this
+-- expression. `include (stream_key, dataset_id)` makes stream resolution
+-- index-only: every append resolves its grain to a stream key, the hottest
+-- catalog read there is, and a read of an Entity's streams returns each
+-- stream's `datasetId`, which the keyed expression alone does not give back.
+create unique index uq_temporal_attribute_streams_grain on temporal_attribute_streams (entity_key, attribute_name_key, (coalesce(dataset_id, ''))) include (stream_key, dataset_id);
 
 -- The holders of an attribute, in the order of their surrogate keys: a
 -- temporal selection by attribute (clause 5.7.4.4 S1, `attrs` with no type)
@@ -68,7 +79,12 @@ create table temporal_attribute_streams (
 -- An attribute with many holders is paged through the Evolution memberships
 -- of the types `stream_type_census` names instead, so no stream carries the
 -- Entity's identifier.
-create index idx_temporal_attribute_streams_attribute_name_key_entity_key on temporal_attribute_streams (attribute_name_key, entity_key);
+--
+-- It keys the grain's `datasetId` last. Both indexes then match a grain
+-- lookup in full, so a planner that estimates one stream per Entity and
+-- attribute, and takes whichever index is smaller, still probes one stream
+-- rather than reading every stream of the attribute.
+create index idx_temporal_attribute_streams_attribute_name_key_entity_key on temporal_attribute_streams (attribute_name_key, entity_key, (coalesce(dataset_id, '')));
 
 -- A temporal geo query (clause 5.7.4.4 S3) reads its candidate Evolutions
 -- here: a stream whose extent misses the relation's box holds no geometry

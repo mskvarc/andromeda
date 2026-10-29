@@ -14,10 +14,9 @@ use std::{num::ParseIntError, str::FromStr};
 
 /// The PostgreSQL version the tenant schema requires.
 ///
-/// `temporal_attribute_streams` identifies a multi-attribute instance with
-/// `UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_key, dataset_id)`,
-/// which is how ETSI GS CIM 009 v1.9.1 clause 4.5.5 is modelled (an absent
-/// `datasetId` is the one default instance), and `NULLS NOT DISTINCT` is a
+/// The maintenance catalogue keys its targets with
+/// `UNIQUE NULLS NOT DISTINCT (tenant_key, snapshot_key, target)`, where an
+/// absent Snapshot is the live branch, and `NULLS NOT DISTINCT` is a
 /// PostgreSQL 15 feature.
 pub const REQUIRED_POSTGRES_VERSION: PostgresVersion = PostgresVersion::new(150_000);
 

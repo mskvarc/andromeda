@@ -55,8 +55,8 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     cast::typed_null,
     literal::int_literal,
+    nullable_text_key::same_nullable_text_key,
     pg_array::has_elements,
-    pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
@@ -227,7 +227,7 @@ pub(crate) fn stream_attribute_rows(schema: Option<&DynIden>, stream: &HistorySt
     let mut select = attribute_rows(schema, &HistoryOf::Entity(stream.column(HistoryGrain::EntityId)));
     select
         .and_where(entry(TemporalEntry::AttributeNameKey).eq(stream.column(HistoryGrain::AttributeNameKey)))
-        .and_where(entry(TemporalEntry::DatasetId).not_distinct_from(stream.column(HistoryGrain::DatasetId)));
+        .and_where(same_nullable_text_key(entry(TemporalEntry::DatasetId), stream.column(HistoryGrain::DatasetId)));
     select
 }
 
@@ -246,7 +246,10 @@ pub(crate) fn stream_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectSta
         )
         .and_where(Expr::col((RecordedEvolution, Entities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
         .and_where(Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)).equals((PendingEntry, TemporalEntry::AttributeNameKey)))
-        .and_where(SimpleExpr::from(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId))).not_distinct_from(entry(TemporalEntry::DatasetId)));
+        .and_where(same_nullable_text_key(
+            Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)),
+            entry(TemporalEntry::DatasetId),
+        ));
     let mut select = Query::select();
     select
         .distinct()

@@ -131,11 +131,6 @@ create table current_attributes (
     -- The equality keys of the sub-attribute tree's scalar values, NULL when
     -- it holds none.
     sub_eq_keys bigint[] compression lz4,
-    -- The grain has a nullable `dataset_id`, so it is a unique constraint and
-    -- the table has no primary key. It is the upsert's conflict target, the
-    -- range a whole-Entity read scans and the access path of every
-    -- Entity-correlated `q` probe.
-    constraint uq_current_attributes_grain unique nulls not distinct (entity_key, attribute_name_key, dataset_id),
     constraint chk_current_attributes_attribute_kind check (attribute_kind between 1 and 8),
     constraint chk_current_attributes_unit_code_id_positive check (unit_code_id > 0),
     constraint chk_current_attributes_ordinal_non_negative check (ordinal >= 0),
@@ -152,6 +147,9 @@ create table current_attributes (
     constraint chk_current_attributes_value_uri_length check (octet_length(value_uri) <= 1024),
     constraint chk_current_attributes_value_long_uri_length check (octet_length(value_long_uri) > 1024),
     constraint chk_current_attributes_dataset_id_length check (octet_length(dataset_id) <= 1024),
+    -- The empty string is the grain's key for the default instance, so no
+    -- `datasetId` may be it.
+    constraint chk_current_attributes_dataset_id_not_empty check (dataset_id <> ''),
     constraint chk_current_attributes_sub_eq_keys_not_empty check (cardinality(sub_eq_keys) > 0)
 )
 with (
@@ -163,6 +161,15 @@ with (
     autovacuum_analyze_threshold = 500,
     autovacuum_vacuum_cost_delay = 0
 );
+
+-- The grain, its default instance keyed as the empty string; the table has no
+-- primary key. It is the upsert's conflict target, the range a whole-Entity
+-- read scans and the access path of every Entity-correlated `q` probe. A
+-- grain compared with `is not distinct from` is joined by testing every pair
+-- of rows, so a write's instances matched against its Entity's would cost
+-- their product; keyed by `coalesce`, the same join is a hash join or an
+-- index probe. Every statement spells the grain as this expression.
+create unique index uq_current_attributes_grain on current_attributes (entity_key, attribute_name_key, (coalesce(dataset_id, '')));
 
 -- One partial B-tree per typed column, led by the attribute key, for plans
 -- that drive from the attribute side.
