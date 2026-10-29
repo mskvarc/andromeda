@@ -4,6 +4,7 @@ use crate::reference::{
     ReferenceError,
     key_listing::{ReferenceEntry, key_listing},
 };
+use textwrap::{Options, WordSeparator, WrapAlgorithm};
 
 /// The opening comment of the template.
 const PREAMBLE: &str = "\
@@ -68,7 +69,16 @@ fn comment_lines(description: Option<&str>) -> Vec<String> {
             let separator = (index > 0).then(|| String::from("#"));
             separator
                 .into_iter()
-                .chain(textwrap::wrap(paragraph, COMMENT_WIDTH - 2).into_iter().map(|line| format!("# {line}")))
+                .chain(textwrap::wrap(paragraph, comment_wrapping()).into_iter().map(|line| format!("# {line}")))
         })
         .collect()
+}
+
+/// How a comment paragraph is wrapped: at ASCII spaces only, filling each line in turn. Both are named rather than
+/// left to `textwrap`'s defaults, which change with the features another crate of the build enables, so the generated
+/// template is the same whichever packages one build compiles.
+fn comment_wrapping() -> Options<'static> {
+    Options::new(COMMENT_WIDTH - 2)
+        .word_separator(WordSeparator::AsciiSpace)
+        .wrap_algorithm(WrapAlgorithm::FirstFit)
 }
