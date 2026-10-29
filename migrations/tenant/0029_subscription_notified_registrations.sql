@@ -15,12 +15,19 @@
 -- broker evaluates a change first sends it, and a subscription's initial
 -- notification and a registration change evaluated at the same moment never
 -- both report one registration.
+--
+-- Raising `reported_revision` to the change revision of a registration update
+-- claims the `updated` notification of that change, so two evaluations of one
+-- update that keeps the registration selected send it once.
 -- ============================================================================
 create table subscription_notified_registrations (
     subscription_key bigint not null,
     -- References no registration: the row outlives the registration's
     -- deletion until the `noLongerMatching` notification it owes is claimed.
     registration_id text compression lz4 collate "C" not null,
+    -- The latest registration change revision that claimed an `updated`
+    -- notification for this pair; NULL until one does.
+    reported_revision bigint,
     constraint pk_subscription_notified_registrations primary key (subscription_key, registration_id),
     constraint fk_subscription_notified_registrations_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
     constraint chk_subscription_notified_registrations_registration_id_length check (octet_length(registration_id) <= 1024)

@@ -318,7 +318,7 @@ impl CsourceNotificationProcessor {
         let states = ChangeStates::of(&event.change);
         let planned = self
             .membership
-            .plan_registration_change(&found, states.change, &event.csr_id, states.before, states.after)
+            .plan_registration_change(&found, states.change, event.revision, &event.csr_id, states.before, states.after)
             .await;
         stream::iter(planned)
             .for_each_concurrent(CSR_NOTIFICATION_CONCURRENCY, |notification| async move {

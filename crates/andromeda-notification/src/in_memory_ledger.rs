@@ -3,11 +3,15 @@
 
 use crate::{
     error::NotificationError,
-    notified_registration_store::{NotifiedRegistrationStore, Release},
+    notified_registration_store::{NotifiedRegistrationStore, Release, UpdateReport},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
 use futures::future::BoxFuture;
-use std::{collections::BTreeSet, sync::Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+};
 
 /// The notified pairs one tenant database holds, shared by every planner built
 /// over it as brokers share the database.
@@ -15,6 +19,8 @@ use std::{collections::BTreeSet, sync::Mutex};
 pub(crate) struct InMemoryLedger {
     /// `(subscription, registration)` pairs.
     pairs: Mutex<BTreeSet<(String, String)>>,
+    /// The revision that claimed the `updated` notification of each pair.
+    reported: Mutex<BTreeMap<(String, String), i64>>,
 }
 
 impl InMemoryLedger {
@@ -38,12 +44,49 @@ impl NotifiedRegistrationStore for InMemoryLedger {
 
     fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>> {
         Box::pin(async move {
-            let removed = self
-                .pairs
-                .lock()
-                .expect("ledger lock")
-                .remove(&(subscription.to_string(), registration.to_string()));
+            let pair = (subscription.to_string(), registration.to_string());
+            let removed = self.pairs.lock().expect("ledger lock").remove(&pair);
+            self.reported.lock().expect("ledger lock").remove(&pair);
             Ok(if removed { Release::Released } else { Release::Absent })
+        })
+    }
+
+    fn report_update<'a>(
+        &'a self,
+        subscription: &'a Identifier,
+        registration: &'a Identifier,
+        revision: CsourceChangeRevision,
+    ) -> BoxFuture<'a, Result<UpdateReport, NotificationError>> {
+        Box::pin(async move {
+            let pair = (subscription.to_string(), registration.to_string());
+            if !self.pairs.lock().expect("ledger lock").contains(&pair) {
+                return Ok(UpdateReport::Settled);
+            }
+            let revision = i64::from(revision);
+            let mut reported = self.reported.lock().expect("ledger lock");
+            Ok(match reported.get(&pair) {
+                Some(held) if *held >= revision => UpdateReport::Settled,
+                Some(_) | None => {
+                    reported.insert(pair, revision);
+                    UpdateReport::Claimed
+                }
+            })
+        })
+    }
+
+    fn unreport_update<'a>(
+        &'a self,
+        subscription: &'a Identifier,
+        registration: &'a Identifier,
+        revision: CsourceChangeRevision,
+    ) -> BoxFuture<'a, Result<(), NotificationError>> {
+        Box::pin(async move {
+            let pair = (subscription.to_string(), registration.to_string());
+            let mut reported = self.reported.lock().expect("ledger lock");
+            if reported.get(&pair) == Some(&i64::from(revision)) {
+                reported.remove(&pair);
+            }
+            Ok(())
         })
     }
 

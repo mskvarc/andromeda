@@ -21,10 +21,10 @@
 use crate::{
     csource_transition::{MembershipStep, RegistrationChange, Selection, StepOutcome, reason, step},
     error::NotificationError,
-    notified_registration_store::{NotifiedRegistrationStore, Release},
+    notified_registration_store::{NotifiedRegistrationStore, Release, UpdateReport},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, notification::CsrTriggerReason, registration::ContextSourceRegistration};
 use andromeda_subscription::{
     change::UpsertKind,
     compiled::CompiledCsrSubscription,
@@ -55,6 +55,9 @@ pub(crate) struct PlannedNotification<'registration> {
     pub(crate) reason: CsrTriggerReason,
     /// The registration change the notification reports.
     pub(crate) change: RegistrationChange,
+    /// The revision whose claim an `updated` notification holds, absent for a
+    /// notification no single change owes.
+    pub(crate) revision: Option<CsourceChangeRevision>,
 }
 
 /// The registrations each change-driven subscription of one tenant was
@@ -216,6 +219,7 @@ impl CsourceMembership {
         &self,
         subscriptions: &[Arc<CompiledCsrSubscription>],
         change: RegistrationChange,
+        revision: CsourceChangeRevision,
         registration_id: &Identifier,
         before: Option<&'registration ContextSourceRegistration>,
         after: Option<&'registration ContextSourceRegistration>,
@@ -250,6 +254,20 @@ impl CsourceMembership {
             let Some(reason) = reason(change, outcome, previously) else {
                 continue;
             };
+            let revision = match reason {
+                CsrTriggerReason::Updated => match self.ledger.report_update(&subscription.id, registration_id, revision).await {
+                    Ok(UpdateReport::Claimed) => Some(revision),
+                    Ok(UpdateReport::Settled) => continue,
+                    Err(failure) => {
+                        error!(
+                            "Failed to claim the update of CSR {} for subscription {}: {}",
+                            registration_id, subscription.id, failure
+                        );
+                        continue;
+                    }
+                },
+                CsrTriggerReason::NewlyMatching | CsrTriggerReason::NoLongerMatching => None,
+            };
             let carried = match reason {
                 CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated => after,
                 CsrTriggerReason::NoLongerMatching => before,
@@ -260,6 +278,7 @@ impl CsourceMembership {
                     registration,
                     reason,
                     change,
+                    revision,
                 });
             }
         }
@@ -319,6 +338,7 @@ impl CsourceMembership {
                 registration,
                 reason,
                 change: RegistrationChange::Updated,
+                revision: None,
             })
             .collect()
     }
@@ -340,7 +360,10 @@ impl CsourceMembership {
                 self.ledger.claim(subscription, slice::from_ref(registration)).await.map(drop)
             }
             (CsrTriggerReason::NoLongerMatching, RegistrationChange::Deleted)
-            | (CsrTriggerReason::Updated, RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted) => Ok(()),
+            | (CsrTriggerReason::Updated, RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted) => match planned.revision {
+                Some(revision) => self.ledger.unreport_update(subscription, registration, revision).await,
+                None => Ok(()),
+            },
         };
         if let Err(failure) = restored {
             error!(

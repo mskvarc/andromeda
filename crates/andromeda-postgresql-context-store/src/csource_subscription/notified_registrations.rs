@@ -12,9 +12,10 @@ use crate::{
     subscription_store::stored_subscription_error::StoredSubscriptionError,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
 use andromeda_notification::{
     error::NotificationError,
-    notified_registration_store::{NotifiedRegistrationStore, Release},
+    notified_registration_store::{NotifiedRegistrationStore, Release, UpdateReport},
 };
 use andromeda_postgresql_schema::subscriptions::{SubscriptionNotifiedRegistrations, Subscriptions};
 use andromeda_postgresql_seaquery::{
@@ -23,7 +24,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use futures::future::BoxFuture;
-use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, Query, SelectStatement};
+use sea_query::{Alias, Cond, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, LockType, OnConflict, Query, SelectStatement, UpdateStatement};
 use sqlx::{PgExecutor, PgPool};
 
 /// The PostgreSQL store of notified registrations.
@@ -55,6 +56,38 @@ impl NotifiedRegistrationStore for NotifiedRegistrationLedger {
                 .await
                 .map_err(|error| persistence(&ContextStoreError::from(error)))?;
             Ok(removed.map_or(Release::Absent, |_| Release::Released))
+        })
+    }
+
+    fn report_update<'a>(
+        &'a self,
+        subscription: &'a Identifier,
+        registration: &'a Identifier,
+        revision: CsourceChangeRevision,
+    ) -> BoxFuture<'a, Result<UpdateReport, NotificationError>> {
+        Box::pin(async move {
+            let claimed: Option<(String,)> = report_statement(subscription, registration, revision)
+                .to_query_as()
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|error| persistence(&ContextStoreError::from(error)))?;
+            Ok(claimed.map_or(UpdateReport::Settled, |_| UpdateReport::Claimed))
+        })
+    }
+
+    fn unreport_update<'a>(
+        &'a self,
+        subscription: &'a Identifier,
+        registration: &'a Identifier,
+        revision: CsourceChangeRevision,
+    ) -> BoxFuture<'a, Result<(), NotificationError>> {
+        Box::pin(async move {
+            unreport_statement(subscription, registration, revision)
+                .to_query()
+                .execute(&self.pool)
+                .await
+                .map(drop)
+                .map_err(|error| persistence(&ContextStoreError::from(error)))
         })
     }
 
@@ -199,6 +232,36 @@ fn release_statement(subscription: &Identifier, registration: &Identifier) -> De
         .to_owned()
 }
 
+/// Raise the revision that claimed the `updated` notification of the
+/// `(subscription, registration)` pair to `revision` while it lags behind,
+/// returning the pair when it did.
+fn report_statement(subscription: &Identifier, registration: &Identifier, revision: CsourceChangeRevision) -> UpdateStatement {
+    Query::update()
+        .table(SubscriptionNotifiedRegistrations::Table)
+        .value(SubscriptionNotifiedRegistrations::ReportedRevision, i64::from(revision))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::RegistrationId).eq(registration.as_str()))
+        .cond_where(
+            Cond::any()
+                .add(Expr::col(SubscriptionNotifiedRegistrations::ReportedRevision).is_null())
+                .add(Expr::col(SubscriptionNotifiedRegistrations::ReportedRevision).lt(i64::from(revision))),
+        )
+        .returning_col(SubscriptionNotifiedRegistrations::RegistrationId)
+        .to_owned()
+}
+
+/// Clear the claim `revision` holds on the `updated` notification of the
+/// `(subscription, registration)` pair.
+fn unreport_statement(subscription: &Identifier, registration: &Identifier, revision: CsourceChangeRevision) -> UpdateStatement {
+    Query::update()
+        .table(SubscriptionNotifiedRegistrations::Table)
+        .value(SubscriptionNotifiedRegistrations::ReportedRevision, Option::<i64>::None)
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::RegistrationId).eq(registration.as_str()))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::ReportedRevision).eq(i64::from(revision)))
+        .to_owned()
+}
+
 /// The identifiers of the subscriptions `registration` was notified to.
 fn notified_subscriptions_statement(registration: &Identifier) -> SelectStatement {
     let subscription = Alias::new("s");
@@ -245,10 +308,13 @@ mod tests {
             notified_registrations_statement,
             notified_subscriptions_statement,
             release_statement,
+            report_statement,
+            unreport_statement,
         },
         statement_text::text_of,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -276,6 +342,34 @@ mod tests {
         assert_eq!(
             sql,
             r#"DELETE FROM "subscription_notified_registrations" WHERE "subscription_key" IN (SELECT "subscription_key" FROM "subscriptions" WHERE "id" = $1) AND "registration_id" = $2 RETURNING "registration_id""#
+        );
+    }
+
+    #[test]
+    fn a_report_raises_the_claimed_revision_only_while_it_lags_and_returns_the_pair() {
+        let (sql, _) = report_statement(
+            &uri("urn:ngsi-ld:Subscription:s"),
+            &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
+            CsourceChangeRevision::from(7),
+        )
+        .build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"UPDATE "subscription_notified_registrations" SET "reported_revision" = $1 WHERE "subscription_key" IN (SELECT "subscription_key" FROM "subscriptions" WHERE "id" = $2) AND "registration_id" = $3 AND ("reported_revision" IS NULL OR "reported_revision" < $4) RETURNING "registration_id""#
+        );
+    }
+
+    #[test]
+    fn an_unreport_clears_the_revision_only_while_it_still_holds_the_claim() {
+        let (sql, _) = unreport_statement(
+            &uri("urn:ngsi-ld:Subscription:s"),
+            &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
+            CsourceChangeRevision::from(7),
+        )
+        .build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"UPDATE "subscription_notified_registrations" SET "reported_revision" = $1 WHERE "subscription_key" IN (SELECT "subscription_key" FROM "subscriptions" WHERE "id" = $2) AND "registration_id" = $3 AND "reported_revision" = $4"#
         );
     }
 

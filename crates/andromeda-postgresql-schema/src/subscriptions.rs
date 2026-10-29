@@ -119,6 +119,9 @@ pub enum SubscriptionNotifiedRegistrations {
     SubscriptionKey,
     /// The registration it was notified of.
     RegistrationId,
+    /// The latest registration change revision that claimed an `updated`
+    /// notification for the pair; NULL until one does.
+    ReportedRevision,
 }
 
 #[cfg(test)]
@@ -132,6 +135,7 @@ mod tests {
         assert_eq!(SubscriptionNotifiedRegistrations::Table.to_string(), "subscription_notified_registrations");
         assert_eq!(SubscriptionNotifiedRegistrations::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(SubscriptionNotifiedRegistrations::RegistrationId.to_string(), "registration_id");
+        assert_eq!(SubscriptionNotifiedRegistrations::ReportedRevision.to_string(), "reported_revision");
     }
 
     #[test]

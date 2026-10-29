@@ -6,6 +6,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    csource_change_revision::CsourceChangeRevision,
     notification::{CsrChange, CsrTriggerReason},
     registration::ContextSourceRegistration,
     subscription::{SubscriptionStatus, standing::SubscriptionStanding},
@@ -85,6 +86,10 @@ fn summary(planned: &[PlannedNotification<'_>]) -> Vec<(CsrTriggerReason, String
         .collect()
 }
 
+fn revision(drawn: i64) -> CsourceChangeRevision {
+    CsourceChangeRevision::from(drawn)
+}
+
 fn ids(registrations: &[&ContextSourceRegistration]) -> Vec<String> {
     registrations.iter().map(|registration| registration.id.to_string()).collect()
 }
@@ -113,6 +118,7 @@ async fn a_registration_carried_by_the_initial_notification_is_not_reported_agai
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(1),
             &uri(REGISTRATION),
             None,
             Some(&created),
@@ -137,6 +143,7 @@ async fn a_creation_evaluated_before_the_initial_notification_is_reported_once_b
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(2),
             &uri(REGISTRATION),
             None,
             Some(&created),
@@ -168,6 +175,7 @@ async fn brokers_sharing_the_tenant_database_report_a_registration_once_between_
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(3),
             &uri(REGISTRATION),
             None,
             Some(&created),
@@ -182,6 +190,7 @@ async fn brokers_sharing_the_tenant_database_report_a_registration_once_between_
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Updated,
+            revision(4),
             &uri(REGISTRATION),
             Some(&created),
             Some(&current),
@@ -213,6 +222,7 @@ async fn a_subscription_created_on_another_broker_is_notified_of_a_change_evalua
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(5),
             &uri(REGISTRATION),
             None,
             Some(&created),
@@ -222,6 +232,7 @@ async fn a_subscription_created_on_another_broker_is_notified_of_a_change_evalua
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Updated,
+            revision(6),
             &uri(REGISTRATION),
             Some(&created),
             Some(&current),
@@ -246,6 +257,7 @@ async fn a_registration_created_after_the_initial_notification_is_newly_matching
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(7),
             &uri(REGISTRATION),
             None,
             Some(&created),
@@ -271,10 +283,24 @@ async fn a_reported_registration_updated_out_of_matching_is_no_longer_matching_o
 
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
     let on_update = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&before), Some(&after))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(8),
+            &uri(REGISTRATION),
+            Some(&before),
+            Some(&after),
+        )
         .await;
     let on_second_update = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&after), Some(&after))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(9),
+            &uri(REGISTRATION),
+            Some(&after),
+            Some(&after),
+        )
         .await;
 
     assert_eq!(summary(&on_update), vec![(CsrTriggerReason::NoLongerMatching, VEHICLE.to_owned())]);
@@ -295,10 +321,24 @@ async fn an_update_into_matching_is_newly_matching_and_a_further_matching_update
 
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
     let into_matching = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&building), Some(&vehicle))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(10),
+            &uri(REGISTRATION),
+            Some(&building),
+            Some(&vehicle),
+        )
         .await;
     let still_matching = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&vehicle), Some(&vehicle))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(11),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&vehicle),
+        )
         .await;
 
     assert_eq!(summary(&into_matching), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
@@ -323,12 +363,145 @@ async fn two_concurrent_evaluations_of_an_update_into_matching_notify_once() {
 
     let _initial = first.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
     let (on_first, on_second) = tokio::join!(
-        first.plan_registration_change(&subscriptions, RegistrationChange::Updated, &registration_id, Some(&building), Some(&vehicle)),
-        second.plan_registration_change(&subscriptions, RegistrationChange::Updated, &registration_id, Some(&building), Some(&vehicle)),
+        first.plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(12),
+            &registration_id,
+            Some(&building),
+            Some(&vehicle)
+        ),
+        second.plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(12),
+            &registration_id,
+            Some(&building),
+            Some(&vehicle)
+        ),
     );
 
     let reasons: Vec<CsrTriggerReason> = summary(&on_first).into_iter().chain(summary(&on_second)).map(|(reason, _)| reason).collect();
     assert_eq!(reasons, vec![CsrTriggerReason::NewlyMatching]);
+}
+
+/// Clause 5.11.7 owes one notification per change: two evaluations of one
+/// update that keeps a reported registration selected send `updated` once.
+#[tokio::test]
+async fn two_concurrent_evaluations_of_an_update_inside_the_selection_notify_once() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let first = broker(&ledger);
+    let second = broker(&ledger);
+    let subscription = subscription();
+    let vehicle = registration(REGISTRATION, VEHICLE);
+    let subscriptions = [Arc::clone(&subscription)];
+    let registration_id = uri(REGISTRATION);
+
+    let _initial = first
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let (on_first, on_second) = tokio::join!(
+        first.plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(40),
+            &registration_id,
+            Some(&vehicle),
+            Some(&vehicle)
+        ),
+        second.plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(40),
+            &registration_id,
+            Some(&vehicle),
+            Some(&vehicle)
+        ),
+    );
+
+    let reasons: Vec<CsrTriggerReason> = summary(&on_first).into_iter().chain(summary(&on_second)).map(|(reason, _)| reason).collect();
+    assert_eq!(reasons, vec![CsrTriggerReason::Updated]);
+}
+
+/// Two different updates of one registration are two changes, each owed its
+/// own `updated` notification.
+#[tokio::test]
+async fn two_distinct_updates_inside_the_selection_each_notify_once() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let vehicle = registration(REGISTRATION, VEHICLE);
+    let subscriptions = [Arc::clone(&subscription)];
+
+    let _initial = membership
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let first = membership
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(41),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&vehicle),
+        )
+        .await;
+    let second = membership
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(42),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&vehicle),
+        )
+        .await;
+
+    assert_eq!(summary(&first), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
+    assert_eq!(summary(&second), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
+}
+
+/// An `updated` notification that was not sent gives its claim back, so the
+/// next evaluation of the same change still sends it.
+#[tokio::test]
+async fn an_unsent_update_notification_leaves_its_change_to_the_next_evaluation() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let vehicle = registration(REGISTRATION, VEHICLE);
+    let subscriptions = [Arc::clone(&subscription)];
+
+    let _initial = membership
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let unsent = membership
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(43),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&vehicle),
+        )
+        .await;
+    for planned in &unsent {
+        membership.undo(planned).await;
+    }
+    let retried = membership
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(43),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&vehicle),
+        )
+        .await;
+
+    assert_eq!(summary(&retried), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
 }
 
 /// Clause 5.11.7 owes one notification per change, and clause 5.3.3 names an
@@ -352,11 +525,18 @@ async fn a_creation_evaluated_after_its_update_into_matching_is_notified_once_by
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
     let creation = ChangeStates::of(&created);
     let on_creation = membership
-        .plan_registration_change(&subscriptions, creation.change, &uri(REGISTRATION), creation.before, creation.after)
+        .plan_registration_change(
+            &subscriptions,
+            creation.change,
+            revision(14),
+            &uri(REGISTRATION),
+            creation.before,
+            creation.after,
+        )
         .await;
     let update = ChangeStates::of(&updated);
     let on_update = membership
-        .plan_registration_change(&subscriptions, update.change, &uri(REGISTRATION), update.before, update.after)
+        .plan_registration_change(&subscriptions, update.change, revision(15), &uri(REGISTRATION), update.before, update.after)
         .await;
 
     assert_eq!(summary(&on_creation), Vec::new());
@@ -377,12 +557,20 @@ async fn deleting_a_reported_registration_is_no_longer_matching_and_an_unreporte
 
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
     let on_delete = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Deleted, &uri(REGISTRATION), Some(&deleted), None)
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Deleted,
+            revision(16),
+            &uri(REGISTRATION),
+            Some(&deleted),
+            None,
+        )
         .await;
     let on_other_delete = membership
         .plan_registration_change(
             &subscriptions,
             RegistrationChange::Deleted,
+            revision(17),
             &uri(OTHER_REGISTRATION),
             Some(&never_reported),
             None,
@@ -404,7 +592,14 @@ async fn a_deletion_without_a_snapshot_withdraws_the_registration_without_a_noti
 
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
     let on_delete = membership
-        .plan_registration_change(&[Arc::clone(&subscription)], RegistrationChange::Deleted, &uri(REGISTRATION), None, None)
+        .plan_registration_change(
+            &[Arc::clone(&subscription)],
+            RegistrationChange::Deleted,
+            revision(18),
+            &uri(REGISTRATION),
+            None,
+            None,
+        )
         .await;
 
     assert_eq!(summary(&on_delete), Vec::new());
@@ -428,12 +623,20 @@ async fn a_creation_found_no_longer_matching_is_left_to_the_update_that_changed_
         .await
         .expect("recorded");
     let on_creation = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Created, &uri(REGISTRATION), None, Some(&current))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Created,
+            revision(19),
+            &uri(REGISTRATION),
+            None,
+            Some(&current),
+        )
         .await;
     let on_update = membership
         .plan_registration_change(
             &subscriptions,
             RegistrationChange::Updated,
+            revision(20),
             &uri(REGISTRATION),
             Some(&as_created),
             Some(&current),
@@ -466,6 +669,7 @@ async fn a_subscription_update_resends_all_current_matches_and_withdraws_what_it
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Deleted,
+            revision(21),
             &uri(OTHER_REGISTRATION),
             Some(&dropped),
             None,
@@ -499,6 +703,7 @@ async fn a_registration_reported_after_the_update_read_its_matches_stays_recorde
         .plan_registration_change(
             &subscriptions,
             RegistrationChange::Created,
+            revision(22),
             &uri(OTHER_REGISTRATION),
             None,
             Some(&reported_later),
@@ -515,6 +720,7 @@ async fn a_registration_reported_after_the_update_read_its_matches_stays_recorde
         .plan_registration_change(
             &subscriptions,
             RegistrationChange::Updated,
+            revision(23),
             &uri(OTHER_REGISTRATION),
             Some(&reported_later),
             Some(&reported_later),
@@ -572,6 +778,7 @@ async fn a_time_interval_subscription_is_sent_every_match_and_ignores_registrati
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Created,
+            revision(24),
             &uri(OTHER_REGISTRATION),
             None,
             Some(&created),
@@ -594,7 +801,7 @@ async fn a_paused_subscription_is_not_notified_of_a_registration_change() {
     let created = registration(REGISTRATION, VEHICLE);
 
     let on_creation = membership
-        .plan_registration_change(&[paused], RegistrationChange::Created, &uri(REGISTRATION), None, Some(&created))
+        .plan_registration_change(&[paused], RegistrationChange::Created, revision(25), &uri(REGISTRATION), None, Some(&created))
         .await;
 
     assert_eq!(summary(&on_creation), Vec::new());
@@ -614,13 +821,27 @@ async fn an_unsent_newly_matching_notification_is_withdrawn_from_the_record() {
 
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
     let on_creation = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Created, &uri(REGISTRATION), None, Some(&created))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Created,
+            revision(26),
+            &uri(REGISTRATION),
+            None,
+            Some(&created),
+        )
         .await;
     for planned in &on_creation {
         membership.undo(planned).await;
     }
     let on_update = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&created), Some(&created))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(27),
+            &uri(REGISTRATION),
+            Some(&created),
+            Some(&created),
+        )
         .await;
 
     assert_eq!(summary(&on_update), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
@@ -643,7 +864,14 @@ async fn an_unsent_no_longer_matching_notification_is_restored_to_the_record() {
         .await
         .expect("recorded");
     let on_update = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Updated, &uri(REGISTRATION), Some(&vehicle), Some(&building))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Updated,
+            revision(28),
+            &uri(REGISTRATION),
+            Some(&vehicle),
+            Some(&building),
+        )
         .await;
     for planned in &on_update {
         membership.undo(planned).await;
@@ -683,6 +911,7 @@ async fn a_registration_changed_before_the_initial_recording_is_withdrawn_and_le
         .plan_registration_change(
             &[Arc::clone(&subscription)],
             RegistrationChange::Updated,
+            revision(29),
             &uri(REGISTRATION),
             Some(&read_with_the_match_set[0]),
             Some(&as_updated),
@@ -745,13 +974,27 @@ async fn an_unsent_withdrawal_of_a_deleted_registration_is_not_restored() {
         .await
         .expect("recorded");
     let on_delete = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Deleted, &uri(REGISTRATION), Some(&deleted), None)
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Deleted,
+            revision(30),
+            &uri(REGISTRATION),
+            Some(&deleted),
+            None,
+        )
         .await;
     for planned in &on_delete {
         membership.undo(planned).await;
     }
     let on_recreation = membership
-        .plan_registration_change(&subscriptions, RegistrationChange::Created, &uri(REGISTRATION), None, Some(&recreated))
+        .plan_registration_change(
+            &subscriptions,
+            RegistrationChange::Created,
+            revision(31),
+            &uri(REGISTRATION),
+            None,
+            Some(&recreated),
+        )
         .await;
 
     assert_eq!(summary(&on_recreation), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
