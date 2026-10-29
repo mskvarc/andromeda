@@ -97,8 +97,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // what the sources answered decides which entities the local read exempts
     // from the value, geo and scope filters (clause 5.7.4.4).
     let sources = TemporalForwarding::new(&state.forwarding, &admitted, &headers, split, shape.reach());
-    let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
-    let gathering = GatheringRequest::new(&target, &params, &context, admitted.language.targeting, service.engine(), &uri);
+    let forwarded = forward_temporal_history(sources, scope, &target, &params, &context, &uri).await?;
+    let gathering = GatheringRequest::new(&target, &params, &context, admitted.language.targeting, &uri);
     let in_effect = gather_in_effect(sources, service, gathering, filtering, forwarded.as_ref()).await?;
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());

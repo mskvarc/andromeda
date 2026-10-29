@@ -24,7 +24,7 @@ use crate::{
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     participating_read::ParticipatingRead,
-    read_fan_out::{ReadSelection, ReadServing},
+    registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     transport::ForwardedRequest,
 };
@@ -147,9 +147,9 @@ impl FederationService {
             return Ok(Vec::new());
         }
         let registrations = self
-            .select_read_registrations(
+            .select_registrations(
                 context,
-                ReadSelection {
+                RegistrationSelection {
                     selectors: &[EntitySelectorParams {
                         id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
                         ..EntitySelectorParams::default()
@@ -158,7 +158,7 @@ impl FederationService {
                     csf: None,
                     scope_q: None,
                     geo: None,
-                    serving: ReadServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
+                    serving: RegistrationServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
                     mode_filter: CsrModeFilter::ExcludeAuxiliary,
                     entity_map: EntityMapInUse::None,
                 },

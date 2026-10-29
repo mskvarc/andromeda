@@ -4,9 +4,7 @@
 use crate::{
     entity::{
         ContextSpec,
-        ContextualExpander,
         CsrModeFilter,
-        EntityResultExt,
         ForwardQueryRequest,
         ProblemResponse,
         SourceContribution,
@@ -29,10 +27,9 @@ use andromeda_federation::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
-use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::filter::{expansion::expand_csf_expr, expression::Expr};
+use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::{HeaderMap, Uri as HttpUri};
 use iri_rs::IriBuf;
@@ -128,15 +125,13 @@ pub(crate) struct QueryForwarding<'a> {
     pub(crate) forwarding: &'a FederationService,
     /// Live or Snapshot branch selected for the request.
     pub(crate) target: &'a ContextTarget,
-    /// The JSON-LD engine the context source filter is expanded with.
-    pub(crate) engine: &'a JsonLdEngine,
     /// The request URI problem responses name.
     pub(crate) uri: &'a HttpUri,
     /// The query as the client wrote it.
     pub(crate) query: &'a EntityQueryParameters,
     /// The query as admitted: the `Via` chain it arrived with, the
-    /// `EntityMap` it runs under and the geoquery the registrations are
-    /// selected by (clause 5.10.2.4).
+    /// `EntityMap` it runs under and the filters the registrations are
+    /// selected by (clauses 4.9 and 5.10.2.4).
     pub(crate) admitted: &'a AdmittedQuery,
     /// The resolved split-entities policy.
     pub(crate) split: SplitEntities,
@@ -158,30 +153,18 @@ impl QueryForwarding<'_> {
     /// 6.4.3.2-3), and so are answers exceeding the request's budget (clause
     /// 4.12, `TooManyResults`).
     pub(crate) async fn run(&self) -> Result<ForwardedQueryResults, ProblemResponse> {
-        // The CSR filter was parsed while extracting the request. The expanded
-        // copy selects the registrations; the raw expression is forwarded as
-        // the client wrote it (clause 5.7.2.4 propagates it into discovery).
-        //
-        // No `jsonKeys` declaration applies: Table 5.2.12-1 scopes that member
-        // to Entity attribute names, while `csf` addresses the Context Source
-        // Properties of a registration (clause 4.9), whose values are raw JSON
-        // addressed by their literal keys.
-        let csf_expr: Option<Expr> = match &self.query.csf {
-            Some(expr) => {
-                let prepared_context = self.engine.prepare_term_context(self.context);
-                let csf_expander = ContextualExpander::new(self.engine, &prepared_context);
-                Some(expand_csf_expr(expr.clone(), &csf_expander).await.with_entity_instance(self.uri)?) // clone: the raw filter stays in the query for forwarding
-            }
-            None => None,
-        };
+        // The expanded context source filter selects the registrations; the
+        // raw expression is forwarded as the client wrote it (clause 5.7.2.4
+        // propagates it into discovery).
+        let csf_expr = self.admitted.registration_filters.csf();
         // Clause 4.12: one budget bounds everything the query gathers, from
         // both phases' sources and, once they have answered, the local store.
         let budget = ResultBudget::new(self.forwarding.result_limits());
-        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr.as_ref(), &budget).await?;
+        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary, csf_expr, &budget).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));
         }
-        let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly, csf_expr.as_ref(), &budget).await?;
+        let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly, csf_expr, &budget).await?;
 
         let mut warnings = collect_warnings(&primary.results);
         warnings.extend(collect_warnings(&auxiliary.results));
@@ -227,7 +210,7 @@ impl QueryForwarding<'_> {
                         headers: Some(self.headers),
                     },
                     csf_expr,
-                    geo: self.admitted.registry_geo.as_ref(),
+                    geo: self.admitted.registration_filters.geo(),
                     mode_filter,
                     entity_map: EntityMapInUse::from(&self.admitted.map_use),
                     budget,

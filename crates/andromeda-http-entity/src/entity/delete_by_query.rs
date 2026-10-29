@@ -21,6 +21,7 @@ use crate::entity::{
     forwarded_write_error,
     multi_status,
     purge_entity_map::resolve_purge_map,
+    query_admission::registration_filters,
     single_source_failure,
 };
 use andromeda_entity::side_effect::SideEffectPlacement;
@@ -175,14 +176,14 @@ pub(crate) async fn delete_by_query(
     let forwarded = if is_local || considers_nothing {
         Vec::new()
     } else {
+        let filters = registration_filters(&state, &context, &query, &uri).await?;
         state
             .forwarding
             .forward_purge(
                 &target,
                 ForwardPurgeRequest {
-                    entity_type_compact: query.entity_type.as_ref(),
-                    entity_ids: query.id.as_deref(),
-                    id_pattern: query.id_pattern.as_ref(),
+                    query: &query,
+                    filters: &filters,
                     local_ids: &entity_ids,
                     query_string: uri.query().unwrap_or(""),
                     entity_map: entity_map.in_use(),

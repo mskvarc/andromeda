@@ -4,7 +4,8 @@
 
 use crate::{error::EntityMapResultExt, state::EntityMapRouteServices};
 use andromeda_federation::{
-    entity_map::{EntityMapQueryKind, ForwardEntityMapRequest, ForwardedEntityMap},
+    entity_map::{EntityMapQuery, ForwardEntityMapRequest, ForwardedEntityMap},
+    expanded_registration_filters::ExpandedRegistrationFilters,
     outcome::ForwardReadOutcome,
     request::TriggeringRequest,
 };
@@ -25,7 +26,6 @@ use andromeda_http_response::{
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use axum::{
     http::{StatusCode, Uri as HttpUri},
@@ -42,14 +42,9 @@ pub(crate) struct MapCreation<'a> {
     pub(crate) lifetime: Option<&'a Iso8601Duration>,
     /// The digest of the creating request's filters (clause 5.5.14).
     pub(crate) fingerprint: RequestFingerprint,
-    /// Which creation resource the peers are asked through.
-    pub(crate) kind: EntityMapQueryKind,
-    /// Compact entity type for registration matching.
-    pub(crate) entity_type: Option<&'a TypeExprRaw>,
-    /// Entity identifiers for registration matching.
-    pub(crate) entity_ids: Option<&'a [Identifier]>,
-    /// The identifier pattern for registration matching.
-    pub(crate) id_pattern: Option<&'a Pattern>,
+    /// The query the map is created for, which also decides the creation
+    /// resource the peers are asked through.
+    pub(crate) query: EntityMapQuery<'a>,
     /// The query string forwarded to each source.
     pub(crate) forwarded_query: String,
     /// Whether the request asked for local scope (clause 5.5.13).
@@ -87,13 +82,12 @@ pub(crate) async fn create_map(
     let mut warnings: Vec<NgsiLdWarning> = Vec::new();
     // Clause 5.5.13: local scope forwards nothing.
     if !creation.local {
+        let filters = registration_filters(state, creation.query, rendering).await?;
         let forwarded: ForwardReadOutcome<ForwardedEntityMap> = state
             .forwarding
             .forward_entity_map_query(ForwardEntityMapRequest {
-                kind: creation.kind,
-                entity_type_compact: creation.entity_type,
-                entity_ids: creation.entity_ids,
-                id_pattern: creation.id_pattern,
+                query: creation.query,
+                filters: &filters,
                 query_string: &creation.forwarded_query,
                 context: rendering.context,
                 triggering,
@@ -117,7 +111,29 @@ pub(crate) async fn create_map(
         }
     }
     state.entity_maps.store(&map).await.with_entity_map_instance(rendering.uri)?;
-    render_created(&map, creation.kind, rendering, state, warnings).await
+    render_created(&map, creation.query, rendering, state, warnings).await
+}
+
+/// The query's context source filter and geoquery expanded under the
+/// request's context, each geoquery admitted under the terms of the service
+/// that runs its query: the registrations a source map is asked of have to
+/// pass them (clauses 4.9 and 5.10.2.4).
+///
+/// # Errors
+///
+/// The classified failure of compiling the geoquery or expanding the filter.
+async fn registration_filters(
+    state: &EntityMapRouteServices,
+    query: EntityMapQuery<'_>,
+    rendering: &CreationRendering<'_>,
+) -> Result<ExpandedRegistrationFilters, ProblemResponse> {
+    let (csf, geo, admission) = match query {
+        EntityMapQuery::Entities(params) => (params.csf.as_ref(), params.geo.0.as_ref(), state.entity_query.geo_admission()),
+        EntityMapQuery::TemporalEntities(params) => (params.csf.as_ref(), params.geo.0.as_ref(), state.temporal.geo_admission()),
+    };
+    ExpandedRegistrationFilters::expand(state.entity_query.engine(), rendering.context, csf, geo, admission)
+        .await
+        .with_entity_map_instance(rendering.uri)
 }
 
 /// Render a created map: 201 with `Location` and `NGSILD-EntityMap`, or 203
@@ -125,14 +141,14 @@ pub(crate) async fn create_map(
 /// (Table 6.34.3.1-1).
 async fn render_created(
     map: &EntityMap,
-    kind: EntityMapQueryKind,
+    query: EntityMapQuery<'_>,
     rendering: &CreationRendering<'_>,
     state: &EntityMapRouteServices,
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<Response, ProblemResponse> {
-    let collection = match kind {
-        EntityMapQueryKind::Entities => ResourceCollection::EntityMaps,
-        EntityMapQueryKind::TemporalEntities => ResourceCollection::TemporalEntityMaps,
+    let collection = match query {
+        EntityMapQuery::Entities(_) => ResourceCollection::EntityMaps,
+        EntityMapQuery::TemporalEntities(_) => ResourceCollection::TemporalEntityMaps,
     };
     let body = EntityMapBody::new(map, rendering.prefer.requested_version);
     let renderer = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)

@@ -29,7 +29,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
     temporal_failure::classify_temporal_error,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_request::{attribute_deletion::DeleteAttrParams, local::LocalOnlyParams, query::temporal::TemporalQueryParameters};

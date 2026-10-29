@@ -14,8 +14,9 @@ use crate::{
     outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
-    read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, expand_registration_targets, read_outcome},
     registration_narrowing::Narrowing,
+    registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     source_walk::SOURCE_PAGE_SIZE,
     split_entities::SplitEntities,
@@ -107,15 +108,15 @@ impl FederationService {
                 QueryDelivery::Batch => ReadIntent::QueryBatch,
             };
             let registrations = self
-                .select_read_registrations(
+                .select_registrations(
                     context,
-                    ReadSelection {
+                    RegistrationSelection {
                         selectors: &client_query.selectors(),
                         exclude_registration: None,
                         csf: csf_expr,
                         scope_q: client_query.scope_q(),
                         geo,
-                        serving: ReadServing::EntityQuery(intent),
+                        serving: RegistrationServing::EntityQuery(intent),
                         mode_filter,
                         entity_map,
                     },
@@ -207,9 +208,9 @@ impl FederationService {
                 return Ok(own_loop_outcome());
             }
             let registrations = self
-                .select_read_registrations(
+                .select_registrations(
                     context,
-                    ReadSelection {
+                    RegistrationSelection {
                         selectors: &client_query.selectors(),
                         exclude_registration,
                         csf: None,
@@ -219,7 +220,7 @@ impl FederationService {
                         // registrations that "match and support the
                         // retrieveEntity operation" (Table 4.20-1); one
                         // advertising only a query operation does not apply.
-                        serving: ReadServing::Operation(ForwardingOperation::RetrieveEntity),
+                        serving: RegistrationServing::Operation(ForwardingOperation::RetrieveEntity),
                         mode_filter,
                         entity_map,
                     },

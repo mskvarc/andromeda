@@ -11,9 +11,10 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
-    read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, expand_registration_targets, read_outcome},
     received_temporal_answer::ReceivedTemporalAnswer,
     registration_narrowing::Narrowing,
+    registration_selection::{RegistrationSelection, RegistrationServing},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, SourcePaging},
     split_entities::SplitEntities,
     term_resolver::TermResolver,
@@ -81,15 +82,15 @@ impl FederationService {
         }
         let client = ClientQuery::TemporalQuery(client_query);
         let registrations = self
-            .select_read_registrations(
+            .select_registrations(
                 context,
-                ReadSelection {
+                RegistrationSelection {
                     selectors: &client.selectors(),
                     exclude_registration: None,
                     csf: csf_expr,
                     scope_q: client_query.scope_q.as_ref(),
                     geo,
-                    serving: ReadServing::Operation(operation),
+                    serving: RegistrationServing::Operation(operation),
                     mode_filter,
                     entity_map,
                 },
@@ -181,9 +182,9 @@ impl FederationService {
             return Ok(own_loop_outcome());
         }
         let registrations = self
-            .select_read_registrations(
+            .select_registrations(
                 context,
-                ReadSelection {
+                RegistrationSelection {
                     selectors: &[EntitySelectorParams {
                         id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
                         ..EntitySelectorParams::default()
@@ -192,7 +193,7 @@ impl FederationService {
                     csf: None,
                     scope_q: None,
                     geo: None,
-                    serving: ReadServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
+                    serving: RegistrationServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
                     mode_filter,
                     entity_map,
                 },

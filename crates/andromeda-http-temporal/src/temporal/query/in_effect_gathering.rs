@@ -25,7 +25,7 @@ use andromeda_federation::{
     outcome::ForwardedTemporalEntities,
     split_entities::SplitEntities,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
@@ -76,20 +76,17 @@ pub(crate) struct GatheringRequest<'r> {
     target: &'r ContextTarget,
     /// The query, its context and the URI a failure names.
     query: InEffectRequest<'r>,
-    /// The engine the context source filter is expanded with.
-    engine: &'r JsonLdEngine,
 }
 
 impl<'r> GatheringRequest<'r> {
     /// The gathering of `params` against `target`, under `context`, its
-    /// target languages read under `language_targeting`, its context
-    /// source filter expanded with `engine` and a failure naming `instance`.
+    /// target languages read under `language_targeting` and a failure naming
+    /// `instance`.
     pub(crate) const fn new(
         target: &'r ContextTarget,
         params: &'r TemporalQueryParameters,
         context: &'r ContextSpec,
         language_targeting: LanguageTargeting,
-        engine: &'r JsonLdEngine,
         instance: &'r Uri,
     ) -> GatheringRequest<'r> {
         GatheringRequest {
@@ -100,7 +97,6 @@ impl<'r> GatheringRequest<'r> {
                 language_targeting,
                 instance,
             },
-            engine,
         }
     }
 }
@@ -121,13 +117,13 @@ pub(crate) async fn gather_in_effect(
     filtering: SplitEntities,
     forwarded: Option<&ForwardedHistory>,
 ) -> Result<Option<InEffectGathering>, ProblemResponse> {
-    let GatheringRequest { target, query, engine } = request;
+    let GatheringRequest { target, query } = request;
     let opens_with_an_instance_in_effect = query.params.window().ok().and_then(|window| window.in_effect_start()).is_some();
     let (Some(forwarded), SplitEntities::Split, true, true) = (forwarded, filtering, carries_split_filters(query.params), opens_with_an_instance_in_effect)
     else {
         return Ok(None);
     };
-    let mut probed = forward_in_effect_probes(sources, engine, target, query, &ACROSS_DATASETS).await?;
+    let mut probed = forward_in_effect_probes(sources, target, query, &ACROSS_DATASETS).await?;
     let window_parts: Vec<&TemporalDocument> = instance_documents(&forwarded.sources).collect();
     let mut entity_ids: Vec<Identifier> = window_parts
         .iter()
@@ -161,7 +157,7 @@ pub(crate) async fn gather_in_effect(
         })
         .collect();
     if !follow_ups.is_empty() {
-        probed.extend(forward_in_effect_probes(sources, engine, target, query, &follow_ups).await?);
+        probed.extend(forward_in_effect_probes(sources, target, query, &follow_ups).await?);
     }
     Ok(Some(InEffectGathering { sources: probed, local }))
 }

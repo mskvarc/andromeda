@@ -10,27 +10,24 @@
 use crate::{
     FederationService,
     cache::Cacheability,
-    entity_read::mode_admitted,
     error::FederationError,
+    expanded_registration_filters::ExpandedRegistrationFilters,
+    forwarded_query::client_query::ClientQuery,
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome},
     read_fan_out::{SourceAnswer, read_outcome},
-    request::{CsrModeFilter, TriggeringRequest},
+    registration_selection::{RegistrationSelection, RegistrationServing},
+    request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     source_read::SourceRead,
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::{
-    csr::expanded_entity_specification::ExpandedEntitySpecification,
-    pattern::Pattern,
-    type_selection::grammar::{TypeExpr, TypeExprRaw},
-};
-use chrono::Utc;
+use andromeda_ngsi_ld_model::entity_map::EntityMap;
+use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use futures::{StreamExt, stream};
 use thiserror::Error;
 use tracing::warn;
@@ -46,43 +43,51 @@ struct InvalidEntityMap<'a> {
     error: serde_json::Error,
 }
 
-/// Which `EntityMap` creation resource a forwarded request targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityMapQueryKind {
-    /// `GET /entityMaps` over current entities (clause 5.14.4).
-    Entities,
-    /// `GET /temporal/entityMaps` over temporal entities (clause 5.14.5).
-    TemporalEntities,
+/// The query an `EntityMap` is created for, which also decides the creation
+/// resource a forwarded request targets.
+#[derive(Debug, Clone, Copy)]
+pub enum EntityMapQuery<'a> {
+    /// A query over current entities (clause 5.14.4).
+    Entities(&'a EntityQueryParameters),
+    /// A query over temporal entities (clause 5.14.5).
+    TemporalEntities(&'a TemporalQueryParameters),
 }
 
-impl EntityMapQueryKind {
-    /// The operation a registration has to advertise for this kind.
+impl<'a> EntityMapQuery<'a> {
+    /// The operation a registration has to advertise for this query.
     const fn operation(self) -> ForwardingOperation {
         match self {
-            EntityMapQueryKind::Entities => ForwardingOperation::CreateEntityMapQueryEntity,
-            EntityMapQueryKind::TemporalEntities => ForwardingOperation::CreateEntityMapQueryTemporal,
+            EntityMapQuery::Entities(_) => ForwardingOperation::CreateEntityMapQueryEntity,
+            EntityMapQuery::TemporalEntities(_) => ForwardingOperation::CreateEntityMapQueryTemporal,
         }
     }
 
     /// The resource path below the API base.
     const fn path(self) -> &'static [&'static str] {
         match self {
-            EntityMapQueryKind::Entities => &["entityMaps"],
-            EntityMapQueryKind::TemporalEntities => &["temporal", "entityMaps"],
+            EntityMapQuery::Entities(_) => &["entityMaps"],
+            EntityMapQuery::TemporalEntities(_) => &["temporal", "entityMaps"],
+        }
+    }
+
+    /// The query as the client sent it, in the terms registrations are
+    /// selected by.
+    const fn client_query(self) -> ClientQuery<'a> {
+        match self {
+            EntityMapQuery::Entities(params) => ClientQuery::EntityQuery(params),
+            EntityMapQuery::TemporalEntities(params) => ClientQuery::TemporalQuery(params),
         }
     }
 }
 
 /// Parameters for forwarding an `EntityMap` creation.
 pub struct ForwardEntityMapRequest<'a> {
-    /// Which creation resource is targeted.
-    pub kind: EntityMapQueryKind,
-    /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a TypeExprRaw>,
-    /// Optional entity identifiers for CSR matching.
-    pub entity_ids: Option<&'a [Identifier]>,
-    /// Optional identifier pattern for CSR matching.
-    pub id_pattern: Option<&'a Pattern>,
+    /// The query the map is created for: its entity selectors are matched by
+    /// clause 5.12 and its Scope query against each registration's `scope`.
+    pub query: EntityMapQuery<'a>,
+    /// The query's context source filter and geoquery, expanded under
+    /// `context`, which a registration has to pass to be contacted.
+    pub filters: &'a ExpandedRegistrationFilters,
     /// The query string forwarded to each source: the full query for a
     /// non-split query, the entity selectors alone when split entities apply
     /// (clause 5.14.4.4 strips the filters before forwarding).
@@ -109,8 +114,8 @@ impl FederationService {
     ///
     /// # Errors
     ///
-    /// Returns [`FederationError::JsonLd`] when the requested entity type
-    /// cannot be expanded against the request's context, and
+    /// Returns [`FederationError::Query`] when a selector's type cannot be
+    /// expanded against the request's context, and
     /// [`FederationError::Registration`] when the matching registrations
     /// cannot be read. A source that fails to answer does not fail the
     /// call: its attempt is reported as a [`ForwardedEntityMap`] without a
@@ -118,10 +123,8 @@ impl FederationService {
     /// returned [`ForwardReadOutcome`] carries on its `sources`.
     pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
-            kind,
-            entity_type_compact,
-            entity_ids,
-            id_pattern,
+            query,
+            filters,
             query_string,
             context,
             triggering,
@@ -129,26 +132,26 @@ impl FederationService {
         if self.is_loop_detected(triggering.via) {
             return Ok(ForwardReadOutcome::empty());
         }
-        let prepared_context = self.engine.prepare_term_context(context);
-        let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(TypeExpr::Type(self.engine.expand_type(t.as_str(), &prepared_context).await?))
-        } else {
-            None
-        };
-        let operation = kind.operation();
-        let registrations: Vec<_> = self
-            .csr_repo
-            .find_matching(&[ExpandedEntitySpecification {
-                entity_type: expanded_type.as_ref(),
-                ids: entity_ids.unwrap_or_default(),
-                id_pattern,
-            }])
-            .await?
-            .into_iter()
-            .filter(|csr| operation.matches(csr))
-            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data.
-            .filter(|csr| mode_admitted(csr, CsrModeFilter::ExcludeAuxiliary))
-            .collect();
+        let client_query = query.client_query();
+        let registrations = self
+            .select_registrations(
+                context,
+                RegistrationSelection {
+                    selectors: &client_query.selectors(),
+                    exclude_registration: None,
+                    csf: filters.csf(),
+                    scope_q: client_query.scope_q(),
+                    geo: filters.geo(),
+                    serving: RegistrationServing::Operation(query.operation()),
+                    // Clause 4.3.6.2: an auxiliary source only supplements
+                    // data held elsewhere, so it holds no map of its own.
+                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                    // Clauses 5.14.4.3 and 5.14.5.3 ignore the location of an
+                    // EntityMap on a creation request.
+                    entity_map: EntityMapInUse::None,
+                },
+            )
+            .await?;
         if registrations.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
@@ -163,7 +166,7 @@ impl FederationService {
                     .spelled_query_string(&registration, context, resolver, query_string, BodyPresence::Absent)
                     .await
                 {
-                    Ok(spelled) => forwarding_url(registration.access.endpoint.url(), kind.path(), Some(&spelled)),
+                    Ok(spelled) => forwarding_url(registration.access.endpoint.url(), query.path(), Some(&spelled)),
                     Err(error) => Err(error),
                 };
                 let read = SourceRead::builder()
@@ -210,20 +213,5 @@ impl FederationService {
             .collect()
             .await;
         Ok(read_outcome(answers, matched))
-    }
-
-    /// The registrations a request that references a live `EntityMap` contacts:
-    /// the map's sources, looked up by identifier, in place of clause 5.12
-    /// matching (clause 5.5.14, clause 5.12 last paragraph).
-    pub(crate) async fn registrations_of_map(&self, map: &EntityMap) -> Result<Vec<ContextSourceRegistration>, FederationError> {
-        let mut registrations = Vec::new();
-        for registration_id in map.registrations() {
-            if let Some(registration) = self.csr_repo.get(registration_id).await?
-                && registration.lifecycle.in_force_at(Utc::now())
-            {
-                registrations.push(registration);
-            }
-        }
-        Ok(registrations)
     }
 }

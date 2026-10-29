@@ -13,9 +13,11 @@ use andromeda_http_response::{
     jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
+    query_failure::classify_query_error,
     temporal_failure::classify_temporal_error,
 };
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
@@ -48,6 +50,12 @@ impl EntityMapHttpClassify for ParameterError {
 impl EntityMapHttpClassify for JsonLdError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         classify_jsonld_error(self)
+    }
+}
+
+impl EntityMapHttpClassify for QueryError {
+    fn classify_for_entity_map_http(&self) -> ClassifiedReport {
+        classify_query_error(self)
     }
 }
 

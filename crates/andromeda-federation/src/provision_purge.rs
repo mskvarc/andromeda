@@ -9,39 +9,40 @@
 use crate::{
     FederationService,
     error::FederationError,
+    expanded_registration_filters::ExpandedRegistrationFilters,
+    forwarded_query::client_query::ClientQuery,
     forwarded_write::PlannedWrite,
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    request::{EntityMapInUse, TriggeringRequest},
+    registration_selection::{RegistrationSelection, RegistrationServing},
+    request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+    registration::ContextSourceRegistration,
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
 };
-use andromeda_ngsi_ld_query::{
-    csr::expanded_entity_specification::ExpandedEntitySpecification,
-    pattern::Pattern,
-    type_selection::grammar::{TypeExpr, TypeExprRaw},
-};
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::slice;
 use tracing::debug;
 use url::form_urlencoded;
 
 /// Parameters for forwarding a purge.
 pub struct ForwardPurgeRequest<'a> {
-    /// The query's type selector, used for registration preselection.
-    pub entity_type_compact: Option<&'a TypeExprRaw>,
-    /// The query's identifiers, used for registration preselection.
-    pub entity_ids: Option<&'a [Identifier]>,
-    /// The query's identifier pattern, used for registration preselection.
-    pub id_pattern: Option<&'a Pattern>,
+    /// The Query Entities selection the purge runs (clause 5.6.21.4), its
+    /// identifiers already narrowed by a referenced Entity Map: its selector is
+    /// matched by clause 5.12 and its Scope query against each registration's
+    /// `scope`.
+    pub query: &'a EntityQueryParameters,
+    /// The selection's context source filter and geoquery, expanded under
+    /// `context`, which a registration has to pass to be contacted.
+    pub filters: &'a ExpandedRegistrationFilters,
     /// The identifiers the query selected locally; a registration's failure is
     /// reported against the ones it covers.
     pub local_ids: &'a [Identifier],
@@ -129,7 +130,7 @@ impl FederationService {
     ///
     /// # Errors
     ///
-    /// Returns [`FederationError::JsonLd`] when the query's entity type
+    /// Returns [`FederationError::Query`] when the query's entity type
     /// cannot be expanded against the request's context, and
     /// [`FederationError::Registration`] when the matching registrations
     /// cannot be read. A registration that refuses the purge does not fail
@@ -143,35 +144,39 @@ impl FederationService {
             return Ok(Vec::new());
         }
         let resolver = TermResolver::new(&self.engine, request.context);
-        let expanded_type = match request.entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(name) => Some(TypeExpr::Type(resolver.expand_type(name.as_str()).await?)),
-            None => None,
-        };
+        let client_query = ClientQuery::EntityQuery(request.query);
         // Clause 5.5.14 (and clause 5.12, last paragraph): a referenced map fixes
         // the sources this purge contacts to the map's own registrations, in
         // place of clause 5.12 matching, exactly as a forwarded query does.
-        let csrs = match request.entity_map.referenced() {
-            Some(map) => self.registrations_of_map(map).await?,
-            None => {
-                self.csr_repo
-                    .find_matching(&[ExpandedEntitySpecification {
-                        entity_type: expanded_type.as_ref(),
-                        ids: request.entity_ids.unwrap_or_default(),
-                        id_pattern: request.id_pattern,
-                    }])
-                    .await?
-            }
-        };
+        let csrs = self
+            .select_registrations(
+                request.context,
+                RegistrationSelection {
+                    selectors: &client_query.selectors(),
+                    exclude_registration: None,
+                    csf: request.filters.csf(),
+                    scope_q: client_query.scope_q(),
+                    geo: request.filters.geo(),
+                    // A matching proxied registration that does not advertise
+                    // `purgeEntity` is a Conflict (clause 5.6.21.4), so the
+                    // operation is checked per registration below.
+                    serving: RegistrationServing::Unchecked,
+                    // Clause 4.3.6.2: an auxiliary source only supplements
+                    // retrieval and never receives a write.
+                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                    entity_map: request.entity_map,
+                },
+            )
+            .await?;
         let query_string = match request.entity_map.referenced() {
-            Some(_) => narrowed_query_string(request.query_string, request.entity_ids),
+            Some(_) => narrowed_query_string(request.query_string, request.query.id.as_deref()),
             None => forwarded_query_string(request.query_string),
         };
 
-        // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut results = Vec::new();
         let mut planned = Vec::new();
         let mut reported = Vec::new();
-        for csr in csrs.into_iter().filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary)) {
+        for csr in csrs {
             let ids = reported_ids(&csr, request.local_ids);
             if ForwardingOperation::PurgeEntity.matches(&csr) {
                 // Clause 4.3.6.6: the purge selection's names are spelled in the

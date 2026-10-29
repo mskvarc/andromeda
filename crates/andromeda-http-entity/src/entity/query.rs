@@ -179,7 +179,6 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let forwarding = (!is_local && !considers_nothing).then(|| QueryForwarding {
             forwarding: &state.forwarding,
             target: &target,
-            engine: service.engine(),
             uri: &uri,
             query: &query,
             admitted: &admitted,

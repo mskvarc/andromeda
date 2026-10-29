@@ -2,7 +2,7 @@
 //!
 //! Admission is everything that can be decided about a query before it reaches
 //! the store: resolving the Entity Map it runs under, confining a non-federating
-//! branch to the local scope, validating it, compiling the geoquery the registrations are selected by, and holding it
+//! branch to the local scope, validating it, expanding the filters the registrations are selected by, and holding it
 //! to the clause 5.7.4.4 ordering rule.
 
 use crate::{
@@ -14,6 +14,7 @@ use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_extensions::advertisement::advertised_language_targeting;
 use andromeda_federation::{
     FederationService,
+    expanded_registration_filters::ExpandedRegistrationFilters,
     forwarded_query::client_query::ClientQuery,
     language_negotiation::NegotiatedLanguageTargeting,
     operation::ForwardingOperation,
@@ -23,11 +24,8 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
-use andromeda_jsonld::{term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_query::{
-    geo::{compile::compile_geo_query, query::GeoQuery},
-    ordering::parameters::OrderingParameters,
-};
+use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
 use andromeda_temporal::query_reading::QueryReading;
 use axum::http::Uri;
@@ -42,10 +40,10 @@ pub(super) struct AdmittedQuery {
     pub(super) incoming_via: Option<Via>,
     /// The Entity Map the query runs under (clause 5.5.14).
     pub(super) map_use: EntityMapUse,
-    /// The geoquery a registration's declared geometry has to admit for the
-    /// registration to take part (clauses 4.3.6.1 and 5.10.2.4); `None` when
-    /// the query has none or does not reach the Context Registry.
-    pub(super) registry_geo: Option<GeoQuery>,
+    /// The context source filter and geoquery a registration has to pass to
+    /// take part (clauses 4.3.6.1, 4.9 and 5.10.2.4); neither when the query
+    /// does not reach the Context Registry.
+    pub(super) registration_filters: ExpandedRegistrationFilters,
     /// What the query's target languages may be and how they select
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
@@ -72,7 +70,7 @@ impl AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
-/// validation, of compiling the geoquery, of the clause 5.7.4.4 ordering rule,
+/// validation, of expanding the registration filters, of the clause 5.7.4.4 ordering rule,
 /// of the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
 /// languages under the broker's
 /// `q_target_languages` level and the levels of the sources the query reaches.
@@ -92,7 +90,7 @@ pub(super) async fn admit_request(
     params
         .validate(TemporalQueryOperation::Query, state.temporal.linked_retrieval())
         .with_instance(instance)?;
-    let registry_geo = registry_geo_query(state, context, params, instance).await?;
+    let registration_filters = registration_filters(state, context, params, instance).await?;
     let service = &state.temporal;
     // The broker refuses a filter too complex for it to resolve, and a target
     // language its own `q_target_languages` level does not admit, before any
@@ -104,7 +102,7 @@ pub(super) async fn admit_request(
     let read = ParticipatingRead {
         requested_scope: params.execution_scope(),
         client_query: ClientQuery::TemporalQuery(params),
-        geo: registry_geo.as_ref(),
+        geo: registration_filters.geo(),
         operation: ForwardingOperation::QueryTemporalEntity,
         entity_map: EntityMapInUse::from(&map_use),
     };
@@ -118,36 +116,32 @@ pub(super) async fn admit_request(
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,
-        registry_geo,
+        registration_filters,
         language,
     })
 }
 
-/// The query's geoquery compiled under the request's context, when the query
-/// reaches the Context Registry: clause 5.10.2.4 matches it against the
-/// geometry each registration declares.
+/// The query's context source filter and geoquery expanded under the
+/// request's context, when the query reaches the Context Registry: clause
+/// 5.10.2.4 matches the geoquery against the geometry each registration
+/// declares, and clause 4.9 the filter against its Context Source Properties.
 ///
 /// # Errors
 ///
-/// The classified failure of compiling the geoquery.
-async fn registry_geo_query(
+/// The classified failure of compiling the geoquery or expanding the filter.
+async fn registration_filters(
     state: &TemporalRouteServices,
     context: &ContextSpec,
     params: &TemporalQueryParameters,
     instance: &Uri,
-) -> Result<Option<GeoQuery>, ProblemResponse> {
+) -> Result<ExpandedRegistrationFilters, ProblemResponse> {
     if params.is_local() {
-        return Ok(None);
+        return Ok(ExpandedRegistrationFilters::default());
     }
     let service = &state.temporal;
-    let prepared_context = service.engine().prepare_term_context(context);
-    compile_geo_query(
-        params.geo.0.as_ref(),
-        &ContextualExpander::new(service.engine(), &prepared_context),
-        service.geo_admission(),
-    )
-    .await
-    .with_instance(instance)
+    ExpandedRegistrationFilters::expand(service.engine(), context, params.csf.as_ref(), params.geo.0.as_ref(), service.geo_admission())
+        .await
+        .with_instance(instance)
 }
 
 /// Refuse an ordering clause 5.7.4.4 does not admit.

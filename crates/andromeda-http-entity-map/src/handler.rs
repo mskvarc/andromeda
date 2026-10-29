@@ -10,7 +10,7 @@ use crate::{
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
 };
 use andromeda_entity_map::fingerprint::{FingerprintedRequest, fingerprint_of};
-use andromeda_federation::{entity_map::EntityMapQueryKind, request::TriggeringRequest, split_entities::SplitEntities};
+use andromeda_federation::{entity_map::EntityMapQuery, request::TriggeringRequest, split_entities::SplitEntities};
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
@@ -183,10 +183,7 @@ async fn create_from_entity_query(
             local_ids,
             lifetime: query.entity_map_lifetime.as_ref(),
             fingerprint,
-            kind: EntityMapQueryKind::Entities,
-            entity_type: query.entity_type.as_ref(),
-            entity_ids: query.id.as_deref(),
-            id_pattern: query.id_pattern.as_ref(),
+            query: EntityMapQuery::Entities(query),
             forwarded_query,
             local: query.is_local(),
         },
@@ -231,10 +228,7 @@ async fn create_from_temporal_query(
             local_ids,
             lifetime: params.entity_map_lifetime.as_ref(),
             fingerprint,
-            kind: EntityMapQueryKind::TemporalEntities,
-            entity_type: params.entity_type.as_ref(),
-            entity_ids: params.id.as_deref(),
-            id_pattern: params.id_pattern.as_ref(),
+            query: EntityMapQuery::TemporalEntities(params),
             forwarded_query,
             local: params.is_local(),
         },

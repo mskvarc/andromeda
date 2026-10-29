@@ -12,7 +12,7 @@ use crate::{
     error::FederationError,
     forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
-    read_fan_out::{ReadSelection, ReadServing},
+    registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -69,15 +69,15 @@ impl FederationService {
         if matches!(ConsideredEntities::of_request(read.client_query.entity_ids()), ConsideredEntities::NoEntity) {
             return Ok(Vec::new());
         }
-        self.select_read_registrations(
+        self.select_registrations(
             context,
-            ReadSelection {
+            RegistrationSelection {
                 selectors: &read.client_query.selectors(),
                 exclude_registration: None,
                 csf: None,
                 scope_q: read.client_query.scope_q(),
                 geo: read.geo,
-                serving: ReadServing::Operation(read.operation),
+                serving: RegistrationServing::Operation(read.operation),
                 mode_filter: CsrModeFilter::All,
                 entity_map: read.entity_map,
             },

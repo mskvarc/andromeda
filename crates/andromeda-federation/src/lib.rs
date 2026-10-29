@@ -41,6 +41,8 @@ pub mod entity_result;
 /// Dropping source entities a write to this broker would refuse (clause 6.3.17).
 /// Federation policy failures.
 pub mod error;
+/// The filters a query places on registrations, expanded under its context.
+pub mod expanded_registration_filters;
 /// The concrete reasons a single forwarded write is reported as a conflict.
 pub mod federation_conflict_reason;
 /// The invariants federation relies on.
@@ -129,9 +131,16 @@ mod provision_plan_selector_tests;
 pub mod provision_purge;
 /// Why a forwarded entity query produced no answer.
 pub mod query_forwarding_error;
+/// Purge and EntityMap creation select their registrations as a read does.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod query_selection_forwarding_tests;
 /// Choosing how a forwarded current-entity read reaches one registration.
 pub mod read_binding;
-/// Registration selection and fan-out shared by forwarded reads.
+/// The fan-out shared by forwarded reads.
 pub mod read_fan_out;
 /// Entity versions in the model, for the merge tests.
 #[cfg(test)]
@@ -146,6 +155,8 @@ mod received_temporal_answer;
 mod registration_narrowing;
 /// The context and representation one registration receives.
 mod registration_payload;
+/// Which registrations a forwarded operation contacts.
+mod registration_selection;
 /// What a context source answered a forwarded request with when it failed it.
 pub mod remote_answer;
 /// Typed forwarding inputs.
@@ -419,6 +430,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-number",
     ],
     allow_production_dependencies: ["reqwest", "tokio"],
 }

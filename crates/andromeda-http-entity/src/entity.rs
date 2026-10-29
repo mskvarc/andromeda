@@ -36,7 +36,7 @@ use andromeda_http_response::{
     provision::{LocalOutcome, multi_status, provision_response},
     single::NgsiLdResponse,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::operation::selection::{DatasetSelection, OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{

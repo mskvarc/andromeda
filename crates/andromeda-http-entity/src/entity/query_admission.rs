@@ -3,7 +3,7 @@
 //! Admission is everything that can be decided about a query before it reaches
 //! the store: refusing a scoped read `@context`, confining a non-federating branch to the local scope, validating
 //! it, resolving the Entity Map it runs under, parsing its response options,
-//! compiling the geoquery the registrations are selected by, and holding it to
+//! expanding the filters the registrations are selected by, and holding it to
 //! the clause 5.7.2.4 ordering rule. [`crate::entity::query::run`]
 //! consumes the [`AdmittedQuery`] this produces.
 
@@ -16,6 +16,7 @@ use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_extensions::advertisement::advertised_language_targeting;
 use andromeda_federation::{
     FederationService,
+    expanded_registration_filters::ExpandedRegistrationFilters,
     forwarded_query::client_query::ClientQuery,
     language_negotiation::NegotiatedLanguageTargeting,
     ordering_admission::OrderingAdmission,
@@ -24,11 +25,8 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
-use andromeda_jsonld::{term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_query::{
-    geo::{compile::compile_geo_query, query::GeoQuery},
-    ordering::parameters::OrderingParameters,
-};
+use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::entity::{
@@ -52,10 +50,10 @@ pub(crate) struct AdmittedQuery {
     pub(crate) map_use: EntityMapUse,
     /// The representation, `sysAttrs` and `count` options resolved (clause 6.3.7).
     pub(crate) opts: EntityQueryParametersOptions,
-    /// The geoquery a registration's declared geometry has to admit for the
-    /// registration to take part (clauses 4.3.6.1 and 5.10.2.4); `None` when
-    /// the query has none or does not reach the Context Registry.
-    pub(crate) registry_geo: Option<GeoQuery>,
+    /// The context source filter and geoquery a registration has to pass to
+    /// take part (clauses 4.3.6.1, 4.9 and 5.10.2.4); neither when the query
+    /// does not reach the Context Registry.
+    pub(crate) registration_filters: ExpandedRegistrationFilters,
     /// What the query's target languages may be and how they select
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
@@ -72,7 +70,7 @@ pub(crate) struct AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of the clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, of compiling the geoquery, of the clause 5.7.2.4 ordering rule, of
+/// options, of expanding the registration filters, of the clause 5.7.2.4 ordering rule, of
 /// the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
 /// languages under the broker's
 /// `q_target_languages` level and the levels of the sources the query reaches.
@@ -92,7 +90,7 @@ pub(crate) async fn admit_request(
     let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
     let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
     let opts = query.parse_options().with_entity_instance(instance)?;
-    let registry_geo = registry_geo_query(state, context, query, instance).await?;
+    let registration_filters = registration_filters(state, context, query, instance).await?;
     let service = &state.entity_query;
     // The broker refuses a filter too complex for it to resolve, and a target
     // language its own `q_target_languages` level does not admit, before any
@@ -104,7 +102,7 @@ pub(crate) async fn admit_request(
     let read = ParticipatingRead {
         requested_scope: query.execution_scope(),
         client_query: ClientQuery::EntityQuery(query),
-        geo: registry_geo.as_ref(),
+        geo: registration_filters.geo(),
         operation: binding.forwarding_operation(),
         entity_map: EntityMapInUse::from(&map_use),
     };
@@ -120,36 +118,32 @@ pub(crate) async fn admit_request(
         incoming_via: protocol.incoming_via,
         map_use,
         opts,
-        registry_geo,
+        registration_filters,
         language,
     })
 }
 
-/// The query's geoquery compiled under the request's context, when the query
-/// reaches the Context Registry: clause 5.10.2.4 matches it against the
-/// geometry each registration declares.
+/// The query's context source filter and geoquery expanded under the
+/// request's context, when the query reaches the Context Registry: clause
+/// 5.10.2.4 matches the geoquery against the geometry each registration
+/// declares, and clause 4.9 the filter against its Context Source Properties.
 ///
 /// # Errors
 ///
-/// The classified failure of compiling the geoquery.
-async fn registry_geo_query(
+/// The classified failure of compiling the geoquery or expanding the filter.
+pub(crate) async fn registration_filters(
     state: &EntityRouteServices,
     context: &ContextSpec,
     query: &EntityQueryParameters,
     instance: &HttpUri,
-) -> Result<Option<GeoQuery>, ProblemResponse> {
+) -> Result<ExpandedRegistrationFilters, ProblemResponse> {
     if query.is_local() {
-        return Ok(None);
+        return Ok(ExpandedRegistrationFilters::default());
     }
     let service = &state.entity_query;
-    let prepared_context = service.engine().prepare_term_context(context);
-    compile_geo_query(
-        query.geo.0.as_ref(),
-        &ContextualExpander::new(service.engine(), &prepared_context),
-        service.geo_admission(),
-    )
-    .await
-    .with_entity_instance(instance)
+    ExpandedRegistrationFilters::expand(service.engine(), context, query.csf.as_ref(), query.geo.0.as_ref(), service.geo_admission())
+        .await
+        .with_entity_instance(instance)
 }
 
 /// Refuse an ordering clause 5.7.2.4 does not admit.

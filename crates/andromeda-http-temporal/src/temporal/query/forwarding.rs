@@ -3,12 +3,10 @@
 
 use crate::temporal::{
     ContextSpec,
-    ContextualExpander,
     CsrModeFilter,
     ForwardTemporalQueryRequest,
     ForwardingOperation,
     ProblemResponse,
-    ResultInstanceExt,
     TemporalQueryParameters,
     query::admission::AdmittedQuery,
 };
@@ -16,6 +14,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::{
     FederationService,
+    expanded_registration_filters::ExpandedRegistrationFilters,
     in_effect_probe::InEffectProbe,
     instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
@@ -29,12 +28,8 @@ use andromeda_http_response::{
     declined_representation::single_source_declined,
     forwarding_failure::local_federation_failure,
 };
-use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{
-    filter::{expansion::expand_csf_expr, expression::Expr, language_targeting::LanguageTargeting},
-    geo::query::GeoQuery,
-};
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
@@ -88,8 +83,9 @@ pub(crate) enum HistoryReach {
 /// How a temporal query reaches the context sources that hold the rest of the
 /// history: the federation service that contacts them, the triggering request
 /// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
-/// are asked under (clause 5.7.4.4), and the Entity Map and the geoquery that
-/// fix which of them are contacted (clauses 5.5.14 and 5.10.2.4).
+/// are asked under (clause 5.7.4.4), and the Entity Map and the registration
+/// filters that fix which of them are contacted (clauses 4.9, 5.5.14 and
+/// 5.10.2.4).
 #[derive(Clone, Copy)]
 pub(crate) struct TemporalForwarding<'a> {
     /// The service that contacts every matching registration.
@@ -101,9 +97,9 @@ pub(crate) struct TemporalForwarding<'a> {
     pub(crate) split: SplitEntities,
     /// The Entity Map the query runs under.
     pub(crate) map_use: &'a EntityMapUse,
-    /// The query's geoquery, compiled, which a registration's declared
-    /// geometry has to admit for it to be contacted.
-    pub(crate) geo: Option<&'a GeoQuery>,
+    /// The query's context source filter and geoquery, expanded, which a
+    /// registration has to pass to be contacted.
+    pub(crate) filters: &'a ExpandedRegistrationFilters,
     /// How much of each source's history is read.
     pub(crate) reach: HistoryReach,
 }
@@ -126,7 +122,7 @@ impl<'a> TemporalForwarding<'a> {
             },
             split,
             map_use: &admitted.map_use,
-            geo: admitted.registry_geo.as_ref(),
+            filters: &admitted.registration_filters,
             reach,
         }
     }
@@ -177,14 +173,13 @@ pub(crate) fn too_many_results(exceeded: ResultBudgetExceeded, instance: &Uri) -
 ///
 /// # Errors
 ///
-/// The classified failure of expanding the context source filter, the clause
-/// 4.12 `TooManyResults` refusal when the sources' answers exceed the budget,
+/// The clause 4.12 `TooManyResults` refusal when the sources' answers exceed
+/// the budget,
 /// and the Table 6.4.3.2-3 `NotImplemented` answer when the one source holding
 /// all the data declined the requested representation.
 pub(crate) async fn forward_temporal_history(
     sources: TemporalForwarding<'_>,
     scope: QueryScope,
-    engine: &JsonLdEngine,
     target: &ContextTarget,
     params: &TemporalQueryParameters,
     context: &ContextSpec,
@@ -195,13 +190,12 @@ pub(crate) async fn forward_temporal_history(
         triggering,
         split,
         map_use,
-        geo,
+        filters,
         reach,
     } = sources;
     if scope == QueryScope::Local {
         return Ok(None);
     }
-    let csf_expr = expanded_csf(engine, params, context, instance).await?;
     let budget = ResultBudget::new(forwarding.result_limits());
     let instances = InstanceBudget::new(forwarding.max_query_instances());
     let paging = match reach {
@@ -220,8 +214,8 @@ pub(crate) async fn forward_temporal_history(
                 context,
                 operation: ForwardingOperation::QueryTemporalEntity,
                 triggering,
-                csf_expr: csf_expr.as_ref(),
-                geo,
+                csf_expr: filters.csf(),
+                geo: filters.geo(),
                 mode_filter: CsrModeFilter::All,
                 entity_map: EntityMapInUse::from(map_use),
                 paging,
@@ -236,26 +230,6 @@ pub(crate) async fn forward_temporal_history(
             budget,
         })),
     }
-}
-
-/// The context source filter of `params` in its expanded form, which selects
-/// registrations; the raw expression travels on as the client wrote it.
-///
-/// No `jsonKeys` declaration applies to `csf`: Table 5.2.12-1 scopes that
-/// member to Entity attribute names, while `csf` addresses the Context Source
-/// Properties of a registration (clause 4.9), whose values are raw JSON
-/// addressed by their literal keys.
-///
-/// # Errors
-///
-/// The classified failure of expanding the filter.
-async fn expanded_csf(engine: &JsonLdEngine, params: &TemporalQueryParameters, context: &ContextSpec, instance: &Uri) -> Result<Option<Expr>, ProblemResponse> {
-    let Some(expr) = &params.csf else {
-        return Ok(None);
-    };
-    let prepared_context = engine.prepare_term_context(context);
-    let expander = ContextualExpander::new(engine, &prepared_context);
-    Ok(Some(expand_csf_expr(expr.clone(), &expander).await.with_instance(instance)?)) // clone: the raw filter stays in the query for forwarding
 }
 
 /// The outcome of one forwarded temporal read, or the failure that ends the
@@ -304,12 +278,11 @@ fn forwarding_outcome(
 ///
 /// # Errors
 ///
-/// The classified failure of expanding the context source filter, the clause
-/// 4.12 `TooManyResults` refusal when a probe's answers exceed its budget, and
+/// The clause 4.12 `TooManyResults` refusal when a probe's answers exceed its
+/// budget, and
 /// the classified failure of a forwarding this broker's own store failed.
 pub(crate) async fn forward_in_effect_probes(
     sources: TemporalForwarding<'_>,
-    engine: &JsonLdEngine,
     target: &ContextTarget,
     request: InEffectRequest<'_>,
     probes: &[InEffectProbe<'_>],
@@ -319,7 +292,7 @@ pub(crate) async fn forward_in_effect_probes(
         triggering,
         split,
         map_use,
-        geo,
+        filters,
         reach: _,
     } = sources;
     // The probes forward the client's `q` as written, which each source reads
@@ -331,7 +304,6 @@ pub(crate) async fn forward_in_effect_probes(
         language_targeting: _,
         instance,
     } = request;
-    let csf_expr = expanded_csf(engine, params, context, instance).await?;
     let mut answers = Vec::new();
     for probe in probes {
         let budget = ResultBudget::new(forwarding.result_limits());
@@ -344,8 +316,8 @@ pub(crate) async fn forward_in_effect_probes(
                     context,
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering,
-                    csf_expr: csf_expr.as_ref(),
-                    geo,
+                    csf_expr: filters.csf(),
+                    geo: filters.geo(),
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::from(map_use),
                     paging: SourcePaging::Walk(&budget),

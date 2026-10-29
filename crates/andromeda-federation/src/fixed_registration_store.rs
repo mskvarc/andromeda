@@ -1,9 +1,10 @@
-//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be, and a read by identifier answers the fixed registration of that identifier as stored, expired or not; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
+//! A fixed in-memory registration store, local-type resolver and geoquery terms for the forwarding tests. Registration matching reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be and records the specifications it was asked with, and a read by identifier answers the fixed registration of that identifier as stored, expired or not; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
 
 use crate::{FederationService, local_entity_type::LocalEntityTypeResolver};
 use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
@@ -11,8 +12,10 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
 };
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
 };
 use andromeda_registration::{
@@ -30,9 +33,13 @@ use andromeda_registration::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 /// A forwarding service choosing among `registrations`, holding no entity of
@@ -62,12 +69,27 @@ pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistra
     .expect("the service builds")
 }
 
+/// Geoquery terms no test geometry reaches, refusing a `near` with both
+/// distances as clause 4.10 is written.
+pub(crate) fn generous_geo_admission() -> GeoQueryAdmission {
+    GeoQueryAdmission::new(
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999)),
+            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999)),
+        },
+        NearDistanceBand::Refused,
+    )
+}
+
 /// A store holding a fixed registration list.
 pub(crate) struct FixedRegistrationStore {
     /// The registrations every matching query answers.
     registrations: Vec<ContextSourceRegistration>,
     /// How many forwarding outcomes were recorded on the registrations.
     recorded_outcomes: AtomicUsize,
+    /// The clause 5.12 specifications each matching query asked with, in
+    /// their debug rendering, one entry per query.
+    asked_specifications: Mutex<Vec<Vec<String>>>,
 }
 
 impl FixedRegistrationStore {
@@ -76,12 +98,19 @@ impl FixedRegistrationStore {
         FixedRegistrationStore {
             registrations,
             recorded_outcomes: AtomicUsize::new(0),
+            asked_specifications: Mutex::new(Vec::new()),
         }
     }
 
     /// How many forwarding outcomes were recorded on the registrations.
     pub(crate) fn recorded_outcomes(&self) -> usize {
         self.recorded_outcomes.load(Ordering::SeqCst)
+    }
+
+    /// The clause 5.12 specifications every matching query asked with, one
+    /// entry per query, each specification in its debug rendering.
+    pub(crate) fn asked_specifications(&self) -> Vec<Vec<String>> {
+        self.asked_specifications.lock().expect("the record is not poisoned").clone() // clone: the caller reads a snapshot of the record
     }
 }
 
@@ -174,13 +203,17 @@ impl RegistrationStore for FixedRegistrationStore {
 
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _entities: &'life1 [ExpandedEntitySpecification<'life2>],
+        entities: &'life1 [ExpandedEntitySpecification<'life2>],
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
+        self.asked_specifications
+            .lock()
+            .expect("the record is not poisoned")
+            .push(entities.iter().map(|specification| format!("{specification:?}")).collect());
         let registrations = self.registrations.clone(); // clone: every query answers its own copy of the fixed list
         Box::pin(async { Ok(registrations) })
     }
