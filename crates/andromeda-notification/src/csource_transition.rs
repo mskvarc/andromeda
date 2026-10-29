@@ -119,18 +119,24 @@ pub(crate) enum StepOutcome {
 /// subscriber was told.
 ///
 /// A registration already recorded is not reported again by its creation: the
-/// notification that recorded it is the one clause 5.11.7 owes for it.
-pub(crate) const fn reason(change: RegistrationChange, outcome: StepOutcome) -> Option<CsrTriggerReason> {
-    match (change, outcome) {
-        (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Recorded) => {
+/// notification that recorded it is the one clause 5.11.7 owes for it. Nor is
+/// it reported as `updated` by an update that brought it into the selection:
+/// `updated` concerns a registration "that was part of a previous
+/// notification" (clause 5.3.3), and `previously`, the selection of the state
+/// the update replaced, says it was not, so the record can only have been
+/// written by the evaluation that sent the one `newlyMatching` the update owes.
+pub(crate) const fn reason(change: RegistrationChange, outcome: StepOutcome, previously: Selection) -> Option<CsrTriggerReason> {
+    match (change, outcome, previously) {
+        (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Recorded, _) => {
             Some(CsrTriggerReason::NewlyMatching)
         }
-        (RegistrationChange::Updated, StepOutcome::AlreadyRecorded) => Some(CsrTriggerReason::Updated),
-        (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Withdrawn) => {
+        (RegistrationChange::Updated, StepOutcome::AlreadyRecorded, Selection::Selected) => Some(CsrTriggerReason::Updated),
+        (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Withdrawn, _) => {
             Some(CsrTriggerReason::NoLongerMatching)
         }
-        (RegistrationChange::Created | RegistrationChange::Deleted, StepOutcome::AlreadyRecorded)
-        | (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Unrecorded) => None,
+        (RegistrationChange::Updated, StepOutcome::AlreadyRecorded, Selection::Unselected)
+        | (RegistrationChange::Created | RegistrationChange::Deleted, StepOutcome::AlreadyRecorded, _)
+        | (RegistrationChange::Created | RegistrationChange::Updated | RegistrationChange::Deleted, StepOutcome::Unrecorded, _) => None,
     }
 }
 

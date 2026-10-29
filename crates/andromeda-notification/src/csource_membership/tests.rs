@@ -305,6 +305,32 @@ async fn an_update_into_matching_is_newly_matching_and_a_further_matching_update
     assert_eq!(summary(&still_matching), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
 }
 
+/// Clause 5.3.3 names an update into matching `newlyMatching` and keeps
+/// `updated` for a registration that was part of a previous notification.
+/// Two evaluations of one such update, whichever order the record serialises
+/// them in, owe the subscriber one `newlyMatching` and no `updated`.
+#[tokio::test]
+async fn two_concurrent_evaluations_of_an_update_into_matching_notify_once() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let first = broker(&ledger);
+    let second = broker(&ledger);
+    let subscription = subscription();
+    let building = registration(REGISTRATION, BUILDING);
+    let vehicle = registration(REGISTRATION, VEHICLE);
+    let subscriptions = [Arc::clone(&subscription)];
+
+    let registration_id = uri(REGISTRATION);
+
+    let _initial = first.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
+    let (on_first, on_second) = tokio::join!(
+        first.plan_registration_change(&subscriptions, RegistrationChange::Updated, &registration_id, Some(&building), Some(&vehicle)),
+        second.plan_registration_change(&subscriptions, RegistrationChange::Updated, &registration_id, Some(&building), Some(&vehicle)),
+    );
+
+    let reasons: Vec<CsrTriggerReason> = summary(&on_first).into_iter().chain(summary(&on_second)).map(|(reason, _)| reason).collect();
+    assert_eq!(reasons, vec![CsrTriggerReason::NewlyMatching]);
+}
+
 /// Clause 5.11.7 owes one notification per change, and clause 5.3.3 names an
 /// update into matching `newlyMatching`. Both changes are evaluated only after
 /// the update committed, each against the registration it wrote: the creation

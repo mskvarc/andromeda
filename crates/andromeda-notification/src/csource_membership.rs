@@ -243,7 +243,11 @@ impl CsourceMembership {
                     continue;
                 }
             };
-            let Some(reason) = reason(change, outcome) else {
+            let previously = match before {
+                Some(replaced) if csource_subscription_selects_registration(subscription, replaced) => Selection::Selected,
+                Some(_) | None => Selection::Unselected,
+            };
+            let Some(reason) = reason(change, outcome, previously) else {
                 continue;
             };
             let carried = match reason {

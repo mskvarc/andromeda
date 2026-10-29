@@ -27,19 +27,58 @@ fn every_change_and_selection_takes_one_step() {
 #[test]
 fn every_store_answer_decides_one_reason() {
     let cases = [
-        (RegistrationChange::Created, StepOutcome::Recorded, Some(CsrTriggerReason::NewlyMatching)),
-        (RegistrationChange::Created, StepOutcome::AlreadyRecorded, None),
-        (RegistrationChange::Created, StepOutcome::Unrecorded, None),
-        (RegistrationChange::Updated, StepOutcome::Recorded, Some(CsrTriggerReason::NewlyMatching)),
-        (RegistrationChange::Updated, StepOutcome::AlreadyRecorded, Some(CsrTriggerReason::Updated)),
-        (RegistrationChange::Updated, StepOutcome::Withdrawn, Some(CsrTriggerReason::NoLongerMatching)),
-        (RegistrationChange::Updated, StepOutcome::Unrecorded, None),
-        (RegistrationChange::Deleted, StepOutcome::Withdrawn, Some(CsrTriggerReason::NoLongerMatching)),
-        (RegistrationChange::Deleted, StepOutcome::Unrecorded, None),
+        (
+            RegistrationChange::Created,
+            StepOutcome::Recorded,
+            Selection::Unselected,
+            Some(CsrTriggerReason::NewlyMatching),
+        ),
+        (RegistrationChange::Created, StepOutcome::AlreadyRecorded, Selection::Unselected, None),
+        (RegistrationChange::Created, StepOutcome::Unrecorded, Selection::Unselected, None),
+        (
+            RegistrationChange::Updated,
+            StepOutcome::Recorded,
+            Selection::Unselected,
+            Some(CsrTriggerReason::NewlyMatching),
+        ),
+        (
+            RegistrationChange::Updated,
+            StepOutcome::Recorded,
+            Selection::Selected,
+            Some(CsrTriggerReason::NewlyMatching),
+        ),
+        (
+            RegistrationChange::Updated,
+            StepOutcome::AlreadyRecorded,
+            Selection::Selected,
+            Some(CsrTriggerReason::Updated),
+        ),
+        (
+            RegistrationChange::Updated,
+            StepOutcome::Withdrawn,
+            Selection::Selected,
+            Some(CsrTriggerReason::NoLongerMatching),
+        ),
+        (RegistrationChange::Updated, StepOutcome::Unrecorded, Selection::Selected, None),
+        (
+            RegistrationChange::Deleted,
+            StepOutcome::Withdrawn,
+            Selection::Selected,
+            Some(CsrTriggerReason::NoLongerMatching),
+        ),
+        (RegistrationChange::Deleted, StepOutcome::Unrecorded, Selection::Selected, None),
     ];
-    for (change, outcome, expected) in cases {
-        assert_eq!(reason(change, outcome), expected, "{change:?} / {outcome:?}");
+    for (change, outcome, previously, expected) in cases {
+        assert_eq!(reason(change, outcome, previously), expected, "{change:?} / {outcome:?} / {previously:?}");
     }
+}
+
+/// Clause 5.3.3: an update that brought a registration into the selection owes
+/// `newlyMatching` once; a second evaluation of it finds the registration
+/// recorded and owes nothing, never `updated`.
+#[test]
+fn an_update_into_the_selection_is_not_reported_as_updated_when_already_recorded() {
+    assert_eq!(reason(RegistrationChange::Updated, StepOutcome::AlreadyRecorded, Selection::Unselected), None);
 }
 
 /// A registration with `id` covering `entity_type`.
