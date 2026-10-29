@@ -60,7 +60,8 @@ impl IntervalCandidates<'_> {
         Ok(candidates)
     }
 
-    /// Read entities a page at a time, keeping only those `keep` accepts.
+    /// Read entities a page at a time, each page continuing after the last
+    /// identifier of the one before, keeping only those `keep` accepts.
     ///
     /// `entity_type` narrows the read to one entity type when the selector names
     /// exactly one; otherwise every entity is a candidate and the predicate is
@@ -70,28 +71,28 @@ impl IntervalCandidates<'_> {
         entity_type: Option<&EntityTypeName>,
         mut keep: impl FnMut(&EntityState) -> bool,
     ) -> Result<Vec<EntityState>, NotificationError> {
-        let limit = i64::from(INTERVAL_ENTITY_PAGE);
         let mut kept = Vec::new();
-        let mut offset = 0_i64;
+        let mut after: Option<Identifier> = None;
         loop {
             let page = match entity_type {
                 Some(type_name) => self
                     .pages
-                    .get_entities_by_type(self.target, type_name, Some(limit), Some(offset))
+                    .get_entities_by_type(self.target, type_name, after.as_ref(), INTERVAL_ENTITY_PAGE)
                     .await
                     .map_err(NotificationError::from)?,
                 None => self
                     .pages
-                    .get_all_entities(self.target, Some(limit), Some(offset))
+                    .get_all_entities(self.target, after.as_ref(), INTERVAL_ENTITY_PAGE)
                     .await
                     .map_err(NotificationError::from)?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
+            // clone: the next read names the last identifier of a page that is consumed below
+            after = page.last().map(|entity| entity.id().clone());
             kept.extend(page.into_iter().filter(|entity| keep(entity)));
             if exhausted {
                 return Ok(kept);
             }
-            offset += limit;
         }
     }
 }
@@ -107,16 +108,41 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{error::EntityError, port::payload_pages::EntityPayloadPages};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
-    use andromeda_subscription::{compilation::compile_subscription, stored_subscription::StoredSubscription};
+    use andromeda_subscription::{compilation::compile_subscription, compiled::CompiledSubscription, stored_subscription::StoredSubscription};
     use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::Mutex;
 
     const VEHICLE: &str = "https://example.org/Vehicle";
 
-    /// The stored entities, served whole as one page.
-    struct StoredEntities(Vec<EntityState>);
+    /// The stored entities in identifier order, served a page at a time, with
+    /// the `after` of every read noted.
+    struct StoredEntities {
+        entities: Vec<EntityState>,
+        reads: Mutex<Vec<Option<Identifier>>>,
+    }
+
+    impl StoredEntities {
+        fn of(entities: Vec<EntityState>) -> StoredEntities {
+            StoredEntities {
+                entities,
+                reads: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn page(&self, entity_type: Option<&EntityTypeName>, after: Option<&Identifier>, limit: u16) -> Vec<EntityState> {
+            self.reads.lock().expect("the notes are not poisoned").push(after.cloned()); // clone: the note outlives the read
+            self.entities
+                .iter()
+                .filter(|entity| entity_type.is_none_or(|wanted| entity.types().as_slice().contains(wanted)))
+                .filter(|entity| after.is_none_or(|after| entity.id().as_str() > after.as_str()))
+                .take(usize::from(limit))
+                .cloned() // clone: each read hands out its own states
+                .collect()
+        }
+    }
 
     #[async_trait]
     impl EntityPayloadPages for StoredEntities {
@@ -124,19 +150,14 @@ mod tests {
             &self,
             _target: &ContextTarget,
             entity_type: &EntityTypeName,
-            _limit: Option<i64>,
-            _offset: Option<i64>,
+            after: Option<&Identifier>,
+            limit: u16,
         ) -> Result<Vec<EntityState>, EntityError> {
-            Ok(self
-                .0
-                .iter()
-                .filter(|entity| entity.types().as_slice().contains(entity_type))
-                .cloned() // clone: each read hands out its own states
-                .collect())
+            Ok(self.page(Some(entity_type), after, limit))
         }
 
-        async fn get_all_entities(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<Vec<EntityState>, EntityError> {
-            Ok(self.0.clone()) // clone: each read hands out its own states
+        async fn get_all_entities(&self, _target: &ContextTarget, after: Option<&Identifier>, limit: u16) -> Result<Vec<EntityState>, EntityError> {
+            Ok(self.page(None, after, limit))
         }
     }
 
@@ -167,7 +188,7 @@ mod tests {
             },
             LanguageMatching::TagEquality,
         );
-        let pages = StoredEntities(vec![vehicle("urn:ngsi-ld:Vehicle:1"), vehicle("urn:ngsi-ld:Vehicle:2")]);
+        let pages = StoredEntities::of(vec![vehicle("urn:ngsi-ld:Vehicle:1"), vehicle("urn:ngsi-ld:Vehicle:2")]);
         let candidates = IntervalCandidates {
             target: &ContextTarget::Live,
             pages: &pages,
@@ -176,5 +197,47 @@ mod tests {
         let matched = candidates.matching(&compiled).await.expect("the pages read");
 
         pretty_assertions::assert_eq!(matched, vec![vehicle("urn:ngsi-ld:Vehicle:2"), vehicle("urn:ngsi-ld:Vehicle:1")]);
+    }
+
+    /// A periodic subscription on every Vehicle.
+    fn all_vehicles() -> CompiledSubscription {
+        let subscription = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:fleet",
+            "type": "Subscription",
+            "entities": [{"type": VEHICLE}],
+            "timeInterval": 60,
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription");
+        compile_subscription(
+            &StoredSubscription {
+                key: SubscriptionKey::try_from(1).expect("a valid key"),
+                subscription,
+            },
+            LanguageMatching::TagEquality,
+        )
+    }
+
+    /// Done when: the walk continues after the last identifier of the previous
+    /// page, never by offset, and reads every entity once.
+    #[tokio::test]
+    async fn a_walk_over_several_pages_continues_after_each_last_identifier() {
+        let ids: Vec<String> = (0..1_100).map(|n| format!("urn:ngsi-ld:Vehicle:{n:05}")).collect();
+        let pages = StoredEntities::of(ids.iter().map(|id| vehicle(id)).collect());
+        let candidates = IntervalCandidates {
+            target: &ContextTarget::Live,
+            pages: &pages,
+        };
+
+        let matched = candidates.matching(&all_vehicles()).await.expect("the pages read");
+
+        let matched_ids: Vec<&str> = matched.iter().map(|entity| entity.id().as_str()).collect();
+        pretty_assertions::assert_eq!(matched_ids, ids.iter().map(String::as_str).collect::<Vec<_>>());
+        let reads = pages.reads.lock().expect("the notes are not poisoned");
+        let afters: Vec<Option<&str>> = reads.iter().map(|after| after.as_ref().map(Identifier::as_str)).collect();
+        pretty_assertions::assert_eq!(afters, vec![None, Some("urn:ngsi-ld:Vehicle:00499"), Some("urn:ngsi-ld:Vehicle:00999")]);
     }
 }
