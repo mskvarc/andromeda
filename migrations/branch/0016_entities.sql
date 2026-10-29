@@ -130,7 +130,6 @@ create table entity_search (
     -- the optional leading `/` of clause 4.18, and this is what reads back.
     verbatim_scope_paths text[] compression lz4 collate "C",
     location geometry compression lz4,
-    location_geography geography compression lz4 generated always as (geom_to_geog(location)) stored,
     constraint pk_entity_search primary key (entity_key),
     constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
@@ -164,9 +163,13 @@ create index idx_entity_search_location on entity_search using gist (location)
 where
     location is not null;
 
-create index idx_entity_search_location_geography on entity_search using gist (location_geography)
+-- `near` measures on the spheroid (clause 4.10), so its distance is judged on
+-- the `geography` projection. The index keys the projection itself rather than
+-- a stored copy of it: a row holds its geometry once, and a recheck projects
+-- the one candidate it judges.
+create index idx_entity_search_location_geography on entity_search using gist ((geom_to_geog(location)))
 where
-    location_geography is not null;
+    location is not null;
 
 -- The spatial index catch-up: a range scan over recently written rows.
 create index idx_entity_search_written_xid on entity_search (written_xid);

@@ -14,6 +14,7 @@ use crate::{
     contention_retry::rerun_while_contended,
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
+    evolution_establishment,
     history,
     history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode},
     job_settlement::settle,
@@ -37,7 +38,7 @@ use andromeda_context_commit::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-use andromeda_postgresql_context_store::entity::repo::EntityRepository;
+use andromeda_postgresql_context_store::entity::{created_entities::CreatedEntities, repo::EntityRepository};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -50,6 +51,8 @@ use std::{
 struct EntityMutations {
     /// Submission-order outcome of every write in the commit.
     outcomes: Vec<WriteOutcome>,
+    /// The created Entities whose Temporal Evolution the create established.
+    established: Vec<Identifier>,
 }
 
 /// Atomic context committer backed by one tenant's PostgreSQL database.
@@ -91,13 +94,15 @@ impl PostgresAtomicCommitter {
 
     /// Apply every current-state mutation and preserve submission-order
     /// outcomes. Every entity inserted or updated is stamped `accepted_at`,
-    /// the instant its attributes carry (clause 4.8).
+    /// the instant its attributes carry (clause 4.8), and a created entity in
+    /// `establishing` has its Temporal Evolution established beside it.
     async fn apply_entities(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         writes: &[AtomicWrite],
         accepted_at: DateTime<Utc>,
+        establishing: &HashSet<Identifier>,
     ) -> Result<EntityMutations, AttemptFailure> {
         let EntityGroups {
             inserts,
@@ -111,7 +116,11 @@ impl PostgresAtomicCommitter {
         }
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
-        self.apply_inserts(tx, target, &inserts, &names, accepted_at, &mut outcomes).await?;
+        let CreatedEntities { landed, established } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;
+        let landed: HashSet<Identifier> = landed.into_iter().collect();
+        for (index, write) in &inserts {
+            outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
+        }
         self.apply_updates(tx, target, &updates, &names, accepted_at, &mut outcomes).await?;
         self.apply_deletes(tx, target, &deletes, &mut outcomes).await?;
         let outcomes = outcomes
@@ -119,10 +128,11 @@ impl PostgresAtomicCommitter {
             .enumerate()
             .map(|(index, outcome)| outcome.ok_or(CommitError::Invariant(CommitInvariant::MissingOutcome { index })))
             .collect::<Result<Vec<WriteOutcome>, CommitError>>()?;
-        Ok(EntityMutations { outcomes })
+        Ok(EntityMutations { outcomes, established })
     }
 
-    /// Insert the grouped entity rows with one fused statement.
+    /// Insert the grouped entity rows with one fused statement, returning
+    /// what it landed.
     async fn apply_inserts(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -130,20 +140,15 @@ impl PostgresAtomicCommitter {
         inserts: &[IndexedWrite<'_>],
         names: &NameKeys,
         accepted_at: DateTime<Utc>,
-        outcomes: &mut [Option<WriteOutcome>],
-    ) -> Result<(), AttemptFailure> {
+        establishing: &HashSet<Identifier>,
+    ) -> Result<CreatedEntities, AttemptFailure> {
         if inserts.is_empty() {
-            return Ok(());
+            return Ok(CreatedEntities::default());
         }
         let binds = columns_for(inserts, names)?;
-        let inserted = EntityRepository::create_batch_in_tx(tx, target, &binds.entities, binds.rows, accepted_at)
+        EntityRepository::create_batch_in_tx(tx, target, &binds.entities, binds.rows, accepted_at, establishing)
             .await
-            .map_err(|error| entity_statement(error))?;
-        let landed: HashSet<Identifier> = inserted.into_iter().collect();
-        for (index, write) in inserts {
-            outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
-        }
-        Ok(())
+            .map_err(|error| entity_statement(error))
     }
 
     /// Update the grouped entity rows with one fused statement.
@@ -263,7 +268,9 @@ impl PostgresAtomicCommitter {
             tx.commit().await.map_err(|error| database(&error))?;
             return Ok(Vec::new());
         }
-        let EntityMutations { outcomes } = self.apply_entities(&mut tx, target, writes, record.recorded_at()).await?;
+        let placement = self.history_mode.placement(target, response);
+        let establishing = evolution_establishment::establishing(placement.inline_recording(), writes, self.core_write_history);
+        let EntityMutations { outcomes, established } = self.apply_entities(&mut tx, target, writes, record.recorded_at(), &establishing).await?;
         let landed: Vec<&AtomicWrite> = writes
             .iter()
             .zip(&outcomes)
@@ -276,14 +283,17 @@ impl PostgresAtomicCommitter {
             events_base,
             job_base,
         } = number_consequences(&landed, &record, base, self.core_write_history)?;
-        let placement = self.history_mode.placement(target, response);
         let queued = match placement {
             HistoryPlacement::Inline(recorder) => {
-                history::apply(recorder, &mut tx, target, &record, &intents).await?;
+                let established = evolution_establishment::confirm(&mut tx, target, &intents, established).await?;
+                history::apply(recorder, &mut tx, target, &record, &intents, &established).await?;
                 ConsequenceWrite::Nothing
             }
-            HistoryPlacement::Queued { recorder, .. } => deferred_history::apply(&mut tx, recorder, &record, &intents).await?,
-            HistoryPlacement::BehindQueued { recorder, .. } => behind_queue::apply(&mut tx, recorder, &record, intents).await?,
+            HistoryPlacement::Queued { recorder, .. } => {
+                evolution_establishment::confirm(&mut tx, target, &[], established).await?;
+                deferred_history::apply(&mut tx, recorder, &record, &intents).await?
+            }
+            HistoryPlacement::BehindQueued { recorder, .. } => behind_queue::apply(&mut tx, recorder, &record, intents, established).await?,
         };
         let notifications = notification_events::apply(
             &mut tx,

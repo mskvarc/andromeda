@@ -2,8 +2,8 @@
 //!
 //! `pgstattuple` reads no GIN index. A density-measured GIN is judged by its
 //! bytes per covered row instead, read from the catalogs only: its size, and
-//! the rows of its table holding a non-null value in the column it is partial
-//! on (`pg_class.reltuples` times one minus that column's `pg_stats.null_frac`).
+//! the rows of its table holding a non-null value in the column it covers
+//! (`pg_class.reltuples` times one minus that column's `pg_stats.null_frac`).
 //! The density is compared with a baseline recorded on the GIN's first
 //! observation and after each rebuild.
 //!
@@ -273,7 +273,7 @@ mod tests {
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "a table never analyzed covers nothing: {sql}");
         assert!(
             sql.contains(
-                r#"("c"."relname", "s"."attname") IN (('current_attributes', 'sub_eq_keys'), ('current_attributes', 'value_object'), ('current_attributes', 'value_long_text'))"#
+                r#"("c"."relname", "s"."attname") IN (('current_attributes', 'sub_eq_keys'), ('current_attributes', 'value_object'), ('current_attributes', 'value_long_text'), ('entities', 'id'))"#
             ),
             "{sql}"
         );

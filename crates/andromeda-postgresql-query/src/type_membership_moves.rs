@@ -64,6 +64,8 @@ pub struct MembershipRemoval {
 /// The membership rows of the identity rows `rows` yields on the side
 /// `memberships` names: one per key of `keys` for which `admitted` holds,
 /// when given. A row the other side already holds gains this side's flag.
+/// An inserted row carries `other_side` as the other side's flag: the
+/// statement that writes both sides of an Entity at once states both.
 ///
 /// # Errors
 ///
@@ -75,15 +77,15 @@ pub fn membership_insert(
     keys: SimpleExpr,
     member: Member,
     admitted: Option<SimpleExpr>,
+    other_side: SimpleExpr,
 ) -> Result<InsertStatement, SeaQueryError> {
     let side = memberships.side;
-    let held = |of: MembershipSide| if of == side { true_literal() } else { false_literal() };
+    let (current, evolution) = match side {
+        MembershipSide::Current => (true_literal(), other_side),
+        MembershipSide::Evolution => (other_side, true_literal()),
+    };
     unnest_keys(&mut rows, keys);
-    rows.expr(member.key)
-        .expr(carried_type_key())
-        .expr(member.id)
-        .expr(held(MembershipSide::Current))
-        .expr(held(MembershipSide::Evolution));
+    rows.expr(member.key).expr(carried_type_key()).expr(member.id).expr(current).expr(evolution);
     if let Some(admitted) = admitted {
         rows.and_where(admitted);
     }
@@ -194,6 +196,7 @@ mod tests {
         type_membership_moves::{Member, carried_among, membership_insert, membership_removal, side_departure},
     };
     use andromeda_postgresql_schema::type_membership::MembershipSide;
+    use andromeda_postgresql_seaquery::literal::false_literal;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
@@ -223,7 +226,7 @@ mod tests {
     /// rather than conflicting.
     #[test]
     fn an_insert_lands_one_membership_row_per_carried_type_on_its_side() {
-        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), None)
+        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), None, false_literal())
             .expect("the membership insert builds")
             .to_string(PostgresQueryBuilder);
         assert_eq!(
@@ -237,10 +240,28 @@ mod tests {
         );
     }
 
+    /// A create that also establishes the Evolution states the Evolution's
+    /// flag beside the current one, so the row is written once.
+    #[test]
+    fn an_insert_states_the_other_sides_flag_it_is_given() {
+        let current = Memberships {
+            side: MembershipSide::Current,
+            schema: None,
+        };
+        let sql = membership_insert(current, written(), column("new_types"), member(), None, column("established"))
+            .expect("the membership insert builds")
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"SELECT "written"."entity_key", "carried"."entity_type_name_key", "written"."id", TRUE, "written"."established" FROM "written" "#),
+            "{sql}"
+        );
+        assert!(sql.ends_with(r#"DO UPDATE SET "is_current_member" = TRUE"#), "{sql}");
+    }
+
     #[test]
     fn an_admitted_insert_keeps_only_the_types_its_condition_admits() {
         let admitted = carried_among(column("old_types")).not();
-        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), Some(admitted))
+        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), Some(admitted), false_literal())
             .expect("the membership insert builds")
             .to_string(PostgresQueryBuilder);
         assert!(
@@ -297,7 +318,7 @@ mod tests {
     #[test]
     fn a_branch_moves_its_memberships_in_its_own_schema() {
         let schema = Alias::new("snap_5").into_iden();
-        let added = membership_insert(evolution(Some(&schema)), written(), column("new_types"), member(), None)
+        let added = membership_insert(evolution(Some(&schema)), written(), column("new_types"), member(), None, false_literal())
             .expect("the membership insert builds")
             .to_string(PostgresQueryBuilder);
         let removal = membership_removal(evolution(Some(&schema)), written(), column("old_types"), column("new_types"), column("id"));

@@ -19,6 +19,8 @@
 mod catalog_statements;
 /// Which ends of an instance an application records.
 mod deletion_judgement;
+/// The Temporal Evolutions a commit's own create established.
+mod established_evolutions;
 /// The Temporal Evolutions an application writes, and their type memberships.
 mod evolution_upsert;
 /// The history and Scope rows, the stream extents and shapes and the instance

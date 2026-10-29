@@ -11,7 +11,8 @@
 //! union of two index-driven arms:
 //!
 //! - the hoisted default instance, through `idx_entity_search_location` (or its
-//!   `geography` twin for `near`), restricted to the index's candidates when an
+//!   `geography` twin, keyed by `geom_to_geog(location)`, for `near`),
+//!   restricted to the index's candidates when an
 //!   in-memory spatial index already answered for the default instance;
 //! - every instance carrying a `datasetId`, through `idx_ca_value_geometry`.
 //!
@@ -33,7 +34,14 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{cast::cast, literal::false_literal, pg_array::is_any_of, pg_type::PostgresType, postgis::judged_geometry};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    geography::geography_of,
+    literal::false_literal,
+    pg_array::is_any_of,
+    pg_type::PostgresType,
+    postgis::judged_geometry,
+};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
@@ -87,7 +95,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
     let spatial = relation_expression(
         &geo.georel,
         SeaExpr::col((search.clone(), EntitySearch::Location)),
-        SeaExpr::col((search.clone(), EntitySearch::LocationGeography)),
+        geography_of(SeaExpr::col((search.clone(), EntitySearch::Location))),
         &geo.geometry,
     )?;
     let mut arm = Query::select();
@@ -286,9 +294,10 @@ mod tests {
         assert!(sql.ends_with("WHERE FALSE"), "{sql}");
     }
 
-    /// `near` reads the hoisted `geography` column, and prefilters the
-    /// `datasetId` instances by a bounding box the geometry `GiST` answers,
-    /// since a cast column reaches no index of its own.
+    /// `near` reads the hoisted geometry through the projection its
+    /// `geography` index is keyed by, and prefilters the `datasetId` instances
+    /// by a bounding box the geometry `GiST` answers, since a cast column
+    /// reaches no index of its own.
     #[test]
     fn near_reads_the_geography_column_and_prefilters_the_dataset_instances_by_their_box() {
         let (sql, _) = render(
@@ -300,7 +309,7 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(sql.contains(r#"ST_DWithin("geo_default"."location_geography","#), "{sql}");
+        assert!(sql.contains(r#"ST_DWithin(geom_to_geog("geo_default"."location"),"#), "{sql}");
         assert!(
             sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
             "{sql}"

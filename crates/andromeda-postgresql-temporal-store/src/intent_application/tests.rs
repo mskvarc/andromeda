@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use andromeda_context_commit::{write_id::WriteId, write_record::WriteRecord};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
@@ -112,6 +112,7 @@ fn commit_steps() -> Vec<(StepRole, String)> {
         &IntentSource::Bound {
             record: &COMMIT_RECORD,
             intents: &[],
+            established: &[],
         },
         None,
     )
@@ -202,7 +203,11 @@ fn record_of(intent: &TemporalAppendIntent) -> TemporalIntentRecord {
 /// Which needs a commit binding `intents` meets, in registry order.
 fn needs_met(intents: &[TemporalIntentRecord]) -> Vec<bool> {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
-    let source = IntentSource::Bound { record: &record, intents };
+    let source = IntentSource::Bound {
+        record: &record,
+        intents,
+        established: &[],
+    };
     TemporalIntentReach::ALL.iter().map(|need| source.may_meet(*need)).collect()
 }
 
@@ -379,7 +384,14 @@ fn an_assertion_is_judged_without_reading_the_queue_in_any_source() {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let schema = Alias::new("snap_1").into_iden();
     let snapshot = writing_in(
-        steps_over(&IntentSource::Bound { record: &record, intents: &[] }, Some(&schema)),
+        steps_over(
+            &IntentSource::Bound {
+                record: &record,
+                intents: &[],
+                established: &[],
+            },
+            Some(&schema),
+        ),
         r#"snap_1"."scope_history"#,
     );
     assert!(!snapshot.contains("temporal_append_intents"), "{snapshot}");
@@ -403,7 +415,14 @@ fn a_native_deletion_of_an_entity_without_evolution_records_nothing() {
 fn a_commit_to_a_snapshot_branch_records_in_its_schema() {
     let record = WriteRecord::restored(WriteId::mint(), recorded_at());
     let schema = Alias::new("snap_7").into_iden();
-    let steps = steps_over(&IntentSource::Bound { record: &record, intents: &[] }, Some(&schema));
+    let steps = steps_over(
+        &IntentSource::Bound {
+            record: &record,
+            intents: &[],
+            established: &[],
+        },
+        Some(&schema),
+    );
     for table in [
         "entities",
         "temporal_attribute_streams",
@@ -508,6 +527,7 @@ fn each_statement_reads_no_entry_field_beyond_what_it_is_bound() {
     let source = IntentSource::Bound {
         record: &COMMIT_RECORD,
         intents: &[],
+        established: &[],
     };
     for (_, reads, sql) in steps_with_reads(&source, None) {
         let read = entry_fields_read(&sql);
@@ -727,6 +747,132 @@ fn a_snapshot_moves_its_memberships_in_its_own_schema() {
     assert!(evolving.contains(r#"INSERT INTO "snap_4"."entity_type_members""#), "{evolving}");
 }
 
+/// The Entity a commit's create established the Temporal Evolution of.
+fn established_vehicle() -> Identifier {
+    "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")
+}
+
+/// The evolution statement of a commit whose create established the
+/// evolution of [`established_vehicle`].
+fn established_evolving() -> String {
+    let established = [established_vehicle()];
+    steps_over(
+        &IntentSource::Bound {
+            record: &COMMIT_RECORD,
+            intents: &[],
+            established: &established,
+        },
+        None,
+    )
+    .into_iter()
+    .map(|(_, sql)| sql)
+    .find(|sql| sql.starts_with(r#"WITH "upserted""#))
+    .expect("an evolution statement over the upsert")
+}
+
+/// The established identifiers, as the statement names them.
+const ESTABLISHED_ARRAY: &str = r"IN (SELECT UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1']::text[]))";
+
+/// A drain and a commit establishing nothing keep the one plain statement,
+/// so only a commit whose create wrote an evolution runs the other shape.
+#[test]
+fn a_source_establishing_no_evolution_keeps_the_plain_evolution_statement() {
+    for steps in [rendered_steps(), commit_steps()] {
+        let evolving = steps
+            .into_iter()
+            .map(|(_, sql)| sql)
+            .find(|sql| sql.contains(r#"INSERT INTO "entities""#))
+            .expect("an evolution statement");
+        assert!(evolving.starts_with(r#"WITH "evolved""#), "{evolving}");
+        assert!(!evolving.contains("upserted"), "{evolving}");
+        assert!(!evolving.contains(r#""est""#), "{evolving}");
+    }
+}
+
+/// The create wrote the evolution an identity row holding none is given, so
+/// the conflict action proposes the inserted values as they are and writes
+/// nothing where the row already holds them: the create's row stays the only
+/// version.
+#[test]
+fn an_established_evolution_is_left_where_its_row_holds_what_the_intents_establish() {
+    let evolving = established_evolving();
+    let upserted = common_table(&evolving, "upserted");
+    let established = format!(r#""entities"."id" {ESTABLISHED_ARRAY}"#);
+    assert!(
+        upserted.contains(&format!(
+            r#"DO UPDATE SET "evolution_created_at" = (CASE WHEN ({established}) THEN "excluded"."evolution_created_at" ELSE COALESCE("entities"."evolution_created_at", "excluded"."evolution_created_at") END)"#
+        )),
+        "{upserted}"
+    );
+    assert!(
+        upserted.contains(&format!(
+            r#""evolution_modified_at" = (CASE WHEN ({established}) THEN "excluded"."evolution_modified_at" ELSE GREATEST("entities"."evolution_modified_at", "excluded"."evolution_modified_at") END)"#
+        )),
+        "{upserted}"
+    );
+    assert!(
+        upserted.contains(&format!(
+            r#"WHERE NOT ({established} AND "entities"."evolution_created_at" = "excluded"."evolution_created_at" AND "entities"."evolution_modified_at" = "excluded"."evolution_modified_at" AND "entities"."evolution_type_name_keys" = "excluded"."evolution_type_name_keys")"#
+        )),
+        "{upserted}"
+    );
+}
+
+/// An established evolution the upsert rewrites is still one the statement
+/// created, with no types before, as an identity row holding none returns.
+#[test]
+fn a_rewritten_established_evolution_is_returned_as_created() {
+    let evolving = established_evolving();
+    let upserted = common_table(&evolving, "upserted");
+    let established = format!(r#""new"."id" {ESTABLISHED_ARRAY}"#);
+    assert!(
+        upserted.ends_with(&format!(
+            r#"RETURNING "new"."entity_key", "new"."id", "old"."evolution_created_at" IS NULL OR {established}, "new"."evolution_type_name_keys", (CASE WHEN ({established}) THEN NULL::integer[] ELSE "old"."evolution_type_name_keys" END)"#
+        )),
+        "{upserted}"
+    );
+}
+
+/// An established evolution the upsert left joins `evolved` from the
+/// identity row as the create wrote it, as created, so its streams are
+/// inserted without arbitration and counted under its types, but only where
+/// the source states types for it and the upsert did not return it already.
+#[test]
+fn an_established_evolution_the_upsert_left_is_evolved_as_created() {
+    let evolving = established_evolving();
+    assert!(
+        evolving.contains(concat!(
+            r#""evolved" ("entity_key", "id", "created", "new_types", "old_types") AS (SELECT "upserted"."entity_key", "upserted"."id", "upserted"."created", "upserted"."new_types", "upserted"."old_types" FROM "upserted" "#,
+            r#"UNION ALL (SELECT "est"."entity_key", "est"."id", TRUE, "est"."evolution_type_name_keys", NULL::integer[] FROM "entities" AS "est" "#
+        )),
+        "{evolving}"
+    );
+    assert!(
+        evolving.contains(&format!(
+            r#"WHERE "est"."id" {ESTABLISHED_ARRAY} AND "est"."id" IN (SELECT "ei"."entity_id" FROM "#
+        )),
+        "{evolving}"
+    );
+    assert!(evolving.contains(r#"WHERE cardinality("ei"."entity_type_name_keys") > 0)"#), "{evolving}");
+    assert!(
+        evolving.contains(r#"AND (NOT "est"."id" IN (SELECT "upserted"."id" FROM "upserted")))"#),
+        "{evolving}"
+    );
+}
+
+/// The create wrote an established evolution's memberships on both sides,
+/// so the memberships are moved from what the upsert wrote alone.
+#[test]
+fn an_established_evolution_lands_no_second_membership_row() {
+    let evolving = established_evolving();
+    let added = common_table(&evolving, "added_members");
+    assert!(
+        added.contains(r#"SELECT "upserted"."entity_key", "carried"."entity_type_name_key", "upserted"."id", FALSE, TRUE FROM "upserted""#),
+        "{added}"
+    );
+    assert!(!added.contains(r#"FROM "evolved""#), "{added}");
+}
+
 #[test]
 fn entries_are_numbered_from_the_base_ordinal() {
     for table in ["attribute_history", "scope_history"] {
@@ -912,7 +1058,11 @@ fn only_the_statements_after_the_evolutions_name_the_created_keys() {
             keys: &[3, 5],
             reach: TemporalIntentReach::ALL.to_vec(),
         },
-        IntentSource::Bound { record: &record, intents: &[] },
+        IntentSource::Bound {
+            record: &record,
+            intents: &[],
+            established: &[],
+        },
     ];
     for source in &sources {
         let naming: Vec<(StepRole, bool)> = steps_over(source, None)

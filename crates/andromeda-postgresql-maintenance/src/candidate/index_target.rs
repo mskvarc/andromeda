@@ -52,10 +52,14 @@ pub enum IndexTarget {
     IdxNotificationDeliveriesSubscription,
     /// The deliveries' primary key.
     PkNotificationDeliveries,
+    /// Identifier trigram GIN, measured by its density: a pending list
+    /// flushed into its posting trees leaves their pages part full.
+    IdxEntitiesIdTrgm,
 }
 
-/// The nullable column whose non-null rows a density-measured GIN covers: each
-/// such GIN is partial on that column being non-null.
+/// The column whose non-null rows a density-measured GIN covers: each such GIN
+/// is partial on that column being non-null, or the column is never null and
+/// the GIN covers every row of its table.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum DensityColumn {
@@ -65,11 +69,19 @@ pub enum DensityColumn {
     ValueObject,
     /// `value_long_text`, covered by `idx_ca_value_long_text_trgm`.
     ValueLongText,
+    /// `entities.id`, covered by `idx_entities_id_trgm`; never null, so every
+    /// row of `entities` is covered.
+    Id,
 }
 
 impl DensityColumn {
     /// Every column a density-measured GIN covers.
-    pub const ALL: [DensityColumn; 3] = [DensityColumn::SubEqKeys, DensityColumn::ValueObject, DensityColumn::ValueLongText];
+    pub const ALL: [DensityColumn; 4] = [
+        DensityColumn::SubEqKeys,
+        DensityColumn::ValueObject,
+        DensityColumn::ValueLongText,
+        DensityColumn::Id,
+    ];
 
     /// The GIN that covers this column's non-null rows.
     #[must_use]
@@ -78,13 +90,14 @@ impl DensityColumn {
             DensityColumn::SubEqKeys => IndexTarget::IdxCaSubEqKeys,
             DensityColumn::ValueObject => IndexTarget::IdxCaValueObject,
             DensityColumn::ValueLongText => IndexTarget::IdxCaValueLongTextTrgm,
+            DensityColumn::Id => IndexTarget::IdxEntitiesIdTrgm,
         }
     }
 }
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
-    pub const ALL: [IndexTarget; 16] = [
+    pub const ALL: [IndexTarget; 17] = [
         IndexTarget::UqCurrentAttributesGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -101,6 +114,7 @@ impl IndexTarget {
         IndexTarget::IdxNotificationDeliveriesEvent,
         IndexTarget::IdxNotificationDeliveriesSubscription,
         IndexTarget::PkNotificationDeliveries,
+        IndexTarget::IdxEntitiesIdTrgm,
     ];
 
     /// Indexes eligible for direct physical bloat probing.
@@ -145,7 +159,8 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
-            | IndexTarget::PkNotificationDeliveries => None,
+            | IndexTarget::PkNotificationDeliveries
+            | IndexTarget::IdxEntitiesIdTrgm => None,
         }
     }
 
@@ -169,7 +184,8 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
-            | IndexTarget::PkNotificationDeliveries => None,
+            | IndexTarget::PkNotificationDeliveries
+            | IndexTarget::IdxEntitiesIdTrgm => None,
         }
     }
 
@@ -181,6 +197,7 @@ impl IndexTarget {
             IndexTarget::IdxCaSubEqKeys => Some(DensityColumn::SubEqKeys),
             IndexTarget::IdxCaValueObject => Some(DensityColumn::ValueObject),
             IndexTarget::IdxCaValueLongTextTrgm => Some(DensityColumn::ValueLongText),
+            IndexTarget::IdxEntitiesIdTrgm => Some(DensityColumn::Id),
             IndexTarget::UqCurrentAttributesGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
@@ -218,6 +235,7 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries => HeapTarget::NotificationDeliveries,
+            IndexTarget::IdxEntitiesIdTrgm => HeapTarget::Entities,
         }
     }
 
@@ -241,6 +259,7 @@ impl IndexTarget {
             IndexTarget::IdxNotificationDeliveriesEvent => "idx_notification_deliveries_event",
             IndexTarget::IdxNotificationDeliveriesSubscription => "idx_notification_deliveries_subscription",
             IndexTarget::PkNotificationDeliveries => "pk_notification_deliveries",
+            IndexTarget::IdxEntitiesIdTrgm => "idx_entities_id_trgm",
         }
     }
 
@@ -293,6 +312,7 @@ mod tests {
             IndexTarget::IdxCaSubEqKeys,
             IndexTarget::IdxCaValueObject,
             IndexTarget::IdxCaValueLongTextTrgm,
+            IndexTarget::IdxEntitiesIdTrgm,
         ] {
             assert!(!IndexTarget::PROBEABLE.contains(&target), "{target}");
         }
@@ -332,6 +352,7 @@ mod tests {
                 ("sub_eq_keys", "idx_ca_sub_eq_keys"),
                 ("value_object", "idx_ca_value_object"),
                 ("value_long_text", "idx_ca_value_long_text_trgm"),
+                ("id", "idx_entities_id_trgm"),
             ]
         );
         for column in DensityColumn::ALL {
@@ -352,7 +373,7 @@ mod tests {
     fn the_queue_index_targets_are_the_delivery_indexes_every_attempt_writes() {
         let queue_indexes = IndexTarget::ALL
             .into_iter()
-            .filter(|target| target.heap() != HeapTarget::CurrentAttributes)
+            .filter(|target| target.heap() == HeapTarget::NotificationDeliveries)
             .map(IndexTarget::relation_name)
             .collect::<Vec<_>>();
         assert_eq!(

@@ -286,7 +286,8 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::IdxNotificationDeliveriesEvent
             | IndexTarget::IdxNotificationDeliveriesSubscription
-            | IndexTarget::PkNotificationDeliveries,
+            | IndexTarget::PkNotificationDeliveries
+            | IndexTarget::IdxEntitiesIdTrgm,
         ) => MaintenanceAction::Reindex,
         MaintenanceTarget::Heap(
             HeapTarget::CurrentAttributes

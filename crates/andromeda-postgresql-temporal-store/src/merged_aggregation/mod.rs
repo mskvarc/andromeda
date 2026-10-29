@@ -176,6 +176,7 @@ impl TemporalRepository {
             &IntentSource::Bound {
                 record: &staged,
                 intents: &intents,
+                established: &[],
             },
             &temporary_schema(),
         )

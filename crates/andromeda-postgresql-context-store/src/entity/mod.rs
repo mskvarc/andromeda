@@ -4,6 +4,8 @@
 pub mod census;
 /// Executing a compiled entity query: its page, its total and its identifiers.
 pub mod compiled_query;
+/// What one batch create landed.
+pub mod created_entities;
 /// The reads that let a deletion skip the payload it removes.
 pub mod deletion_outline;
 /// Reading interned keys back as the names the dictionaries hold.

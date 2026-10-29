@@ -9,6 +9,7 @@ use crate::{
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
+        created_entities::CreatedEntities,
         mapper::stored_uri,
         params::PreparedEntityColumns,
         repo::EntityRepository,
@@ -18,19 +19,21 @@ use crate::{
             search_image::SearchImage,
             staging::{
                 Attrs,
+                Established,
                 Ins,
                 Proj,
                 ProjectedWrite,
                 Srch,
+                StagedColumn,
                 entity_arrays,
                 from_inserted,
                 insert_staging_columns,
-                next_write_count,
                 projected,
                 projection_cte,
                 with_staged_alias,
             },
             type_membership::{Mbrs, created_memberships},
+            version_guard::next_write_count,
         },
     },
     error::ContextStoreError,
@@ -41,30 +44,49 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
+    returning_image::{New, Old},
     unnest::UnnestAliased,
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CommonTableExpression, Expr, ExprTrait, IntoIden, OnConflict, Query, WithClause, WithQuery};
+use sea_query::{
+    CaseStatement,
+    CommonTableExpression,
+    Expr,
+    ExprTrait,
+    InsertStatement,
+    IntoIden,
+    Keyword,
+    OnConflict,
+    Query,
+    SimpleExpr,
+    WithClause,
+    WithQuery,
+};
 use sqlx::{Postgres, Transaction};
+use std::collections::HashSet;
 
 /// The statement name the entity set-insert is observed under.
 const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 
 /// Build the batch insert of `entities` and the attribute instance rows
-/// `rows` stages for them, each entity created and modified at `accepted_at`.
+/// `rows` stages for them, each entity created and modified at `accepted_at`,
+/// establishing the Temporal Evolution of those in `establishing`.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $11::timestamptz[]) AS d(…)),
-///      ins AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at)
-///              SELECT proj.id, $accepted_at, $accepted_at, … FROM proj ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …,
-///              write_count = entities.write_count + 1 WHERE entities.created_at IS NULL RETURNING entity_key, id),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $12::boolean[]) AS d(…)),
+///      ins(entity_key, id, established) AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at,
+///                                                    evolution_created_at, evolution_modified_at, evolution_type_name_keys)
+///              SELECT proj.id, $accepted_at, $accepted_at, …, CASE WHEN proj.establishes_evolution THEN $accepted_at END, … FROM proj
+///              ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …,
+///              write_count = entities.write_count + 1 WHERE entities.created_at IS NULL
+///              RETURNING new.entity_key, new.id, old.entity_key IS NULL AND new.evolution_created_at IS NOT NULL),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
 ///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
 ///      mbrs AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id, is_current_member, is_evolution_member)
-///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id, TRUE, FALSE FROM ins JOIN proj ON proj.id = ins.id
+///               SELECT ins.entity_key, carried.entity_type_name_key, ins.id, TRUE, ins.established FROM ins JOIN proj ON proj.id = ins.id
 ///               INNER JOIN LATERAL (SELECT UNNEST(proj.entity_type_name_keys) …) AS carried ON TRUE
 ///               ON CONFLICT (entity_type_name_key, id) DO UPDATE SET is_current_member = TRUE),
 ///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($12::text[], …) AS r(…)),
@@ -73,7 +95,7 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
 ///      census_type_attributes AS (INSERT INTO entity_type_attribute_census … FROM srch …),
 ///      census_attributes AS (INSERT INTO attribute_census … FROM srch …)
-/// SELECT id FROM ins
+/// SELECT id, established FROM ins
 /// ```
 ///
 /// The conflict clause on `entities` is how a duplicate create is detected:
@@ -99,6 +121,15 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 /// sub-attributes, so one insert lands every instance of every entity, paired
 /// with its entity by identifier.
 ///
+/// An entity in `establishing` is one whose commit records its history in
+/// the same transaction, and that history creates its Temporal Evolution
+/// (clause 4.5.6) at `accepted_at` under the types the create states. A new
+/// identity row is minted with that evolution and with its memberships on
+/// both sides, which the history application then leaves as they are, so
+/// each row is written once. The conflict action does not touch the
+/// evolution columns, so an identity row that existed keeps the evolution
+/// it held, and `established` says which rows were minted with one.
+///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::StatementBuild`] if a child projection ever stops
@@ -108,36 +139,15 @@ pub(super) fn entity_insert_statement<'entities>(
     entities: &'entities PreparedEntityColumns,
     rows: StagedRows<'_>,
     accepted_at: DateTime<Utc>,
+    establishing: &HashSet<Identifier>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = insert_staging_columns();
     let mut external = ExternalArguments::default();
-    let staged_entities = entity_arrays(entities, written_column(&entities.locations)?, &mut external);
+    let mut staged_entities = entity_arrays(entities, written_column(&entities.locations)?, &mut external);
+    staged_entities.push(Expr::val(entities.ids.iter().map(|id| establishing.contains(id)).collect::<Vec<bool>>()));
     let instance_arrays = rows.into_arrays(&mut external);
 
-    let mut identity = Query::insert();
-    let current_state = [Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt, Entities::MinAttributeExpiresAt];
-    identity
-        .into_table(table_of(target, Entities::Table))
-        .columns([Entities::Id].into_iter().chain(current_state))
-        .select_from(
-            Query::select()
-                .expr(projected(Entities::Id))
-                .expr(Expr::val(accepted_at))
-                .expr(Expr::val(accepted_at))
-                .expr(projected(Entities::ExpiresAt))
-                .expr(projected(Entities::MinAttributeExpiresAt))
-                .from(Proj)
-                .take(),
-        )?;
-    identity
-        .on_conflict(
-            OnConflict::column(Entities::Id)
-                .update_columns(current_state)
-                .value(Entities::WriteCount, next_write_count(Entities::Table))
-                .action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null())
-                .to_owned(),
-        )
-        .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
+    let identity = identity_insert(target, accepted_at)?;
 
     let mut search = Query::insert();
     search
@@ -175,7 +185,13 @@ pub(super) fn entity_insert_statement<'entities>(
 
     let mut with = WithClause::new();
     with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Insert))
-        .cte(CommonTableExpression::new().table_name(Ins).query(identity).to_owned())
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Ins)
+                .columns([Entities::EntityKey.into_iden(), Entities::Id.into_iden(), Established.into_iden()])
+                .query(identity)
+                .to_owned(),
+        )
         .cte(
             CommonTableExpression::new()
                 .table_name(Srch)
@@ -194,10 +210,65 @@ pub(super) fn entity_insert_statement<'entities>(
     for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::Id).from(Ins).take());
+    let statement = with.query(Query::select().column(Entities::Id).column(Established).from(Ins).take());
 
     let statement = with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns));
     Ok(ExternallyBound::new(statement, external))
+}
+
+/// The identity insert of a create, `ins`: each staged entity created and
+/// modified at `accepted_at`, minted with its Temporal Evolution where it is
+/// staged as establishing one, returning its key, its identifier and whether
+/// the insert minted the row with that evolution.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::StatementBuild`] if the projection ever stops
+/// matching the column list, which the fixed shape makes unreachable.
+fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result<InsertStatement, ContextStoreError> {
+    let mut identity = Query::insert();
+    let current_state = [Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt, Entities::MinAttributeExpiresAt];
+    let evolution = [Entities::EvolutionCreatedAt, Entities::EvolutionModifiedAt, Entities::EvolutionTypeNameKeys];
+    let established = |value: SimpleExpr| -> SimpleExpr {
+        CaseStatement::new()
+            .case(projected(StagedColumn::EstablishesEvolution), value)
+            .finally(Keyword::Null)
+            .into()
+    };
+    identity
+        .into_table(table_of(target, Entities::Table))
+        .columns([Entities::Id].into_iter().chain(current_state).chain(evolution))
+        .select_from(
+            Query::select()
+                .expr(projected(Entities::Id))
+                .expr(Expr::val(accepted_at))
+                .expr(Expr::val(accepted_at))
+                .expr(projected(Entities::ExpiresAt))
+                .expr(projected(Entities::MinAttributeExpiresAt))
+                .expr(established(Expr::val(accepted_at)))
+                .expr(established(Expr::val(accepted_at)))
+                .expr(established(projected(EntitySearch::EntityTypeNameKeys)))
+                .from(Proj)
+                .take(),
+        )?;
+    identity
+        .on_conflict(
+            OnConflict::column(Entities::Id)
+                .update_columns(current_state)
+                .value(Entities::WriteCount, next_write_count(Entities::Table))
+                .action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null())
+                .to_owned(),
+        )
+        .returning(
+            Query::returning().exprs([
+                Expr::col((New, Entities::EntityKey)),
+                Expr::col((New, Entities::Id)),
+                Expr::col((Old, Entities::EntityKey))
+                    .is_null()
+                    .and(Expr::col((New, Entities::EvolutionCreatedAt)).is_not_null()),
+            ]),
+        );
+    Ok(identity)
 }
 
 impl EntityRepository {
@@ -205,7 +276,9 @@ impl EntityRepository {
     /// attribute instance rows `rows` stages for it, returning the entities
     /// actually inserted. Each is created and modified at `accepted_at`, the
     /// instant its attributes carry (clause 4.8), so every entity one commit
-    /// writes shares it.
+    /// writes shares it. A new identity row of an entity in `establishing` is
+    /// minted with its Temporal Evolution too ([`entity_insert_statement`]),
+    /// and those come back as established.
     ///
     /// # Errors
     ///
@@ -218,18 +291,28 @@ impl EntityRepository {
         entities: &PreparedEntityColumns,
         rows: StagedRows<'_>,
         accepted_at: DateTime<Utc>,
-    ) -> Result<Vec<Identifier>, ContextStoreError> {
+        establishing: &HashSet<Identifier>,
+    ) -> Result<CreatedEntities, ContextStoreError> {
         if entities.ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(CreatedEntities::default());
         }
         types_present(entities)?;
 
-        let rows = entity_insert_statement(target, entities, rows, accepted_at)?
-            .into_query_as::<(String,)>()
+        let rows = entity_insert_statement(target, entities, rows, accepted_at, establishing)?
+            .into_query_as::<(String, bool)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
-        rows.iter().map(|(id,)| stored_uri(id)).collect()
+        let mut created = CreatedEntities::default();
+        for (id, established) in &rows {
+            let id = stored_uri(id)?;
+            if *established {
+                // clone: the identifier is both landed and established.
+                created.established.push(id.clone());
+            }
+            created.landed.push(id);
+        }
+        Ok(created)
     }
 }
 
@@ -249,7 +332,7 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use chrono::{DateTime, Utc};
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashSet};
 
     /// The instant every rendered insert is accepted at.
     fn accepted_at() -> DateTime<Utc> {
@@ -260,7 +343,7 @@ mod tests {
     fn entity_insert_sql(target: &ContextTarget) -> String {
         let entities = PreparedEntityColumns::with_capacity(0);
         text_of_query(
-            entity_insert_statement(target, &entities, StagedRows::default(), accepted_at())
+            entity_insert_statement(target, &entities, StagedRows::default(), accepted_at(), &HashSet::new())
                 .expect("the fixed insert builds")
                 .into_query(),
         )
@@ -274,14 +357,14 @@ mod tests {
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 2;
+        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 4;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
         );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, loc_expires_at, expires_at, min_attribute_expires_at, establishes_evolution)"
             ),
             "{sql}"
         );
@@ -300,8 +383,8 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($12::text[]"), "{sql}");
-        assert!(sql.contains(r"$41::sub_attribute_tree[], $35::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($15::text[]"), "{sql}");
+        assert!(sql.contains(r"$44::sub_attribute_tree[], $38::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -322,7 +405,7 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at")"#),
+            sql.contains(r#""ins" ("entity_key", "id", "established") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location")"#), "{sql}");
@@ -330,7 +413,7 @@ mod tests {
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"SELECT "id" FROM "ins""#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "id", "established" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
             2,
@@ -390,20 +473,25 @@ mod tests {
     /// 5.5.11.0). An identity row holding a current state is left alone, and
     /// one holding the Temporal Evolution alone (clause 5.6.6 deleted its
     /// current state) is given one and returned, so clause 5.6.1 creates the
-    /// Entity anew under the same key, one write count past the deletion.
+    /// Entity anew under the same key, one write count past the deletion. The
+    /// conflict action leaves the evolution columns alone, so only a row the
+    /// insert minted carries the evolution it was asked to establish.
     #[test]
     fn the_insert_keeps_its_conflict_clause_and_revives_an_evolution_alone() {
         let sql = insert();
         assert!(
             sql.contains(concat!(
-                r#"SELECT "proj"."id", $10, $11, "proj"."expires_at", "proj"."min_attribute_expires_at" FROM "proj" "#,
+                r#"SELECT "proj"."id", $11, $12, "proj"."expires_at", "proj"."min_attribute_expires_at", "#,
+                r#"(CASE WHEN ("proj"."establishes_evolution") THEN $13 ELSE NULL END), (CASE WHEN ("proj"."establishes_evolution") THEN $14 ELSE NULL END), "#,
+                r#"(CASE WHEN ("proj"."establishes_evolution") THEN "proj"."entity_type_name_keys" ELSE NULL END) FROM "proj" "#,
                 r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
                 r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at", "#,
-                r#""write_count" = "entities"."write_count" + 1 WHERE "entities"."created_at" IS NULL RETURNING "entity_key", "id""#
+                r#""write_count" = "entities"."write_count" + 1 WHERE "entities"."created_at" IS NULL "#,
+                r#"RETURNING "new"."entity_key", "new"."id", "old"."entity_key" IS NULL AND "new"."evolution_created_at" IS NOT NULL)"#
             )),
             "{sql}"
         );
-        assert!(!sql.contains("location_geography"), "the geography is generated: {sql}");
+        assert!(!sql.contains("geography"), "the geography is an index expression, never stored: {sql}");
     }
 
     /// Every child insert finds its row by the identifier the identity insert
@@ -417,7 +505,8 @@ mod tests {
     }
 
     /// Clause 4.17 selects on membership, so a create lands one membership row
-    /// per type beside the search row that carries the same keys.
+    /// per type beside the search row that carries the same keys, on the
+    /// Evolution's side too where the insert minted the row with its evolution.
     #[test]
     fn a_create_lands_its_type_memberships_in_the_same_statement() {
         let sql = insert();
@@ -427,6 +516,7 @@ mod tests {
             ),
             "{sql}"
         );
+        assert!(sql.contains(r#""ins"."id", TRUE, "ins"."established" FROM "ins""#), "{sql}");
     }
 
     /// A Snapshot branch lands its rows in the Snapshot's own schema, so every

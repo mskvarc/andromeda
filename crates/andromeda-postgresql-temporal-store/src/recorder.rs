@@ -9,6 +9,7 @@ use crate::{
 };
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_temporal::append_intent::TemporalAppendIntent;
 use sqlx::{Postgres, Transaction};
@@ -36,6 +37,8 @@ impl TemporalRecorder {
     ///
     /// History only. Current entity state is written by the same transaction, but by the crate that owns the commit rather than from here, and the temporal catalogue keeps Temporal Evolution independent of it in both directions.
     ///
+    /// `established` names the Entities whose Temporal Evolution the commit's own create already wrote beside their current state, exactly as their intent here establishes it (see [`IntentSource::Bound`]); the application counts each as an evolution it created and writes its identity row and memberships no second time.
+    ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::WriteRecordMismatch`] when an intent
@@ -53,12 +56,18 @@ impl TemporalRecorder {
         target: &ContextTarget,
         record: &WriteRecord,
         intents: &[TemporalAppendIntent],
+        established: &[Identifier],
     ) -> Result<(), TemporalStoreError> {
         if intents.is_empty() {
             return Ok(());
         }
         let records = self.intent_records_in_tx(tx, record, intents).await?;
-        apply_intents_in_tx(tx, &IntentSource::Bound { record, intents: &records }, target).await
+        let source = IntentSource::Bound {
+            record,
+            intents: &records,
+            established,
+        };
+        apply_intents_in_tx(tx, &source, target).await
     }
 
     /// The records `intents` wait in the intent queue as, every name they

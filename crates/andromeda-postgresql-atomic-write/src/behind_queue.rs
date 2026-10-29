@@ -13,13 +13,16 @@
 //! intents, and an intent a drain is applying but has not committed is still
 //! seen queued. Each intent is numbered from its own base ordinal, so splitting
 //! the commit's intents by Entity leaves every history row's identity as it
-//! was.
+//! was. A Temporal Evolution the commit's create established stands only for
+//! an Entity recorded inline; one queued behind gets it back
+//! ([`evolution_establishment`]).
 
 use crate::{
     attempt_failure::AttemptFailure,
     commit_refusal::temporal,
     consequences::ConsequenceWrite,
     deferred_history,
+    evolution_establishment,
     history,
     intent_store::PostgresTemporalIntentStore,
 };
@@ -33,19 +36,22 @@ use std::collections::HashSet;
 
 /// Record the live-branch intents of the commit `record` inline for every
 /// Entity with no queued history, and queue those of the others, reporting
-/// whether anything was queued.
+/// whether anything was queued. `established` names the Entities whose
+/// Temporal Evolution the commit's create wrote.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     recorder: &TemporalRecorder,
     record: &WriteRecord,
     intents: Vec<TemporalAppendIntent>,
+    established: Vec<Identifier>,
 ) -> Result<ConsequenceWrite, AttemptFailure> {
     let entity_ids: Vec<&Identifier> = intents.iter().map(|intent| &intent.entity_id).collect();
     let queued = PostgresTemporalIntentStore::queued_entities_in_tx(tx, &entity_ids)
         .await
         .map_err(|error| AttemptFailure::Failed(temporal(error)))?;
     let EntitySplit { inline, behind } = split_behind(intents, &queued);
-    history::apply(recorder, tx, &ContextTarget::Live, record, &inline).await?;
+    let established = evolution_establishment::confirm(tx, &ContextTarget::Live, &inline, established).await?;
+    history::apply(recorder, tx, &ContextTarget::Live, record, &inline, &established).await?;
     Ok(deferred_history::apply(tx, recorder, record, &behind).await?)
 }
 

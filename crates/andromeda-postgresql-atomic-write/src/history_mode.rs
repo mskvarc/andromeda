@@ -67,6 +67,25 @@ pub(crate) enum HistoryPlacement<'a> {
     },
 }
 
+/// Whether a commit may record any of its history in its own transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InlineRecording {
+    /// Some or all of it lands inline.
+    Possible,
+    /// All of it is queued.
+    Never,
+}
+
+impl HistoryPlacement<'_> {
+    /// Whether a commit placed here may record any of its history inline.
+    pub(crate) const fn inline_recording(&self) -> InlineRecording {
+        match self {
+            HistoryPlacement::Inline(_) | HistoryPlacement::BehindQueued { .. } => InlineRecording::Possible,
+            HistoryPlacement::Queued { .. } => InlineRecording::Never,
+        }
+    }
+}
+
 impl TemporalHistoryCommitMode {
     /// The history commit mode of a tenant recording through `recorder` and
     /// waking its drain through `publisher`.
@@ -98,7 +117,7 @@ impl TemporalHistoryCommitMode {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode};
+    use crate::history_mode::{CommitResponse, HistoryPlacement, InlineRecording, TemporalHistoryCommitMode};
     use andromeda_configuration::schema::database::{name_cache::NameCacheConfig, write_reserve::WriteReserve};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -138,7 +157,10 @@ mod tests {
     #[tokio::test]
     async fn a_snapshot_branchs_history_is_recorded_in_the_write_transaction_for_either_response() {
         for response in [CommitResponse::Synchronous, CommitResponse::RespondAsync] {
-            assert!(matches!(mode().placement(&snapshot(), response), HistoryPlacement::Inline(_)));
+            let mode = mode();
+            let placement = mode.placement(&snapshot(), response);
+            assert!(matches!(placement, HistoryPlacement::Inline(_)));
+            assert_eq!(placement.inline_recording(), InlineRecording::Possible);
         }
     }
 
@@ -147,10 +169,10 @@ mod tests {
     /// history of its Entity precedes.
     #[tokio::test]
     async fn a_live_synchronous_commits_history_queues_behind_its_entities_queued_history() {
-        assert!(matches!(
-            mode().placement(&ContextTarget::Live, CommitResponse::Synchronous),
-            HistoryPlacement::BehindQueued { .. }
-        ));
+        let mode = mode();
+        let placement = mode.placement(&ContextTarget::Live, CommitResponse::Synchronous);
+        assert!(matches!(placement, HistoryPlacement::BehindQueued { .. }));
+        assert_eq!(placement.inline_recording(), InlineRecording::Possible);
     }
 
     /// RFC 7240 section 4.1 lets a respond-async answer precede the
@@ -158,9 +180,9 @@ mod tests {
     /// history is queued and still answered at once.
     #[tokio::test]
     async fn a_live_respond_async_commit_queues_its_history_as_intents() {
-        assert!(matches!(
-            mode().placement(&ContextTarget::Live, CommitResponse::RespondAsync),
-            HistoryPlacement::Queued { .. }
-        ));
+        let mode = mode();
+        let placement = mode.placement(&ContextTarget::Live, CommitResponse::RespondAsync);
+        assert!(matches!(placement, HistoryPlacement::Queued { .. }));
+        assert_eq!(placement.inline_recording(), InlineRecording::Never);
     }
 }

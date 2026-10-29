@@ -106,7 +106,14 @@ mod tests {
     #[test]
     fn the_created_keys_are_named_the_same_for_a_bound_source() {
         let record = WriteRecord::restored(WriteId::mint(), recorded_at());
-        let sql = rendered(&IntentSource::Bound { record: &record, intents: &[] }, &[7, 9]);
+        let sql = rendered(
+            &IntentSource::Bound {
+                record: &record,
+                intents: &[],
+                established: &[],
+            },
+            &[7, 9],
+        );
         assert!(sql.contains(r#""te"."entity_key" = ANY(ARRAY [7,9]::bigint[])"#), "{sql}");
     }
 }

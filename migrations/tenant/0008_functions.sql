@@ -2,13 +2,13 @@
 -- 0008: Functions every branch resolves
 -- ============================================================================
 --
--- The functions the branch relations name in a generated column and the
+-- The functions the branch relations name in an index expression and the
 -- trigger function the dictionaries refuse changes with. They live in
 -- `public`, and a Snapshot schema reaches them through its search path, so one
 -- definition serves every branch.
 -- ============================================================================
--- `geom_to_geog` wraps the `geometry` to `geography` cast so a stored
--- generated column can use it. PostGIS marks the cast `STABLE` because it
+-- `geom_to_geog` wraps the `geometry` to `geography` cast so an index
+-- expression can use it. PostGIS marks the cast `STABLE` because it
 -- reads `spatial_ref_sys`, but for SRID 4326, the only SRID the schema
 -- admits, the result is deterministic, so the wrapper is declared `IMMUTABLE`.
 create function geom_to_geog (g geometry)

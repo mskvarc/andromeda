@@ -13,12 +13,13 @@
 
 use crate::{error::TemporalStoreError, stored_catalog_error::StoredCatalogError, temporal_entry_record::TemporalIntentRecord};
 use andromeda_context_commit::write_record::WriteRecord;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     external_arguments::ExternalArguments,
-    pg_array::any,
+    pg_array::{any, text_array},
     pg_type::PostgresType,
     statement::Statement,
     unnest::{Ordinality, unnest_of},
@@ -59,6 +60,13 @@ pub enum IntentSource<'a> {
         record: &'a WriteRecord,
         /// The intents, in commit order, which is the order their keys take.
         intents: &'a [TemporalIntentRecord],
+        /// The Entities whose Temporal Evolution the commit's own create
+        /// wrote beside their current state, exactly as these intents
+        /// establish it: created and modified at the commit's instant, under
+        /// the types their one intent states. The application counts each as
+        /// an evolution it created and leaves its identity row and its
+        /// memberships as they are.
+        established: &'a [Identifier],
     },
 }
 
@@ -120,6 +128,9 @@ pub(crate) struct StagedSource<'a> {
     relation: StagedRelation<'a>,
     /// The keys of the Temporal Evolutions the application created so far.
     created: &'a [i64],
+    /// The Entities whose Temporal Evolution the commit established beside
+    /// their current state, empty for a queued source.
+    established: &'a [Identifier],
     /// The external arguments the statements of the step carry.
     external: ExternalArguments<'a>,
 }
@@ -145,17 +156,25 @@ impl<'a> StagedSource<'a> {
     /// `created` the keys of the evolutions the application created so far.
     pub(crate) fn new(source: &'a IntentSource<'a>, reads: EntryReads, created: &'a [i64]) -> StagedSource<'a> {
         let mut external = ExternalArguments::default();
-        let relation = match source {
-            IntentSource::Queued { keys, .. } => StagedRelation::Queued { keys },
-            IntentSource::Bound { record, intents } => StagedRelation::Bound {
-                record,
-                intents: match reads {
-                    EntryReads::Identities => external.push(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
-                    EntryReads::Everything => external.push(*intents),
+        let (relation, established) = match source {
+            IntentSource::Queued { keys, .. } => (StagedRelation::Queued { keys }, &[][..]),
+            IntentSource::Bound { record, intents, established } => (
+                StagedRelation::Bound {
+                    record,
+                    intents: match reads {
+                        EntryReads::Identities => external.push(intents.iter().map(TemporalIntentRecord::identities).collect::<Vec<_>>()),
+                        EntryReads::Everything => external.push(*intents),
+                    },
                 },
-            },
+                *established,
+            ),
         };
-        StagedSource { relation, created, external }
+        StagedSource {
+            relation,
+            created,
+            established,
+            external,
+        }
     }
 
     /// The external arguments the staged statements carry, to bind with them.
@@ -198,6 +217,19 @@ impl<'a> StagedSource<'a> {
     /// `bigint[]` value.
     pub(crate) fn created_evolutions(&self) -> SimpleExpr {
         cast(Expr::val(self.created.to_vec()), PostgresType::BigintArray)
+    }
+
+    /// The identifiers of the Entities whose Temporal Evolution the commit
+    /// established beside their current state, as a `text[]` value; `None`
+    /// when there is none, so the statements of every other source keep
+    /// their plain shape.
+    pub(crate) fn established_evolutions(&self) -> Option<SimpleExpr> {
+        (!self.established.is_empty()).then(|| {
+            cast(
+                text_array(&self.established.iter().map(Identifier::as_str).collect::<Vec<_>>()),
+                PostgresType::TextArray,
+            )
+        })
     }
 }
 

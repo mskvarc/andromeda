@@ -40,6 +40,7 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent) => MaintenanceTargetCode::IdxNotificationDeliveriesEvent,
         MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription) => MaintenanceTargetCode::IdxNotificationDeliveriesSubscription,
         MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries) => MaintenanceTargetCode::PkNotificationDeliveries,
+        MaintenanceTarget::Index(IndexTarget::IdxEntitiesIdTrgm) => MaintenanceTargetCode::IdxEntitiesIdTrgm,
         MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryColumnstore,
     }
 }
@@ -81,6 +82,7 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::IdxNotificationDeliveriesEvent => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent),
         MaintenanceTargetCode::IdxNotificationDeliveriesSubscription => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription),
         MaintenanceTargetCode::PkNotificationDeliveries => MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries),
+        MaintenanceTargetCode::IdxEntitiesIdTrgm => MaintenanceTarget::Index(IndexTarget::IdxEntitiesIdTrgm),
         MaintenanceTargetCode::AttributeHistoryColumnstore => MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory),
     }
 }

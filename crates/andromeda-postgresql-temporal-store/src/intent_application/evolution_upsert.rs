@@ -7,7 +7,10 @@
 //! one, so the list only grows, and the membership relation a temporal type
 //! selection walks only gains rows.
 
-use crate::intent_application::intent_source::{I, StagedSource, intent, source_intents, source_intents_as};
+use crate::intent_application::{
+    established_evolutions::{Upserted, among, left_established, no_types},
+    intent_source::{I, StagedSource, intent, source_intents, source_intents_as},
+};
 use andromeda_postgresql_query::{
     type_list_union::{TypeListColumn, type_list_union},
     type_membership::Memberships,
@@ -18,13 +21,14 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     cast::cast,
     conflict_image::Excluded,
-    literal::text_literal,
+    literal::{false_literal, text_literal},
     pg_array::{all, array_cat, array_of_subquery, array_position, has_elements},
     pg_type::PostgresType,
     returning_image::{New, Old},
     unnest::unnest_of,
 };
 use sea_query::{
+    CaseStatement,
     CommonTableExpression,
     DynIden,
     Expr,
@@ -38,6 +42,7 @@ use sea_query::{
     Query,
     SelectStatement,
     SimpleExpr,
+    UnionType,
     WindowStatement,
     WithClause,
     error::Error as SeaQueryError,
@@ -89,32 +94,72 @@ struct StatedTypes;
 #[iden = "added"]
 struct Added;
 
+/// The columns `evolved` and `upserted` carry.
+fn evolution_columns() -> [DynIden; 5] {
+    [
+        Entities::EntityKey.into_iden(),
+        Entities::Id.into_iden(),
+        Created.into_iden(),
+        NewTypes.into_iden(),
+        OldTypes.into_iden(),
+    ]
+}
+
 /// Add to `with` the evolutions of the Entities the intents of `source` state
 /// types for, as `evolved` ([`evolutions_statement`]), and the membership rows
 /// of the types they gained, as `added_members` ([`gained_memberships`]).
+///
+/// When the commit established some evolutions itself, the upsert runs as
+/// `upserted` and `evolved` adds the established evolutions it left alone
+/// ([`left_established`]); the memberships are read from `upserted` alone,
+/// since the create that established an evolution wrote its memberships
+/// with both flags.
 ///
 /// # Errors
 ///
 /// Returns [`SeaQueryError`] if a projection ever stops matching its column
 /// list, which the fixed shapes here make unreachable.
 pub(crate) fn with_evolutions(with: &mut WithClause, source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<(), SeaQueryError> {
+    let established = source.established_evolutions();
+    let upsert = evolutions_statement(source, schema, established.as_ref())?;
+    let written = match established {
+        None => {
+            with.cte(
+                CommonTableExpression::new()
+                    .table_name(Evolved)
+                    .columns(evolution_columns())
+                    .query(upsert)
+                    .to_owned(),
+            );
+            Evolved.into_iden()
+        }
+        Some(established) => {
+            let mut evolved = Query::select();
+            evolved
+                .columns(evolution_columns().map(|column| (Upserted, column)))
+                .from(Upserted)
+                .union(UnionType::All, left_established(source, schema, &established));
+            with.cte(
+                CommonTableExpression::new()
+                    .table_name(Upserted)
+                    .columns(evolution_columns())
+                    .query(upsert)
+                    .to_owned(),
+            )
+            .cte(
+                CommonTableExpression::new()
+                    .table_name(Evolved)
+                    .columns(evolution_columns())
+                    .query(evolved)
+                    .to_owned(),
+            );
+            Upserted.into_iden()
+        }
+    };
     with.cte(
         CommonTableExpression::new()
-            .table_name(Evolved)
-            .columns([
-                Entities::EntityKey.into_iden(),
-                Entities::Id.into_iden(),
-                Created.into_iden(),
-                NewTypes.into_iden(),
-                OldTypes.into_iden(),
-            ])
-            .query(evolutions_statement(source, schema)?)
-            .to_owned(),
-    )
-    .cte(
-        CommonTableExpression::new()
             .table_name(AddedMembers)
-            .query(gained_memberships(schema)?)
+            .query(gained_memberships(schema, &written)?)
             .to_owned(),
     );
     Ok(())
@@ -140,7 +185,14 @@ pub(crate) fn with_evolutions(with: &mut WithClause, source: &StagedSource<'_>, 
 /// `created_at` and its latest's as `modified_at`, which is what applying them
 /// one after the other leaves. `created_at` is never moved and `modified_at`
 /// never moves back ([`latest_modification`], clause 4.8).
-fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+///
+/// An Entity in `established` holds the evolution its commit's create wrote,
+/// which is what the upsert writes into an identity row holding none. Its
+/// conflict action takes the inserted row's values as they are, and writes
+/// nothing where the row already holds them, so the create's row stays the
+/// only version. Such an evolution, when rewritten, is returned as one the
+/// statement created, with no types before.
+fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>, established: Option<&SimpleExpr>) -> Result<InsertStatement, SeaQueryError> {
     let mut select = Query::select();
     select
         .distinct_on([(I, TemporalAppendIntents::EntityId)])
@@ -161,31 +213,67 @@ fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> 
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, Entities::Table))
-        .columns([
-            Entities::Id,
-            Entities::EvolutionCreatedAt,
-            Entities::EvolutionModifiedAt,
-            Entities::EvolutionTypeNameKeys,
-        ])
-        .select_from(select)?
-        .on_conflict(
-            OnConflict::column(Entities::Id)
-                .values([
-                    (Entities::EvolutionCreatedAt, first_creation()),
-                    (Entities::EvolutionModifiedAt, latest_modification()),
-                    (Entities::EvolutionTypeNameKeys, merged_types()),
-                ])
-                .to_owned(),
-        )
-        .returning(Query::returning().exprs([
-            Expr::col((New, Entities::EntityKey)),
-            Expr::col((New, Entities::Id)),
-            Expr::col((Old, Entities::EvolutionCreatedAt)).is_null(),
-            Expr::col((New, Entities::EvolutionTypeNameKeys)),
-            Expr::col((Old, Entities::EvolutionTypeNameKeys)),
-        ]));
+        .columns([Entities::Id].into_iter().chain(MERGED_COLUMNS.map(|(column, _)| column)))
+        .select_from(select)?;
+    match established {
+        None => {
+            statement
+                .on_conflict(
+                    OnConflict::column(Entities::Id)
+                        .values(MERGED_COLUMNS.map(|(column, merged)| (column, merged())))
+                        .to_owned(),
+                )
+                .returning(Query::returning().exprs([
+                    Expr::col((New, Entities::EntityKey)),
+                    Expr::col((New, Entities::Id)),
+                    Expr::col((Old, Entities::EvolutionCreatedAt)).is_null(),
+                    Expr::col((New, Entities::EvolutionTypeNameKeys)),
+                    Expr::col((Old, Entities::EvolutionTypeNameKeys)),
+                ]));
+        }
+        Some(established) => {
+            let stored_established = || among(Expr::col((Entities::Table, Entities::Id)), established);
+            let returned_established = || among(Expr::col((New, Entities::Id)), established);
+            let held = MERGED_COLUMNS.into_iter().fold(stored_established(), |held, (column, _)| {
+                held.and(Expr::col((Entities::Table, column)).eq(Expr::col((Excluded, column))))
+            });
+            statement
+                .on_conflict(
+                    OnConflict::column(Entities::Id)
+                        .values(MERGED_COLUMNS.map(|(column, merged)| {
+                            let value: SimpleExpr = CaseStatement::new()
+                                .case(stored_established(), Expr::col((Excluded, column)))
+                                .finally(merged())
+                                .into();
+                            (column, value)
+                        }))
+                        .action_and_where(held.not())
+                        .to_owned(),
+                )
+                .returning(
+                    Query::returning().exprs([
+                        Expr::col((New, Entities::EntityKey)),
+                        Expr::col((New, Entities::Id)),
+                        Expr::col((Old, Entities::EvolutionCreatedAt)).is_null().or(returned_established()),
+                        Expr::col((New, Entities::EvolutionTypeNameKeys)),
+                        CaseStatement::new()
+                            .case(returned_established(), no_types())
+                            .finally(Expr::col((Old, Entities::EvolutionTypeNameKeys)))
+                            .into(),
+                    ]),
+                );
+        }
+    }
     Ok(statement)
 }
+
+/// The evolution columns of the identity row the upsert writes, each with the
+/// value its conflict action merges into a stored evolution.
+const MERGED_COLUMNS: [(Entities, fn() -> SimpleExpr); 3] = [
+    (Entities::EvolutionCreatedAt, first_creation),
+    (Entities::EvolutionModifiedAt, latest_modification),
+    (Entities::EvolutionTypeNameKeys, merged_types),
+];
 
 /// Every type the intents of `source` state, one list per Entity, under the
 /// columns of [`type_list_union`]: each type once, in the order of the first
@@ -251,7 +339,7 @@ fn merged_types() -> SimpleExpr {
     array_cat(stored(), array_of_subquery(lacking))
 }
 
-/// The membership rows of the types each evolution `evolved` returns gained:
+/// The membership rows of the types each evolution `written` returns gained:
 /// every type it is recorded under that it was not, which is every type of one
 /// the statement created.
 ///
@@ -260,21 +348,25 @@ fn merged_types() -> SimpleExpr {
 /// replaced is the one it found after waiting on any concurrent writer, while
 /// the relation read in the same `WITH` is the statement's snapshot. The
 /// upsert only adds types, so no membership row ever leaves.
-fn gained_memberships(schema: Option<&DynIden>) -> Result<InsertStatement, SeaQueryError> {
+fn gained_memberships(schema: Option<&DynIden>, written: &DynIden) -> Result<InsertStatement, SeaQueryError> {
     let memberships = Memberships {
         side: MembershipSide::Evolution,
         schema,
     };
+    // clone: every column names the same relation.
+    let column = |name: DynIden| Expr::col((DynIden::clone(written), name));
     let member = Member {
-        key: Expr::col((Evolved, Entities::EntityKey)),
-        id: Expr::col((Evolved, Entities::Id)),
+        key: column(Entities::EntityKey.into_iden()),
+        id: column(Entities::Id.into_iden()),
     };
-    let gained = Expr::col((Evolved, Created)).or(carried_among(Expr::col((Evolved, OldTypes))).not());
+    let gained = column(Created.into_iden()).or(carried_among(column(OldTypes.into_iden())).not());
     membership_insert(
         memberships,
-        Query::select().from(Evolved).take(),
-        Expr::col((Evolved, NewTypes)),
+        // clone: the rows and their columns name the same relation.
+        Query::select().from(DynIden::clone(written)).take(),
+        column(NewTypes.into_iden()),
         member,
         Some(gained),
+        false_literal(),
     )
 }

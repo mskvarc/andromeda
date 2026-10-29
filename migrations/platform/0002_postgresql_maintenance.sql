@@ -84,7 +84,8 @@
 --     30 entity_search_statistics, 31 idx_notification_deliveries_claim,
 --     32 idx_notification_deliveries_event,
 --     33 idx_notification_deliveries_subscription,
---     34 pk_notification_deliveries, 35 attribute_history_columnstore
+--     34 pk_notification_deliveries, 35 attribute_history_columnstore,
+--     36 idx_entities_id_trgm
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 -- ============================================================================
 create table postgresql_maintenance_tenants (
@@ -121,7 +122,7 @@ create table postgresql_maintenance_targets (
     constraint uq_postgresql_maintenance_targets_grain unique nulls not distinct (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_snapshot_key_positive check (snapshot_key is null or snapshot_key > 0),
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 35),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 36),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),

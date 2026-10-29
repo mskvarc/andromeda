@@ -22,6 +22,9 @@ mod consequences;
 mod contention_retry;
 mod deferred_history;
 mod entity_group;
+/// Which Temporal Evolutions a commit's creates establish, and confirming
+/// them against the history it records inline.
+mod evolution_establishment;
 mod history;
 mod history_interpretation;
 /// Whether a commit records its temporal history inline or queues it.

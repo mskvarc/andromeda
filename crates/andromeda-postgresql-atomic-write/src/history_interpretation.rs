@@ -43,10 +43,9 @@ pub(crate) fn interpret(
     let mut next = base;
     let mut intents = Vec::with_capacity(landed.len());
     for write in landed {
-        let core_write = !write.history.iter().any(HistoryRecord::is_evolution_instances);
-        match (core_write_history, core_write) {
-            (CoreWriteHistory::NotRecorded, true) => continue,
-            (CoreWriteHistory::NotRecorded, false) | (CoreWriteHistory::Recorded, true | false) => {}
+        match history_recording(write, core_write_history) {
+            HistoryRecording::Skipped => continue,
+            HistoryRecording::Interpreted => {}
         }
         let refused = |error: TemporalError| AttemptFailure::of_write(temporal(error), Identifier::clone(&write.entity_id)); // clone: the attribution owns the entity it names.
         let Some(intent) =
@@ -61,6 +60,27 @@ pub(crate) fn interpret(
         intents.push(intent);
     }
     Ok((intents, next))
+}
+
+/// Whether a landed write's history is interpreted into an intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HistoryRecording {
+    /// Its history is interpreted; it may still yield no intent.
+    Interpreted,
+    /// It records nothing: a Core write under
+    /// [`CoreWriteHistory::NotRecorded`].
+    Skipped,
+}
+
+/// Whether `write`'s history is interpreted under `core_write_history`: a Core
+/// write, one whose history holds no instance added through the Temporal API,
+/// is skipped when Core writes are not recorded.
+pub(crate) fn history_recording(write: &AtomicWrite, core_write_history: CoreWriteHistory) -> HistoryRecording {
+    let core_write = !write.history.iter().any(HistoryRecord::is_evolution_instances);
+    match (core_write_history, core_write) {
+        (CoreWriteHistory::NotRecorded, true) => HistoryRecording::Skipped,
+        (CoreWriteHistory::NotRecorded, false) | (CoreWriteHistory::Recorded, true | false) => HistoryRecording::Interpreted,
+    }
 }
 
 #[cfg(test)]

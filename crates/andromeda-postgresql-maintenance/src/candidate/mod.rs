@@ -105,6 +105,7 @@ mod tests {
             (IndexTarget::IdxNotificationDeliveriesEvent, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxNotificationDeliveriesSubscription, HeapTarget::NotificationDeliveries),
             (IndexTarget::PkNotificationDeliveries, HeapTarget::NotificationDeliveries),
+            (IndexTarget::IdxEntitiesIdTrgm, HeapTarget::Entities),
         ];
         assert_eq!(IndexTarget::ALL.map(|target| (target, target.heap())), expected);
         for (index, heap) in expected {

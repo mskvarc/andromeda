@@ -33,6 +33,8 @@ use std::collections::BTreeSet;
 
 /// The batch delete.
 mod delete;
+/// Taking back the Temporal Evolution a create established.
+mod evolution_withdrawal;
 /// The batch insert.
 mod insert;
 /// The images of an `entity_search` row a set-write hands on.
@@ -43,6 +45,8 @@ pub(crate) mod staging;
 pub(crate) mod type_membership;
 /// The batch update.
 mod update;
+/// The version a guarded write compares and the count every write moves.
+mod version_guard;
 
 /// Every `$n` placeholder in `sql`, as numbers.
 #[cfg(test)]

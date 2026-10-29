@@ -19,7 +19,7 @@
 use crate::{
     entity::write::{
         search_image::SearchImage,
-        staging::{Ins, Srch, from_inserted, projected},
+        staging::{Established, Ins, Srch, from_inserted, projected},
     },
     error::ContextStoreError,
 };
@@ -33,6 +33,7 @@ use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
     type_membership::MembershipSide,
 };
+use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::{DynIden, Expr, ExprTrait, Iden, InsertStatement, Query};
 
 /// The membership CTE of a create or an update, `mbrs`, whose only purpose is
@@ -64,7 +65,9 @@ const fn current(schema: Option<&DynIden>) -> Memberships<'_> {
 }
 
 /// The membership rows of the Entities a create just minted, read from the
-/// source the other child inserts read (`FROM ins JOIN proj ...`).
+/// source the other child inserts read (`FROM ins JOIN proj ...`), each on the
+/// Evolution's side too where the create established the Temporal Evolution
+/// under the same types.
 ///
 /// # Errors
 ///
@@ -82,6 +85,7 @@ pub(crate) fn created_memberships(target: &ContextTarget) -> Result<InsertStatem
         projected(EntitySearch::EntityTypeNameKeys),
         member,
         None,
+        Expr::col((Ins, Established)),
     )?)
 }
 
@@ -105,6 +109,7 @@ pub(super) fn added_memberships(target: &ContextTarget) -> Result<InsertStatemen
         Expr::col((Srch, SearchImage::NewTypes)),
         member,
         Some(added),
+        false_literal(),
     )?)
 }
 
@@ -144,7 +149,7 @@ mod tests {
             sql,
             concat!(
                 r#"INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id", "is_current_member", "is_evolution_member") "#,
-                r#"SELECT "ins"."entity_key", "carried"."entity_type_name_key", "ins"."id", TRUE, FALSE FROM "ins" "#,
+                r#"SELECT "ins"."entity_key", "carried"."entity_type_name_key", "ins"."id", TRUE, "ins"."established" FROM "ins" "#,
                 r#"JOIN "proj" ON "proj"."id" = "ins"."id" "#,
                 r#"INNER JOIN LATERAL (SELECT UNNEST("proj"."entity_type_name_keys") AS "entity_type_name_key") AS "carried" ON TRUE "#,
                 r#"ON CONFLICT ("entity_type_name_key", "id") DO UPDATE SET "is_current_member" = TRUE"#

@@ -10,8 +10,10 @@
 //! apart, one row each, keyed by the entity identifier
 //! ([`instances_cte`](crate::current_attribute::staging::instances_cte)).
 
-use crate::entity::params::{PreparedEntityColumns, literal_texts};
-use andromeda_context_commit::entity_version::EntityVersion;
+use crate::entity::{
+    params::{PreparedEntityColumns, literal_texts},
+    write::version_guard::expectation_columns,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
@@ -23,21 +25,7 @@ use andromeda_postgresql_seaquery::{
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use sea_query::{
-    CaseStatement,
-    CommonTableExpression,
-    Cond,
-    Expr,
-    ExprTrait,
-    FunctionCall,
-    Iden,
-    IntoIden,
-    JoinType,
-    Keyword,
-    Query,
-    SelectStatement,
-    SimpleExpr,
-};
+use sea_query::{CaseStatement, CommonTableExpression, Expr, ExprTrait, FunctionCall, Iden, IntoIden, JoinType, Keyword, Query, SelectStatement, SimpleExpr};
 
 /// The staging alias, `d`, each set-write reads its parallel arrays under.
 ///
@@ -57,6 +45,13 @@ pub(super) struct Proj;
 #[derive(Iden, Clone, Copy)]
 #[iden = "ins"]
 pub(super) struct Ins;
+
+/// The column of `ins` saying whether the create minted the identity row with
+/// the Temporal Evolution it was asked to establish, `established`: false for
+/// an identity row that existed, which keeps the evolution it held.
+#[derive(Iden, Clone, Copy)]
+#[iden = "established"]
+pub(super) struct Established;
 
 /// The `entity_search` CTE, `srch`: the rows a set-write wrote there, returned
 /// as the images ([`SearchImage`](crate::entity::write::search_image::SearchImage))
@@ -148,6 +143,9 @@ pub(super) enum StagedColumn {
     ExpectedWriteCount,
     /// Whether the row keeps its stored `location` geometry.
     LocKept,
+    /// Whether a create writes the Entity's Temporal Evolution beside its
+    /// current state, when the identity row is new.
+    EstablishesEvolution,
 }
 
 /// The hoisted geometry column of the search row, with the staging columns
@@ -238,19 +236,28 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 11] {
     ]
 }
 
-/// The eleven projected staging columns of the insert, in bind order.
-pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
+/// The eleven value columns, as staging columns.
+fn value_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
         .map(|(column, array_type)| UnnestColumn::new(column, array_type))
         .collect()
 }
 
-/// The fourteen projected staging columns of the update: the insert's eleven,
-/// whether the hoisted geometry is kept, and the two of the expectation the
-/// compare-and-set holds.
+/// The twelve projected staging columns of the insert, in bind order: the
+/// eleven value columns and whether the create establishes the Temporal
+/// Evolution.
+pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
+    let mut columns = value_columns();
+    columns.push(UnnestColumn::new(StagedColumn::EstablishesEvolution, PostgresType::BooleanArray));
+    columns
+}
+
+/// The fourteen projected staging columns of the update: the eleven value
+/// columns, whether the hoisted geometry is kept, and the two of the
+/// expectation the compare-and-set holds.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
-    let mut columns = insert_staging_columns();
+    let mut columns = value_columns();
     columns.push(UnnestColumn::new(HOISTED_LOCATION.kept, PostgresType::BooleanArray));
     columns.extend(expectation_columns());
     columns
@@ -262,23 +269,6 @@ pub(super) fn delete_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = vec![UnnestColumn::new(StagedColumn::Id, PostgresType::TextArray)];
     columns.extend(expectation_columns());
     columns
-}
-
-/// The two staging columns of a version expectation, the key and the count.
-fn expectation_columns() -> [UnnestColumn; 2] {
-    [
-        UnnestColumn::new(StagedColumn::ExpectedEntityKey, PostgresType::BigintArray),
-        UnnestColumn::new(StagedColumn::ExpectedWriteCount, PostgresType::BigintArray),
-    ]
-}
-
-/// The two arrays staging `expected` in [`expectation_columns`] order: a
-/// `None` entry is NULL in both.
-pub(super) fn expectation_arrays(expected: &[Option<EntityVersion>]) -> [SimpleExpr; 2] {
-    [
-        nullable_array(expected.iter().map(|version| version.map(EntityVersion::entity_key))),
-        nullable_array(expected.iter().map(|version| version.map(EntityVersion::write_count))),
-    ]
 }
 
 /// The eleven arrays the entity columns stage in `value_staging_columns`
@@ -318,9 +308,10 @@ pub(super) fn staging_source(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>) 
 /// whose output columns carry the names of the relation columns they land in.
 ///
 /// What only an update stages (whether the geometry is kept, and the
-/// expectation) is projected for the update alone, so the insert and the
-/// update share this one builder. A kept geometry stages no EWKB, so its
-/// projection validates nothing.
+/// expectation) is projected for the update alone, and what only an insert
+/// stages (whether it establishes the Temporal Evolution) for the insert
+/// alone, so the two share this one builder. A kept geometry stages no EWKB,
+/// so its projection validates nothing.
 pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, write: ProjectedWrite) -> CommonTableExpression {
     let mut select = Query::select();
     select
@@ -357,7 +348,9 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, 
                 .expr(staged(StagedColumn::ExpectedEntityKey))
                 .expr(staged(StagedColumn::ExpectedWriteCount));
         }
-        ProjectedWrite::Insert => {}
+        ProjectedWrite::Insert => {
+            select.expr(staged(StagedColumn::EstablishesEvolution));
+        }
     }
     select.from_function(staging_source(columns, arrays), Staged);
     let select: SelectStatement = select.take();
@@ -375,36 +368,8 @@ pub(super) enum ProjectedWrite {
     /// The update: whether the geometry is kept, and the expectation, are
     /// staged and projected.
     Update,
-    /// The insert: nothing to compare against and no stored row to keep from.
+    /// The insert: nothing to compare against and no stored row to keep
+    /// from, and whether it establishes the Temporal Evolution is staged and
+    /// projected.
     Insert,
-}
-
-/// The write count a write of the identity row named `entities` leaves:
-/// `<entities>.write_count + 1`. Every write of the current state moves it, so
-/// a later write never matches an expectation an earlier one satisfied.
-pub(super) fn next_write_count(entities: impl IntoIden) -> SimpleExpr {
-    Expr::col((entities.into_iden(), Entities::WriteCount)).add(SimpleExpr::Constant(1.into()))
-}
-
-/// The precondition the update and the delete carry:
-/// `<s>.expected_entity_key IS NULL OR (<entities>.entity_key = <s>.expected_entity_key
-/// AND <entities>.write_count = <s>.expected_write_count)`, with `s` the
-/// relation the statement carries the expectation in (`d` for the delete,
-/// `proj` for the update) and `entities` the name the statement reads the
-/// identity row under.
-///
-/// A null expectation matches whatever is there; a non-null one matches only a
-/// row still standing as the caller read it, which is what turns a
-/// read-modify-write into a compare-and-set rather than a lost update. The
-/// version compared is the row's key and write count, not its clause 4.8
-/// `modifiedAt`: two writes accepted in the same microsecond stamp the same
-/// instant but never leave the same count.
-pub(super) fn expectation(staging: impl IntoIden, entities_alias: impl IntoIden) -> Cond {
-    // clone: each alias qualifies more than one column
-    let (staging, entities_alias) = (staging.into_iden(), entities_alias.into_iden());
-    Cond::any().add(Expr::col((staging.clone(), StagedColumn::ExpectedEntityKey)).is_null()).add(
-        Cond::all()
-            .add(Expr::col((entities_alias.clone(), Entities::EntityKey)).equals((staging.clone(), StagedColumn::ExpectedEntityKey)))
-            .add(Expr::col((entities_alias, Entities::WriteCount)).equals((staging, StagedColumn::ExpectedWriteCount))),
-    )
 }
