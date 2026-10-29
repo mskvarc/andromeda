@@ -460,7 +460,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""dropped" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "ents"."entity_key" FROM "ents" JOIN "grains""#),
+            sql.contains(r#""dropped" AS (DELETE FROM "current_attributes" WHERE ("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN (SELECT "ents"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains""#),
             "{sql}"
         );
         assert!(
