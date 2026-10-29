@@ -13,7 +13,9 @@
 //! - the hoisted default instance, through `idx_entity_search_location`, or,
 //!   when an in-memory spatial index already answered for the default
 //!   instance, through the candidates it named, looked up by identifier;
-//! - every instance carrying a `datasetId`, through `idx_ca_value_geometry`.
+//! - every instance carrying a `datasetId`, through
+//!   `idx_ca_dataset_value_geometry`, which holds no other instance: a box
+//!   that holds thousands of default instances reads none of them twice.
 //!
 //! Each arm tests the box its index keys, the instance's great-circle reach
 //! first, before the exact relation. The candidates' box test reads no index,
@@ -167,8 +169,8 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::AttributeNameKey)).eq(location_key.get()))
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetId)).is_not_null())
         .and_where(instance_stands(SeaExpr::col((instance.clone(), CurrentAttributes::ExpiresAt))))
-        // The written column, which the partial `idx_ca_value_geometry` is
-        // restricted by.
+        // With the `datasetId` test, the predicate the partial
+        // `idx_ca_dataset_value_geometry` is restricted by.
         .and_where(SeaExpr::col((instance, CurrentAttributes::ValueGeometry)).is_not_null());
     arm.cond_where(restriction(&geo.georel, &geo.geometry, &stored, BoxIndexing::Indexed)?);
     Ok(arm.take())

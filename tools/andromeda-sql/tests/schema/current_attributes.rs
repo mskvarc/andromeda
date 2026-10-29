@@ -147,6 +147,20 @@ fn every_value_index_is_partial_on_its_column() -> Result<(), PinError> {
     Ok(())
 }
 
+/// A `location` geo-query reads its `datasetId` instances apart from the
+/// default ones, which it reads hoisted.
+#[test]
+fn the_dataset_geometry_index_holds_only_instances_with_a_dataset() -> Result<(), PinError> {
+    let schema = schema()?;
+    assert_eq!(
+        index_definition(&schema, "idx_ca_dataset_value_geometry")?,
+        format!(
+            "on {TABLE} using gist (attribute_name_key, coalesce(value_geometry_reach, value_geometry_valid, value_geometry)) where value_geometry is not null and dataset_id is not null"
+        )
+    );
+    Ok(())
+}
+
 #[test]
 fn the_sub_attribute_key_index_is_partial_and_off_the_pending_list() -> Result<(), PinError> {
     let schema = schema()?;

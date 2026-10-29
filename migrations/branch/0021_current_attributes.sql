@@ -255,6 +255,13 @@ where
 create statistics stx_ca_value_geometry on (coalesce(value_geometry_reach, value_geometry_valid, value_geometry))
 from current_attributes;
 
+-- A `location` geo-query reads the instances carrying a `datasetId` here: its
+-- default instance is hoisted, and almost no instance carries one, so the
+-- query reads none of the rows it would only discard.
+create index idx_ca_dataset_value_geometry on current_attributes using gist (attribute_name_key, coalesce(value_geometry_reach, value_geometry_valid, value_geometry))
+where
+    value_geometry is not null and dataset_id is not null;
+
 -- The correlated instance lookup and the distance ordering of clause 4.23.
 create index idx_ca_entity_geometry on current_attributes (attribute_name_key, entity_key)
 where

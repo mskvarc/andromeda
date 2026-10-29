@@ -21,7 +21,7 @@ fn every_reach_box_an_index_keys_has_expression_statistics() -> Result<(), PinEr
         .flat_map(|index| index.elements().iter().map(move |element| (index.table(), element.written())))
         .filter(|(_, key)| key.starts_with("coalesce(") && key.contains("_reach,"))
         .collect();
-    assert_eq!(boxes.len(), 5, "{boxes:?}");
+    assert_eq!(boxes.len(), 6, "{boxes:?}");
     for (table, key) in boxes {
         let expected = format!("on ({key}) from {table}");
         assert!(
