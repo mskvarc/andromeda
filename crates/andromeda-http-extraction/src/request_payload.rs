@@ -23,7 +23,7 @@
 use crate::{
     addressed_uri::addressed_request_uri,
     body_admission_refusal::BodyAdmissionRefusal,
-    content_kind::request_content_kind,
+    content_kind::admit_content_kind,
     content_length_precondition::{DeclaredBodyLength, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     request_body_limit::RequestBodyLimit,
@@ -44,7 +44,7 @@ use axum::{
         Request,
         rejection::{BytesRejection, FailedToBufferBody},
     },
-    http::{StatusCode, Uri, Version},
+    http::{Uri, Version},
 };
 use thiserror::Error;
 
@@ -71,12 +71,7 @@ where
         let instance = addressed_request_uri(&request);
         // clone: the precondition's refusal and the payload's each name the request.
         let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
-        // Clause 6.3.4: the `Content-Type` is `application/json` or
-        // `application/ld+json` (`application/merge-patch+json` for PATCH
-        // alone); anything else is "just a 415 HTTP status code".
-        if request_content_kind(request.headers(), request.method()).is_none() {
-            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        }
+        admit_content_kind(request.headers(), request.method())?;
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
         // clone: a counted payload over its limit names the request too.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;

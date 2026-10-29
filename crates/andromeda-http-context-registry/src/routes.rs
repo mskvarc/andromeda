@@ -124,6 +124,33 @@ mod tests {
         Ok(())
     }
 
+    /// Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is not
+    /// 'application/json' nor 'application/ld+json', shall result in just a 415
+    /// HTTP status code (without any payload body)". The precondition holds for
+    /// creating a hosted `@context` before the addressed tenant is resolved.
+    #[tokio::test]
+    async fn creating_a_context_with_an_unsupported_media_type_is_the_bare_415() -> Result<(), HttpError> {
+        for content_type in [Some("application/xml"), Some("text/plain"), None] {
+            let routes = ContextRegistryRoutes::new(Arc::new(RejectingResolver)).into_router();
+            let mut request = Request::builder().method(Method::POST).uri("/jsonldContexts").header(CONTENT_LENGTH, "2");
+            if let Some(content_type) = content_type {
+                request = request.header("content-type", content_type);
+            }
+
+            // A `Router`'s service error type is uninhabited, so the call has no
+            // failure case to propagate.
+            let response = match routes.oneshot(request.body(Body::from("{}"))?).await {
+                Ok(response) => response,
+                Err(never) => match never {},
+            };
+
+            assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE, "{content_type:?}");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap_or_default();
+            assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 415: {body:?}");
+        }
+        Ok(())
+    }
+
     /// A declared length lets the request through the precondition and on to
     /// the operation, which the rejecting resolver then refuses.
     #[tokio::test]

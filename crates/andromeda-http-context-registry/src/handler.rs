@@ -10,7 +10,7 @@ use crate::{
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
-    content_length_precondition::DeclaredBodyLength,
+    body_preconditions::BodyPreconditions,
     not_json_document::NotJsonDocument,
     pagination_policy::RequestPagination,
     query::ValidatedQuery,
@@ -50,18 +50,19 @@ use serde_json::value::RawValue;
 /// Create a hosted or cached JSON-LD `@context` (clause 5.13.2).
 ///
 /// Clause 6.3.4 applies its POST preconditions here as to every other
-/// body-taking operation: the [`DeclaredBodyLength`] extractor refuses a
+/// body-taking operation: the [`BodyPreconditions`] extractor refuses a
 /// request that declares no `Content-Length` with the bare 411 the clause
-/// requires. It is listed first because the precondition is a property of the
-/// incoming HTTP request alone, so it holds whether or not the addressed
-/// tenant resolves.
+/// requires, and one whose `Content-Type` is not admitted with the bare 415.
+/// It is listed first because the preconditions are properties of the incoming
+/// HTTP request alone, so they hold whether or not the addressed tenant
+/// resolves.
 ///
 /// The entry's `url` member is the absolute URL it is served under, built on
 /// the request's `apiRoot`; the `Location` is the local relative path clause
 /// 6.29.3.1 prescribes, below the configured `apiRoot`'s prefix. The operation defines no query parameter, so any is the
 /// clause 6.3.20 `InvalidRequest`, read before the tenant is resolved.
 pub(crate) async fn create(
-    _body_length: DeclaredBodyLength,
+    _preconditions: BodyPreconditions,
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,

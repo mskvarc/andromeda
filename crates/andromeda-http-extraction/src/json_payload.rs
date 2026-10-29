@@ -8,6 +8,7 @@
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    content_kind::admit_content_kind,
     content_length_precondition::declared_body_length,
     json_value_budget::refuse_values_past_budget,
     not_json_document::NotJsonDocument,
@@ -16,12 +17,7 @@ use crate::{
 };
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use axum::{
-    extract::{FromRequest, Request},
-    http::{HeaderMap, StatusCode},
-};
-use headers::HeaderMapExt;
-use mediatype::{MediaTypeBuf, names};
+use axum::extract::{FromRequest, Request};
 use serde::de::DeserializeOwned;
 use serde_json::error::Category;
 use thiserror::Error;
@@ -43,9 +39,7 @@ where
         // with "just a 415 HTTP status code (without any payload body)".
         // clone: each refusal below names the same request.
         let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
-        if !announces_json(request.headers()) {
-            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        }
+        admit_content_kind(request.headers(), request.method())?;
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
         // clone: a body that is read but does not decode still names the request.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
@@ -88,18 +82,6 @@ impl RequestRefusal for JsonPayloadRefusal {
             JsonPayloadRefusal::WrongShape(_) => NgsiLdErrorType::BadRequestData,
         }
     }
-}
-
-/// Whether the request's `Content-Type` announces a JSON document:
-/// `application/json` or an `application/*+json` type.
-fn announces_json(headers: &HeaderMap) -> bool {
-    let Some(content_type) = headers.typed_get::<headers::ContentType>() else {
-        return false;
-    };
-    content_type
-        .to_string()
-        .parse::<MediaTypeBuf>()
-        .is_ok_and(|media_type| media_type.ty() == names::APPLICATION && (media_type.subty() == names::JSON || media_type.suffix() == Some(names::JSON)))
 }
 
 #[cfg(test)]

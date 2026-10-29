@@ -2,9 +2,11 @@
 //!
 //! Uses `mediatype` for `Content-Type` validation instead of substring
 //! matching, preventing false positives: `application/json-patch+json` is not
-//! `application/json`.
+//! `application/json`. Every body reader and every route that takes a body
+//! admits the media type here, so no two disagree on what clause 6.3.4 permits.
 
-use axum::http::{HeaderMap, Method};
+use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use axum::http::{HeaderMap, Method, StatusCode};
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 
@@ -19,17 +21,30 @@ pub(crate) enum ContentKind {
     MergePatchJson,
 }
 
-/// The representation a request's `Content-Type` announces, when clause 6.3.4
-/// admits it under the request's method.
-pub(crate) fn request_content_kind(headers: &HeaderMap, method: &Method) -> Option<ContentKind> {
-    classify_content_type(&headers.typed_get::<headers::ContentType>()?.to_string(), method)
+/// Admit the representation a request's `Content-Type` announces.
+///
+/// Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is not
+/// 'application/json' nor 'application/ld+json', shall result in just a 415
+/// HTTP status code (without any payload body)". This is the only place a
+/// request's media type is decided.
+///
+/// # Errors
+///
+/// Returns the bare 415 when the header is absent, is no media type, or names
+/// one clause 6.3.4 does not admit under `method`.
+pub(crate) fn admit_content_kind(headers: &HeaderMap, method: &Method) -> Result<ContentKind, ExtractorRejection> {
+    let raw = headers.typed_get::<headers::ContentType>().map(|value| value.to_string()).unwrap_or_default();
+    classify_content_type(&raw, method).ok_or_else(|| {
+        tracing::warn!("request refused: unsupported media type '{raw}'");
+        ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+    })
 }
 
 /// Classify a raw content type into a supported JSON representation kind.
 ///
 /// Clause 6.3.4: `application/merge-patch+json` is admitted for HTTP PATCH
 /// requests alone, so under any other method it is unsupported.
-pub(crate) fn classify_content_type(raw: &str, method: &Method) -> Option<ContentKind> {
+fn classify_content_type(raw: &str, method: &Method) -> Option<ContentKind> {
     let mt: MediaTypeBuf = raw.parse().ok()?;
 
     if mt.ty() != names::APPLICATION {

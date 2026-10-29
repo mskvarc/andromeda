@@ -23,6 +23,7 @@ use crate::entity_operations::{
     multi_status_response,
 };
 use andromeda_http_extraction::{
+    body_preconditions::BodyPreconditions,
     context_target,
     entity_id_batch::{EntityIdBatch, JsonLdEntityIds},
 };
@@ -30,6 +31,9 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
 pub(crate) async fn batch_delete(
+    // The clause 6.3.4 preconditions are properties of the incoming request
+    // alone, so they answer before the query is read or the tenant is resolved.
+    _preconditions: BodyPreconditions,
     // Clause 6.3.18 is the one URL parameter the operation defines, so any
     // other is an `InvalidRequest`; it is read first, before the tenant is
     // resolved.

@@ -92,7 +92,7 @@ mod tests {
     use andromeda_http_extraction::accept_language::AcceptLanguageReading;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
-        body::Body,
+        body::{Body, to_bytes},
         http,
         http::{Method, Request, StatusCode},
     };
@@ -176,6 +176,30 @@ mod tests {
                 .insert("ngsild-snapshot", http::HeaderValue::from_static("urn:ngsi-ld:Snapshot:1"));
             let response = routes.clone().oneshot(scoped).await?;
             assert_ne!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path} must reach its handler");
+        }
+        Ok(())
+    }
+
+    /// Clause 6.3.4: a batch delete is an HTTP POST with a payload body, so an
+    /// unsupported `Content-Type` is "just a 415 HTTP status code (without any
+    /// payload body)", and it holds before the addressed tenant is resolved.
+    #[tokio::test]
+    async fn a_batch_delete_with_an_unsupported_media_type_is_the_bare_415() -> Result<(), Box<dyn Error>> {
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none(), AcceptLanguageReading::Ignored).into_router();
+        for content_type in [Some("application/xml"), Some("text/plain"), None] {
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri("/entityOperations/delete")
+                .header("content-length", "2");
+            if let Some(content_type) = content_type {
+                builder = builder.header("content-type", content_type);
+            }
+
+            let response = routes.clone().oneshot(builder.body(Body::from("[]"))?).await?;
+
+            pretty_assertions::assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE, "{content_type:?}");
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            assert!(body.is_empty(), "clause 6.3.4 forbids a payload body on a 415: {body:?}");
         }
         Ok(())
     }

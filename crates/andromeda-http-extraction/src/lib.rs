@@ -20,6 +20,7 @@ mod body_admission;
 mod body_admission_refusal;
 mod body_envelope;
 pub mod body_only_query;
+pub mod body_preconditions;
 pub mod classification;
 mod content_kind;
 pub mod content_length_precondition;

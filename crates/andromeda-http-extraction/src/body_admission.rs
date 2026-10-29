@@ -13,7 +13,7 @@ use crate::{
     body_admission_refusal::BodyAdmissionRefusal,
     body_envelope::BodyEnvelope,
     classification::classify_context_link_error,
-    content_kind::{ContentKind, classify_content_type},
+    content_kind::{ContentKind, admit_content_kind},
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     not_json_document::NotJsonDocument,
@@ -25,12 +25,7 @@ use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
 use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
 use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
-use axum::{
-    body::Bytes,
-    extract::Request,
-    http::{StatusCode, Uri},
-};
-use headers::HeaderMapExt;
+use axum::{body::Bytes, extract::Request, http::Uri};
 use iri_rs::IriBuf;
 
 /// A request body that passed the NGSI-LD body preconditions, with its
@@ -182,16 +177,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
     // looked at, so an absent Content-Length is the bare 411 the clause
     // requires rather than a decoding failure.
     let declared = declared_body_length(req.headers(), req.extensions()).map_err(|error| error.into_rejection(uri.clone()))?;
-    let content_type_raw = req
-        .headers()
-        .typed_get::<headers::ContentType>()
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-
-    let Some(content_kind) = classify_content_type(&content_type_raw, req.method()) else {
-        tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
-        return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-    };
+    let content_kind = admit_content_kind(req.headers(), req.method())?;
 
     // Clause 6.3.5: an `application/ld+json` body names its context itself and
     // refuses a context `Link` beside it; any other body is read against the

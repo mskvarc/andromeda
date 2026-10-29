@@ -16,6 +16,7 @@ use crate::{
     blocking_decode::{BlockingDecodePolicy, decode_payload},
     body_envelope::BodyEnvelope,
     classification::classify_context_link_error,
+    content_kind::{ContentKind, admit_content_kind},
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     not_json_document::NotJsonDocument,
@@ -37,46 +38,11 @@ use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedConte
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{HeaderMap, StatusCode, Uri as HttpUri},
+    http::{HeaderMap, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
-use headers::HeaderMapExt;
-use mediatype::{MediaTypeBuf, names};
 use serde_json::value::RawValue;
 use std::mem::take;
-
-/// The representation a batch request announced in its `Content-Type`.
-///
-/// Clause 6.3.4 admits exactly these two for a body-taking operation, so the
-/// classification is total once the extractor has admitted the request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContentKind {
-    /// Plain `application/json` batch representation.
-    Json,
-    /// JSON-LD `application/ld+json` batch representation.
-    LdJson,
-}
-
-/// Classify one raw content type into a supported batch representation.
-fn classify_batch_content_type(raw: &str) -> Option<ContentKind> {
-    let mt: MediaTypeBuf = raw.parse().ok()?;
-    if mt.ty() != names::APPLICATION {
-        return None;
-    }
-    if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
-        return Some(ContentKind::LdJson);
-    }
-    if mt.subty() == names::JSON && mt.suffix().is_none() {
-        return Some(ContentKind::Json);
-    }
-    None
-}
-
-/// The representation the request's `Content-Type` announces, if clause 6.3.4
-/// admits it for a body-taking operation.
-fn batch_content_type(headers: &HeaderMap) -> Option<ContentKind> {
-    classify_batch_content_type(&headers.typed_get::<headers::ContentType>()?.to_string())
-}
 
 /// A batch request body that has passed the clause 6.3.4 preconditions.
 ///
@@ -133,13 +99,7 @@ where
         // looked at: a request that declares no payload length has declared no
         // payload for the media type to describe.
         let declared = declared_body_length(&parts.headers, &parts.extensions).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
-        // Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is
-        // not 'application/json' nor 'application/ld+json', shall result in
-        // just a 415 HTTP status code (without any payload body)". This is the
-        // only place a batch request's media type is classified.
-        let Some(content_kind) = batch_content_type(&parts.headers) else {
-            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-        };
+        let content_kind = admit_content_kind(&parts.headers, &parts.method).map_err(IntoResponse::into_response)?;
         // Clause 6.3.5: an `application/ld+json` body names its context in the
         // body, so "the presence of a JSON-LD Link header in the incoming HTTP
         // request when the Content-Type header is application/ld+json shall
@@ -148,7 +108,7 @@ where
         // validated here like every other request's.
         let carrier = match content_kind {
             ContentKind::LdJson => PayloadCarrier::LdJsonBody,
-            ContentKind::Json => PayloadCarrier::LinkHeader,
+            ContentKind::Json | ContentKind::MergePatchJson => PayloadCarrier::LinkHeader,
         };
         let link_context = match RequestLinks::of(&mut parts).and_then(|links| links.context_for(carrier)) {
             Ok(link_context) => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
@@ -275,9 +235,9 @@ impl<'b> BatchArrayItem<'b> {
             BodyEnvelope::Array(_) | BodyEnvelope::Null | BodyEnvelope::Scalar => None,
         };
         match (content_kind, &context) {
-            (ContentKind::Json, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
+            (ContentKind::Json | ContentKind::MergePatchJson, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
             (ContentKind::LdJson, None) => return Err(BatchItemRefusal::NoContextInLdJson),
-            (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
+            (ContentKind::Json | ContentKind::MergePatchJson, None) | (ContentKind::LdJson, Some(_)) => {}
         }
 
         Ok(ItemAdmission {
@@ -335,7 +295,7 @@ fn decode_batch(
     let items = batch_items::<&RawValue>(body, BatchMembers::Entities)?;
 
     let shared_context = match content_kind {
-        ContentKind::Json => Some(BatchContext::shared(link_context)),
+        ContentKind::Json | ContentKind::MergePatchJson => Some(BatchContext::shared(link_context)),
         ContentKind::LdJson => None,
     };
     // clone: the batch and every item it reads hold the shared handle
