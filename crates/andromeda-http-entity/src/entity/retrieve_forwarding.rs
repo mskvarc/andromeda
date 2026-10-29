@@ -99,7 +99,7 @@ impl RetrieveForwarding<'_> {
     }
 
     /// The forwarded retrieval, as both phases send it.
-    fn request(&self) -> ForwardRetrieveRequest<'_> {
+    const fn request(&self) -> ForwardRetrieveRequest<'_> {
         ForwardRetrieveRequest {
             entity_id: self.entity_id,
             exclude_registration: None,
