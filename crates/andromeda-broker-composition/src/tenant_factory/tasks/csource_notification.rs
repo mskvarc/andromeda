@@ -206,7 +206,7 @@ fn register_csource_notification_processor(
             processor.reload_cache().await.map_err(worker_notification_failure)?;
             execution.mark_running();
             let mut lost_registration_changes: u64 = 0;
-            let mut evaluated_through: Option<DateTime<Utc>> = None;
+            let mut evaluated_through = Some(Utc::now());
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
