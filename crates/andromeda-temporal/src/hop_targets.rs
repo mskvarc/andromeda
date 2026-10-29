@@ -11,8 +11,12 @@
 //! every other one through the remote half of the temporal Linked Entity
 //! retrieval. The filters then judge each hop in memory over those targets.
 //!
-//! A target is read from one holder: this broker when it records the entity,
-//! the remainder of the system otherwise. Its instances inside the window
+//! A target is read from every holder, as the parts of a split entity are:
+//! this broker when it records the entity, and every context source whose
+//! registration covers it, which is asked for the attributes the hops read of
+//! it and the window alone. The parts are merged by Attribute and `datasetId`
+//! into one entity. A holder that fails leaves its part out and is reported, so
+//! the query is answered with a warning. Its instances inside the window
 //! count; the instance in effect when the window opens is the latest across
 //! the target's own parts, which a hop does not gather.
 
@@ -28,12 +32,16 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_model::temporal::{
+    temporal_document::{MergeMode, TemporalDocument},
+    temporal_history::TemporalHistory,
+};
 use andromeda_ngsi_ld_query::{
     queried_entity::linked_entities::LinkedEntities,
     temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow},
 };
+use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::{
     collections::{HashMap, HashSet},
@@ -81,43 +89,38 @@ struct TargetRead<'r> {
     context: &'r ContextSpec,
 }
 
+/// What reading the entities the hops reach found.
+#[derive(Debug, Default)]
+pub(crate) struct HopReading {
+    /// Every target read, each the union of what its holders answered.
+    pub(crate) targets: Vec<TemporalDocument>,
+    /// The holders that could not be consulted or whose answer was unusable;
+    /// the targets they hold are judged on the parts that did answer.
+    pub(crate) incomplete: Vec<LinkedResolutionFailure>,
+}
+
 impl TemporalService {
     /// Read over the window of `params` every entity the hops reach from
-    /// `parts`, `hops` naming the Relationships crossed at each depth.
+    /// `parts`, `hops` naming the Relationships crossed at each depth and
+    /// `reads` the attributes each depth is read for.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the window does not compile or this
-    /// broker's temporal catalogue cannot be read. A target whose history
-    /// cannot be read is left out: clause 4.5.23 leaves such a Relationship a
-    /// plain URI, and a hop reaches nothing through it.
+    /// broker's temporal catalogue cannot be read. A holder that cannot be
+    /// consulted is left out and reported in [`HopReading::incomplete`]:
+    /// clause 4.5.23 leaves such a Relationship a plain URI, and a hop reaches
+    /// what the other holders answered.
     pub(crate) async fn read_hop_targets(
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
         context: &ContextSpec,
-        hops: &[Vec<&AttributeName>],
+        (hops, reads): (&[Vec<&AttributeName>], &[Option<Vec<&AttributeName>>]),
         parts: &[&TemporalDocument],
-    ) -> Result<Vec<TemporalDocument>, TemporalError> {
-        // A filter reads instances whatever representation the client asked
-        // for, and every instance of the window, before any `lastN` cut.
-        let window = TemporalLinkedWindow {
-            format: TemporalFormat::Normalized,
-            last_n: None,
-            aggr_methods: None,
-            aggr_period_duration: None,
-            ..TemporalLinkedWindow::of_request(params)
-        };
-        let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
+    ) -> Result<HopReading, TemporalError> {
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
-        let read = TargetRead {
-            target,
-            scope: &scope,
-            compiled: &compiled,
-            window: &window,
-            context,
-        };
-        let mut targets: Vec<TemporalDocument> = Vec::new();
+        let mut reading = HopReading::default();
         let mut seen: HashSet<Identifier> = HashSet::new();
         let mut frontier = objects_of(parts.iter().copied(), hops.first());
         for depth in 1..=hops.len() {
@@ -125,56 +128,93 @@ impl TemporalService {
             if frontier.is_empty() {
                 break;
             }
+            // A filter reads instances whatever representation the client
+            // asked for, and every instance of the window, before any `lastN`
+            // cut; a target is asked only for what the hops read of it.
+            let window = TemporalLinkedWindow {
+                format: TemporalFormat::Normalized,
+                last_n: None,
+                aggr_methods: None,
+                aggr_period_duration: None,
+                attrs: reads
+                    .get(depth - 1)
+                    .and_then(Option::as_ref)
+                    .map(|names| names.iter().map(|name| (*name).clone()).collect()), // clone: the window owns the names it asks for
+                ..TemporalLinkedWindow::of_request(params)
+            };
+            let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
+            let read = TargetRead {
+                target,
+                scope: &scope,
+                compiled: &compiled,
+                window: &window,
+                context,
+            };
             let level = self.read_target_level(&read, &frontier, &seen).await?;
-            frontier = objects_of(level.iter(), hops.get(depth));
-            targets.extend(level);
+            frontier = objects_of(level.targets.iter(), hops.get(depth));
+            reading.targets.extend(level.targets);
+            reading.incomplete.extend(level.incomplete);
         }
-        Ok(targets)
+        Ok(reading)
     }
 
-    /// Read `ids` over the window, from this broker when it records them, from
-    /// the remainder of the system otherwise; `visited` names every target the
-    /// walk has read or is reading.
+    /// Read `ids` over the window from every holder: this broker when it
+    /// records them, and the remainder of the system whether or not it does,
+    /// since clause 5.7.4.4 makes the Temporal Evolution of an Entity the union
+    /// of what every part holds. `visited` names every target the walk has read
+    /// or is reading.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the temporal catalogue cannot be read.
-    async fn read_target_level(
-        &self,
-        read: &TargetRead<'_>,
-        ids: &[Identifier],
-        visited: &HashSet<Identifier>,
-    ) -> Result<Vec<TemporalDocument>, TemporalError> {
+    async fn read_target_level(&self, read: &TargetRead<'_>, ids: &[Identifier], visited: &HashSet<Identifier>) -> Result<HopReading, TemporalError> {
         let catalogued = self.reader.entity_types(read.scope, ids).await?;
         let compactor = self.engine.compactor(read.context);
         let compactor = EntityCompactor::new(&compactor);
         let remote = self.remote_temporal_linked.as_ref().filter(|_| read.target.permits_federation());
         let held: Vec<Identifier> = visited.iter().cloned().collect(); // clone: a remote holder is told every target already read
-        let mut level = Vec::new();
+        let mut level = HopReading::default();
         for id in ids {
+            let mut parts: Vec<TemporalHistory> = Vec::new();
             if let Some(types) = catalogued.get(id) {
                 match self.render_one_temporal_entity(read.scope, id, types, read.compiled, &compactor).await {
-                    Ok(rendered) if rendered.presence == HistoryPresence::Present => level.extend(instances_of(rendered.history)),
+                    Ok(rendered) if rendered.presence == HistoryPresence::Present => parts.push(rendered.history),
                     Ok(_) => {}
                     Err(error) => tracing::debug!("Failed to read the temporal evolution of hop target {}: {}", id, error),
                 }
-                continue;
             }
-            let Some(remote) = remote else {
-                continue;
-            };
-            match remote.fetch_linked_temporal(id, NonZeroU32::MIN, &held, read.window, read.context).await {
-                Ok(resolution) => {
-                    for failure in &resolution.failures {
-                        tracing::warn!("Hop target {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
+            if let Some(remote) = remote {
+                match remote.fetch_linked_temporal(id, NonZeroU32::MIN, &held, read.window, read.context).await {
+                    Ok(resolution) => {
+                        for failure in &resolution.failures {
+                            tracing::warn!("Hop target {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
+                        }
+                        level.incomplete.extend(resolution.failures);
+                        parts.extend(resolution.entities);
                     }
-                    level.extend(resolution.entities.into_iter().filter_map(instances_of));
+                    Err(error) => {
+                        tracing::warn!("Failed to read the temporal evolution of hop target {} outside this broker: {}", id, error);
+                        level.incomplete.push(LinkedResolutionFailure::unreachable(id, &error));
+                    }
                 }
-                Err(error) => tracing::warn!("Failed to read the temporal evolution of hop target {} outside this broker: {}", id, error),
             }
+            level.targets.extend(union_of(parts, read.window.timeproperty));
         }
         Ok(level)
     }
+}
+
+/// The instances of the parts of one or more entities, the parts of an entity
+/// merged into one document.
+fn union_of(parts: Vec<TemporalHistory>, timeproperty: TimeProp) -> impl Iterator<Item = TemporalDocument> {
+    let mut gathered: Vec<TemporalHistory> = Vec::new();
+    for part in parts {
+        match gathered.iter_mut().find(|held| held.id() == part.id()) {
+            Some(held) => held.merge(part, MergeMode::Inclusive, timeproperty),
+            None => gathered.push(part),
+        }
+    }
+    gathered.into_iter().filter_map(instances_of)
 }
 
 /// The instances `history` holds; an aggregate holds none a filter reads.

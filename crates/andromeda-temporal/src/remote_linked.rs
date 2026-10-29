@@ -22,7 +22,14 @@
 use crate::error::TemporalError;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    temporal_format::TemporalFormat,
+    time_prop::TimeProp,
+    time_rel::TimeRel,
+};
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
@@ -55,6 +62,9 @@ pub struct TemporalLinkedWindow {
     pub aggr_methods: Option<Vec<AggrMethod>>,
     /// The aggregation bucket width, when the representation is aggregated.
     pub aggr_period_duration: Option<AggregationPeriod>,
+    /// The only attributes the answer carries (`attrs`); every attribute when
+    /// absent.
+    pub attrs: Option<Vec<AttributeName>>,
 }
 
 impl TemporalLinkedWindow {
@@ -76,6 +86,7 @@ impl TemporalLinkedWindow {
             format,
             aggr_methods: params.aggr_methods.clone().filter(|_| aggregation), // clone: the window outlives the borrowed request
             aggr_period_duration: params.aggr_period_duration.filter(|_| aggregation),
+            attrs: None,
         }
     }
 
@@ -84,7 +95,8 @@ impl TemporalLinkedWindow {
     /// This is the local counterpart of the forwarded query string: the window
     /// and nothing else. Because every member the struct does not hold is left
     /// at its default, an `attrs` or `datasetId` that narrowed the roots cannot
-    /// leak into the traversal and hide a linked entity's own attributes.
+    /// leak into the traversal and hide a linked entity's own attributes; the
+    /// window's own `attrs` is set by the reader that needs fewer.
     #[must_use]
     pub fn to_parameters(&self) -> TemporalQueryParameters {
         TemporalQueryParameters {
@@ -96,6 +108,7 @@ impl TemporalLinkedWindow {
             format: Some(WrittenValue::Supported(self.format)),
             aggr_methods: self.aggr_methods.clone(), // clone: the derived request owns its methods
             aggr_period_duration: self.aggr_period_duration,
+            attrs: self.attrs.clone(), // clone: the derived request owns its attributes
             ..TemporalQueryParameters::default()
         }
     }

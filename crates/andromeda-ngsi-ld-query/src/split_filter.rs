@@ -37,6 +37,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
+/// The clause 4.23 keywords a Query Term may end in instead of an attribute.
+const STRUCTURAL_MEMBERS: [&str; 3] = ["id", "type", "scope"];
+
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
 pub enum FilterLeaf<'q> {
@@ -169,6 +172,43 @@ impl<'q> SplitFilter<'q> {
                     && !level.contains(&relationship)
                 {
                     level.push(relationship);
+                }
+                path = inner;
+                depth += 1;
+            }
+        }
+        levels
+    }
+
+    /// The attributes the entities each hop depth reaches are read for,
+    /// parallel to [`Self::hop_relationships`]: the Relationships crossed at
+    /// the next depth and the attribute a Query Term ends in, without
+    /// repetition. `None` at a depth where a term ends in `id`, `type` or
+    /// `scope`, which name structural members and need the entity whole.
+    #[must_use]
+    pub fn hop_reads(&self) -> Vec<Option<Vec<&'q AttributeName>>> {
+        let mut levels: Vec<Option<Vec<&'q AttributeName>>> = Vec::new();
+        for leaf in self.leaves() {
+            let FilterLeaf::Term(pred) = leaf else {
+                continue;
+            };
+            let mut path = pred.path();
+            let mut depth = 0;
+            while let QueryPath::Linked { inner, .. } = path {
+                if levels.len() <= depth {
+                    levels.push(Some(Vec::new()));
+                }
+                let read = match inner.as_ref() {
+                    QueryPath::Linked { relationship, .. } => Some(relationship),
+                    QueryPath::Local(local) if STRUCTURAL_MEMBERS.contains(&local.attr.as_str()) => None,
+                    QueryPath::Local(local) => Some(&local.attr),
+                };
+                if let Some(level) = levels.get_mut(depth) {
+                    match (read, level.as_mut()) {
+                        (None, _) => *level = None,
+                        (Some(name), Some(names)) if !names.contains(&name) => names.push(name),
+                        (Some(_), Some(_) | None) => {}
+                    }
                 }
                 path = inner;
                 depth += 1;
@@ -432,6 +472,35 @@ mod tests {
             .map(|level| level.into_iter().map(AttributeName::as_str).collect())
             .collect();
         pretty_assertions::assert_eq!(levels, [vec!["https://example.com/parkedIn"], vec!["https://example.com/operator"]]);
+    }
+
+    #[test]
+    fn the_hop_reads_are_the_next_relationships_and_the_attributes_the_terms_end_in() {
+        let selection = selection(
+            Some(
+                "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/name\"}}==\"x\"|\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0;\"https://example.com/speed\">1",
+            ),
+            None,
+            None,
+        );
+        let reads: Vec<Option<Vec<&str>>> = SplitFilter::of(&selection)
+            .hop_reads()
+            .into_iter()
+            .map(|level| level.map(|names| names.into_iter().map(AttributeName::as_str).collect()))
+            .collect();
+        pretty_assertions::assert_eq!(
+            reads,
+            [
+                Some(vec!["https://example.com/operator", "https://example.com/free"]),
+                Some(vec!["https://example.com/name"])
+            ]
+        );
+    }
+
+    #[test]
+    fn a_depth_where_a_term_ends_in_a_structural_member_is_read_whole() {
+        let selection = selection(Some("\"https://example.com/parkedIn\"{type}==\"https://example.com/Parking\""), None, None);
+        pretty_assertions::assert_eq!(SplitFilter::of(&selection).hop_reads(), [None]);
     }
 
     #[test]

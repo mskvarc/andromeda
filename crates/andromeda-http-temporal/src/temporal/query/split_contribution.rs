@@ -25,6 +25,7 @@ use crate::temporal::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
+use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
@@ -248,6 +249,7 @@ pub(crate) async fn merge_with_contributions(
     let mut merged = merge_forwarded_history(local_entities, forwarded, merge.filtering, merge.shape.remote_parts(), window, instance)?;
     if let Some(settlement) = settlement {
         retain_settled(&mut merged.entities, merge.contributed, &settlement);
+        merged.warnings.extend(with_linked_resolution_warnings(Vec::new(), &settlement.incomplete));
     }
     if let Some((mut entities, warnings)) = rendered {
         close_hub_aggregates(merge.params, &mut merged.entities, &mut entities);
@@ -362,6 +364,7 @@ mod tests {
         let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")], ContributedRendering::Local);
         let settlement = SplitSettlement {
             retained: [id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
+            incomplete: Vec::new(),
         };
         retain_settled(&mut entities, &contributed, &settlement);
         pretty_assertions::assert_eq!(
@@ -424,6 +427,7 @@ mod tests {
         let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")], ContributedRendering::Local);
         let settlement = SplitSettlement {
             retained: [id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
+            incomplete: Vec::new(),
         };
         retain_settled(&mut entities, &contributed, &settlement);
         pretty_assertions::assert_eq!(

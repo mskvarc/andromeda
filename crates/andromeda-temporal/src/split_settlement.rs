@@ -22,7 +22,7 @@
 use crate::{
     answered_evolution::AnsweredEvolution,
     error::TemporalError,
-    hop_targets::HopTargets,
+    hop_targets::{HopReading, HopTargets},
     in_effect_entity::InEffectEntity,
     local_in_effect::{LocalInEffect, part_document},
     port::read_scope::ScopeReach,
@@ -33,6 +33,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
+use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::collections::{HashMap, HashSet};
 
@@ -41,6 +42,9 @@ use std::collections::{HashMap, HashSet};
 pub struct SplitSettlement {
     /// The contributed entities whose gathered parts satisfy the filters.
     pub retained: HashSet<Identifier>,
+    /// The holders of a hop target that could not be read, whose parts the
+    /// filters were decided without.
+    pub incomplete: Vec<LinkedResolutionFailure>,
 }
 
 /// What the Context Sources answered a split query with.
@@ -86,6 +90,7 @@ impl TemporalService {
         if filter.is_empty() {
             return Ok(SplitSettlement {
                 retained: entity_ids.into_iter().collect(),
+                incomplete: Vec::new(),
             });
         }
 
@@ -101,8 +106,8 @@ impl TemporalService {
                 .collect::<Result<Vec<_>, _>>()?
         };
         let windowed: Vec<&TemporalDocument> = answered.in_window.iter().copied().chain(&local_links).collect();
-        let targets = if hops.is_empty() {
-            Vec::new()
+        let hop_reading = if hops.is_empty() {
+            HopReading::default()
         } else {
             let reached: Vec<&TemporalDocument> = windowed
                 .iter()
@@ -110,9 +115,10 @@ impl TemporalService {
                 .chain(answered.in_effect.iter().copied())
                 .chain(local.parts())
                 .collect();
-            self.read_hop_targets(target, params, reading.context, &hops, &reached).await?
+            self.read_hop_targets(target, params, reading.context, (&hops, &filter.hop_reads()), &reached)
+                .await?
         };
-        let linked = HopTargets::of(&targets, compiled.window);
+        let linked = HopTargets::of(&hop_reading.targets, compiled.window);
         for part in windowed {
             let Some(entity_id) = part.id() else {
                 continue;
@@ -136,7 +142,10 @@ impl TemporalService {
             .into_iter()
             .filter(|entity_id| truths.get(entity_id).is_some_and(|held| filter.holds(held)))
             .collect();
-        Ok(SplitSettlement { retained })
+        Ok(SplitSettlement {
+            retained,
+            incomplete: hop_reading.incomplete,
+        })
     }
 }
 
