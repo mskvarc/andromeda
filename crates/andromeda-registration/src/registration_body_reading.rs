@@ -138,7 +138,7 @@ fn read_defined<'de, A: MapAccess<'de>>(body: &mut RegistrationBody, member: Csr
         CsrMember::ExpiresAt => read(&mut body.expires_at, member, members),
         CsrMember::Endpoint => read(&mut body.endpoint, member, members),
         CsrMember::Accept => read(&mut body.accept, member, members),
-        CsrMember::Scope => read_array(&mut body.scope, member, members),
+        CsrMember::Scope => read_one_or_many(&mut body.scope, member, members),
         CsrMember::RefreshRate => read(&mut body.refresh_rate, member, members),
         CsrMember::Management => read(&mut body.management, member, members),
         CsrMember::ContextSourceInfo => read_array(&mut body.context_source_info, member, members),
@@ -149,9 +149,7 @@ fn read_defined<'de, A: MapAccess<'de>>(body: &mut RegistrationBody, member: Csr
 /// Read the value of `member` into `slot`, which a member written twice would
 /// find taken.
 fn read<'de, T: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<T>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
-    if !slot.is_absent() {
-        return Err(A::Error::duplicate_field(member.key()));
-    }
+    unwritten(slot, member)?;
     *slot = members.next_value()?;
     Ok(())
 }
@@ -160,17 +158,34 @@ fn read<'de, T: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<T>, me
 /// array holding the NGSI-LD Null alone deletes it as the bare Null does
 /// (clause 4.5.0).
 fn read_array<'de, E: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<Vec<E>>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
-    if !slot.is_absent() {
-        return Err(A::Error::duplicate_field(member.key()));
-    }
+    unwritten(slot, member)?;
     *slot = members.next_value::<ArrayMember<E>>()?.0;
     Ok(())
+}
+
+/// Read the value of `member`, whose data type is a string or an array of
+/// strings, into `slot`: a single string is the array of that one element.
+fn read_one_or_many<'de, E: Deserialize<'de>, A: MapAccess<'de>>(slot: &mut Clearable<Vec<E>>, member: CsrMember, members: &mut A) -> Result<(), A::Error> {
+    unwritten(slot, member)?;
+    *slot = members.next_value::<OneOrManyMember<E>>()?.0;
+    Ok(())
+}
+
+/// Refuse a member written twice, whose slot is already taken.
+fn unwritten<T, E: DeserializeError>(slot: &Clearable<T>, member: CsrMember) -> Result<(), E> {
+    if slot.is_absent() { Ok(()) } else { Err(E::duplicate_field(member.key())) }
 }
 
 /// An array member, read by [`clearable_array`].
 #[derive(Deserialize)]
 #[serde(transparent, bound = "E: Deserialize<'de>")]
 struct ArrayMember<E>(#[serde(deserialize_with = "clearable_array::deserialize")] Clearable<Vec<E>>);
+
+/// A member that is one element or an array of them, read by
+/// [`clearable_array`].
+#[derive(Deserialize)]
+#[serde(transparent, bound = "E: Deserialize<'de>")]
+struct OneOrManyMember<E>(#[serde(deserialize_with = "clearable_array::deserialize_one_or_many")] Clearable<Vec<E>>);
 
 #[cfg(test)]
 #[expect(
@@ -210,6 +225,25 @@ mod tests {
         assert!(serde_json::from_str::<RegistrationBody>(r#"{"custom": null}"#).is_err());
         let body = serde_json::from_str::<RegistrationBody>(r#"{"custom": {"a": null}}"#).expect("data holding a null");
         pretty_assertions::assert_eq!(body.additional_properties.len(), 1);
+    }
+
+    /// Clause 5.2.9: `scope` is "String or String[]", so a single string is
+    /// the one-element list, an invalid string is still refused, and the Null
+    /// still deletes it.
+    #[test]
+    fn a_single_scope_string_is_read_as_a_one_element_list() {
+        let single = serde_json::from_str::<RegistrationBody>(r#"{"scope": "/FR/Rennes"}"#).expect("a single scope");
+        let list = serde_json::from_str::<RegistrationBody>(r#"{"scope": ["/FR/Rennes"]}"#).expect("a one-element list");
+        pretty_assertions::assert_eq!(single.scope, list.scope);
+        assert!(matches!(single.scope, Clearable::Set(ref scopes) if scopes.len() == 1));
+        assert!(serde_json::from_str::<RegistrationBody>(r#"{"scope": "not a scope"}"#).is_err());
+        assert!(
+            serde_json::from_str::<RegistrationBody>(r#"{"scope": "urn:ngsi-ld:null"}"#)
+                .expect("the Null")
+                .scope
+                .is_ngsi_ld_null()
+        );
+        assert!(serde_json::from_str::<RegistrationBody>(r#"{"scope": 5}"#).is_err());
     }
 
     /// An array member written twice is refused as any member is.

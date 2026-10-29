@@ -6,6 +6,9 @@
 //! element is no deletion: it is an element, read as the member's elements
 //! are. A deleted member is written back in the array form, which a reader
 //! that takes the array alone also reads.
+//!
+//! A member whose data type is "String or String[]" (clause 5.2.9 `scope`)
+//! reads a single string as the array of that one element.
 
 use crate::clearable::Clearable;
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::{NULL_URI, is_ngsi_ld_null};
@@ -19,7 +22,7 @@ use serde::{
         SeqAccess,
         Unexpected,
         Visitor,
-        value::{BorrowedStrDeserializer, SeqAccessDeserializer},
+        value::{BorrowedStrDeserializer, SeqAccessDeserializer, StrDeserializer},
     },
 };
 use std::{fmt, marker::PhantomData};
@@ -37,6 +40,23 @@ where
     E: Deserialize<'de>,
 {
     deserializer.deserialize_any(ArrayVisitor(PhantomData))
+}
+
+/// Deserialize a member whose data type is a string or an array of strings: a
+/// single string is the array of that one element, and the NGSI-LD Null, bare
+/// or as the one element of an array, deletes it.
+///
+/// # Errors
+///
+/// Returns the deserializer's own error when the member is neither a string nor
+/// an array, a JSON `null` included, and an element's refusal otherwise, a
+/// single string's included.
+pub fn deserialize_one_or_many<'de, D, E>(deserializer: D) -> Result<Clearable<Vec<E>>, D::Error>
+where
+    D: Deserializer<'de>,
+    E: Deserialize<'de>,
+{
+    deserializer.deserialize_any(OneOrManyVisitor(PhantomData))
 }
 
 /// Serialize an array member as the fragment wrote it: the elements, or the
@@ -80,6 +100,37 @@ impl<'de, E: Deserialize<'de>> Visitor<'de> for ArrayVisitor<E> {
             return Ok(Clearable::NgsiLdNull);
         }
         elements.into_iter().map(element).collect::<Result<Vec<E>, A::Error>>().map(Clearable::Set)
+    }
+
+    // Clause 4.5.0: "null cannot be used as a value in NGSI-LD".
+    fn visit_unit<Er: DeserializeError>(self) -> Result<Clearable<Vec<E>>, Er> {
+        Err(Er::invalid_type(Unexpected::Unit, &self))
+    }
+
+    fn visit_none<Er: DeserializeError>(self) -> Result<Clearable<Vec<E>>, Er> {
+        Err(Er::invalid_type(Unexpected::Unit, &self))
+    }
+}
+
+/// Reads a member that is one element or an array of them.
+struct OneOrManyVisitor<E>(PhantomData<E>);
+
+impl<'de, E: Deserialize<'de>> Visitor<'de> for OneOrManyVisitor<E> {
+    type Value = Clearable<Vec<E>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string, an array or the NGSI-LD Null \"urn:ngsi-ld:null\"")
+    }
+
+    fn visit_str<Er: DeserializeError>(self, text: &str) -> Result<Clearable<Vec<E>>, Er> {
+        if is_ngsi_ld_null(text) {
+            return Ok(Clearable::NgsiLdNull);
+        }
+        E::deserialize(StrDeserializer::<Er>::new(text)).map(|element| Clearable::Set(vec![element]))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, elements: A) -> Result<Clearable<Vec<E>>, A::Error> {
+        ArrayVisitor(PhantomData).visit_seq(elements)
     }
 
     // Clause 4.5.0: "null cannot be used as a value in NGSI-LD".
@@ -167,6 +218,53 @@ mod tests {
     fn a_json_null_is_refused_as_the_member_and_as_an_element() {
         for fragment in [json!({"names": null}), json!({"names": [null]}), json!({"names": ["a", null]})] {
             assert!(read(&fragment).is_err(), "{fragment}");
+        }
+    }
+
+    /// A carrier standing in for a member of the data type "String or String[]".
+    #[derive(Debug, Deserialize)]
+    struct OneOrMany {
+        #[serde(default, deserialize_with = "clearable_array::deserialize_one_or_many")]
+        names: Clearable<Vec<String>>,
+    }
+
+    fn read_one_or_many(fragment: &serde_json::Value) -> Result<OneOrMany, serde_json::Error> {
+        serde_json::from_str(&fragment.to_string())
+    }
+
+    /// Clause 5.2.9: a single string reads as the array of that one element,
+    /// and an array reads element by element.
+    #[test]
+    fn a_string_reads_as_the_array_of_that_one_element() {
+        pretty_assertions::assert_eq!(
+            read_one_or_many(&json!({"names": "/A/B"})).expect("a string").names,
+            Clearable::Set(vec!["/A/B".to_owned()])
+        );
+        pretty_assertions::assert_eq!(
+            read_one_or_many(&json!({"names": ["/A/B", "/C"]})).expect("an array").names,
+            Clearable::Set(vec!["/A/B".to_owned(), "/C".to_owned()])
+        );
+    }
+
+    /// Clause 4.5.0: the Null deletes a string-or-array member, bare or as the
+    /// one element of an array.
+    #[test]
+    fn the_null_deletes_a_string_or_array_member() {
+        for deletion in [json!("urn:ngsi-ld:null"), json!(["urn:ngsi-ld:null"])] {
+            assert!(read_one_or_many(&json!({"names": deletion})).expect("the Null").names.is_ngsi_ld_null());
+        }
+    }
+
+    /// A JSON `null`, a number and an object are neither a string nor an array.
+    #[test]
+    fn a_member_that_is_neither_a_string_nor_an_array_is_refused() {
+        for fragment in [
+            json!({"names": null}),
+            json!({"names": 5}),
+            json!({"names": {"a": 1}}),
+            json!({"names": [null]}),
+        ] {
+            assert!(read_one_or_many(&fragment).is_err(), "{fragment}");
         }
     }
 
