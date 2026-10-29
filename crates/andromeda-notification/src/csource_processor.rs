@@ -45,6 +45,8 @@ use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, error};
 
+mod reconcile;
+
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
 /// Applies context-source subscription and registration events to notification policy.
@@ -246,6 +248,17 @@ impl CsourceNotificationProcessor {
     /// current match set and that it no longer selects, returning those
     /// withdrawn.
     async fn withdraw_unselected_records(&self, compiled_sub: &CompiledCsrSubscription, matching: &[ContextSourceRegistration]) -> Vec<Identifier> {
+        let current = self.recorded_beyond_states(compiled_sub, matching).await;
+        self.membership.withdraw_unselected(compiled_sub, &current).await
+    }
+
+    /// Each registration recorded for `compiled_sub` outside `matching`, paired
+    /// with its state as the store holds it now.
+    async fn recorded_beyond_states(
+        &self,
+        compiled_sub: &CompiledCsrSubscription,
+        matching: &[ContextSourceRegistration],
+    ) -> Vec<(Identifier, Option<ContextSourceRegistration>)> {
         let beyond = match self.membership.recorded_beyond(&compiled_sub.id, matching).await {
             Ok(beyond) => beyond,
             Err(error) => {
@@ -262,7 +275,7 @@ impl CsourceNotificationProcessor {
                 Err(error) => error!("Failed to re-read CSR {} for subscription {}: {}", identifier, compiled_sub.id, error),
             }
         }
-        self.membership.withdraw_unselected(compiled_sub, current).await
+        current
     }
 
     /// Each of `registrations` paired with its state as the store holds it

@@ -31,6 +31,7 @@ use andromeda_subscription::{
     csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration},
     csource_notification_cadence::CsourceNotificationCadence,
 };
+use chrono::{DateTime, Utc};
 use std::{collections::HashSet, slice, sync::Arc};
 use tracing::error;
 
@@ -139,14 +140,14 @@ impl CsourceMembership {
     pub(crate) async fn withdraw_unselected(
         &self,
         subscription: &CompiledCsrSubscription,
-        current: Vec<(Identifier, Option<ContextSourceRegistration>)>,
+        current: &[(Identifier, Option<ContextSourceRegistration>)],
     ) -> Vec<Identifier> {
         let mut withdrawn = Vec::new();
         for (identifier, state) in current {
             match state {
-                Some(registration) if csource_subscription_selects_registration(subscription, &registration) => {}
-                Some(_) | None => match self.ledger.release(&subscription.id, &identifier).await {
-                    Ok(Release::Released) => withdrawn.push(identifier),
+                Some(registration) if csource_subscription_selects_registration(subscription, registration) => {}
+                Some(_) | None => match self.ledger.release(&subscription.id, identifier).await {
+                    Ok(Release::Released) => withdrawn.push(identifier.clone()), // clone: the caller keeps the states it paired them with
                     Ok(Release::Absent) => {}
                     Err(failure) => error!("Failed to withdraw CSR {} for subscription {}: {}", identifier, subscription.id, failure),
                 },
@@ -259,6 +260,63 @@ impl CsourceMembership {
             }
         }
         planned
+    }
+
+    /// The notifications owed `subscription` for the registration changes it
+    /// did not see, derived from the record instead of from the changes.
+    ///
+    /// `matching` is every registration the subscription selects now and
+    /// `departed` pairs each registration recorded for it outside that set with
+    /// its state as the store holds it, absent once deleted. A match not yet
+    /// recorded is recorded and reported as `newlyMatching` (clause 5.3.3). A
+    /// departed registration no longer selected is withdrawn and reported as
+    /// `noLongerMatching` with the state it has now, since the state the
+    /// subscriber was told matched is not known; one that was deleted is
+    /// withdrawn without a notification, as a deletion that carries no prior
+    /// state is. The record does not keep what the subscriber was last told, so
+    /// a recorded match is reported as `updated` when it was modified after
+    /// `evaluated_through`, the modification time of the last change evaluated
+    /// before the gap; without one, nothing is known to have changed.
+    pub(crate) async fn plan_reconciliation<'registration>(
+        &self,
+        subscription: &Arc<CompiledCsrSubscription>,
+        matching: &'registration [ContextSourceRegistration],
+        departed: &'registration [(Identifier, Option<ContextSourceRegistration>)],
+        evaluated_through: Option<DateTime<Utc>>,
+    ) -> Vec<PlannedNotification<'registration>> {
+        let identifiers: Vec<Identifier> = matching.iter().map(|registration| registration.id.clone()).collect(); // clone: the store takes the identifiers as one slice
+        let recorded = match self.ledger.claim(&subscription.id, &identifiers).await {
+            Ok(recorded) => recorded.into_iter().collect::<HashSet<Identifier>>(),
+            Err(failure) => {
+                error!("Failed to record the CSRs matching subscription {}: {}", subscription.id, failure);
+                HashSet::new()
+            }
+        };
+        let withdrawn: HashSet<Identifier> = self.withdraw_unselected(subscription, departed).await.into_iter().collect();
+        let newly = matching
+            .iter()
+            .filter(|registration| recorded.contains(&registration.id))
+            .map(|registration| (registration, CsrTriggerReason::NewlyMatching));
+        let changed = matching
+            .iter()
+            .filter(|registration| !recorded.contains(&registration.id))
+            .filter(|registration| evaluated_through.is_some_and(|through| registration.lifecycle.modified_at > through))
+            .map(|registration| (registration, CsrTriggerReason::Updated));
+        let gone = departed
+            .iter()
+            .filter(|(identifier, _)| withdrawn.contains(identifier))
+            .filter_map(|(_, state)| state.as_ref())
+            .map(|registration| (registration, CsrTriggerReason::NoLongerMatching));
+        newly
+            .chain(changed)
+            .chain(gone)
+            .map(|(registration, reason)| PlannedNotification {
+                subscription: Arc::clone(subscription),
+                registration,
+                reason,
+                change: RegistrationChange::Updated,
+            })
+            .collect()
     }
 
     /// Restore the record a planned notification that was not sent had

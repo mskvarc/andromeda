@@ -42,11 +42,38 @@ use andromeda_task_runtime::{
     wake_trigger::wake_channel,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
 };
+
+/// What emptying the registration change queue after an overflow found.
+///
+/// The queued events are older than the reconciliation that follows, which
+/// reads every registration as it stands, so they are consumed rather than
+/// evaluated: evaluating them as well would report the same change twice.
+struct DrainedRegistrations {
+    /// Events the channel dropped, including any dropped again while draining.
+    lost: u64,
+    /// The latest modification time among the consumed events and those
+    /// evaluated before them.
+    evaluated_through: Option<DateTime<Utc>>,
+}
+
+impl DrainedRegistrations {
+    /// Consume every event queued on `receiver`.
+    fn absorb(&mut self, receiver: &mut broadcast::Receiver<CsrChangeEvent>) {
+        loop {
+            match receiver.try_recv() {
+                Ok(event) => self.evaluated_through = self.evaluated_through.max(event.change.written_at()),
+                Err(TryRecvError::Lagged(skipped)) => self.lost = self.lost.saturating_add(skipped),
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            }
+        }
+    }
+}
 
 /// The change streams a context-source notification worker reacts to.
 ///
@@ -178,6 +205,8 @@ fn register_csource_notification_processor(
         async move {
             processor.reload_cache().await.map_err(worker_notification_failure)?;
             execution.mark_running();
+            let mut lost_registration_changes: u64 = 0;
+            let mut evaluated_through: Option<DateTime<Utc>> = None;
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
@@ -201,9 +230,19 @@ fn register_csource_notification_processor(
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
                             }
+                            evaluated_through = evaluated_through.max(event.change.written_at());
                             processor.apply_registration_change(event).await;
                         }
-                        Err(RecvError::Lagged(skipped)) => tracing::debug!(skipped, "registration stream lagged"),
+                        Err(RecvError::Lagged(skipped)) => {
+                            let mut drained = DrainedRegistrations { lost: skipped, evaluated_through };
+                            drained.absorb(&mut registration_receiver);
+                            lost_registration_changes = lost_registration_changes.saturating_add(drained.lost);
+                            tracing::warn!(skipped = drained.lost, lost_registration_changes, "registration stream lagged; reconciling context source notifications");
+                            evaluated_through = processor
+                                .reconcile_registrations(drained.evaluated_through)
+                                .await
+                                .map_err(worker_notification_failure)?;
+                        }
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Registration)),
                     },
                 }

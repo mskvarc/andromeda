@@ -43,6 +43,13 @@ pub mod delivery_store;
 pub mod error;
 /// The events a delivery pass's in-flight deliveries already carry.
 pub mod held_events;
+/// The notified-registration record held in memory for tests.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod in_memory_ledger;
 /// Entity interval notification evaluation.
 pub mod interval;
 /// The entities a periodic notification considers.

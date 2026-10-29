@@ -1,8 +1,8 @@
 use crate::{
     csource_membership::{CsourceMembership, PlannedNotification},
     csource_transition::{ChangeStates, RegistrationChange},
-    error::NotificationError,
-    notified_registration_store::{NotifiedRegistrationStore, Release},
+    in_memory_ledger::InMemoryLedger,
+    notified_registration_store::NotifiedRegistrationStore,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
@@ -11,13 +11,10 @@ use andromeda_ngsi_ld_model::{
     subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
 use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
-use futures::future::BoxFuture;
+use chrono::Duration;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, Mutex},
-};
+use std::{collections::BTreeSet, sync::Arc};
 use url::Url;
 
 const VEHICLE: &str = "https://example.com/Vehicle";
@@ -25,70 +22,6 @@ const BUILDING: &str = "https://example.com/Building";
 const SUBSCRIPTION: &str = "urn:ngsi-ld:Subscription:csource";
 const REGISTRATION: &str = "urn:ngsi-ld:ContextSourceRegistration:1";
 const OTHER_REGISTRATION: &str = "urn:ngsi-ld:ContextSourceRegistration:2";
-
-/// The notified pairs one tenant database holds, shared by every planner built
-/// over it as brokers share the database.
-#[derive(Default)]
-struct InMemoryLedger {
-    /// `(subscription, registration)` pairs.
-    pairs: Mutex<BTreeSet<(String, String)>>,
-}
-
-impl InMemoryLedger {
-    fn pairs(&self) -> BTreeSet<(String, String)> {
-        self.pairs.lock().expect("ledger lock").clone()
-    }
-}
-
-impl NotifiedRegistrationStore for InMemoryLedger {
-    fn claim<'a>(&'a self, subscription: &'a Identifier, registrations: &'a [Identifier]) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
-        Box::pin(async move {
-            let mut pairs = self.pairs.lock().expect("ledger lock");
-            Ok(registrations
-                .iter()
-                .filter(|registration| pairs.insert((subscription.to_string(), registration.to_string())))
-                .cloned()
-                .collect())
-        })
-    }
-
-    fn release<'a>(&'a self, subscription: &'a Identifier, registration: &'a Identifier) -> BoxFuture<'a, Result<Release, NotificationError>> {
-        Box::pin(async move {
-            let removed = self
-                .pairs
-                .lock()
-                .expect("ledger lock")
-                .remove(&(subscription.to_string(), registration.to_string()));
-            Ok(if removed { Release::Released } else { Release::Absent })
-        })
-    }
-
-    fn notified_subscriptions<'a>(&'a self, registration: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
-        Box::pin(async move {
-            Ok(self
-                .pairs
-                .lock()
-                .expect("ledger lock")
-                .iter()
-                .filter(|(_, notified)| notified == registration.as_str())
-                .map(|(subscription, _)| uri(subscription))
-                .collect())
-        })
-    }
-
-    fn registrations_notified_to<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<Vec<Identifier>, NotificationError>> {
-        Box::pin(async move {
-            Ok(self
-                .pairs
-                .lock()
-                .expect("ledger lock")
-                .iter()
-                .filter(|(owner, _)| owner == subscription.as_str())
-                .map(|(_, registration)| uri(registration))
-                .collect())
-        })
-    }
-}
 
 fn uri(raw: &str) -> Identifier {
     raw.parse().expect("valid URI")
@@ -501,7 +434,7 @@ async fn a_subscription_update_resends_all_current_matches_and_withdraws_what_it
     let on_update = membership.plan_upsert(&subscription, UpsertKind::Updated, &one).await.expect("recorded");
     let beyond = membership.recorded_beyond(&subscription.id, &one).await.expect("read");
     let withdrawn = membership
-        .withdraw_unselected(&subscription, vec![(uri(OTHER_REGISTRATION), Some(registration(OTHER_REGISTRATION, BUILDING)))])
+        .withdraw_unselected(&subscription, &[(uri(OTHER_REGISTRATION), Some(registration(OTHER_REGISTRATION, BUILDING)))])
         .await;
     let on_delete = membership
         .plan_registration_change(
@@ -550,7 +483,7 @@ async fn a_registration_reported_after_the_update_read_its_matches_stays_recorde
         .await
         .expect("recorded");
     let withdrawn = membership
-        .withdraw_unselected(&subscription, vec![(uri(OTHER_REGISTRATION), Some(registration(OTHER_REGISTRATION, VEHICLE)))])
+        .withdraw_unselected(&subscription, &[(uri(OTHER_REGISTRATION), Some(registration(OTHER_REGISTRATION, VEHICLE)))])
         .await;
     let on_later_update = membership
         .plan_registration_change(
@@ -581,7 +514,7 @@ async fn an_unsent_update_notification_leaves_the_record_as_the_subscriber_last_
     let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &before).await.expect("recorded");
     let on_update = membership.plan_upsert(&subscription, UpsertKind::Updated, &after).await.expect("recorded");
     let withdrawn = membership
-        .withdraw_unselected(&subscription, vec![(uri(REGISTRATION), Some(registration(REGISTRATION, BUILDING)))])
+        .withdraw_unselected(&subscription, &[(uri(REGISTRATION), Some(registration(REGISTRATION, BUILDING)))])
         .await;
     membership.withdraw_unsent(&subscription.id, &on_update.recorded).await;
     membership.restore(&subscription.id, &withdrawn).await;
@@ -796,4 +729,126 @@ async fn an_unsent_withdrawal_of_a_deleted_registration_is_not_restored() {
         .await;
 
     assert_eq!(summary(&on_recreation), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
+}
+
+/// Clause 5.3.3: a registration the subscription selects and was never told of
+/// is reported as `newlyMatching` and recorded, whichever change made it match.
+#[tokio::test]
+async fn a_match_missed_by_a_lost_change_is_reported_as_newly_matching_and_recorded() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let matching = [registration(REGISTRATION, VEHICLE)];
+
+    let planned = membership.plan_reconciliation(&subscription, &matching, &[], None).await;
+
+    assert_eq!(summary(&planned), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
+    assert_eq!(ledger.pairs(), BTreeSet::from([pair(REGISTRATION)]));
+}
+
+/// A registration already recorded was reported by a change that was delivered,
+/// so reconciling it again reports nothing.
+#[tokio::test]
+async fn a_match_already_recorded_is_not_reported_again_by_reconciliation() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let matching = [registration(REGISTRATION, VEHICLE)];
+    let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
+
+    let planned = membership.plan_reconciliation(&subscription, &matching, &[], None).await;
+
+    assert_eq!(summary(&planned), Vec::new());
+    assert_eq!(ledger.pairs(), BTreeSet::from([pair(REGISTRATION)]));
+}
+
+/// A recorded registration that changed out of matching while its change was
+/// lost is withdrawn and reported as `noLongerMatching`.
+#[tokio::test]
+async fn a_recorded_registration_that_stopped_matching_is_withdrawn_and_reported() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let _initial = membership
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let departed = [(uri(REGISTRATION), Some(registration(REGISTRATION, BUILDING)))];
+
+    let planned = membership.plan_reconciliation(&subscription, &[], &departed, None).await;
+
+    assert_eq!(summary(&planned), vec![(CsrTriggerReason::NoLongerMatching, BUILDING.to_owned())]);
+    assert_eq!(ledger.pairs(), BTreeSet::new());
+}
+
+/// A deleted registration carries no state to report, so its record is
+/// withdrawn without a notification.
+#[tokio::test]
+async fn a_recorded_registration_that_was_deleted_is_withdrawn_without_a_notification() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let _initial = membership
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let departed = [(uri(REGISTRATION), None)];
+
+    let planned = membership.plan_reconciliation(&subscription, &[], &departed, None).await;
+
+    assert_eq!(summary(&planned), Vec::new());
+    assert_eq!(ledger.pairs(), BTreeSet::new());
+}
+
+/// A recorded registration the subscription still selects was reported after
+/// the match set was read, and keeps its record.
+#[tokio::test]
+async fn a_recorded_registration_that_still_matches_keeps_its_record() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let _initial = membership
+        .plan_upsert(&subscription, UpsertKind::Created, &[registration(REGISTRATION, VEHICLE)])
+        .await
+        .expect("recorded");
+    let departed = [(uri(REGISTRATION), Some(registration(REGISTRATION, VEHICLE)))];
+
+    let planned = membership.plan_reconciliation(&subscription, &[], &departed, None).await;
+
+    assert_eq!(summary(&planned), Vec::new());
+    assert_eq!(ledger.pairs(), BTreeSet::from([pair(REGISTRATION)]));
+}
+
+/// Clause 5.3.3: a recorded registration modified after the last change
+/// evaluated before the gap is reported as `updated`.
+#[tokio::test]
+async fn a_recorded_match_modified_after_the_last_evaluated_change_is_reported_as_updated() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let matching = [registration(REGISTRATION, VEHICLE)];
+    let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
+    let before_modification = matching[0].lifecycle.modified_at - Duration::seconds(1);
+
+    let planned = membership.plan_reconciliation(&subscription, &matching, &[], Some(before_modification)).await;
+
+    assert_eq!(summary(&planned), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
+}
+
+/// A recorded registration not modified since the last evaluated change was
+/// reported by it, and an unknown point reports nothing as changed.
+#[tokio::test]
+async fn a_recorded_match_not_modified_since_the_last_evaluated_change_is_not_reported() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let matching = [registration(REGISTRATION, VEHICLE)];
+    let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &matching).await.expect("recorded");
+    let modified_at = matching[0].lifecycle.modified_at;
+
+    let at_the_point = membership.plan_reconciliation(&subscription, &matching, &[], Some(modified_at)).await;
+    let without_a_point = membership.plan_reconciliation(&subscription, &matching, &[], None).await;
+
+    assert_eq!(summary(&at_the_point), Vec::new());
+    assert_eq!(summary(&without_a_point), Vec::new());
 }
