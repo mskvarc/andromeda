@@ -97,6 +97,17 @@ pub enum FederationError {
         /// The least level the query's target languages need.
         needs: LanguageTargeting,
     },
+    /// A query cannot be forwarded to a registration within the URL budget,
+    /// however its identifier list is split, so no request is prepared for it.
+    #[error("the query to registration {registration} needs at least {smallest} bytes of URL, over the {budget} bytes a forwarded GET may take")]
+    ForwardedUrlOverBudget {
+        /// The registration the query could not be prepared for.
+        registration: Identifier,
+        /// The most bytes a forwarded URL may take.
+        budget: usize,
+        /// The bytes the smallest URL that could carry the query takes.
+        smallest: usize,
+    },
     /// An internal federation invariant could not be satisfied.
     ///
     /// Boxed: the invariants carry the widest members, and inlining them would

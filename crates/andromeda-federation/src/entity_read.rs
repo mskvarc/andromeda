@@ -16,7 +16,7 @@ use crate::{
     query_forwarding_error::QueryForwardingError,
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, expand_registration_targets, read_outcome},
-    registration_narrowing::Narrowing,
+    registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     source_walk::SOURCE_PAGE_SIZE,
@@ -270,10 +270,13 @@ impl FederationService {
                 .presence(BodyPresence::Absent)
                 .build();
             for registration in registrations {
-                let reads = self
-                    .registration_queries(&registration, &narrowing)
-                    .await?
-                    .into_reads(|query| ForwardedRead::Get(build_retrieve_url(registration.access.endpoint.url(), entity_id, &query.to_query_string())));
+                let reads = self.registration_queries(&registration, &narrowing).await?.into_reads(|query| {
+                    vec![ForwardedRead::Get(build_retrieve_url(
+                        registration.access.endpoint.url(),
+                        entity_id,
+                        &query.to_query_string(),
+                    ))]
+                });
                 expand_registration_targets(registration, reads, &mut targets);
             }
             if targets.is_empty() {
@@ -311,15 +314,15 @@ const fn read_intent(delivery: QueryDelivery) -> ReadIntent {
 /// The forwarded read one registration receives for a query, through the
 /// binding it advertises (clauses 4.3.6.1, 6.23.1): a GET query, or a POST
 /// batch query.
-fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, binding: ReadBinding) -> ForwardedRead {
+fn query_read(registration: &ContextSourceRegistration, query: ForwardedQuery, binding: ReadBinding) -> Vec<ForwardedRead> {
     let endpoint = registration.access.endpoint.url();
     match binding {
-        ReadBinding::Query => ForwardedRead::Get(build_query_url(endpoint, &query.to_query_string())),
+        ReadBinding::Query => get_reads(registration, query, build_query_url),
         ReadBinding::BatchQuery => {
             // Clause 6.23 carries the query in the body; the page size travels
             // as the URI parameter clause 6.3.10 defines for it.
             let page = format!("{}={}", ForwardedParameter::Limit, SOURCE_PAGE_SIZE);
-            match batch_query(query) {
+            vec![match batch_query(&query) {
                 Ok(body) => ForwardedRead::PostQuery {
                     url: build_batch_query_url(endpoint, &page),
                     body: Box::new(body),
@@ -327,7 +330,7 @@ fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, 
                 // A query that cannot be written is the registration's failure
                 // to prepare, which a read reports as its own.
                 Err(error) => ForwardedRead::Get(Err(error)),
-            }
+            }]
         }
     }
 }

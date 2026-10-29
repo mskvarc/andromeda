@@ -13,7 +13,7 @@ use crate::{
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, expand_registration_targets, read_outcome},
     received_temporal_answer::ReceivedTemporalAnswer,
-    registration_narrowing::Narrowing,
+    registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, SourcePaging},
     split_entities::SplitEntities,
@@ -117,7 +117,7 @@ impl FederationService {
             let reads = self
                 .registration_queries(&registration, &narrowing)
                 .await?
-                .into_reads(|query| ForwardedRead::Get(build_temporal_query_url(registration.access.endpoint.url(), &query.to_query_string())));
+                .into_reads(|query| get_reads(&registration, query, build_temporal_query_url));
             expand_registration_targets(registration, reads, &mut targets);
         }
         if targets.is_empty() {
@@ -217,11 +217,11 @@ impl FederationService {
             .build();
         for registration in registrations {
             let reads = self.registration_queries(&registration, &narrowing).await?.into_reads(|query| {
-                ForwardedRead::Get(build_temporal_retrieve_url(
+                vec![ForwardedRead::Get(build_temporal_retrieve_url(
                     registration.access.endpoint.url(),
                     entity_id,
                     &query.to_query_string(),
-                ))
+                ))]
             });
             expand_registration_targets(registration, reads, &mut targets);
         }

@@ -91,6 +91,13 @@ pub mod incomplete_answer;
 pub mod instance_budget;
 /// How a read's `q` target languages are matched across the sources it reaches.
 pub mod language_negotiation;
+/// An identifier list over the URL budget is forwarded as several requests.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod large_id_list_forwarding_tests;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
 /// The registrations a read matched, read once and split by forwarding phase.

@@ -61,13 +61,31 @@ pub(crate) enum RegistrationQueries {
 }
 
 impl RegistrationQueries {
-    /// The forwarded reads these queries become, each built by `read`, or the
-    /// one read that carries the failure to prepare them.
-    pub(crate) fn into_reads(self, read: impl Fn(&ForwardedQuery) -> ForwardedRead) -> Vec<ForwardedRead> {
+    /// The forwarded reads these queries become, each query turned into its
+    /// reads by `read`, or the one read that carries the failure to prepare
+    /// them.
+    pub(crate) fn into_reads(self, read: impl Fn(ForwardedQuery) -> Vec<ForwardedRead>) -> Vec<ForwardedRead> {
         match self {
-            RegistrationQueries::Narrowed(queries) => queries.iter().map(read).collect(),
+            RegistrationQueries::Narrowed(queries) => queries.into_iter().flat_map(read).collect(),
             RegistrationQueries::Unprepared(error) => vec![ForwardedRead::Get(Err::<Url, FederationError>(error))],
         }
+    }
+}
+
+/// The GET reads that carry `query` to the resource `build_url` addresses on
+/// `registration`, one per run of identifiers that fits the URL budget (clauses
+/// 4.3.6.7 and 5.5.14). A query that fits no split is the registration's
+/// failure to prepare, which a read reports as its own.
+pub(crate) fn get_reads(
+    registration: &ContextSourceRegistration,
+    query: ForwardedQuery,
+    build_url: fn(&Url, &str) -> Result<Url, FederationError>,
+) -> Vec<ForwardedRead> {
+    let endpoint = registration.access.endpoint.url();
+    let prepared = build_url(endpoint, "").and_then(|resource| query.within_url_budget(&resource, &registration.id));
+    match prepared {
+        Ok(runs) => runs.iter().map(|run| ForwardedRead::Get(build_url(endpoint, &run.to_query_string()))).collect(),
+        Err(error) => vec![ForwardedRead::Get(Err(error))],
     }
 }
 
