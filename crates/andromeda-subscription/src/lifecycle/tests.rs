@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -360,11 +360,15 @@ const CHOSEN_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-conte
 /// The `jsonldContext` an update wrote, recorded by [`UpdatingStore`].
 type WrittenContext = Arc<Mutex<Option<Option<IriBuf>>>>;
 
-/// A store holding one subscription, which records the `jsonldContext` an
-/// update writes back.
+/// The status an update wrote, recorded by [`UpdatingStore`].
+type WrittenStatus = Arc<Mutex<Option<SubscriptionStatus>>>;
+
+/// A store holding one subscription, which records the `jsonldContext` and the
+/// status an update writes back.
 struct UpdatingStore {
     stored: Subscription,
     written: WrittenContext,
+    status: WrittenStatus,
 }
 
 #[async_trait]
@@ -442,10 +446,11 @@ impl SubscriptionStore for UpdatingStore {
         _target: &ContextTarget,
         _id: &Identifier,
         fields: &SubscriptionFields<'_>,
-        _status: SubscriptionStatus,
+        status: SubscriptionStatus,
     ) -> Result<u64, SubscriptionError> {
         // clone: the record keeps the written IRI for the assertion.
         *self.written.lock().expect("the written context is never poisoned") = Some(fields.jsonld_context.cloned());
+        *self.status.lock().expect("the written status is never poisoned") = Some(status);
         Ok(1)
     }
 }
@@ -485,6 +490,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
     let store = UpdatingStore {
         stored: subscription_with_chosen_context(),
         written: Arc::clone(&written),
+        status: WrittenStatus::default(),
     };
     let service = SubscriptionService::new(
         Arc::new(store),
@@ -508,6 +514,64 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
 #[tokio::test]
 async fn the_empty_fragment_writes_nothing() {
     assert_eq!(written_after_update(json!({}), &ContextSpec::none()).await, None);
+}
+
+/// The status an update of `fragment` writes to a subscription whose row still
+/// reads `status` although its `expiresAt` has passed, as it does between the
+/// due instant and the sweep that persists the expiry.
+async fn status_written_after_update(status: SubscriptionStatus, fragment: Value) -> SubscriptionStatus {
+    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    let mut stored = subscription_with_chosen_context();
+    stored.lifecycle.standing.status = status;
+    stored.lifecycle.standing.expires_at = Some(Utc::now() - Duration::hours(1));
+    let written = WrittenStatus::default();
+    let store = UpdatingStore {
+        stored,
+        written: WrittenContext::default(),
+        status: Arc::clone(&written),
+    };
+    let service = SubscriptionService::new(
+        Arc::new(store),
+        // clone: the service and the variant each own an engine handle.
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+        filter_admission(),
+    );
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
+    let updated = service
+        .update(
+            &ContextTarget::Live,
+            &uri("urn:ngsi-ld:Subscription:stored"),
+            request,
+            &AdmittedContext::core_only(),
+        )
+        .await;
+    assert!(updated.is_ok(), "{updated:?}");
+    let recorded = *written.lock().expect("the written status is never poisoned");
+    recorded.expect("the update wrote the status")
+}
+
+/// Clause 5.8.2.4: removing `expiresAt` leaves an expired subscription
+/// expired, also while its row still reads `active` or `paused` because the
+/// sweep has not yet persisted the expiry.
+#[tokio::test]
+async fn removing_expires_at_keeps_a_subscription_past_its_expiry_expired() {
+    for stored in [SubscriptionStatus::Active, SubscriptionStatus::Paused, SubscriptionStatus::Expired] {
+        let status = status_written_after_update(stored, json!({ "expiresAt": "urn:ngsi-ld:null" })).await;
+        assert_eq!(status, SubscriptionStatus::Expired, "a row reading {stored:?}");
+    }
+}
+
+/// Clause 5.8.2.4: a future `expiresAt` reactivates a subscription past its
+/// expiry whichever status its row reads.
+#[tokio::test]
+async fn a_future_expires_at_reactivates_a_subscription_past_its_expiry() {
+    for stored in [SubscriptionStatus::Active, SubscriptionStatus::Paused, SubscriptionStatus::Expired] {
+        let status = status_written_after_update(stored, json!({ "expiresAt": "2099-01-01T00:00:00Z" })).await;
+        assert_eq!(status, SubscriptionStatus::Active, "a row reading {stored:?}");
+    }
 }
 
 /// Clause 5.8.2.4 checks a fragment against the data types and restrictions
@@ -581,6 +645,7 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
     let store = UpdatingStore {
         stored: subscription_with_chosen_context(),
         written: Arc::clone(&written),
+        status: WrittenStatus::default(),
     };
     let service = SubscriptionService::new(
         Arc::new(store),
