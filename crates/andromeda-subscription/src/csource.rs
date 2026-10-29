@@ -42,7 +42,10 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     }
 
     fn validate_update_extra(&self, _request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
-        // Clause 5.11.3: unlike entity subscriptions, a past `expiresAt` is not rejected.
+        // Clause 5.11.3.4 checks a fragment only against the data types and
+        // restrictions of Table 5.2.12-1, which sets no future-only bound on
+        // `expiresAt`, and does not apply the past-expiry refusal of clause
+        // 5.8.2.4: a past `expiresAt` is accepted and expires the subscription.
         Ok(())
     }
 
@@ -102,6 +105,16 @@ mod tests {
             validated("application/geo+json"),
             Err(SubscriptionError::Validation(SubscriptionValidationReason::GeoJsonForCsourceSubscription))
         ));
+    }
+
+    /// Clause 5.11.3.4 applies no past-expiry refusal to an update fragment.
+    #[test]
+    fn an_update_with_a_past_expires_at_is_admitted() {
+        let variant = CsrSubscriptionVariant::new(JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"));
+        let wire = json!({"expiresAt": "2020-01-01T00:00:00Z"});
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let result = variant.validate_update_extra(&request);
+        assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
