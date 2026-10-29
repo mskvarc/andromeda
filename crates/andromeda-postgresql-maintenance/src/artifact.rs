@@ -4,7 +4,8 @@
 //! was building, named `<index>_ccnew[digits]`, invalid beside the original;
 //! one interrupted after the swap leaves the original as `<index>_ccold`. An
 //! allowlisted index's artifact sits in its branch schema, and a history
-//! chunk's sits beside the chunk, which the catalogue read pairs it with.
+//! chunk's sits beside the chunk, or in `pg_toast` on the chunk's TOAST table,
+//! which the catalogue read pairs it with.
 
 use crate::{
     branch::Branch,
@@ -240,5 +241,18 @@ mod tests {
             let artifact = RecoveryArtifact::of_chunk(HistoryTable::AttributeHistory, chunk(), "_timescaledb_internal".to_owned(), name);
             assert!(artifact.is_none(), "{name}");
         }
+    }
+
+    /// A chunk rebuild also rebuilds the index of the chunk's TOAST table, so
+    /// an interruption leaves its `_ccnew` in `pg_toast`, dropped from there.
+    #[test]
+    fn a_chunk_toast_artifact_is_dropped_from_pg_toast() {
+        let Some(artifact) = RecoveryArtifact::of_chunk(HistoryTable::AttributeHistory, chunk(), "pg_toast".to_owned(), "pg_toast_29697_index_ccnew") else {
+            panic!("a ccnew index on a chunk's TOAST table is an artifact");
+        };
+        assert_eq!(
+            artifact.name.drop_statement(),
+            drop_index_concurrently(Alias::new("pg_toast"), Alias::new("pg_toast_29697_index_ccnew"))
+        );
     }
 }

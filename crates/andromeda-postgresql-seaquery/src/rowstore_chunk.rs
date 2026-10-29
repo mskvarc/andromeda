@@ -98,8 +98,10 @@ pub struct InvalidIndexSchema;
 #[iden = "index_name"]
 pub struct InvalidIndexName;
 
-/// Every invalid index on a chunk of `hypertable`, the oldest chunk first:
-/// what an interrupted `REINDEX TABLE CONCURRENTLY` of a chunk leaves behind.
+/// Every invalid index on a chunk of `hypertable` or on the chunk's TOAST
+/// table, the oldest chunk first: what an interrupted
+/// `REINDEX TABLE CONCURRENTLY` of a chunk leaves behind, since the rebuild
+/// covers the TOAST table's index too.
 ///
 /// Projects the chunk's OID (`chunk_oid`) and relation (`chunk`), and the
 /// index's schema (`index_schema`) and name (`index_name`). The hypertable
@@ -118,7 +120,9 @@ pub fn invalid_chunk_indexes_statement(hypertable: &str) -> SelectStatement {
             JoinType::InnerJoin,
             Alias::new("pg_index"),
             Alias::new("i"),
-            catalog("i", "indrelid").eq(chunk()),
+            catalog("i", "indrelid")
+                .eq(chunk())
+                .or(catalog("i", "indrelid").eq(Expr::cust_with_exprs("(SELECT reltoastrelid FROM pg_class WHERE oid = $1)", [chunk()]))),
         )
         .join_as(
             JoinType::InnerJoin,
@@ -196,14 +200,14 @@ mod tests {
     }
 
     /// The invalid indexes are those PostgreSQL marks invalid on a chunk of
-    /// the bound hypertable, each beside its chunk.
+    /// the bound hypertable or on its TOAST table, each beside its chunk.
     #[test]
     fn an_invalid_index_is_read_beside_the_chunk_it_was_built_on() {
         let (sql, values) = invalid_chunk_indexes_statement("attribute_history").build(PostgresQueryBuilder);
         for clause in [
             r#"AS "chunk_oid""#,
             r#""n"."nspname" AS "index_schema", "c"."relname" AS "index_name""#,
-            r#"INNER JOIN "pg_index" AS "i" ON "i"."indrelid" = (format('%I.%I', "chunk_schema", "chunk_name")::regclass)"#,
+            r#"INNER JOIN "pg_index" AS "i" ON "i"."indrelid" = (format('%I.%I', "chunk_schema", "chunk_name")::regclass) OR "i"."indrelid" = ((SELECT reltoastrelid FROM pg_class WHERE oid = format('%I.%I', "chunk_schema", "chunk_name")::regclass))"#,
             r#"WHERE "hypertable_name" = $1 AND "i"."indisvalid" = $2"#,
             r#"ORDER BY "range_start" ASC, "c"."relname" ASC"#,
         ] {
