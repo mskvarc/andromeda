@@ -785,6 +785,40 @@ mod tests {
         assert!(!built.sql.contains("entity_type_members"), "{}", built.sql);
     }
 
+    /// A geo-query's matches drive the statement and its count, so the types
+    /// of a typed geo-query are tested on the search row and no membership
+    /// range is merged.
+    #[test]
+    fn a_typed_geo_query_tests_its_types_on_the_search_row() {
+        let mut q = empty_query();
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Or(vec![
+                    TypeExpr::Type(iri("https://example.com/Vehicle")),
+                    TypeExpr::Type(iri("https://example.com/Home")),
+                ])))
+                .build(),
+        ];
+        q.selection.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
+                min_distance: None,
+            },
+            geometry: point(&serde_json::json!([13.4, 52.5])),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
+        });
+        let built = build_counted(&q, &known_types());
+        let count = built.count_sql.expect("count requested");
+        for sql in [page_of(&built.sql), count.as_str()] {
+            assert!(
+                sql.contains(r#"("entity_search"."entity_type_name_keys" @> (ARRAY[1])) OR ("entity_search"."entity_type_name_keys" @> (ARRAY[2]))"#),
+                "{sql}"
+            );
+            assert!(sql.contains(r#""entities"."entity_key" IN ("#), "{sql}");
+            assert!(!sql.contains("entity_type_members"), "{sql}");
+        }
+    }
+
     #[test]
     fn build_with_mixed_type_expr() {
         let mut q = empty_query();

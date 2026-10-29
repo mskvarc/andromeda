@@ -6,7 +6,12 @@
 //! selection (clause 4.17), which carries the same `entity_key` and `id` and
 //! yields a type's Entities in identifier order without visiting any other.
 //! `entities` is then joined only for the `createdAt` or `modifiedAt` a sort
-//! reads. `entity_search` is joined only when some axis of the query reads an
+//! reads. A geo-query keeps `entities` driving: its matches come from the
+//! spatial index as a set of keys, and the walk of several types is a merge
+//! the planner cannot see into, so it would merge every member of the types
+//! before the few matches narrow them. Driven by `entities`, the statement
+//! starts from the matches and tests the type on the search row the geo-query
+//! joins anyway. `entity_search` is joined only when some axis of the query reads an
 //! indexed column of it. A `q` expression and a sort on an attribute value read
 //! `current_attributes` rows through probes and laterals correlated on the
 //! entity key, so they join nothing. What the response holds is not a reason
@@ -152,14 +157,16 @@ impl EntityRelations {
 
 /// The relation a selection is driven by: the membership walk when every
 /// selector selects by a type expression that has a range to walk and names no
-/// identifier, `entities` otherwise.
+/// identifier, and no geo-query narrows the selection, `entities` otherwise.
 ///
 /// A selector naming identifiers is already answered by the identifier index,
-/// and a request that considers no Entity (clause 5.5.14) walks nothing.
+/// a geo-query by the spatial index, and a request that considers no Entity
+/// (clause 5.5.14) walks nothing.
 fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>, lifecycle: Demand) -> RowSource {
     let walkable = match selection.considered {
         ConsideredEntities::Selected => {
-            !selection.selectors.is_empty()
+            selection.geo.is_none()
+                && !selection.selectors.is_empty()
                 && selection
                     .selectors
                     .iter()
@@ -390,6 +397,31 @@ mod tests {
         let mut nothing = typed_query();
         nothing.selection.considered = ConsideredEntities::NoEntity;
         assert_eq!(relations(&nothing).source, RowSource::Entities);
+    }
+
+    /// A geo-query's matches drive the statement, so a typed geo-query is
+    /// driven by `entities` and tests its types on the search row, one type or
+    /// several.
+    #[test]
+    fn a_typed_geo_query_is_driven_by_entities_and_tests_the_type_on_the_search_row() {
+        let geo = GeoQuery {
+            georel: GeoRel::Within,
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
+        };
+        let mut one = typed_query();
+        one.selection.geo = Some(geo.clone()); // clone: the second query carries the same geo-query
+        let mut several = typed_query();
+        several.selection.selectors.push(
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/U".to_string()).expect("valid IRI"))))
+                .build(),
+        );
+        several.selection.geo = Some(geo);
+        for query in [one, several] {
+            assert_eq!(relations(&query), joined(Demand::Joined), "{query:?}");
+            assert_eq!(EntityRelations::for_count(&query, &types(), None), joined(Demand::Joined), "{query:?}");
+        }
     }
 
     /// A `createdAt` sort reads a lifecycle column the walk does not carry, so
