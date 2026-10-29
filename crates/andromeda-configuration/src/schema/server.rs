@@ -1,5 +1,5 @@
-//! The `[server]` table: the data-plane listener, its drain and its HTTP/3
-//! sibling.
+//! The `[server]` table: the data-plane listener, the address clients reach it
+//! at, its drain and its HTTP/3 sibling.
 
 use crate::{
     human_duration::HumanDuration,
@@ -8,6 +8,7 @@ use crate::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
+use url::Url;
 
 /// The data-plane listener.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
@@ -25,6 +26,19 @@ pub struct ServerConfig {
         description = "Whether the API listener serves plaintext or terminates TLS with the `[tls]` certificate. One port speaks one or the other, never both."
     )]
     pub transport: ListenerTransport,
+    /// The `apiRoot` (clause 6.2) clients and peers reach the API at, path
+    /// prefix included, such as `https://broker.example.org/context-broker`.
+    ///
+    /// Every absolute URL the broker mints is built on it, and subscription
+    /// forwarding (clauses 5.8.1.4 and 5.8.6) names it as the endpoint of every
+    /// subscription the broker places at a context source. `None` builds URLs
+    /// on the origin each request reveals, with no prefix, and leaves
+    /// subscription forwarding off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The address clients and peers reach the API at, path prefix included, such as `https://broker.example.org/context-broker`. Every absolute URL the broker hands out is built on it, including stored `@context` URLs, and forwarded subscriptions name it as the endpoint their notifications come back to. Left out, URLs are built on the origin each request reveals, with no prefix, and subscriptions are not forwarded to context sources."
+    )]
+    pub public_url: Option<Url>,
     /// How long accepted connections may take to drain once shutdown begins,
     /// in human-readable form (`"30s"`).
     #[schemars(description = "How long open connections get to finish their requests once shutdown begins. Connections still open after it are closed.")]
@@ -49,6 +63,7 @@ impl Default for ServerConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 1056,
             transport: ListenerTransport::Plaintext,
+            public_url: None,
             graceful_drain_timeout: HumanDuration::from_secs(30),
             announced_close_timeout: HumanDuration::from_secs(1),
             http3: Http3Config::default(),
@@ -76,6 +91,24 @@ mod tests {
         }
         let holder: TimeoutHolder = toml::from_str("announced_close_timeout = \"750ms\"")?;
         assert_eq!(holder.announced_close_timeout, HumanDuration::from_millis(750));
+        Ok(())
+    }
+
+    #[test]
+    fn no_public_url_is_set_by_default() {
+        assert_eq!(ServerConfig::default().public_url, None);
+    }
+
+    #[test]
+    fn a_public_url_keeps_its_path_prefix() -> Result<(), Box<dyn Error>> {
+        let config: ServerConfig = toml::from_str(&format!(
+            "public_url = \"https://broker.example.org/context-broker\"\n{}",
+            toml::to_string(&ServerConfig::default())?
+        ))?;
+        assert_eq!(
+            config.public_url.map(String::from),
+            Some(String::from("https://broker.example.org/context-broker"))
+        );
         Ok(())
     }
 

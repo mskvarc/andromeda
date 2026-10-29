@@ -119,7 +119,7 @@ pub(super) fn construct_services(
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let context_hosting = TenantContextHosting::new(contexts);
     let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
-    let edge = DistributedSubscriptionEdge::resolve(&config.federation.identity, subscription_router, &forwarding, &storage.tenant);
+    let edge = DistributedSubscriptionEdge::resolve(config.public_url.as_ref(), subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(
         storage,
         signals,

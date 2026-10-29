@@ -5,7 +5,6 @@ use crate::schema::{source_alias::SourceAlias, source_extras::SourceExtras, sour
 use iri_rs::iri;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 /// The identity returned by `/info/sourceIdentity` and used for distributed
 /// loop detection (Table 5.2.40-1).
@@ -21,17 +20,6 @@ pub struct IdentityConfig {
         description = "The name the broker adds to the `Via` header of every request it forwards. A request whose `Via` already holds this name is treated as a forwarding loop, so every broker in a federation needs its own. Must be an HTTP token, as a `Via` entry requires."
     )]
     pub source_alias: SourceAlias,
-    /// The origin peers reach this broker at, such as `https://broker-a:1056`.
-    ///
-    /// Subscription forwarding (clauses 5.8.1.4 and 5.8.6) names this broker as
-    /// the notification endpoint of every subscription it places at a context
-    /// source; left out, the broker cannot receive those notifications, and
-    /// forwarding stays off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "The address peers and clients reach the broker at, path prefix included, such as `https://broker.example.org`. Every absolute URL the broker hands out is built on it, including stored `@context` URLs, and forwarded subscriptions name it as the endpoint their notifications come back to. Left out, URLs are built on the origin each request reveals, with no prefix, and subscriptions are not forwarded to context sources."
-    )]
-    pub advertised_url: Option<Url>,
     /// Instance-specific information reported verbatim as
     /// `contextSourceExtras`, written as a table whose keys are reported as
     /// written. Raw JSON, never JSON-LD, never interpreted. Set in the file
@@ -49,7 +37,6 @@ impl Default for IdentityConfig {
             // Compile-time validated, so the built-in default needs no runtime parse or panic.
             source_id: SourceIdentifier::from_static(iri!("urn:ngsi-ld:ContextSourceIdentity:andromeda")),
             source_alias: SourceAlias::from_static("andromeda"),
-            advertised_url: None,
             extras: None,
         }
     }

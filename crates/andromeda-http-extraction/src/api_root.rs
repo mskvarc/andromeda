@@ -3,23 +3,30 @@
 //! Clause 6.2: "The apiRoot includes the scheme ("http" or "https"), host and
 //! optional port, and an optional prefix string." A broker behind a reverse
 //! proxy that mounts it under a prefix cannot learn that prefix from the
-//! request, so an operator who configures the URL peers reach the broker at
-//! (`federation.identity.advertised_url`) configures the `apiRoot` itself, path included,
-//! and every URL the broker mints is built on it. Without one, the origin the
+//! request, so an operator who configures the URL clients reach the broker at
+//! (`server.public_url`) configures the `apiRoot` itself, path included, and
+//! every URL the broker mints is built on it. Without one, the origin the
 //! request reveals is the `apiRoot`, with no prefix.
 
 use crate::{
     addressed_uri::addressed_uri,
     api_root_scheme::ApiRootScheme,
     classification::classify_api_root_error,
+    forwarded_field_trust::ForwardedFieldTrust,
+    forwarded_host::forwarded_host,
     forwarded_protocol::forwarded_protocol,
     listener_scheme::ListenerScheme,
 };
-use andromeda_configuration::schema::forwarded_header_trust::ForwardedHeaderTrust;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{HeaderMap, request::Parts},
+};
 use headers::HeaderMapExt;
-use std::future::{Future, ready};
+use std::{
+    fmt::Display,
+    future::{Future, ready},
+};
 use thiserror::Error;
 use url::Url;
 
@@ -32,15 +39,15 @@ pub enum ApiRootError {
 }
 
 /// The configured `apiRoot`, installed as a request extension by the API
-/// assembly when `federation.identity.advertised_url` is set.
+/// assembly when `server.public_url` is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdvertisedApiRoot(Url);
+pub struct ConfiguredApiRoot(Url);
 
-impl AdvertisedApiRoot {
+impl ConfiguredApiRoot {
     /// The configured `apiRoot`, path prefix included.
     #[must_use]
-    pub const fn new(url: Url) -> AdvertisedApiRoot {
-        AdvertisedApiRoot(url)
+    pub const fn new(url: Url) -> ConfiguredApiRoot {
+        ConfiguredApiRoot(url)
     }
 
     /// The configured `apiRoot`.
@@ -52,9 +59,9 @@ impl AdvertisedApiRoot {
 
 /// The `apiRoot` the broker mints its own absolute URLs under.
 ///
-/// The configured [`AdvertisedApiRoot`] when one is installed; otherwise the
-/// origin the request reveals, or `None` for a request naming no authority,
-/// under which nothing can be given an absolute URL.
+/// The [`ConfiguredApiRoot`] when one is installed; otherwise the origin the
+/// request reveals, or `None` for a request naming no authority, under which
+/// nothing can be given an absolute URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRoot(Option<Url>);
 
@@ -72,18 +79,18 @@ impl ApiRoot {
     }
 }
 
-/// The protocol a trusted reverse proxy forwarded, or `None` when the edge is
-/// not trusted or forwarded nothing readable.
+/// The request's fields when its forwarded fields may be believed, or `None`
+/// when they may not.
 ///
-/// The trust decision arrives as a request extension the process stack installs
-/// from configuration. A request that carries no such extension is treated as
-/// untrusted, so a router assembled without that stack -- a unit test, a
-/// fragment mounted on its own -- can never be talked into minting an `https`
-/// URL by a client-supplied field.
-fn forwarded_scheme(parts: &Parts) -> Option<ApiRootScheme> {
-    match parts.extensions.get::<ForwardedHeaderTrust>() {
-        Some(ForwardedHeaderTrust::Trusted) => forwarded_protocol(&parts.headers),
-        Some(ForwardedHeaderTrust::Untrusted) | None => None,
+/// The trust decision arrives as a [`ForwardedFieldTrust`] request extension
+/// the HTTP stack installs. A request that carries none is treated as
+/// untrusted, so a router assembled without that stack (a unit test, a
+/// fragment mounted on its own) can never be talked into minting a URL by a
+/// client-supplied field.
+fn believed_fields(parts: &Parts) -> Option<&HeaderMap> {
+    match parts.extensions.get::<ForwardedFieldTrust>() {
+        Some(ForwardedFieldTrust::Trusted) => Some(&parts.headers),
+        Some(ForwardedFieldTrust::Untrusted) | None => None,
     }
 }
 
@@ -91,7 +98,7 @@ fn forwarded_scheme(parts: &Parts) -> Option<ApiRootScheme> {
 ///
 /// Each listener installs its [`ListenerScheme`] as a request extension. A
 /// request carrying none is treated as plaintext, so a router assembled without
-/// a listener -- a unit test, a fragment mounted on its own -- never mints an
+/// a listener (a unit test, a fragment mounted on its own) never mints an
 /// `https` URL it was not served over.
 fn listener_scheme(parts: &Parts) -> ApiRootScheme {
     parts
@@ -118,9 +125,18 @@ fn request_authority(parts: &Parts) -> Option<headers::Host> {
         .or_else(|| parts.headers.typed_get::<headers::Host>())
 }
 
-/// Reconstruct the origin from the authority the request addresses and, when
-/// the edge is trusted, from the protocol it forwarded; otherwise from the
-/// scheme of the listener the request arrived on.
+/// The origin `host` names under `scheme`.
+fn origin(scheme: ApiRootScheme, host: impl Display) -> Result<Url, url::ParseError> {
+    Url::parse(&format!("{}://{host}", scheme.as_scheme()))
+}
+
+/// Reconstruct the origin the request reveals.
+///
+/// When its forwarded fields may be believed, the scheme and host a proxy
+/// forwarded outrank the scheme of the listener the request arrived on and
+/// the authority the request addressed, because the proxy knows what the
+/// client addressed and the hop behind it does not. A forwarded host no origin
+/// can be built from is ignored like any other unreadable forwarded field.
 ///
 /// This is the origin the request itself reveals, whatever `apiRoot` is
 /// configured: a relative reference the request carries resolves against the
@@ -129,22 +145,27 @@ fn request_authority(parts: &Parts) -> Option<headers::Host> {
 ///
 /// # Errors
 ///
-/// Returns [`ApiRootError::InvalidOrigin`] for an authority no origin can be
-/// built from.
+/// Returns [`ApiRootError::InvalidOrigin`] for a request authority no origin
+/// can be built from.
 pub(crate) fn request_origin(parts: &Parts) -> Result<Option<Url>, ApiRootError> {
-    let Some(host) = request_authority(parts) else {
-        return Ok(None);
-    };
-    let scheme = forwarded_scheme(parts).unwrap_or_else(|| listener_scheme(parts));
-    Url::parse(&format!("{}://{host}", scheme.as_scheme()))
-        .map(Some)
+    let believed = believed_fields(parts);
+    let scheme = believed.and_then(forwarded_protocol).unwrap_or_else(|| listener_scheme(parts));
+    if let Some(host) = believed.and_then(forwarded_host) {
+        match origin(scheme, &host) {
+            Ok(url) => return Ok(Some(url)),
+            Err(error) => tracing::debug!(host = %host, error = %error, "forwarded host forms no origin"),
+        }
+    }
+    request_authority(parts)
+        .map(|host| origin(scheme, host))
+        .transpose()
         .map_err(ApiRootError::InvalidOrigin)
 }
 
 /// The configured `apiRoot` when one is installed, else the request's origin.
 fn resolve_api_root(parts: &Parts) -> Result<ApiRoot, ApiRootError> {
-    match parts.extensions.get::<AdvertisedApiRoot>() {
-        Some(advertised) => Ok(ApiRoot(Some(advertised.url().clone()))), // clone: the extension stays installed for the rest of the request
+    match parts.extensions.get::<ConfiguredApiRoot>() {
+        Some(configured) => Ok(ApiRoot(Some(configured.url().clone()))), // clone: the extension stays installed for the rest of the request
         None => request_origin(parts).map(ApiRoot),
     }
 }
@@ -163,11 +184,11 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        api_root::{AdvertisedApiRoot, ApiRoot, ApiRootError, resolve_api_root},
+        api_root::{ApiRoot, ApiRootError, ConfiguredApiRoot, resolve_api_root},
         api_root_scheme::ApiRootScheme,
+        forwarded_field_trust::ForwardedFieldTrust,
         listener_scheme::ListenerScheme,
     };
-    use andromeda_configuration::schema::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
         extract::FromRequestParts,
@@ -178,7 +199,7 @@ mod tests {
 
     /// The parts of a request carrying `fields`, optionally under a declared
     /// proxy trust.
-    fn parts(fields: &[(&'static str, &str)], trust: Option<ForwardedHeaderTrust>) -> Result<Parts, Box<dyn Error>> {
+    fn parts(fields: &[(&'static str, &str)], trust: Option<ForwardedFieldTrust>) -> Result<Parts, Box<dyn Error>> {
         let mut builder = Request::get("/ngsi-ld/v1/jsonldContexts");
         for (name, value) in fields {
             builder = builder.header(*name, *value);
@@ -197,7 +218,7 @@ mod tests {
     }
 
     /// The origin the extractor reconstructs, as wire text.
-    async fn origin_of(fields: &[(&'static str, &str)], trust: Option<ForwardedHeaderTrust>) -> Result<Option<String>, Box<dyn Error>> {
+    async fn origin_of(fields: &[(&'static str, &str)], trust: Option<ForwardedFieldTrust>) -> Result<Option<String>, Box<dyn Error>> {
         let parts = parts(fields, trust)?;
         origin_from(parts).await
     }
@@ -207,7 +228,7 @@ mod tests {
     async fn origin_on_listener(
         scheme: ApiRootScheme,
         fields: &[(&'static str, &str)],
-        trust: Option<ForwardedHeaderTrust>,
+        trust: Option<ForwardedFieldTrust>,
     ) -> Result<Option<String>, Box<dyn Error>> {
         let mut parts = parts(fields, trust)?;
         parts.extensions.insert(ListenerScheme::from(scheme));
@@ -236,7 +257,7 @@ mod tests {
     /// declared the edge trusted.
     #[tokio::test]
     async fn a_forwarded_protocol_is_ignored_while_the_edge_is_untrusted() -> Result<(), Box<dyn Error>> {
-        for trust in [None, Some(ForwardedHeaderTrust::Untrusted)] {
+        for trust in [None, Some(ForwardedFieldTrust::Untrusted)] {
             let fields = [("host", "broker.example"), ("x-forwarded-proto", "https"), ("forwarded", "proto=https")];
             pretty_assertions::assert_eq!(
                 origin_of(&fields, trust).await?,
@@ -252,7 +273,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             origin_of(
                 &[("host", "broker.example"), ("x-forwarded-proto", "https")],
-                Some(ForwardedHeaderTrust::Trusted)
+                Some(ForwardedFieldTrust::Trusted)
             )
             .await?,
             Some("https://broker.example/".to_owned())
@@ -266,7 +287,7 @@ mod tests {
     async fn the_rfc_7239_field_outranks_the_de_facto_one_at_a_trusted_edge() -> Result<(), Box<dyn Error>> {
         let fields = [("host", "broker.example"), ("forwarded", "proto=https"), ("x-forwarded-proto", "http")];
         pretty_assertions::assert_eq!(
-            origin_of(&fields, Some(ForwardedHeaderTrust::Trusted)).await?,
+            origin_of(&fields, Some(ForwardedFieldTrust::Trusted)).await?,
             Some("https://broker.example/".to_owned())
         );
         Ok(())
@@ -278,7 +299,7 @@ mod tests {
     async fn a_malformed_forwarded_field_falls_back_to_the_listener_scheme() -> Result<(), Box<dyn Error>> {
         let fields = [("host", "broker.example"), ("forwarded", "definitely not rfc 7239")];
         pretty_assertions::assert_eq!(
-            origin_of(&fields, Some(ForwardedHeaderTrust::Trusted)).await?,
+            origin_of(&fields, Some(ForwardedFieldTrust::Trusted)).await?,
             Some("http://broker.example/".to_owned())
         );
         Ok(())
@@ -289,11 +310,7 @@ mod tests {
     #[tokio::test]
     async fn a_trusted_edge_forwarding_plaintext_keeps_the_plaintext_scheme() -> Result<(), Box<dyn Error>> {
         pretty_assertions::assert_eq!(
-            origin_of(
-                &[("host", "broker.example"), ("x-forwarded-proto", "http")],
-                Some(ForwardedHeaderTrust::Trusted)
-            )
-            .await?,
+            origin_of(&[("host", "broker.example"), ("x-forwarded-proto", "http")], Some(ForwardedFieldTrust::Trusted)).await?,
             Some("http://broker.example/".to_owned())
         );
         Ok(())
@@ -351,7 +368,7 @@ mod tests {
     /// An untrusted edge can neither upgrade nor downgrade the listener's scheme.
     #[tokio::test]
     async fn an_untrusted_forwarded_http_cannot_downgrade_an_https_listener() -> Result<(), Box<dyn Error>> {
-        for trust in [None, Some(ForwardedHeaderTrust::Untrusted)] {
+        for trust in [None, Some(ForwardedFieldTrust::Untrusted)] {
             pretty_assertions::assert_eq!(
                 origin_on_listener(ApiRootScheme::Https, &[("host", "broker.example"), ("x-forwarded-proto", "http")], trust).await?,
                 Some("https://broker.example/".to_owned())
@@ -368,7 +385,7 @@ mod tests {
             origin_on_listener(
                 ApiRootScheme::Https,
                 &[("host", "broker.example"), ("forwarded", "proto=http")],
-                Some(ForwardedHeaderTrust::Trusted)
+                Some(ForwardedFieldTrust::Trusted)
             )
             .await?,
             Some("http://broker.example/".to_owned())
@@ -403,7 +420,95 @@ mod tests {
     #[tokio::test]
     async fn a_configured_api_root_outranks_the_request_origin_and_keeps_its_prefix() -> Result<(), Box<dyn Error>> {
         let mut parts = parts(&[("host", "internal.example:1026")], None)?;
-        parts.extensions.insert(AdvertisedApiRoot::new(Url::parse("https://public.example/broker")?));
+        parts.extensions.insert(ConfiguredApiRoot::new(Url::parse("https://public.example/broker")?));
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://public.example/broker".to_owned()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_trusted_edge_decides_the_host_of_a_minted_url() -> Result<(), Box<dyn Error>> {
+        let fields = [
+            ("host", "internal:1056"),
+            ("x-forwarded-host", "broker.example:8443"),
+            ("x-forwarded-proto", "https"),
+        ];
+        pretty_assertions::assert_eq!(
+            origin_of(&fields, Some(ForwardedFieldTrust::Trusted)).await?,
+            Some("https://broker.example:8443/".to_owned())
+        );
+        let fields = [("host", "internal:1056"), ("forwarded", "proto=https;host=broker.example")];
+        pretty_assertions::assert_eq!(
+            origin_of(&fields, Some(ForwardedFieldTrust::Trusted)).await?,
+            Some("https://broker.example/".to_owned())
+        );
+        Ok(())
+    }
+
+    /// The security property for the host: a client-supplied forwarded host
+    /// cannot move a minted URL to another authority unless the edge is
+    /// trusted.
+    #[tokio::test]
+    async fn a_forwarded_host_is_ignored_while_the_edge_is_untrusted() -> Result<(), Box<dyn Error>> {
+        for trust in [None, Some(ForwardedFieldTrust::Untrusted)] {
+            let fields = [
+                ("host", "broker.example"),
+                ("x-forwarded-host", "attacker.example"),
+                ("forwarded", "host=attacker.example"),
+            ];
+            pretty_assertions::assert_eq!(origin_of(&fields, trust).await?, Some("http://broker.example/".to_owned()));
+        }
+        Ok(())
+    }
+
+    /// The proxy knows the authority the client addressed, which the hop
+    /// behind it carries in `:authority` no better than in `Host`.
+    #[tokio::test]
+    async fn a_trusted_forwarded_host_outranks_the_target_authority() -> Result<(), Box<dyn Error>> {
+        let (mut parts, ()) = Request::get("http://internal:1056/ngsi-ld/v1/jsonldContexts")
+            .header("x-forwarded-host", "broker.example")
+            .body(())?
+            .into_parts();
+        parts.extensions.insert(ForwardedFieldTrust::Trusted);
+        pretty_assertions::assert_eq!(origin_from(parts).await?, Some("http://broker.example/".to_owned()));
+        Ok(())
+    }
+
+    /// A forwarded host no origin can be built from is an unreadable field,
+    /// which leaves the request's own authority rather than failing it.
+    #[tokio::test]
+    async fn a_forwarded_host_that_forms_no_origin_falls_back_to_the_request_authority() -> Result<(), Box<dyn Error>> {
+        for forwarded in ["broker.example:99999", "user@broker.example", "a b"] {
+            pretty_assertions::assert_eq!(
+                origin_of(
+                    &[("host", "internal:1056"), ("x-forwarded-host", forwarded)],
+                    Some(ForwardedFieldTrust::Trusted)
+                )
+                .await?,
+                Some("http://internal:1056/".to_owned()),
+                "{forwarded} is ignored"
+            );
+        }
+        Ok(())
+    }
+
+    /// A forwarded host serves a request that names no authority of its own.
+    #[tokio::test]
+    async fn a_trusted_forwarded_host_serves_a_request_naming_no_authority() -> Result<(), Box<dyn Error>> {
+        pretty_assertions::assert_eq!(
+            origin_of(&[("x-forwarded-host", "broker.example")], Some(ForwardedFieldTrust::Trusted)).await?,
+            Some("http://broker.example/".to_owned())
+        );
+        Ok(())
+    }
+
+    /// A configured `apiRoot` outranks a trusted forwarded host too.
+    #[tokio::test]
+    async fn a_configured_api_root_outranks_a_trusted_forwarded_host() -> Result<(), Box<dyn Error>> {
+        let mut parts = parts(
+            &[("host", "internal:1056"), ("x-forwarded-host", "broker.example")],
+            Some(ForwardedFieldTrust::Trusted),
+        )?;
+        parts.extensions.insert(ConfiguredApiRoot::new(Url::parse("https://public.example/broker")?));
         pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://public.example/broker".to_owned()));
         Ok(())
     }
@@ -412,7 +517,7 @@ mod tests {
     #[tokio::test]
     async fn a_configured_api_root_serves_a_request_naming_no_authority() -> Result<(), Box<dyn Error>> {
         let mut parts = parts(&[], None)?;
-        parts.extensions.insert(AdvertisedApiRoot::new(Url::parse("https://public.example/")?));
+        parts.extensions.insert(ConfiguredApiRoot::new(Url::parse("https://public.example/")?));
         pretty_assertions::assert_eq!(origin_from(parts).await?, Some("https://public.example/".to_owned()));
         Ok(())
     }

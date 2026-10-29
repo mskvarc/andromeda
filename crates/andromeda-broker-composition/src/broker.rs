@@ -34,7 +34,7 @@ use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
-use andromeda_http_extraction::api_root::AdvertisedApiRoot;
+use andromeda_http_extraction::api_root::ConfiguredApiRoot;
 use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
@@ -344,7 +344,7 @@ async fn construct(
         .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
         .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
-        .advertised_api_root(config.federation.identity.advertised_url.clone().map(AdvertisedApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
+        .configured_api_root(config.server.public_url.clone().map(ConfiguredApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
         .pagination(pagination)
         .build();
     let stack = HttpStack::new(config.http.clone(), config.request_limits)?; // clone: the assembled stack owns its process-wide configuration

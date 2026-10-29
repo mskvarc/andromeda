@@ -5,7 +5,7 @@
 //! compares the refusal itself rather than its wording.
 
 use crate::{
-    schema::tls::ClientAuthenticationMode,
+    schema::{http::forwarded::ForwardedTrust, tls::ClientAuthenticationMode},
     validate::{
         bound::{Bound, Quantity, Relation},
         config_key::ConfigKey,
@@ -82,6 +82,13 @@ pub enum ConfigurationViolation {
     /// Fetch standard forbids and the CORS layer cannot build.
     #[display("http.cors: credentials = \"allowed\" cannot be combined with an `any` wildcard on origins, methods, headers or exposed headers")]
     CorsCredentialsWithWildcard,
+    /// Proxies are listed while the trust believes no list, so nothing would
+    /// read them.
+    #[display("http.forwarded.proxies is set but http.forwarded.trust is \"{trust}\"; set the trust to \"proxies\" or remove the list")]
+    ProxiesWithoutProxyTrust {
+        /// The trust that reads no list.
+        trust: ForwardedTrust,
+    },
     /// Two preloaded contexts name one URL, so which file serves it would be
     /// decided by their order.
     #[display("jsonld.preloaded_contexts names {url} more than once")]
@@ -109,6 +116,9 @@ pub enum Requirement {
     /// History retention is enabled.
     #[display("temporal.storage.retention.mode is \"enabled\"")]
     Retention,
+    /// Forwarded fields are believed only from listed proxies.
+    #[display("http.forwarded.trust is \"proxies\"")]
+    ProxyTrust,
 }
 
 #[cfg(test)]

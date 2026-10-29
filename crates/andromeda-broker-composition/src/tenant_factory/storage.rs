@@ -171,7 +171,7 @@ async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssembly
 /// resolved from its storage, never fetched over HTTP from this broker.
 fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>) -> Result<JsonLdEngine, TenantAssemblyError> {
     let recognizer = Arc::new(TenantHostedContexts::new(
-        config.federation.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
+        config.public_url.clone(), // clone: the recogniser owns the configured apiRoot
     ));
     Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }

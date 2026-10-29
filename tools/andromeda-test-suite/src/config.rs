@@ -57,11 +57,11 @@ pub enum BrokerRole {
     SingleTenant,
     /// The andromeda stack broker delivering notifications in durable mode.
     Durable,
-    /// The andromeda stack broker trusting the `Forwarded` and `X-Forwarded-Proto` fields.
+    /// The andromeda stack broker believing the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields.
     Edge,
     /// The edge broker's authority under `https`.
     EdgeHttps,
-    /// The andromeda stack broker advertising a path-prefixed apiRoot.
+    /// The andromeda stack broker configured with a path-prefixed apiRoot.
     Prefixed,
     /// The andromeda stack broker reading `q` target languages as RFC 4647 extended ranges.
     LanguageRange,

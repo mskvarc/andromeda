@@ -105,8 +105,10 @@ where
 /// 431 on either. A connection on which a response announced `Connection:
 /// close` closes in stages, delayed by the policy's announced-close delay (see
 /// [`crate::staged_close_stream`]); every other connection closes as soon as
-/// it is done. Once `shutdown` resolves no connection is accepted, and the
-/// open ones finish their in-flight requests.
+/// it is done. Every request carries the address of the peer its connection
+/// came from as a `ConnectInfo<SocketAddr>` extension. Once `shutdown`
+/// resolves no connection is accepted, and the open ones finish their
+/// in-flight requests.
 ///
 /// # Errors
 ///
@@ -120,7 +122,7 @@ pub async fn serve_listener<L, S, F>(
     header_section: HeaderSectionPolicy,
 ) -> Result<(), HttpServerError>
 where
-    L: Listener,
+    L: Listener<Addr = SocketAddr>,
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + Sync + 'static,
     S::Future: Send + 'static,
     F: Future<Output = ()> + Send,
@@ -132,13 +134,14 @@ where
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
-            (io, _address) = listener.accept() => {
+            (io, peer) = listener.accept() => {
                 // clone: the connection's I/O and every request it carries share one record.
                 let announcement = io.announcement().clone();
                 // clone: each connection owns a handle to the shared service.
                 let connection_service = service.clone().map_request(move |request: Request<Incoming>| {
                     let mut request = request.map(Body::new);
                     request.extensions_mut().insert(ConnectInfo(announcement.clone()));
+                    request.extensions_mut().insert(ConnectInfo(peer));
                     request
                 });
                 let connection = builder.serve_connection(TokioIo::new(io), TowerToHyperService::new(connection_service)).into_owned();
@@ -171,7 +174,7 @@ mod tests {
     use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::listener_transport::ListenerTransport};
     use axum::{
         Router,
-        extract::Request,
+        extract::{ConnectInfo, Request},
         http::{StatusCode, header::CONNECTION},
         routing::{get, post},
     };
@@ -247,6 +250,30 @@ mod tests {
         ));
         let response = reqwest::get(format!("http://{address}/test")).await?;
         pretty_assertions::assert_eq!(response.text().await?, "served");
+        shutdown_sender.send(()).map_err(|()| TestError::Shutdown)?;
+        server.await??;
+        Ok(())
+    }
+
+    /// The edge decides whose forwarded fields to believe from the peer, so
+    /// every request must carry it.
+    #[tokio::test]
+    async fn every_request_carries_the_address_of_its_peer() -> Result<(), TestError> {
+        let (listener, address) = ephemeral_listener().await?;
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let server = tokio::spawn(serve_listener(
+            listener,
+            Router::new().route("/peer", get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() })),
+            async move {
+                match shutdown_receiver.await {
+                    Ok(()) | Err(_) => {}
+                }
+            },
+            POLICY,
+            HEADER_SECTION,
+        ));
+        let response = reqwest::get(format!("http://{address}/peer")).await?;
+        pretty_assertions::assert_eq!(response.text().await?, "127.0.0.1");
         shutdown_sender.send(()).map_err(|()| TestError::Shutdown)?;
         server.await??;
         Ok(())

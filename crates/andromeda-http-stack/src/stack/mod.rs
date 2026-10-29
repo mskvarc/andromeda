@@ -5,6 +5,7 @@ mod cors_layer;
 pub mod csrf_layer;
 mod decompression_layer;
 mod encoded_entity_tag;
+mod forwarded_trust_layer;
 pub mod helmet_layer;
 mod metric_layer;
 mod request_deadline;
@@ -19,6 +20,7 @@ use crate::{
         csrf_layer::{CsrfLayerError, build_csrf_layer},
         decompression_layer::{build_decompression_layer, record_received_content_length},
         encoded_entity_tag::EncodedEntityTags,
+        forwarded_trust_layer::{ForwardedTrustPolicy, install_forwarded_trust},
         helmet_layer::{SecurityHeadersError, build_helmet_layer},
         metric_layer::http_metric_layer,
         request_deadline::{RequestDeadline, answer_within_deadline},
@@ -27,7 +29,6 @@ use crate::{
     },
 };
 use andromeda_configuration::schema::{
-    forwarded_header_trust::ForwardedHeaderTrust,
     http::{HttpStackConfig, body_decoding::BodyDecodingConfigError, server_timing::ServerTimingConfig},
     link_field_layout::LinkFieldLayout,
     request_limits::{RequestLimitsConfig, RequestLimitsConfigError},
@@ -94,8 +95,8 @@ pub struct HttpStack {
     request_json_value_limit: RequestJsonValueLimit,
     /// How a payload is decoded beside the executor.
     blocking_decode: BlockingDecodePolicy,
-    /// The operator's forwarded-header trust decision.
-    forwarded_headers: ForwardedHeaderTrust,
+    /// Whose forwarded fields are believed.
+    forwarded_trust: ForwardedTrustPolicy,
     /// How a response's link-values are laid out over `Link` field lines.
     link_field: LinkFieldLayout,
     /// Maximum wall-clock time for one HTTP request.
@@ -135,7 +136,7 @@ impl HttpStack {
             request_body_limit,
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(limits.max_json_values)),
             blocking_decode,
-            forwarded_headers: config.forwarded_headers,
+            forwarded_trust: ForwardedTrustPolicy::from(&config.forwarded),
             link_field: config.link_field,
             request_deadline: RequestDeadline::new(limits.timeout.duration()),
             helmet: build_helmet_layer(&config.security_headers)?,
@@ -152,11 +153,11 @@ impl HttpStack {
     /// Apply middleware scoped to the complete NGSI-LD API subtree.
     pub fn apply_api(&self, router: Router) -> Router {
         // Every absolute URL the broker mints from a request origin reads the
-        // operator's trust decision from this extension, so a router assembled
-        // without the stack treats every forwarded-protocol field as untrusted
-        // rather than inheriting a permissive default.
+        // trust decided here for the request's peer, so a router assembled
+        // without the stack treats every forwarded field as untrusted rather
+        // than inheriting a permissive default.
         let mut router = router
-            .layer(Extension(self.forwarded_headers))
+            .layer(middleware::from_fn_with_state(self.forwarded_trust.clone(), install_forwarded_trust)) // clone: the middleware owns its copy of the policy
             // The limit travels with the request as well as bounding it, so a
             // payload reader refusing a body names the size it would accept.
             .layer(Extension(self.request_body_limit))
@@ -310,7 +311,6 @@ mod tests {
         human_duration::HumanDuration,
         schema::{
             feature_mode::FeatureMode,
-            forwarded_header_trust::ForwardedHeaderTrust,
             http::{
                 HttpStackConfig,
                 body_decoding::BodyDecodingConfig,
@@ -318,6 +318,7 @@ mod tests {
                 cors::{CorsConfig, CorsMode},
                 csrf::CsrfConfig,
                 decompression::{DecompressionConfig, UnacceptedEncoding},
+                forwarded::{ForwardedConfig, ForwardedTrust},
                 security_headers::SecurityHeadersConfig,
                 server_timing::{ServerTimingConfig, ServerTimingPhase},
             },
@@ -325,7 +326,11 @@ mod tests {
             request_limits::RequestLimitsConfig,
         },
     };
-    use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_json_value_limit::RequestJsonValueLimit};
+    use andromeda_http_extraction::{
+        blocking_decode::BlockingDecodePolicy,
+        forwarded_field_trust::ForwardedFieldTrust,
+        request_json_value_limit::RequestJsonValueLimit,
+    };
     use axum::{
         Extension,
         Router,
@@ -348,7 +353,6 @@ mod tests {
                 blocking_threshold: HumanByteSize::kib(256),
                 max_concurrent_blocking: NonZeroUsize::MIN,
             },
-            forwarded_headers: ForwardedHeaderTrust::Untrusted,
             link_field: LinkFieldLayout::Combined,
             cors: CorsConfig {
                 mode: CorsMode::Disabled,
@@ -362,6 +366,7 @@ mod tests {
                 algorithms: EnumSet::empty(),
                 unaccepted_encoding: UnacceptedEncoding::Refuse,
             },
+            forwarded: ForwardedConfig::default(),
             server_timing: ServerTimingConfig {
                 mode: FeatureMode::Disabled,
                 phases: ServerTimingPhase::Total.into(),
@@ -524,26 +529,29 @@ mod tests {
         Ok(())
     }
 
-    /// The API stack hands every route the operator's trust decision, so the
+    /// The API stack hands every route the trust decided for its peer, so the
     /// origin extractor never has to guess it.
     #[tokio::test]
-    async fn the_api_stack_installs_the_configured_forwarded_header_trust() -> Result<(), Box<dyn Error>> {
-        for declared in [ForwardedHeaderTrust::Untrusted, ForwardedHeaderTrust::Trusted] {
+    async fn the_api_stack_installs_the_configured_forwarded_trust() -> Result<(), Box<dyn Error>> {
+        for (trust, expected) in [
+            (ForwardedTrust::None, ForwardedFieldTrust::Untrusted),
+            (ForwardedTrust::Any, ForwardedFieldTrust::Trusted),
+        ] {
             let stack = HttpStack::new(
                 HttpStackConfig {
-                    forwarded_headers: declared,
+                    forwarded: ForwardedConfig { trust, proxies: Vec::new() },
                     ..disabled_config()
                 },
                 test_limits(),
             )?;
             let router = stack.apply_api(Router::new().route(
                 "/probe",
-                get(|Extension(trust): Extension<ForwardedHeaderTrust>| async move { trust.to_string() }),
+                get(|Extension(trust): Extension<ForwardedFieldTrust>| async move { format!("{trust:?}") }),
             ));
             let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
             pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
             let body = to_bytes(response.into_body(), usize::MAX).await?;
-            pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, declared.to_string());
+            pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, format!("{expected:?}"));
         }
         Ok(())
     }

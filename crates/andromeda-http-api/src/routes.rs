@@ -4,7 +4,7 @@ use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
-use andromeda_http_extraction::api_root::AdvertisedApiRoot;
+use andromeda_http_extraction::api_root::ConfiguredApiRoot;
 use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
@@ -52,7 +52,7 @@ pub struct ApiRoutes {
     pub(crate) component_report: ComponentReportRoutes,
     /// The configured `apiRoot` minted URLs are built on, when one is
     /// configured; otherwise each request's origin is (clause 6.2).
-    pub(crate) advertised_api_root: Option<AdvertisedApiRoot>,
+    pub(crate) configured_api_root: Option<ConfiguredApiRoot>,
     /// How every paged collection pages, resolved from `[pagination]` and
     /// `[extensions]` at startup (clauses 5.5.9.1 and 5.5.9.2).
     pub(crate) pagination: PaginationPolicy,

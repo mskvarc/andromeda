@@ -10,7 +10,7 @@
 //! reaches the resource through the same prefix. The scheme and authority stay
 //! out: the tables prescribe a path.
 
-use crate::api_root::{AdvertisedApiRoot, ApiRoot};
+use crate::api_root::{ApiRoot, ConfiguredApiRoot};
 use andromeda_http_headers::location::Location;
 use andromeda_http_response::headers::with_location;
 use axum::{extract::FromRequestParts, http::request::Parts, response::Response};
@@ -57,7 +57,7 @@ pub enum ResourceCollection {
 /// Names created resources below the `apiRoot`'s path, or below the root
 /// when there is none.
 ///
-/// Extracted from the [`AdvertisedApiRoot`] request extension alone, so
+/// Extracted from the [`ConfiguredApiRoot`] request extension alone, so
 /// extracting it never fails. The origin a request reveals has the path `/`,
 /// so a locator built from an [`ApiRoot`] names the same paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -98,7 +98,7 @@ where
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
         // clone: the extension stays installed for the rest of the request
-        ready(Ok(ResourceLocator(parts.extensions.get::<AdvertisedApiRoot>().map(|root| root.url().clone()))))
+        ready(Ok(ResourceLocator(parts.extensions.get::<ConfiguredApiRoot>().map(|root| root.url().clone()))))
     }
 }
 
@@ -111,7 +111,7 @@ impl From<&ApiRoot> for ResourceLocator {
 #[cfg(test)]
 mod tests {
     use crate::{
-        api_root::{AdvertisedApiRoot, ApiRoot},
+        api_root::{ApiRoot, ConfiguredApiRoot},
         resource_location::{ResourceCollection, ResourceLocator},
     };
     use axum::{
@@ -188,7 +188,7 @@ mod tests {
     #[tokio::test]
     async fn the_locator_reads_the_installed_api_root() -> Result<(), Box<dyn Error>> {
         let (mut parts, ()) = Request::post("/ngsi-ld/v1/entities").header("host", "internal.example").body(())?.into_parts();
-        parts.extensions.insert(AdvertisedApiRoot::new(Url::parse("https://gw.example.com/broker")?));
+        parts.extensions.insert(ConfiguredApiRoot::new(Url::parse("https://gw.example.com/broker")?));
         let located = ResourceLocator::from_request_parts(&mut parts, &()).await?;
         pretty_assertions::assert_eq!(
             location_text(&located, ResourceCollection::Entities),

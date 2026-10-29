@@ -119,6 +119,9 @@ struct TenantFactoryConfig {
     /// How every HTTP notification lays out its `Link` field lines, as the
     /// `[http]` table decides for responses.
     link_field: LinkFieldLayout,
+    /// The `apiRoot` clients and peers reach the broker at (clause 6.2),
+    /// when `server.public_url` configures one.
+    public_url: Option<Url>,
 }
 
 impl From<&BrokerConfig> for TenantFactoryConfig {
@@ -137,6 +140,7 @@ impl From<&BrokerConfig> for TenantFactoryConfig {
             tenancy: config.tenancy.clone(),
             extensions: config.extensions,
             link_field: config.http.link_field,
+            public_url: config.server.public_url.clone(), // clone: each tenant built reads the configured apiRoot
         }
     }
 }

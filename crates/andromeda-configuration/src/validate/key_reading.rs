@@ -38,6 +38,8 @@ impl ConfigKey {
             | ConfigKey::HttpCorsAllowHeaders
             | ConfigKey::HttpCorsExposeHeaders
             | ConfigKey::HttpCorsCredentials
+            | ConfigKey::HttpForwardedTrust
+            | ConfigKey::HttpForwardedProxies
             | ConfigKey::JsonLdPreloadedContextUrl
             | ConfigKey::TemporalStorageRetentionMode
             | ConfigKey::ObservabilityMetricsMode => None,

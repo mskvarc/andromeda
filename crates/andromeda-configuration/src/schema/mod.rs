@@ -11,7 +11,6 @@ pub mod expiry;
 pub mod extensions;
 pub mod feature_mode;
 pub mod federation;
-pub mod forwarded_header_trust;
 pub mod http;
 pub mod http3;
 pub mod jsonld;

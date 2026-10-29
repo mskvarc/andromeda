@@ -98,7 +98,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-hub:5432/fed_hub"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-hub"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-hub"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-hub:1071"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://fed-hub:1071"
     ports:
       - "1071:1071"
 
@@ -113,7 +113,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-madrid:5432/fed_madrid"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-madrid"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-madrid"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-madrid:1072"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://fed-domain-madrid:1072"
     ports:
       - "1072:1072"
 
@@ -128,7 +128,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-berlin:5432/fed_berlin"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-berlin"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-berlin"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-berlin:1073"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://fed-domain-berlin:1073"
     ports:
       - "1073:1073"
 
@@ -143,7 +143,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-nordic:5432/fed_nordic"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-nordic"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-nordic"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-nordic:1074"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://fed-domain-nordic:1074"
     ports:
       - "1074:1074"
 
@@ -158,7 +158,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@fed-postgres-north:5432/fed_north"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-north"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "fed-domain-north"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://fed-domain-north:1075"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://fed-domain-north:1075"
     ports:
       - "1075:1075"
 

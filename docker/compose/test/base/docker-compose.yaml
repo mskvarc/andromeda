@@ -139,6 +139,6 @@ services:
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1057"
-      ANDROMEDA__HTTP__FORWARDED_HEADERS: "trusted"
+      ANDROMEDA__HTTP__FORWARDED__TRUST: "any"
     ports:
       - "1057:1057"

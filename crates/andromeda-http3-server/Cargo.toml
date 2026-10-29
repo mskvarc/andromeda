@@ -15,7 +15,7 @@ andromeda-server-tls.workspace = true
 axum = "0.8.9"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
-h3-util = { version = "0.0.6", features = ["quinn"] }
+h3-util = "0.0.6"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 thiserror = "2.0.21"

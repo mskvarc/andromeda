@@ -7,7 +7,6 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals},
 };
-use andromeda_configuration::schema::federation::identity::IdentityConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
@@ -32,6 +31,7 @@ use andromeda_subscription_forwarding::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
+use url::Url;
 
 /// The subscription services one tenant answers requests with.
 pub(super) struct SubscriptionServices {
@@ -60,18 +60,18 @@ pub(super) struct DistributedSubscriptionEdge<'edge> {
 }
 
 impl<'edge> DistributedSubscriptionEdge<'edge> {
-    /// Resolve the edge from the advertised origin.
+    /// Resolve the edge from the configured `apiRoot`.
     ///
-    /// Without an advertised origin the distributed side stays off, and the
-    /// broker says so once per tenant.
+    /// Without one the distributed side stays off, and the broker says so
+    /// once per tenant.
     pub(super) fn resolve(
-        info: &IdentityConfig,
+        public_url: Option<&Url>,
         router: &'edge Arc<dyn ForwardedSubscriptionRouter>,
         federation: &'edge Arc<FederationService>,
         tenant: &TenantRef,
     ) -> Option<DistributedSubscriptionEdge<'edge>> {
-        let Some(receiver) = info.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) else {
-            tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
+        let Some(receiver) = public_url.and_then(ReceiverEndpoint::from_advertised) else {
+            tracing::info!(tenant = ?tenant, "subscription forwarding disabled: server.public_url is not set");
             return None;
         };
         Some(DistributedSubscriptionEdge { receiver, router, federation })

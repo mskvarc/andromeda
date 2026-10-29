@@ -59,8 +59,8 @@ services:
       <<: *broker-env
       ANDROMEDA__TENANCY__MODE: "enabled"
       # Safe only because no host port is published and nginx replaces these headers.
-      ANDROMEDA__HTTP__FORWARDED_HEADERS: "trusted"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "https://127.0.0.1:8443"
+      ANDROMEDA__HTTP__FORWARDED__TRUST: "any"
+      ANDROMEDA__SERVER__PUBLIC_URL: "https://127.0.0.1:8443"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:tls-broker"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "tls-broker"
     healthcheck:

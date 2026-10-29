@@ -1,7 +1,7 @@
 //! Assembly of named state-complete fragments under the public API root.
 
 use crate::{management::ManagementRoutes, routes::ApiRoutes};
-use andromeda_http_extraction::{api_root::AdvertisedApiRoot, operation_hit_scope::scope_operation_hits, request_links::validate_request_links};
+use andromeda_http_extraction::{api_root::ConfiguredApiRoot, operation_hit_scope::scope_operation_hits, request_links::validate_request_links};
 use andromeda_http_response::method_not_allowed::registered_on;
 use andromeda_http_stack::stack::HttpStack;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
@@ -44,7 +44,7 @@ impl HttpApi {
         let ngsi = registered_on(ngsi);
         let mut api_root = Router::new().nest(
             "/ngsi-ld/v1",
-            stack.apply_api(ngsi_request_layers(ngsi, routes.advertised_api_root, routes.pagination)),
+            stack.apply_api(ngsi_request_layers(ngsi, routes.configured_api_root, routes.pagination)),
         );
         // Merged mode mounts the management endpoints as root siblings of the
         // NGSI-LD nest, outside the operation-hit scope, so a metrics scrape is
@@ -81,7 +81,7 @@ impl HttpApi {
 }
 
 /// The layers every NGSI-LD request passes before any route.
-fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRoot>, pagination: PaginationPolicy) -> Router {
+fn ngsi_request_layers(ngsi: Router, configured_api_root: Option<ConfiguredApiRoot>, pagination: PaginationPolicy) -> Router {
     // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
     // several times internally (write screening, then the write itself);
     // an operation scope makes those internal resolutions count as one use.
@@ -96,8 +96,8 @@ fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRo
     let ngsi = ngsi.layer(Extension(pagination));
     // Clause 6.2: a configured `apiRoot`, prefix included, is the one every
     // route builds on.
-    match advertised_api_root {
-        Some(advertised) => ngsi.layer(Extension(advertised)),
+    match configured_api_root {
+        Some(configured) => ngsi.layer(Extension(configured)),
         None => ngsi,
     }
 }
@@ -112,7 +112,6 @@ mod tests {
     use andromeda_component_report::{ComponentReport, ComponentVersion, ConnectionCapacity};
     use andromeda_configuration::schema::{
         feature_mode::FeatureMode,
-        forwarded_header_trust::ForwardedHeaderTrust,
         http::{
             HttpStackConfig,
             cors::{CorsConfig, CorsMode},
@@ -139,7 +138,7 @@ mod tests {
     };
     use andromeda_http_extraction::{
         accept_language::AcceptLanguageReading,
-        api_root::{AdvertisedApiRoot, ApiRoot},
+        api_root::{ApiRoot, ConfiguredApiRoot},
         pagination_policy::RequestPagination,
     };
     use andromeda_http_health::routes::HealthRoutes;
@@ -327,7 +326,7 @@ mod tests {
                 version: ComponentVersion::from("16.2".to_owned()),
                 connections: ConnectionCapacity::new(200, 3, 150),
             }]))
-            .advertised_api_root(None)
+            .configured_api_root(None)
             .pagination(PaginationPolicy::CursorDefault)
             .build())
     }
@@ -352,7 +351,6 @@ mod tests {
                 mode: FeatureMode::Disabled,
                 trusted_origins: Vec::new(),
             },
-            forwarded_headers: ForwardedHeaderTrust::Untrusted,
             ..HttpStackConfig::default()
         };
         Ok(HttpStack::new(http_config, RequestLimitsConfig::default())?)
@@ -668,7 +666,7 @@ mod tests {
             "/ngsi-ld/v1",
             test_stack()?.apply_api(ngsi_request_layers(
                 probe,
-                Some(AdvertisedApiRoot::new(configured.clone())),
+                Some(ConfiguredApiRoot::new(configured.clone())),
                 PaginationPolicy::CursorDefault,
             )), // clone: the expectation keeps the URL
         );

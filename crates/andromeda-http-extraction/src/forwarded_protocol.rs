@@ -13,13 +13,13 @@
 //! `Forwarded` field; `X-Forwarded-Proto` is the de-facto field that predates
 //! it. Both are read, `Forwarded` first.
 
-use crate::api_root_scheme::ApiRootScheme;
+use crate::{
+    api_root_scheme::ApiRootScheme,
+    forwarded_element::{FORWARDED, leftmost_forwarded_element, leftmost_list_member, read_field, unquoted},
+};
 use axum::http::{HeaderMap, HeaderName};
 use rfc7239::RfcError;
 use thiserror::Error;
-
-/// The RFC 7239 field carrying what a proxy forwarded.
-static FORWARDED: HeaderName = HeaderName::from_static("forwarded");
 
 /// The de-facto field carrying the protocol a proxy forwarded.
 static X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
@@ -38,13 +38,8 @@ pub enum ForwardedProtocolError {
     UnsupportedProtocol(#[source] strum::ParseError),
 }
 
-/// The protocol an RFC 7239 `Forwarded` field value names.
-///
-/// RFC 7239 clause 4 lets a proxy append its own element to the field, so the
-/// list runs from the element closest to the original client to the element
-/// added by the proxy nearest the broker. The public edge -- the one whose
-/// scheme a client would use to come back to a minted URL -- is the leftmost,
-/// so that is the element read.
+/// The protocol the leftmost element of an RFC 7239 `Forwarded` field value
+/// names.
 ///
 /// # Errors
 ///
@@ -54,23 +49,14 @@ pub enum ForwardedProtocolError {
 /// and [`ForwardedProtocolError::UnsupportedProtocol`] when that parameter
 /// names neither `http` nor `https`.
 pub fn from_forwarded(value: &str) -> Result<ApiRootScheme, ForwardedProtocolError> {
-    // A field present but empty carries no element to read, which is a field
-    // that names no protocol rather than one whose syntax is wrong.
-    if value.trim().is_empty() {
-        return Err(ForwardedProtocolError::NoProtocol);
-    }
-    let leftmost = rfc7239::parse(value).next().ok_or(ForwardedProtocolError::NoProtocol)?;
-    let element = leftmost.map_err(ForwardedProtocolError::ForwardedSyntax)?;
-    let protocol = element.protocol.ok_or(ForwardedProtocolError::NoProtocol)?;
-    parse_protocol(protocol)
+    let element = leftmost_forwarded_element(value)
+        .map_err(ForwardedProtocolError::ForwardedSyntax)?
+        .ok_or(ForwardedProtocolError::NoProtocol)?;
+    parse_protocol(element.protocol.ok_or(ForwardedProtocolError::NoProtocol)?)
 }
 
-/// The protocol an `X-Forwarded-Proto` field value names.
-///
-/// The field has no RFC. A proxy chain that appends rather than replaces
-/// produces a comma-separated list ordered the way RFC 7239 orders its
-/// elements, so the leftmost value is again the one closest to the original
-/// client.
+/// The protocol the leftmost member of an `X-Forwarded-Proto` field value
+/// names.
 ///
 /// # Errors
 ///
@@ -78,18 +64,15 @@ pub fn from_forwarded(value: &str) -> Result<ApiRootScheme, ForwardedProtocolErr
 /// [`ForwardedProtocolError::UnsupportedProtocol`] when it names neither
 /// `http` nor `https`.
 pub fn from_x_forwarded_proto(value: &str) -> Result<ApiRootScheme, ForwardedProtocolError> {
-    let leftmost = value.split(',').next().ok_or(ForwardedProtocolError::NoProtocol)?;
-    parse_protocol(leftmost)
+    parse_protocol(leftmost_list_member(value))
 }
 
-/// Read one protocol token, which RFC 7239 clause 4 permits as a quoted string
-/// as well as a bare token.
+/// Read one protocol token.
 fn parse_protocol(raw: &str) -> Result<ApiRootScheme, ForwardedProtocolError> {
-    let token = raw.trim().trim_matches('"').trim();
-    if token.is_empty() {
-        return Err(ForwardedProtocolError::NoProtocol);
-    }
-    token.parse().map_err(ForwardedProtocolError::UnsupportedProtocol)
+    unquoted(raw)
+        .ok_or(ForwardedProtocolError::NoProtocol)?
+        .parse()
+        .map_err(ForwardedProtocolError::UnsupportedProtocol)
 }
 
 /// The protocol the request's forwarded fields name, if any of them do.
@@ -107,26 +90,6 @@ fn parse_protocol(raw: &str) -> Result<ApiRootScheme, ForwardedProtocolError> {
 #[must_use]
 pub fn forwarded_protocol(headers: &HeaderMap) -> Option<ApiRootScheme> {
     read_field(headers, &FORWARDED, from_forwarded).or_else(|| read_field(headers, &X_FORWARDED_PROTO, from_x_forwarded_proto))
-}
-
-/// Read one forwarded field with `parse`, reporting an unreadable value as an
-/// absent one so a malformed field costs the request nothing.
-fn read_field(headers: &HeaderMap, name: &HeaderName, parse: fn(&str) -> Result<ApiRootScheme, ForwardedProtocolError>) -> Option<ApiRootScheme> {
-    let value = headers.get(name)?;
-    let text = match value.to_str() {
-        Ok(text) => text,
-        Err(error) => {
-            tracing::debug!(field = %name, error = %error, "forwarded field is not visible text");
-            return None;
-        }
-    };
-    match parse(text) {
-        Ok(protocol) => Some(protocol),
-        Err(error) => {
-            tracing::debug!(field = %name, error = %error, "forwarded field names no usable protocol");
-            None
-        }
-    }
 }
 
 #[cfg(test)]

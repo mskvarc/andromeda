@@ -18,7 +18,6 @@ use andromeda_configuration::header_section_limit::HeaderSectionLimit;
 use andromeda_http_server::close_policy::ClosePolicy;
 use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
-use h3_util::quinn::H3QuinnAcceptor;
 use quinn::{Endpoint, VarInt};
 use std::{
     convert::Infallible,
@@ -38,13 +37,6 @@ pub enum Http3ServeError {
     /// The bound endpoint's local address could not be read.
     #[error("local address of the QUIC endpoint is unavailable: {0}")]
     LocalAddress(#[source] io::Error),
-    /// The HTTP/3 connection accept loop terminated with an error.
-    ///
-    /// The QUIC acceptor hands the failure back type-erased, so there is no
-    /// typed cause to chain; the erased error is logged where it surfaces
-    /// instead.
-    #[error("HTTP/3 connection accept loop failed")]
-    Serve,
     /// Connections were still open once the drain deadline passed and were cut off.
     #[error("HTTP/3 connections did not drain before the configured deadline")]
     DrainDeadlineExceeded {
@@ -68,9 +60,8 @@ pub enum Http3ServeError {
 /// # Errors
 ///
 /// Returns [`Http3ServeError::LocalAddress`] when the endpoint's address cannot
-/// be read for logging, [`Http3ServeError::Serve`] when the accept loop fails,
-/// and [`Http3ServeError::DrainDeadlineExceeded`] when connections were still
-/// open at the drain deadline.
+/// be read for logging, and [`Http3ServeError::DrainDeadlineExceeded`] when
+/// connections were still open at the drain deadline.
 pub async fn serve_endpoint<F>(
     endpoint: Endpoint,
     feed: ServerConfigFeed,
@@ -84,21 +75,9 @@ where
 {
     let local_address = endpoint.local_addr().map_err(Http3ServeError::LocalAddress)?;
     tracing::info!(address = %local_address, "HTTP/3 listener accepting connections");
-    // The acceptor takes ownership of the endpoint handle; a second cheap,
-    // Arc-backed handle is retained to install rotated configurations and to
-    // await the endpoint idle once serving stops.
-    let acceptor = H3QuinnAcceptor::new(endpoint.clone());
-    let result = tokio::select! {
-        result = accept_connections(acceptor, router, limit, policy, shutdown) => result,
+    let drain = tokio::select! {
+        drain = accept_connections(&endpoint, router, limit, policy, shutdown) => drain,
         never = install_rotations(&endpoint, feed) => match never {},
-    };
-    let drain = match result {
-        Ok(drain) => drain,
-        Err(error) => {
-            tracing::error!(error = %error, "HTTP/3 connection accept loop failed");
-            endpoint.wait_idle().await;
-            return Err(Http3ServeError::Serve);
-        }
     };
     match drain {
         Drain::Complete => {
@@ -155,7 +134,7 @@ mod tests {
     use andromeda_server_tls::test_identity::authority::TestAuthority;
     use axum::{
         Router,
-        extract::Query,
+        extract::{ConnectInfo, Query},
         routing::{get, post, put},
     };
     use bytes::Bytes;
@@ -208,6 +187,7 @@ mod tests {
                 get(|Query(params): Query<HashMap<String, String>>| async move { params.get("name").cloned().unwrap_or_default() }),
             )
             .route("/method", put(|| async { "put" }).delete(|| async { "delete" }).patch(|| async { "patch" }))
+            .route("/peer", get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }))
     }
 
     /// The router wrapped exactly as [`crate::config`] documents for HTTP/3:
@@ -276,6 +256,18 @@ mod tests {
         let response = client.send(request(Method::GET, running.port(), "/probe")?, &[]).await?;
         assert_eq!(response.status, StatusCode::OK);
         assert_eq!(response.text()?, "h3 works");
+        client.close().await;
+        running.stop().await
+    }
+
+    /// The edge decides whose forwarded fields to believe from the peer, on
+    /// this listener as on the TCP one.
+    #[tokio::test]
+    async fn every_request_carries_the_address_of_its_peer() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let running = RunningListener::start(test_router())?;
+        let mut client = running.dial().await?;
+        let response = client.send(request(Method::GET, running.port(), "/peer")?, &[]).await?;
+        assert_eq!(response.text()?, "127.0.0.1");
         client.close().await;
         running.stop().await
     }
@@ -607,15 +599,6 @@ mod tests {
         assert_eq!(response.text()?, "h3 works");
         authenticated.close().await;
         running.stop().await
-    }
-
-    #[test]
-    fn a_failed_accept_loop_is_reported_without_an_erased_cause() {
-        assert_eq!(Http3ServeError::Serve.to_string(), "HTTP/3 connection accept loop failed");
-        assert!(
-            Http3ServeError::Serve.source().is_none(),
-            "the upstream cause is type-erased and logged, not chained"
-        );
     }
 
     /// A request for `/probe` whose `x-fill` field brings its header section,

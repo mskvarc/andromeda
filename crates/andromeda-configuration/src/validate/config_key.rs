@@ -90,6 +90,12 @@ pub enum ConfigKey {
     /// `http.cors.credentials`.
     #[display("http.cors.credentials")]
     HttpCorsCredentials,
+    /// `http.forwarded.trust`.
+    #[display("http.forwarded.trust")]
+    HttpForwardedTrust,
+    /// `http.forwarded.proxies`.
+    #[display("http.forwarded.proxies")]
+    HttpForwardedProxies,
     /// `database.max_connections`.
     #[display("database.max_connections")]
     DatabaseMaxConnections,

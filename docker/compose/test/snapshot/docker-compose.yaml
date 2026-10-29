@@ -101,7 +101,7 @@ services:
       <<: *primary-env
       ANDROMEDA__SERVER__PORT: "1081"
       ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "2s"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-primary:1081"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://snapshot-primary:1081"
     ports:
       - "1081:1081"
 
@@ -115,7 +115,7 @@ services:
     environment:
       <<: *primary-env
       ANDROMEDA__SERVER__PORT: "1082"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-replica:1082"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://snapshot-replica:1082"
     ports:
       - "1082:1082"
 
@@ -130,7 +130,7 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@snapshot-postgres-remote:5432/snapshot_remote"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-remote"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-remote"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-remote:1083"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://snapshot-remote:1083"
     ports:
       - "1083:1083"
 
@@ -146,7 +146,7 @@ services:
       ANDROMEDA__TENANCY__MODE: "disabled"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-nonmultitenant"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-nonmultitenant"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-nonmultitenant:1084"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://snapshot-nonmultitenant:1084"
     ports:
       - "1084:1084"
 
@@ -163,7 +163,7 @@ services:
       ANDROMEDA__SNAPSHOT__QUOTA__MAX_PER_TENANT: "3"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:snapshot-quota"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "snapshot-quota"
-      ANDROMEDA__FEDERATION__IDENTITY__ADVERTISED_URL: "http://snapshot-quota:1085"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://snapshot-quota:1085"
     ports:
       - "1085:1085"
 
