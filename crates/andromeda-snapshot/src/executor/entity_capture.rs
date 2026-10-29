@@ -31,6 +31,7 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     entity_result::collect_warnings,
     error::FederationError,
+    expanded_registration_filters::ExpandedRegistrationFilters,
     forwarded_query::client_query::ClientQuery,
     instance_budget::InstanceBudgetExceeded,
     outcome::ForwardedEntities,
@@ -45,6 +46,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
+    error::QueryError,
     page_window::{PageStart, PageWindow},
 };
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingExceeded;
@@ -135,7 +137,11 @@ impl SnapshotExecutor {
             return Ok(failure_detail(ExecutionFailure::QueryValidation { cause: &error }.to_string()));
         }
 
-        let (mut pending, forwarding_failure) = match self.walk_sources(&params, context).await {
+        let filters = match self.entity_registration_filters(&params, context).await {
+            Ok(filters) => filters,
+            Err(error) => return Ok(failure_detail(error.to_string())),
+        };
+        let (mut pending, forwarding_failure) = match self.walk_sources(&params, context, &filters).await {
             WalkedSources::Answered(pending) => (pending, None),
             WalkedSources::Unreachable(error) => {
                 warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
@@ -233,9 +239,21 @@ impl SnapshotExecutor {
         Ok(success_detail(ledger.captured.len()))
     }
 
+    /// The query's context source filter and geoquery expanded under `context`,
+    /// which select the registrations the query reaches exactly as Query
+    /// Entities selects them (clauses 4.3.6.1, 4.9 and 5.10.2.4). A query
+    /// limited to the local scope reaches none.
+    async fn entity_registration_filters(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<ExpandedRegistrationFilters, QueryError> {
+        if params.is_local() {
+            return Ok(ExpandedRegistrationFilters::default());
+        }
+        let query = &self.sources.entity_query;
+        ExpandedRegistrationFilters::expand(query.engine(), context, params.csf.as_ref(), params.geo.0.as_ref(), query.geo_admission()).await
+    }
+
     /// Walk every matching Context Source to the end of its answer (clause
     /// 5.16.1.4).
-    async fn walk_sources(&self, params: &EntityQueryParameters, context: &ContextSpec) -> WalkedSources {
+    async fn walk_sources(&self, params: &EntityQueryParameters, context: &ContextSpec, filters: &ExpandedRegistrationFilters) -> WalkedSources {
         let budget = ResultBudget::new(self.sources.forwarding.result_limits());
         let forwarding = &self.sources.forwarding;
         let request = ForwardQueryRequest {
@@ -246,8 +264,8 @@ impl SnapshotExecutor {
             split: forwarding.split_entities(params.split_entities),
             context,
             triggering: TriggeringRequest::default(),
-            csf_expr: None,
-            geo: None,
+            csf_expr: filters.csf(),
+            geo: filters.geo(),
             entity_map: EntityMapInUse::None,
             budget: &budget,
         };

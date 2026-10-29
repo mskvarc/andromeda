@@ -22,6 +22,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::{
+    expanded_registration_filters::ExpandedRegistrationFilters,
     operation::ForwardingOperation,
     outcome::ForwardedTemporalEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, SourcePaging, TriggeringRequest},
@@ -37,6 +38,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
+    error::QueryError,
     page_window::{PageStart, PageWindow},
     temporal::{
         contributed_entities::ContributedEntities,
@@ -67,6 +69,9 @@ struct TemporalCapture<'q> {
     interval: TimeInterval,
     /// The context the query is expanded under.
     context: &'q ContextSpec,
+    /// The query's context source filter and geoquery, which select the
+    /// registrations it reaches.
+    filters: &'q ExpandedRegistrationFilters,
 }
 
 impl SnapshotExecutor {
@@ -86,6 +91,10 @@ impl SnapshotExecutor {
             Ok(interval) => interval,
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
+        let filters = match self.temporal_registration_filters(&params, context).await {
+            Ok(filters) => filters,
+            Err(error) => return Ok(failure_detail(error.to_string())),
+        };
         let capture = TemporalCapture {
             target,
             snapshot_id,
@@ -93,6 +102,7 @@ impl SnapshotExecutor {
             params: &params,
             interval,
             context,
+            filters: &filters,
         };
         let mut window = PageWindow {
             limit: self.capture_page_size,
@@ -137,6 +147,18 @@ impl SnapshotExecutor {
             return Ok(failure);
         }
         Ok(success_detail(captured.len()))
+    }
+
+    /// The query's context source filter and geoquery expanded under `context`,
+    /// which select the registrations the query reaches exactly as Query
+    /// Temporal Evolution of Entities selects them (clauses 4.3.6.1, 4.9 and
+    /// 5.10.2.4). A query limited to the local scope reaches none.
+    async fn temporal_registration_filters(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<ExpandedRegistrationFilters, QueryError> {
+        if params.is_local() {
+            return Ok(ExpandedRegistrationFilters::default());
+        }
+        let temporal = &self.sources.temporal;
+        ExpandedRegistrationFilters::expand(temporal.engine(), context, params.csf.as_ref(), params.geo.0.as_ref(), temporal.geo_admission()).await
     }
 
     /// Walk every source page again over the window resumed past the least
@@ -219,8 +241,8 @@ impl SnapshotExecutor {
                     context: capture.context,
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering: TriggeringRequest::default(),
-                    csf_expr: None,
-                    geo: None,
+                    csf_expr: capture.filters.csf(),
+                    geo: capture.filters.geo(),
                     mode_filter: CsrModeFilter::All,
                     only_registration: None,
                     entity_map: EntityMapInUse::None,
