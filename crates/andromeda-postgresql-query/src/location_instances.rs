@@ -10,13 +10,15 @@
 //! `current_attributes` row. The relation is therefore evaluated as the
 //! union of two index-driven arms:
 //!
-//! - the hoisted default instance, through `idx_entity_search_location`,
-//!   restricted to the index's candidates when an in-memory spatial index
-//!   already answered for the default instance;
+//! - the hoisted default instance, through `idx_entity_search_location`, or,
+//!   when an in-memory spatial index already answered for the default
+//!   instance, through the candidates it named, looked up by identifier;
 //! - every instance carrying a `datasetId`, through `idx_ca_value_geometry`.
 //!
 //! Each arm tests the box its index keys, the instance's great-circle reach
-//! first, before the exact relation.
+//! first, before the exact relation. The candidates' box test reads no index,
+//! so the planner never scans the spatial index beside them; past a few dozen
+//! candidates the scan reads less, and the arm drops them for it.
 //!
 //! An entity is in the answer when either arm finds one of its instances. The
 //! outer statement reads the union once per entity and in `entity_key` order:
@@ -48,6 +50,13 @@ const DEFAULT_ALIAS: &str = "geo_default";
 /// Alias the hoisted-instance arm reads `entities` under when it is restricted
 /// to an index's candidates.
 const CANDIDATE_ALIAS: &str = "geo_candidate";
+
+/// The most candidates the hoisted-instance arm looks up one by one. Each
+/// candidate costs an identifier probe and a search-row probe, while the
+/// spatial index returns the same rows from a few adjacent pages; past this
+/// count the arm scans `idx_entity_search_location` for the query's box
+/// instead.
+const MAX_PROBED_CANDIDATES: usize = 64;
 
 /// Alias the `datasetId`-instance arm reads `current_attributes` under.
 const INSTANCE_ALIAS: &str = "geo_location_instance";
@@ -109,15 +118,10 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
         SeaExpr::col((search.clone(), EntitySearch::LocationReach)), // clone: the alias qualifies both columns
         SeaExpr::col((search.clone(), EntitySearch::Location)),
     );
-    let spatial = restriction(&geo.georel, &geo.geometry, &stored, BoxIndexing::Indexed)?;
     let mut arm = Query::select();
-    match default_location {
-        DefaultLocationNarrowing::Unnarrowed => {
-            arm.column((search.clone(), EntitySearch::EntityKey))
-                .from_as(rows.table(EntitySearch::Table), search);
-        }
+    let indexing = match default_location {
         DefaultLocationNarrowing::Candidates(candidates) if candidates.is_empty() => return Ok(None),
-        DefaultLocationNarrowing::Candidates(candidates) => {
+        DefaultLocationNarrowing::Candidates(candidates) if candidates.len() <= MAX_PROBED_CANDIDATES => {
             let candidate = Alias::new(CANDIDATE_ALIAS);
             arm.column((candidate.clone(), Entities::EntityKey))
                 .from_as(rows.table(Entities::Table), candidate.clone())
@@ -128,11 +132,19 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
                     SeaExpr::col((search, EntitySearch::EntityKey)).equals((candidate.clone(), Entities::EntityKey)),
                 )
                 .and_where(is_any_of(SeaExpr::col((candidate, Entities::Id)), candidates.iter().map(Identifier::to_string)));
+            // The candidates drive the arm: an indexable box test would let the
+            // planner scan the spatial index as well and join the two reads.
+            BoxIndexing::Unindexed
         }
-    }
+        DefaultLocationNarrowing::Unnarrowed | DefaultLocationNarrowing::Candidates(_) => {
+            arm.column((search.clone(), EntitySearch::EntityKey))
+                .from_as(rows.table(EntitySearch::Table), search);
+            BoxIndexing::Indexed
+        }
+    };
     // Clause 4.22: the hoisted default instance matches only while it stands.
     arm.and_where(instance_stands(SeaExpr::col((Alias::new(DEFAULT_ALIAS), EntitySearch::LocationExpiresAt))))
-        .cond_where(spatial);
+        .cond_where(restriction(&geo.georel, &geo.geometry, &stored, indexing)?);
     Ok(Some(arm.take()))
 }
 
@@ -168,7 +180,11 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, location_instances::any_location_instance};
+    use crate::{
+        attribute_name_key::AttributeNameKey,
+        entity_row_refs::EntityRowRefs,
+        location_instances::{MAX_PROBED_CANDIDATES, any_location_instance},
+    };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
     use andromeda_postgresql_schema::current::Entities;
@@ -267,6 +283,37 @@ mod tests {
         assert!(sql.contains(r#""geo_location_instance"."dataset_id" IS NOT NULL"#), "{sql}");
         let arrays = values.0.iter().filter(|value| matches!(value, sea_query::Value::Array(..))).count();
         assert_eq!(arrays, 1, "the candidates bind as one array: {sql}");
+    }
+
+    /// The candidates drive the hoisted arm, so its box test reads no spatial
+    /// index the planner could scan beside them.
+    #[test]
+    fn index_candidates_test_the_hoisted_box_without_the_spatial_index() {
+        let candidates = DefaultLocationNarrowing::Candidates(vec!["urn:ngsi-ld:V:1".parse().expect("uri")]);
+        let (sql, _) = render(any_location_instance(&geo(near("1000")), &unaliased(), &candidates, None).expect("renders"));
+        assert!(
+            sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location")::box2d && ST_MakeEnvelope("#),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location") && "#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#" AND _ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
+    }
+
+    /// Past the probe cap the hoisted arm scans the spatial index for the box
+    /// and binds no candidates.
+    #[test]
+    fn candidates_past_the_probe_cap_leave_the_hoisted_arm_to_the_spatial_index() {
+        let many = (0..=MAX_PROBED_CANDIDATES)
+            .map(|n| format!("urn:ngsi-ld:V:{n}").parse().expect("uri"))
+            .collect();
+        let (sql, values) =
+            render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Candidates(many), None).expect("renders"));
+        let (unnarrowed, _) = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
+        assert_eq!(sql, unnarrowed);
+        assert!(!values.0.iter().any(|value| matches!(value, sea_query::Value::Array(..))), "{sql}");
     }
 
     /// An index that found no default instance leaves the `datasetId`
