@@ -25,6 +25,7 @@ use andromeda_notification::{
     csource_change_order::CsourceChangeOrder,
     csource_interval::CsourceIntervalNotificationOperation,
     csource_processor::{CsourceNotificationProcessor, CsourceNotificationProcessorDeps},
+    csource_reconciled_window::ReconciledWindow,
     notified_registration_store::NotifiedRegistrationStore,
 };
 use andromeda_postgresql_context_store::csource_subscription::{notified_registrations::NotifiedRegistrationLedger, revision_ledger::CsourceRevisionLedger};
@@ -207,6 +208,7 @@ fn register_csource_notification_processor(
             execution.mark_running();
             let mut lost_registration_changes: u64 = 0;
             let mut evaluated_through = Some(Utc::now());
+            let mut reconciled = ReconciledWindow::default();
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
@@ -220,6 +222,9 @@ fn register_csource_notification_processor(
                     },
                     received = registration_receiver.recv() => match received {
                         Ok(event) => {
+                            if reconciled.covers(&event.change) {
+                                continue;
+                            }
                             loop {
                                 match subscription_receiver.try_recv() {
                                     Ok(change) => processor.apply_subscription_change(change).await,
@@ -238,10 +243,12 @@ fn register_csource_notification_processor(
                             drained.absorb(&mut registration_receiver);
                             lost_registration_changes = lost_registration_changes.saturating_add(drained.lost);
                             tracing::warn!(skipped = drained.lost, lost_registration_changes, "registration stream lagged; reconciling context source notifications");
-                            evaluated_through = processor
+                            let read_through = processor
                                 .reconcile_registrations(drained.evaluated_through)
                                 .await
                                 .map_err(worker_notification_failure)?;
+                            evaluated_through = drained.evaluated_through.max(read_through);
+                            reconciled = ReconciledWindow::through(read_through);
                         }
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Registration)),
                     },

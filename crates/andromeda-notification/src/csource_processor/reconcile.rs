@@ -31,8 +31,10 @@ impl CsourceNotificationProcessor {
     /// it is sent, so a change that was delivered after all, or a second
     /// broker reconciling the same tenant, reports nothing twice.
     ///
-    /// Returns the latest modification time among the registrations read, the
-    /// point the next reconciliation reports `updated` changes from.
+    /// Returns the latest modification time among the registrations read, or
+    /// `None` when it read none: the point the next reconciliation reports
+    /// `updated` changes from, and up to which the changes still queued were
+    /// already reported.
     ///
     /// # Errors
     ///
@@ -41,7 +43,7 @@ impl CsourceNotificationProcessor {
     /// reconciled.
     pub async fn reconcile_registrations(&self, evaluated_through: Option<DateTime<Utc>>) -> Result<Option<DateTime<Utc>>, NotificationError> {
         self.reload_cache().await?;
-        let mut read_through = evaluated_through;
+        let mut read_through = None;
         let subscriptions = self
             .cache
             .subscriptions()

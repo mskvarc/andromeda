@@ -15,6 +15,8 @@ mod csource_match_set;
 mod csource_membership;
 /// Context-source event notification evaluation.
 pub mod csource_processor;
+/// The registration changes a reconciliation has already reported.
+pub mod csource_reconciled_window;
 /// The clause 5.3.3 transitions of a context source notification.
 mod csource_transition;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
