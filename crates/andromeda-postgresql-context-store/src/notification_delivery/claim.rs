@@ -30,7 +30,11 @@ use andromeda_context_space::{context_target::ContextTarget, snapshot_target::Sn
 use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm, held_events::HeldEvents};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{notification::NotificationDeliveries, snapshot::Snapshots, subscriptions::Subscriptions};
-use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::claimable_at, statement::Statement};
+use andromeda_postgresql_seaquery::{
+    interval::make_interval_secs,
+    queue::{claimable_at, is_claimed_from},
+    statement::Statement,
+};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
@@ -170,7 +174,10 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// statement and the index match structurally; ordering by it, then by `delivery_key`,
 /// is the index's own key order, so the claim is one bounded range scan whose
 /// depth is the batch size. `FOR UPDATE SKIP LOCKED` in the candidate subquery
-/// steps over a row another worker holds instead of waiting on it.
+/// steps over a row another worker holds instead of waiting on it, and the
+/// update leases exactly the keys that subquery picked ([`is_claimed_from`]),
+/// never a delivery past the batch that would sit leased and undelivered until
+/// its lease lapsed.
 ///
 /// The attempt ceiling is not part of the predicate: a delivery that has run
 /// out of attempts is stamped `exhausted_at` by the worker that made the last
@@ -197,7 +204,10 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
         .from(table_of(target, Subscriptions::Table).alias(DeliverySubscription))
-        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)).in_subquery(candidates))
+        .and_where(is_claimed_from(
+            Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)),
+            candidates,
+        ))
         .and_where(
             Expr::col((DeliverySubscription, Subscriptions::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
         )
@@ -301,6 +311,13 @@ mod tests {
     }
 
     #[test]
+    fn the_claim_leases_only_the_keys_its_limited_selection_picked() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(sql.contains(r#""delivery_key" ASC LIMIT 10 FOR UPDATE SKIP LOCKED))"#), "{sql}");
+        assert!(!sql.contains(" IN (SELECT"), "{sql}");
+    }
+
+    #[test]
     fn a_row_another_worker_holds_is_skipped_rather_than_waited_on() {
         let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
@@ -324,7 +341,7 @@ mod tests {
     fn the_claim_returns_the_rows_it_leased_with_their_subscription() {
         let sql = claim_sql(&ContextTarget::Live);
         assert!(
-            sql.contains(r#"FROM "subscriptions" AS "s" WHERE "notification_deliveries"."delivery_key" IN (SELECT"#),
+            sql.contains(r#"FROM "subscriptions" AS "s" WHERE "notification_deliveries"."delivery_key" = ANY(ARRAY (SELECT"#),
             "{sql}"
         );
         assert!(

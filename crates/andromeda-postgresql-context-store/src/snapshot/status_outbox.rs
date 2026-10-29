@@ -10,7 +10,13 @@ use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, leas
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
-use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at, statement::Statement};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    clock::now,
+    pg_type::PostgresType,
+    queue::{claimable_at, is_claimed_from},
+    statement::Statement,
+};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query, UpdateStatement};
@@ -69,32 +75,7 @@ impl SnapshotStatusOutbox {
     /// back to a delivery because its endpoint or Snapshot URI no longer parses.
     pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
         let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-        let claimable = || {
-            claimable_at(
-                Expr::col(SnapshotNotificationOutbox::NextAttemptAt),
-                Expr::col(SnapshotNotificationOutbox::LeaseUntil),
-            )
-        };
-        let candidates = Query::select()
-            .column(SnapshotNotificationOutbox::Id)
-            .from(SnapshotNotificationOutbox::Table)
-            .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
-            .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
-            .and_where(claimable().lte(Expr::current_timestamp()))
-            .order_by_expr(claimable(), Order::Asc)
-            .order_by(SnapshotNotificationOutbox::Id, Order::Asc)
-            .limit(u64::from(limit.get()))
-            .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
-            .to_owned();
-        let claim = Query::update()
-            .table(SnapshotNotificationOutbox::Table)
-            .value(SnapshotNotificationOutbox::ClaimedAt, now())
-            .value(SnapshotNotificationOutbox::ClaimedBy, worker.as_uuid())
-            .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
-            .and_where(Expr::col(SnapshotNotificationOutbox::Id).in_subquery(candidates))
-            .returning_col(SnapshotNotificationOutbox::Id)
-            .to_owned();
-        let claimed_ids: Vec<Uuid> = claim
+        let claimed_ids: Vec<Uuid> = claim_statement(worker, lease_until, limit)
             .to_query_scalar()
             .fetch_all(&mut *transaction)
             .await
@@ -248,6 +229,40 @@ impl SnapshotStatusOutbox {
     }
 }
 
+/// Lease up to `limit` due events to `worker` until `lease_until`, returning
+/// their ids.
+///
+/// The update leases exactly the ids its `FOR UPDATE SKIP LOCKED` selection
+/// picked ([`is_claimed_from`]): an event leased past the batch would wait out
+/// its lease undelivered.
+fn claim_statement(worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> UpdateStatement {
+    let claimable = || {
+        claimable_at(
+            Expr::col(SnapshotNotificationOutbox::NextAttemptAt),
+            Expr::col(SnapshotNotificationOutbox::LeaseUntil),
+        )
+    };
+    let candidates = Query::select()
+        .column(SnapshotNotificationOutbox::Id)
+        .from(SnapshotNotificationOutbox::Table)
+        .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
+        .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
+        .and_where(claimable().lte(Expr::current_timestamp()))
+        .order_by_expr(claimable(), Order::Asc)
+        .order_by(SnapshotNotificationOutbox::Id, Order::Asc)
+        .limit(u64::from(limit.get()))
+        .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
+        .to_owned();
+    Query::update()
+        .table(SnapshotNotificationOutbox::Table)
+        .value(SnapshotNotificationOutbox::ClaimedAt, now())
+        .value(SnapshotNotificationOutbox::ClaimedBy, worker.as_uuid())
+        .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
+        .and_where(is_claimed_from(Expr::col(SnapshotNotificationOutbox::Id), candidates))
+        .returning_col(SnapshotNotificationOutbox::Id)
+        .to_owned()
+}
+
 /// The lease extension of one claimed event, guarded like its acknowledgement.
 fn renew_statement(id: Uuid, worker: LeaseHolder, lease_until: DateTime<Utc>) -> UpdateStatement {
     Query::update()
@@ -341,12 +356,13 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::snapshot::status_outbox::{outbox_insert, renew_statement};
+    use crate::snapshot::status_outbox::{claim_statement, outbox_insert, renew_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
+    use std::num::NonZeroU32;
     use url::Url;
     use uuid::Uuid;
 
@@ -376,5 +392,20 @@ mod tests {
         assert!(sql.contains(r#"'[{"key":"fiware-service","value":"openiot"}]'::json"#), "{sql}");
         assert!(sql.contains(r#"'{"id":"urn:ngsi-ld:Notification:1"}'::json"#), "{sql}");
         assert!(!sql.contains("::jsonb"), "{sql}");
+    }
+
+    #[test]
+    fn the_claim_leases_only_the_ids_its_limited_selection_picked() {
+        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("a valid lease instant");
+        let limit = NonZeroU32::new(16).expect("a positive limit");
+        let sql = claim_statement(LeaseHolder::from(Uuid::nil()), lease_until, limit).to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with(r#"UPDATE "snapshot_notification_outbox" SET"#), "{sql}");
+        assert!(
+            sql.contains(r#"WHERE "id" = ANY(ARRAY (SELECT "id" FROM "snapshot_notification_outbox""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""id" ASC LIMIT 16 FOR UPDATE SKIP LOCKED))"#), "{sql}");
+        assert!(!sql.contains(" IN (SELECT"), "{sql}");
+        assert!(sql.ends_with(r#"RETURNING "id""#), "{sql}");
     }
 }

@@ -9,7 +9,7 @@ use crate::intent_store::queue_order::{ClaimedIntent, HeadBlock, earlier_intent_
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
-use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::any};
+use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::any, queue::is_claimed_from};
 use andromeda_temporal::append_intent::TemporalIntentKey;
 use chrono::{DateTime, Utc};
 use sea_query::{
@@ -69,8 +69,10 @@ fn unleased_by(clock: SimpleExpr) -> SimpleExpr {
 
 /// Claim an ordered bounded batch of the intents `scope` admits for `owner`.
 ///
-/// One `UPDATE` whose `WHERE intent_key IN (SELECT … FOR UPDATE SKIP LOCKED)`
-/// both selects and claims the batch atomically. An intent is eligible only
+/// One `UPDATE` both selects and claims the batch atomically, leasing exactly
+/// the keys its `FOR UPDATE SKIP LOCKED` selection picked
+/// ([`is_claimed_from`]), so a claim never counts an attempt on an intent it
+/// will not apply. An intent is eligible only
 /// when no earlier intent of its Entity blocks it ([`earlier_intent_blocks`]),
 /// so the batch holds each Entity's head and the run after it.
 ///
@@ -107,7 +109,7 @@ pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: 
         .value(TemporalAppendIntents::LeaseUntil, lease_until)
         .value(TemporalAppendIntents::ClaimedBy, owner.as_uuid())
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).add(1))
-        .and_where(Expr::col(TemporalAppendIntents::IntentKey).in_subquery(eligible.clone()))
+        .and_where(is_claimed_from(Expr::col(TemporalAppendIntents::IntentKey), eligible))
         .returning(Query::returning().columns([
             TemporalAppendIntents::IntentKey,
             TemporalAppendIntents::WriteId,
@@ -255,6 +257,19 @@ mod tests {
         assert!(sql.contains(r#"UPDATE "temporal_append_intents""#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
+    }
+
+    /// Every leased intent has an attempt counted, so a claim that leased past
+    /// its limit would count attempts on intents it never applies.
+    #[test]
+    fn the_claim_leases_only_the_keys_its_limited_selection_picked() {
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"WHERE "intent_key" = ANY(ARRAY (SELECT "intent_key" FROM "temporal_append_intents" AS "c""#),
+            "{sql}"
+        );
+        assert!(sql.contains("LIMIT 10 FOR UPDATE SKIP LOCKED))"), "{sql}");
+        assert!(!sql.contains(" IN (SELECT"), "{sql}");
     }
 
     #[test]

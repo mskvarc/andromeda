@@ -1,4 +1,5 @@
-//! The claimable-instant expression the durable queues order and filter on.
+//! The claimable-instant expression the durable queues order and filter on,
+//! and the predicate that bounds which rows one claim leases.
 //!
 //! Every lease-based queue in the schema answers the same question at claim
 //! time: is this row due, and is nobody holding it? Two columns carry that —
@@ -16,9 +17,16 @@
 //! for "unleased" is rendered as a typed literal rather than bound as a
 //! parameter: a bound value only matches under a custom plan, and a generic
 //! plan would silently stop using the index.
+//!
+//! A claim is one `UPDATE` that leases the rows a locked, limited selection
+//! picks. The selection reaches the update only through [`is_claimed_from`],
+//! so every queue leases at most the rows its limit admits.
 
-use crate::open_instant::or_start_of_time;
-use sea_query::{Func, SimpleExpr};
+use crate::{
+    open_instant::or_start_of_time,
+    pg_array::{any, array_of_subquery},
+};
+use sea_query::{ExprTrait, Func, SelectStatement, SimpleExpr};
 
 /// PostgreSQL: `GREATEST(due, COALESCE(lease_until, '-infinity'::timestamptz))`
 /// — the instant from which a queue row may be claimed.
@@ -33,10 +41,26 @@ pub fn claimable_at(due: SimpleExpr, lease_until: SimpleExpr) -> SimpleExpr {
     Func::greatest([due, or_start_of_time(lease_until)]).into()
 }
 
+/// PostgreSQL: `key = ANY(ARRAY (candidates))` — the rows a claim leases are
+/// exactly the keys its selection picked.
+///
+/// `candidates` is the queue's own selection of one key column, ordered,
+/// limited to the batch and locked `FOR UPDATE SKIP LOCKED`. As
+/// `key IN (candidates)` the planner may choose a semi join that rescans the
+/// selection once per row of the updated table, and each rescan's row lock
+/// steps over the rows the same command has already updated, so one claim
+/// leases every due row instead of at most the limit. An uncorrelated
+/// `ARRAY (…)` is an init plan: the selection runs once and its keys are fixed
+/// before the update reads a row, whatever plan the update gets.
+#[must_use]
+pub fn is_claimed_from(key: impl Into<SimpleExpr>, candidates: SelectStatement) -> SimpleExpr {
+    key.into().eq(any(array_of_subquery(candidates)))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::queue::claimable_at;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use crate::queue::{claimable_at, is_claimed_from};
+    use sea_query::{Alias, Expr, ExprTrait, LockBehavior, LockType, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_claimable_instant_is_the_later_of_due_and_lease_expiry_with_unleased_as_minus_infinity() {
@@ -48,5 +72,27 @@ mod tests {
             sql.contains(r#"GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz))"#),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn a_claim_leases_the_keys_its_locked_limited_selection_picked_once() {
+        let candidates = Query::select()
+            .column(Alias::new("id"))
+            .from(Alias::new("queue"))
+            .and_where(Expr::col(Alias::new("due")).lte(Expr::current_timestamp()))
+            .limit(1)
+            .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
+            .to_owned();
+        let (sql, values) = Query::update()
+            .table(Alias::new("queue"))
+            .value(Alias::new("claimed"), true)
+            .and_where(is_claimed_from(Expr::col(Alias::new("id")), candidates))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(
+            sql,
+            r#"UPDATE "queue" SET "claimed" = $1 WHERE "id" = ANY(ARRAY (SELECT "id" FROM "queue" WHERE "due" <= CURRENT_TIMESTAMP LIMIT $2 FOR UPDATE SKIP LOCKED))"#
+        );
+        pretty_assertions::assert_eq!(values.0.len(), 2);
     }
 }

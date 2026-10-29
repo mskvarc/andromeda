@@ -20,7 +20,7 @@ use andromeda_entity::{
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
-use andromeda_postgresql_seaquery::{interval::make_interval_secs, statement::Statement};
+use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::is_claimed_from, statement::Statement};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -153,9 +153,13 @@ fn persistence(error: &sqlx::Error) -> EntityError {
 
 /// Claim a batch of due jobs for `owner`, returning each claimed row's events.
 ///
-/// One `UPDATE` whose `WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the
-/// batch atomically. The candidate predicate is the queue's claim index: not
-/// dead, due, and either unleased or held under an expired lease.
+/// One `UPDATE` both selects and claims the batch atomically, leasing exactly
+/// the ids its `FOR UPDATE SKIP LOCKED` selection picked ([`is_claimed_from`]).
+/// A claim that leased more than the batch would leave the rows the drain does
+/// not replay to lapse and be reclaimed, each reclaim counting an attempt, until
+/// a job that was never attempted is dead-lettered. The candidate predicate is
+/// the queue's claim index: not dead, due, and either unleased or held under an
+/// expired lease.
 ///
 /// Reclaiming a row that still carries a lease counts an attempt. Such a row's
 /// previous attempt ended without releasing it -- the worker crashed, or its
@@ -193,7 +197,7 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
         .value(PendingSideEffects::ClaimedBy, owner.as_uuid())
-        .and_where(Expr::col(PendingSideEffects::Id).in_subquery(candidates))
+        .and_where(is_claimed_from(Expr::col(PendingSideEffects::Id), candidates))
         .returning(Query::returning().columns([
             PendingSideEffects::Id,
             PendingSideEffects::AttemptCount,
@@ -340,10 +344,15 @@ mod tests {
         );
     }
 
+    /// A claim that leased past its width would leave the jobs the drain does
+    /// not replay to lapse and be reclaimed, counting an attempt each time,
+    /// until jobs never attempted are dead-lettered.
     #[test]
-    fn the_claim_width_is_the_limit_it_was_asked_for() {
+    fn the_claim_leases_only_the_ids_its_limited_selection_picked() {
         let sql = lease_batch_statement(holder(), 1, 30.0).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("LIMIT 1 FOR UPDATE SKIP LOCKED"), "{sql}");
+        assert!(sql.contains(r#"WHERE "id" = ANY(ARRAY (SELECT "id" FROM "pending_side_effects""#), "{sql}");
+        assert!(sql.contains("LIMIT 1 FOR UPDATE SKIP LOCKED))"), "{sql}");
+        assert!(!sql.contains(" IN (SELECT"), "{sql}");
     }
 
     /// A replay may outlive its lease and fail afterwards; its release must

@@ -12,7 +12,7 @@
 use crate::store_fault::{persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
-use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_seaquery::{queue::is_claimed_from, statement::Statement};
 use andromeda_tenancy::wake_schedule::{TenantWakeSchedule, WakeScheduleError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -147,6 +147,10 @@ fn tenant_key_of(tenant: &TenantName) -> SelectStatement {
 /// Claim up to `limit` tenants due at or before `now`, leasing each to
 /// `lease_until` so a crash before the wake settles re-fires it, returning the
 /// claimed surrogate keys.
+///
+/// The update leases exactly the keys its `FOR UPDATE SKIP LOCKED` selection
+/// picked ([`is_claimed_from`]), so one pass wakes at most `limit` tenants and
+/// leaves every other due tenant to the next pass.
 fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> UpdateStatement {
     let candidates = Query::select()
         .column(WakeScheduleTable::TenantKey)
@@ -161,7 +165,7 @@ fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> Up
     Query::update()
         .table(WakeScheduleTable::Table)
         .value(WakeScheduleTable::WakeAt, DateTime::<Utc>::from(lease_until))
-        .and_where(Expr::col(WakeScheduleTable::TenantKey).in_subquery(candidates))
+        .and_where(is_claimed_from(Expr::col(WakeScheduleTable::TenantKey), candidates))
         .returning_col(WakeScheduleTable::TenantKey)
         .to_owned()
 }
@@ -229,6 +233,18 @@ mod tests {
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains("RETURNING \"tenant_key\""), "{sql}");
         assert!(sql.contains("LIMIT 4"), "{sql}");
+    }
+
+    #[test]
+    fn the_claim_leases_only_the_keys_its_limited_selection_picked() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let sql = claim_statement(now, now + Duration::from_secs(60), 4).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"WHERE "tenant_key" = ANY(ARRAY (SELECT "tenant_key" FROM "tenant_wake_schedule""#),
+            "{sql}"
+        );
+        assert!(sql.contains("LIMIT 4 FOR UPDATE SKIP LOCKED))"), "{sql}");
+        assert!(!sql.contains(" IN (SELECT"), "{sql}");
     }
 
     #[test]
