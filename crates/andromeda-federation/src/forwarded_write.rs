@@ -215,10 +215,8 @@ impl FederationService {
             Ok(url) => url,
             Err(error) => return unreachable(error),
         };
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardedWriteOutcome::Transport(TransportFailure::CoolingDown { remaining });
+        if let Some(failure) = self.cooldowns.holding_back(registration) {
+            return ForwardedWriteOutcome::Transport(failure);
         }
         debug!("CS forwarding {} {}", method, url);
         // A single-entity write answers a partial success with an

@@ -98,10 +98,8 @@ impl FederationService {
         {
             return FederationService::name_context(ForwardGetOutcome::Success(response), inbound, &decision);
         }
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
+        if let Some(failure) = self.cooldowns.holding_back(registration) {
+            return ForwardGetOutcome::Transport(failure);
         }
         debug!("CS forwarding GET {}", url);
 
@@ -162,10 +160,8 @@ impl FederationService {
             Ok(payload) => payload,
             Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
-        if let Some(remaining) = self.cooldowns.remaining(registration) {
-            // Clause 5.2.34: a request inside the cooldown window is answered
-            // with a timeout for the registration, without contacting it.
-            return ForwardGetOutcome::Transport(TransportFailure::CoolingDown { remaining });
+        if let Some(failure) = self.cooldowns.holding_back(registration) {
+            return ForwardGetOutcome::Transport(failure);
         }
         debug!("CS forwarding POST {}", url);
 

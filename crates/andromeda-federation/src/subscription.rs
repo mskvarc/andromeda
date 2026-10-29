@@ -151,6 +151,9 @@ impl FederationService {
         if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
         }
+        if let Some(failure) = self.cooldowns.holding_back(registration) {
+            return ForwardedWriteOutcome::Transport(failure);
+        }
         let (method, path, body, context) = match &forward {
             SubscriptionForward::Create { body, context } => (reqwest::Method::POST, vec!["subscriptions"], Some(*body), *context),
             SubscriptionForward::Update { remote_id, body, context } => {

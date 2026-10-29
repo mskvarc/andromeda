@@ -8,7 +8,10 @@
 //! ignores further failures until it closes: the requests in flight to one
 //! endpoint fail together and count as one failure of the episode.
 
-use crate::cooldown_policy::{CooldownEpisode, CooldownPolicy};
+use crate::{
+    cooldown_policy::{CooldownEpisode, CooldownPolicy},
+    outcome::TransportFailure,
+};
 use andromeda_ngsi_ld_lexicon::{dereferenceable_uri::DereferenceableUri, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_retry::schedule::BackoffSchedule;
@@ -113,7 +116,7 @@ impl CooldownRegistry {
 
     /// How long `registration` stays held back, if it is: the longer of its
     /// endpoint's window and its own, each floored at its `management.cooldown`.
-    pub(crate) fn remaining(&self, registration: &ContextSourceRegistration) -> Option<Duration> {
+    fn remaining(&self, registration: &ContextSourceRegistration) -> Option<Duration> {
         let floor = own_cooldown(registration).unwrap_or(Duration::ZERO);
         let now = Instant::now();
         let endpoint = self
@@ -122,6 +125,15 @@ impl CooldownRegistry {
             .and_then(|window| window.remaining(floor, now));
         let own = self.by_registration.get(&registration.id).and_then(|window| window.remaining(floor, now));
         endpoint.max(own)
+    }
+
+    /// The failure a request to `registration` is answered with while it is
+    /// held back, without contacting it; `None` when it may be contacted.
+    ///
+    /// Clause 5.2.34: a request inside the cooldown window is answered with a
+    /// timeout for the registration.
+    pub(crate) fn holding_back(&self, registration: &ContextSourceRegistration) -> Option<TransportFailure> {
+        self.remaining(registration).map(|remaining| TransportFailure::CoolingDown { remaining })
     }
 
     /// Open or advance the window of `key` for a failure of `registration`.
