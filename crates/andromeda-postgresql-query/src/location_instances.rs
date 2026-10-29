@@ -206,11 +206,11 @@ mod tests {
             .expect("renders"),
         );
         assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND ST_Within("geo_default"."location","#),
+            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND _ST_Within("geo_default"."location","#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
+            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
             "{sql}"
         );
         assert!(
@@ -301,14 +301,14 @@ mod tests {
             sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeEnvelope("#),
             "{sql}"
         );
-        assert!(sql.contains(r#"ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
+        assert!(sql.contains(r#" AND _ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
         assert!(!sql.contains("geom_to_geog"), "{sql}");
         assert!(
             sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#"ST_DWithin(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry")::geography,"#),
+            sql.contains(r#" AND _ST_DWithin(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry")::geography,"#),
             "{sql}"
         );
     }

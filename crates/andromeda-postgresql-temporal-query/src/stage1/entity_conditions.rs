@@ -524,7 +524,7 @@ mod tests {
         });
         let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
         assert!(sql.contains(r#""qh"."observed_at""#), "the window is applied to the geo instances: {sql}");
-        assert!(sql.contains("ST_DWithin"), "near renders a distance relation on the geo instances: {sql}");
+        assert!(sql.contains(" _ST_DWithin("), "near renders a distance relation on the geo instances: {sql}");
     }
 
     #[test]

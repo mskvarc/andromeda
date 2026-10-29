@@ -42,7 +42,17 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::false_literal,
     pg_type::PostgresType,
-    postgis::{st_contains, st_disjoint, st_distance, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
+    postgis::{
+        exact_contains,
+        exact_dwithin,
+        exact_equals,
+        exact_intersects,
+        exact_overlaps,
+        exact_within,
+        st_disjoint,
+        st_distance,
+        validated_geom_from_ewkb,
+    },
 };
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
@@ -112,7 +122,8 @@ pub fn registration_area(geo: &GeoQuery, subject: &StoredGeometry) -> Result<Opt
 ///
 /// The box test is what reaches a spatial index, since the relations read the
 /// judged geometry, not the indexed box, and `near` reads it cast to
-/// `geography`, which no index keys.
+/// `geography`, which no index keys. It is also the one condition the planner
+/// estimates from the box: the exact relations carry no index support.
 ///
 /// # Errors
 ///
@@ -145,12 +156,12 @@ pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: 
     // value between the two operands a `near` relation carries.
     let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     let spatial = match georel {
-        GeoRel::Within => st_within(subject.planar(), reference_geom()),
-        GeoRel::Contains => st_contains(subject.planar(), reference_geom()),
-        GeoRel::Intersects => st_intersects(subject.planar(), reference_geom()),
+        GeoRel::Within => exact_within(subject.planar(), reference_geom()),
+        GeoRel::Contains => exact_contains(subject.planar(), reference_geom()),
+        GeoRel::Intersects => exact_intersects(subject.planar(), reference_geom()),
         GeoRel::Disjoint => st_disjoint(subject.planar(), reference_geom()),
-        GeoRel::Equals => st_equals(subject.planar(), reference_geom()),
-        GeoRel::Overlaps => st_overlaps(subject.planar(), reference_geom()),
+        GeoRel::Equals => exact_equals(subject.planar(), reference_geom()),
+        GeoRel::Overlaps => exact_overlaps(subject.planar(), reference_geom()),
         // `near` measures on the spheroid, so both operands become `geography`.
         GeoRel::Near { max_distance, min_distance } => {
             let reference_geography = cast(reference_geom(), PostgresType::Geography);
@@ -174,7 +185,7 @@ const INSTANCE_ALIAS: &str = "geo_instance";
 fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Option<f64>, min_distance: Option<f64>) -> Result<SimpleExpr, RenderError> {
     let mut parts = Vec::new();
     if let Some(max) = max_distance {
-        parts.push(st_dwithin(geo_col.clone(), ref_geom.clone(), max)); // clone: both halves read the same two operands
+        parts.push(exact_dwithin(geo_col.clone(), ref_geom.clone(), max)); // clone: both halves read the same two operands
     }
     if let Some(min) = min_distance {
         // The minimum distance is request-supplied, so it binds as a parameter.
@@ -346,7 +357,7 @@ mod tests {
             LOCATION,
         );
         let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("ST_DWithin"), "{sql}");
+        assert!(sql.contains("_ST_DWithin("), "{sql}");
         assert!(sql.contains("ST_Distance"), "{sql}");
     }
 
@@ -380,7 +391,7 @@ mod tests {
             sql.contains("\"geo_instance\".\"entity_key\" = \"entities\".\"entity_key\""),
             "correlated to the filtered row: {sql}"
         );
-        assert!(sql.contains("ST_Within"), "{sql}");
+        assert!(sql.contains("_ST_Within("), "{sql}");
         assert!(sql.contains("ST_GeomFromEWKB"), "reference side still binds EWKB: {sql}");
         assert!(
             !sql.contains("ST_GeomFromGeoJSON"),
@@ -403,7 +414,7 @@ mod tests {
             .find(r#"COALESCE("geo_instance"."value_geometry_reach", "geo_instance"."value_geometry_valid", "geo_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB("#)
             .expect("the box test");
         let relation = sql
-            .find(r#"ST_Within(COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry"), "#)
+            .find(r#" AND _ST_Within(COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry"), "#)
             .expect("the relation");
         assert!(boxed < relation, "{sql}");
     }
@@ -447,7 +458,7 @@ mod tests {
         let geo = point_query(GeoRel::Within, LOCATION);
         let names = ResolvedNames::from_pairs([(name(LOCATION), AttributeNameKey::from(3_i32))]);
         let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap());
-        assert!(sql.contains("ST_Within(\"geo_default\".\"location\""), "{sql}");
+        assert!(sql.contains(" AND _ST_Within(\"geo_default\".\"location\""), "{sql}");
         assert!(sql.contains("\"geo_location_instance\".\"attribute_name_key\" = 3"), "{sql}");
         assert!(sql.contains("\"geo_location_instance\".\"dataset_id\" IS NOT NULL"), "{sql}");
     }
@@ -458,7 +469,7 @@ mod tests {
     fn an_unrecorded_default_geoproperty_reads_its_hoisted_instance_alone() {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).unwrap());
-        assert!(sql.contains("ST_Within(\"geo_default\".\"location\""), "{sql}");
+        assert!(sql.contains(" AND _ST_Within(\"geo_default\".\"location\""), "{sql}");
         assert!(!sql.contains("current_attributes"), "{sql}");
     }
 
@@ -489,7 +500,7 @@ mod tests {
             sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::geography"),
             "{sql}"
         );
-        assert!(sql.contains("ST_DWithin"), "{sql}");
+        assert!(sql.contains("_ST_DWithin(COALESCE("), "{sql}");
         assert!(
             sql.contains("COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
             "the cast column reaches no index, so the box the geometry GiST keys prefilters it: {sql}"
@@ -584,24 +595,24 @@ mod tests {
     #[test]
     fn every_georel_renders_its_postgis_function_on_an_entity() {
         let cases = [
-            (GeoRel::Within, "ST_Within"),
-            (GeoRel::Contains, "ST_Contains"),
-            (GeoRel::Intersects, "ST_Intersects"),
+            (GeoRel::Within, "_ST_Within"),
+            (GeoRel::Contains, "_ST_Contains"),
+            (GeoRel::Intersects, "_ST_Intersects"),
             (GeoRel::Disjoint, "ST_Disjoint"),
-            (GeoRel::Equals, "ST_Equals"),
-            (GeoRel::Overlaps, "ST_Overlaps"),
+            (GeoRel::Equals, "_ST_Equals"),
+            (GeoRel::Overlaps, "_ST_Overlaps"),
             (
                 GeoRel::Near {
                     max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
                     min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
                 },
-                "ST_DWithin",
+                "_ST_DWithin",
             ),
         ];
         for (georel, function) in cases {
             let geo = point_query(georel, LOCATION);
             let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-            assert!(sql.contains(function), "{:?} on an entity: {sql}", geo.georel);
+            assert!(sql.contains(&format!("{function}(\"geo_default\"")), "{:?} on an entity: {sql}", geo.georel);
         }
     }
 
@@ -618,8 +629,8 @@ mod tests {
         );
         let entity_sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
         let temporal_sql = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(entity_sql.contains("ST_DWithin"), "{entity_sql}");
-        assert!(temporal_sql.contains("ST_DWithin"), "{temporal_sql}");
+        assert!(entity_sql.contains("_ST_DWithin("), "{entity_sql}");
+        assert!(temporal_sql.contains("_ST_DWithin("), "{temporal_sql}");
         // The only difference is the qualification of the outer rows' columns.
         assert_eq!(
             entity_sql.replace("\"entity_search\".", "\"s\".").replace("\"entities\".", "\"e\"."),

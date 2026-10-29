@@ -342,10 +342,10 @@ mod tests {
         let unindexed = sql
             .find(r#"COALESCE("qh"."value_geometry_reach", "qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeEnvelope("#)
             .expect("the unindexed box");
-        let distance = sql.find("ST_DWithin").expect("the distance");
+        let distance = sql.find(" _ST_DWithin(").expect("the distance");
         assert!(unindexed < distance, "{sql}");
         assert!(
-            sql[distance..].starts_with(r#"ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography, "#),
+            sql[distance..].starts_with(r#" _ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography, "#),
             "{sql}"
         );
         assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");

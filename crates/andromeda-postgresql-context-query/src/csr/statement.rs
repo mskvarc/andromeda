@@ -563,7 +563,7 @@ mod tests {
         // one whose location reaches into the reference possibly contains a
         // location within it.
         assert!(built.sql.contains("\"location\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("ST_Intersects"), "{}", built.sql);
+        assert!(built.sql.contains(" _ST_Intersects("), "{}", built.sql);
     }
 
     /// Each part of the page is read through the window widened to reach the
@@ -624,7 +624,7 @@ mod tests {
             "{}",
             built.count_sql
         );
-        assert!(built.count_sql.contains(" AND ST_Intersects("), "{}", built.count_sql);
+        assert!(built.count_sql.contains(" AND _ST_Intersects("), "{}", built.count_sql);
         assert_eq!(built.count_sql.matches("registration_information").count(), 2, "{}", built.count_sql);
     }
 
@@ -796,7 +796,7 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let built = build(&q);
-        assert!(built.sql.contains("ST_Intersects"), "{}", built.sql);
+        assert!(built.sql.contains(" _ST_Intersects("), "{}", built.sql);
         assert!(built.sql.contains("ST_GeomFromEWKB"), "{}", built.sql);
     }
 }

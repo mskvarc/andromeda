@@ -7,6 +7,7 @@ mod context_source_properties;
 mod current_attributes;
 mod dictionary_append_only;
 mod entity_search_scope;
+mod geometry_reach_statistics;
 mod registration_information;
 mod repository;
 mod scope_history_index;

@@ -249,6 +249,12 @@ create index idx_ca_value_geometry on current_attributes using gist (attribute_n
 where
     value_geometry is not null;
 
+-- The planner reads no statistics from the expression of a partial index, so
+-- without these it prices that box test at a fixed guess, however many
+-- instances the box holds.
+create statistics stx_ca_value_geometry on (coalesce(value_geometry_reach, value_geometry_valid, value_geometry))
+from current_attributes;
+
 -- The correlated instance lookup and the distance ordering of clause 4.23.
 create index idx_ca_entity_geometry on current_attributes (attribute_name_key, entity_key)
 where

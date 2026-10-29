@@ -173,6 +173,12 @@ create index idx_entity_search_location on entity_search using gist (coalesce(lo
 where
     location is not null;
 
+-- The planner reads no statistics from the expression of a partial index, so
+-- without these it prices that box test at a fixed guess, however many
+-- Entities the box holds.
+create statistics stx_entity_search_location on (coalesce(location_reach, location))
+from entity_search;
+
 -- The spatial index catch-up: a range scan over recently written rows.
 create index idx_entity_search_written_xid on entity_search (written_xid);
 

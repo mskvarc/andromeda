@@ -14,26 +14,26 @@ use sea_query::{BinOper, Expr, ExprTrait, Func, Iden, SimpleExpr};
 /// placeholders, so a value can never be interpolated into the call by mistake.
 #[derive(Iden, Clone, Copy)]
 enum PostgisFunction {
-    /// `ST_Within(a, b)`.
-    #[iden = "ST_Within"]
+    /// `_ST_Within(a, b)`.
+    #[iden = "_ST_Within"]
     Within,
-    /// `ST_Contains(a, b)`.
-    #[iden = "ST_Contains"]
+    /// `_ST_Contains(a, b)`.
+    #[iden = "_ST_Contains"]
     Contains,
-    /// `ST_Intersects(a, b)`.
-    #[iden = "ST_Intersects"]
+    /// `_ST_Intersects(a, b)`.
+    #[iden = "_ST_Intersects"]
     Intersects,
-    /// `ST_Overlaps(a, b)`.
-    #[iden = "ST_Overlaps"]
+    /// `_ST_Overlaps(a, b)`.
+    #[iden = "_ST_Overlaps"]
     Overlaps,
-    /// `ST_Equals(a, b)`.
-    #[iden = "ST_Equals"]
+    /// `_ST_Equals(a, b)`.
+    #[iden = "_ST_Equals"]
     Equals,
     /// `ST_Disjoint(a, b)`.
     #[iden = "ST_Disjoint"]
     Disjoint,
-    /// `ST_DWithin(a, b, distance)`.
-    #[iden = "ST_DWithin"]
+    /// `_ST_DWithin(a, b, distance)`.
+    #[iden = "_ST_DWithin"]
     Dwithin,
     /// `ST_Distance(a, b)`.
     #[iden = "ST_Distance"]
@@ -92,24 +92,34 @@ fn binary_spatial(function: PostgisFunction, geo_col: SimpleExpr, ref_geom: Simp
     Func::cust(function).args([geo_col, ref_geom]).into()
 }
 
-/// `PostGIS`: `ST_Within(geo_col, ref_geom)` - tests if geometry A is within geometry B.
+/// `PostGIS`: `_ST_Within(geo_col, ref_geom)` - whether geometry A is within
+/// geometry B.
+///
+/// The exact relations call the `PostGIS` functions that carry no index
+/// support. `ST_Within` and its siblings derive a box test of their own and
+/// estimate their selectivity from that box, while the caller renders the one
+/// box test the geometry's index keys beside the relation: the planner would
+/// count the same box twice and expect next to no rows.
 #[must_use]
-pub fn st_within(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
+pub fn exact_within(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Within, geo_col, ref_geom)
 }
 
-/// `PostGIS`: `ST_DWithin(geo_col, ref_geom, distance)` - tests if geometries are within distance.
+/// `PostGIS`: `_ST_DWithin(geo_col, ref_geom, distance)` - whether two
+/// geometries lie within a distance of each other, without index support (see
+/// [`exact_within`]).
 ///
 /// The distance is a request-supplied value, so it binds as a parameter rather
 /// than being interpolated into the statement text.
 #[must_use]
-pub fn st_dwithin(geo_col: SimpleExpr, ref_geom: SimpleExpr, distance: f64) -> SimpleExpr {
+pub fn exact_dwithin(geo_col: SimpleExpr, ref_geom: SimpleExpr, distance: f64) -> SimpleExpr {
     Func::cust(PostgisFunction::Dwithin).args([geo_col, ref_geom, Expr::val(distance)]).into()
 }
 
-/// `PostGIS`: `ST_Contains(geo_col, ref_geom)` - tests if geometry A contains geometry B.
+/// `PostGIS`: `_ST_Contains(geo_col, ref_geom)` - whether geometry A contains
+/// geometry B, without index support (see [`exact_within`]).
 #[must_use]
-pub fn st_contains(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
+pub fn exact_contains(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Contains, geo_col, ref_geom)
 }
 
@@ -120,25 +130,29 @@ pub fn st_distance(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Distance, geo_col, ref_geom)
 }
 
-/// `PostGIS`: `ST_Intersects(geo_col, ref_geom)` - tests if geometries intersect.
+/// `PostGIS`: `_ST_Intersects(geo_col, ref_geom)` - whether two geometries
+/// intersect, without index support (see [`exact_within`]).
 #[must_use]
-pub fn st_intersects(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
+pub fn exact_intersects(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Intersects, geo_col, ref_geom)
 }
 
-/// `PostGIS`: `ST_Overlaps(geo_col, ref_geom)` - tests if geometries overlap.
+/// `PostGIS`: `_ST_Overlaps(geo_col, ref_geom)` - whether two geometries
+/// overlap, without index support (see [`exact_within`]).
 #[must_use]
-pub fn st_overlaps(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
+pub fn exact_overlaps(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Overlaps, geo_col, ref_geom)
 }
 
-/// `PostGIS`: `ST_Equals(geo_col, ref_geom)` - tests if geometries are equal.
+/// `PostGIS`: `_ST_Equals(geo_col, ref_geom)` - whether two geometries are
+/// topologically equal, without index support (see [`exact_within`]).
 #[must_use]
-pub fn st_equals(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
+pub fn exact_equals(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Equals, geo_col, ref_geom)
 }
 
-/// `PostGIS`: `ST_Disjoint(geo_col, ref_geom)` - tests if geometries are disjoint.
+/// `PostGIS`: `ST_Disjoint(geo_col, ref_geom)` - whether two geometries are
+/// disjoint; the function carries no index support.
 #[must_use]
 pub fn st_disjoint(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Disjoint, geo_col, ref_geom)
@@ -382,18 +396,29 @@ mod tests {
     }
 
     #[test]
-    fn st_within_generates_correct_sql() {
-        let sql = render(st_within(Expr::col(("e", "location")), Expr::val("geojson")));
-        assert!(sql.contains("ST_Within"), "{sql}");
+    fn every_exact_relation_calls_the_function_without_index_support() {
+        let subject = || Expr::col(("e", "location"));
+        let reference = || Expr::col(("r", "reference"));
+        let relations = [
+            (exact_within(subject(), reference()), "_ST_Within"),
+            (exact_contains(subject(), reference()), "_ST_Contains"),
+            (exact_intersects(subject(), reference()), "_ST_Intersects"),
+            (exact_overlaps(subject(), reference()), "_ST_Overlaps"),
+            (exact_equals(subject(), reference()), "_ST_Equals"),
+            (st_disjoint(subject(), reference()), "ST_Disjoint"),
+        ];
+        for (relation, function) in relations {
+            pretty_assertions::assert_eq!(render(relation), format!(r#"SELECT {function}("e"."location", "r"."reference")"#));
+        }
     }
 
     #[test]
-    fn st_dwithin_binds_the_distance_rather_than_interpolating_it() {
+    fn exact_dwithin_binds_the_distance_rather_than_interpolating_it() {
         let (sql, _values) = Query::select()
-            .expr(st_dwithin(Expr::col(("e", "location")), Expr::val("geojson"), 1000.0))
+            .expr(exact_dwithin(Expr::col(("e", "location")), Expr::val("geojson"), 1000.0))
             .to_owned()
             .build(PostgresQueryBuilder);
-        assert!(sql.contains("ST_DWithin"), "{sql}");
+        pretty_assertions::assert_eq!(sql, r#"SELECT _ST_DWithin("e"."location", $1, $2)"#);
         // The request-supplied distance must be a bound parameter, never text in
         // the statement, so it cannot appear inline.
         assert!(!sql.contains("1000"), "distance was interpolated, not bound: {sql}");

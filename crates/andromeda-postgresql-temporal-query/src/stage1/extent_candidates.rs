@@ -260,7 +260,7 @@ mod tests {
         let branches = PageBranches::of(&sql);
         for residual in [branches.short, branches.indexed, branches.walk] {
             assert!(
-                residual.contains(r#"ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography"#),
+                residual.contains(r#" _ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography"#),
                 "{residual}"
             );
         }
@@ -387,7 +387,7 @@ mod tests {
         );
         assert!(parts.walked.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{}", parts.walked);
         assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
-        assert!(parts.filtered.contains("ST_DWithin("), "{}", parts.filtered);
+        assert!(parts.filtered.contains(" _ST_DWithin("), "{}", parts.filtered);
         assert!(!parts.indexed.contains("ST_DWithin(") && !parts.walked.contains("ST_DWithin("), "{sql}");
         assert!(!sql.contains("CASE WHEN"), "{sql}");
     }

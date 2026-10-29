@@ -257,7 +257,7 @@ mod tests {
         let branches = PageBranches::of(&sql);
         assert!(branches.candidates.contains(r#"FROM "scope_history" WHERE"#), "{sql}");
         assert!(!branches.candidates.contains("value_extent"), "{sql}");
-        assert!(branches.indexed.contains("ST_DWithin("), "{sql}");
+        assert!(branches.indexed.contains(" _ST_DWithin("), "{sql}");
     }
 
     #[test]

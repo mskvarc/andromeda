@@ -175,6 +175,18 @@ create index idx_csr_without_operation_space on context_source_registrations (id
 where
     operation_space is null;
 
+-- The planner reads no statistics from the expression of a partial index, so
+-- without these it prices each box test at a fixed guess, however many
+-- registrations the box holds.
+create statistics stx_csr_location on (coalesce(location_reach, location_valid, location))
+from context_source_registrations;
+
+create statistics stx_csr_observation_space on (coalesce(observation_space_reach, observation_space_valid, observation_space))
+from context_source_registrations;
+
+create statistics stx_csr_operation_space on (coalesce(operation_space_reach, operation_space_valid, operation_space))
+from context_source_registrations;
+
 create index idx_csr_scope_paths on context_source_registrations using gist (scope_paths);
 
 create index idx_csr_expires_at on context_source_registrations (expires_at)

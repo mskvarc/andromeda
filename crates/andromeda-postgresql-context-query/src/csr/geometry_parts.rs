@@ -109,7 +109,10 @@ mod tests {
         let (absent, present) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([1.0, 2.0])));
         assert!(absent.ends_with(r#"WHERE "location" IS NULL"#), "{absent}");
         assert!(present.contains(r#""location" IS NOT NULL AND "#), "{present}");
-        assert!(present.contains(r#"))) AND ST_Intersects(COALESCE("location_valid", "location")"#), "{present}");
+        assert!(
+            present.contains(r#"))) AND _ST_Intersects(COALESCE("location_valid", "location")"#),
+            "{present}"
+        );
         assert!(!present.contains(" OR "), "the parts are separate statements, not alternatives: {present}");
     }
 
@@ -133,13 +136,13 @@ mod tests {
     #[test]
     fn every_georel_is_tested_through_its_reduction() {
         let cases = [
-            (GeoRel::Within, "ST_Intersects"),
-            (GeoRel::Contains, "ST_Contains"),
-            (GeoRel::Intersects, "ST_Intersects"),
-            (GeoRel::Disjoint, "NOT ST_Within"),
-            (GeoRel::Equals, "ST_Contains"),
-            (GeoRel::Overlaps, "ST_Intersects"),
-            (near(Some("500"), Some("100")), "ST_DWithin"),
+            (GeoRel::Within, " _ST_Intersects("),
+            (GeoRel::Contains, " _ST_Contains("),
+            (GeoRel::Intersects, " _ST_Intersects("),
+            (GeoRel::Disjoint, "NOT _ST_Within("),
+            (GeoRel::Equals, " _ST_Contains("),
+            (GeoRel::Overlaps, " _ST_Intersects("),
+            (near(Some("500"), Some("100")), " _ST_DWithin("),
         ];
         for (georel, function) in cases {
             let geo = query(georel, LOCATION, &serde_json::json!([1.0, 2.0]));

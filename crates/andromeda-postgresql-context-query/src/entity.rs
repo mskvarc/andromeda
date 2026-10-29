@@ -1341,7 +1341,7 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
+        assert!(built.sql.contains(" _ST_DWithin("), "should contain spatial predicate");
         assert!(
             built
                 .sql
