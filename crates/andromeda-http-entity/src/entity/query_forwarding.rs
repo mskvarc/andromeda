@@ -2,16 +2,7 @@
 //! and what they bring back.
 
 use crate::{
-    entity::{
-        ContextSpec,
-        CsrModeFilter,
-        ForwardQueryRequest,
-        ProblemResponse,
-        SourceContribution,
-        collect_warnings,
-        contributions_of,
-        query_admission::AdmittedQuery,
-    },
+    entity::{ContextSpec, ForwardQueryRequest, ProblemResponse, SourceContribution, collect_warnings, contributions_of, query_admission::AdmittedQuery},
     error::public_error,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -19,6 +10,7 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
+    matched_registrations::PhasedRegistrations,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, QueryDelivery, TriggeringRequest},
@@ -29,6 +21,7 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
@@ -161,7 +154,9 @@ impl QueryForwarding<'_> {
         // Clause 4.12: one budget bounds everything the query gathers, from
         // both phases' sources and, once they have answered, the local store.
         let budget = ResultBudget::new(self.forwarding.result_limits());
-        let (primary, auxiliary) = in_phases(|mode_filter| self.phase(mode_filter, csf_expr, &budget), self.uri).await?;
+        // Both phases match the same registrations, so they are read once.
+        let phased = self.matched(csf_expr, &budget).await?;
+        let (primary, auxiliary) = in_phases(phased, |registrations| self.phase(registrations, csf_expr, &budget), self.uri).await?;
 
         let mut warnings = collect_warnings(&primary.results);
         warnings.extend(collect_warnings(&auxiliary.results));
@@ -178,53 +173,71 @@ impl QueryForwarding<'_> {
         })
     }
 
-    /// One forwarding phase over the registrations `mode_filter` admits.
+    /// The forwarded query, as both phases send it.
+    fn request<'b>(&self, csf_expr: Option<&'b Expr>, budget: &'b ResultBudget) -> ForwardQueryRequest<'b>
+    where
+        Self: 'b,
+    {
+        ForwardQueryRequest {
+            client_query: ClientQuery::EntityQuery(self.query),
+            delivery: self.delivery,
+            split: self.split,
+            context: self.context,
+            triggering: TriggeringRequest {
+                via: self.admitted.incoming_via.as_ref(),
+                headers: Some(self.headers),
+            },
+            csf_expr,
+            geo: self.admitted.registration_filters.geo(),
+            entity_map: EntityMapInUse::from(&self.admitted.map_use),
+            budget,
+        }
+    }
+
+    /// Read the registrations the query matches, split by phase.
+    ///
+    /// One that could not be read because this broker's own store is saturated
+    /// or unreachable fails the query rather than hide every source.
+    async fn matched(&self, csf_expr: Option<&Expr>, budget: &ResultBudget) -> Result<PhasedRegistrations, ProblemResponse> {
+        match self.forwarding.match_query(self.target, &self.request(csf_expr, budget)).await {
+            Ok(matched) => Ok(matched.into_phases()),
+            Err(error) => self.failed(error).map(|()| PhasedRegistrations::default()),
+        }
+    }
+
+    /// One forwarding phase over the registrations it contacts.
     ///
     /// A forwarding that failed at its sources leaves the query with the local
-    /// answer, but one that could not read the registrations to forward to,
-    /// because this broker's own store is saturated or unreachable, fails the
-    /// query rather than hide every source; a phase whose sources answer with more entities than the request
+    /// answer; a phase whose sources answer with more entities than the request
     /// may gather refuses the query, because a truncated collection would make
     /// its page window and `NGSILD-Results-Count` silently wrong (clauses 4.12
     /// and 6.3.13).
     async fn phase(
         &self,
-        mode_filter: CsrModeFilter,
+        registrations: Vec<ContextSourceRegistration>,
         csf_expr: Option<&Expr>,
         budget: &ResultBudget,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
-        let forwarded = self
-            .forwarding
-            .forward_query(
-                self.target,
-                ForwardQueryRequest {
-                    client_query: ClientQuery::EntityQuery(self.query),
-                    delivery: self.delivery,
-                    split: self.split,
-                    context: self.context,
-                    triggering: TriggeringRequest {
-                        via: self.admitted.incoming_via.as_ref(),
-                        headers: Some(self.headers),
-                    },
-                    csf_expr,
-                    geo: self.admitted.registration_filters.geo(),
-                    mode_filter,
-                    entity_map: EntityMapInUse::from(&self.admitted.map_use),
-                    budget,
-                },
-            )
-            .await;
-        match forwarded {
+        match self.forwarding.forward_query(self.target, self.request(csf_expr, budget), registrations).await {
             Ok(outcome) => Ok(outcome),
-            Err(QueryForwardingError::TooManyResults(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
-            Err(QueryForwardingError::TooManyInstances(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
-            Err(QueryForwardingError::Federation(error)) => {
+            Err(error) => self.failed(error).map(|()| ForwardReadOutcome::empty()),
+        }
+    }
+
+    /// The failure of a forwarding step: a refusal, or the failure of this
+    /// broker's own store, is the query's; a source that could not be reached
+    /// is only logged.
+    fn failed(&self, error: QueryForwardingError) -> Result<(), ProblemResponse> {
+        match error {
+            QueryForwardingError::TooManyResults(exceeded) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
+            QueryForwardingError::TooManyInstances(exceeded) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
+            QueryForwardingError::Federation(error) => {
                 if let Some(report) = local_federation_failure(&error) {
                     // clone: the problem response owns the request URI it names
                     return Err(report.with_instance(self.uri.clone()));
                 }
                 warn!(%error, "context source forwarding failed during the entity query");
-                Ok(ForwardReadOutcome::empty())
+                Ok(())
             }
         }
     }
@@ -239,31 +252,35 @@ impl QueryForwarding<'_> {
 ///
 /// The failure of either phase, and the 501 of a lone proxied source.
 async fn in_phases<Phase, Answered>(
+    phased: PhasedRegistrations,
     mut phase: Phase,
     uri: &HttpUri,
 ) -> Result<(ForwardReadOutcome<ForwardedEntities>, ForwardReadOutcome<ForwardedEntities>), ProblemResponse>
 where
-    Phase: FnMut(CsrModeFilter) -> Answered,
+    Phase: FnMut(Vec<ContextSourceRegistration>) -> Answered,
     Answered: Future<Output = Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse>>,
 {
-    let primary = phase(CsrModeFilter::ExcludeAuxiliary).await?;
+    let primary = phase(phased.primary).await?;
     if let Some(status) = primary.sources.single_source_status {
         return Err(single_source_declined(status, uri));
     }
-    let auxiliary = phase(CsrModeFilter::AuxiliaryOnly).await?;
+    let auxiliary = phase(phased.auxiliary).await?;
     Ok((primary, auxiliary))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity::{CsrModeFilter, ProblemResponse, query_forwarding::in_phases},
+        entity::{ProblemResponse, query_forwarding::in_phases},
         error::public_error,
     };
-    use andromeda_federation::outcome::{ForwardReadOutcome, ForwardedEntities};
+    use andromeda_federation::{
+        matched_registrations::PhasedRegistrations,
+        outcome::{ForwardReadOutcome, ForwardedEntities},
+    };
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::http::Uri as HttpUri;
-    use std::cell::RefCell;
+    use std::cell::Cell;
 
     fn uri() -> HttpUri {
         HttpUri::from_static("/ngsi-ld/v1/entities")
@@ -274,11 +291,12 @@ mod tests {
     #[tokio::test]
     async fn a_refused_first_phase_never_starts_the_auxiliary_phase() {
         let uri = uri();
-        let started = RefCell::new(Vec::new());
+        let started = Cell::new(0_usize);
 
         let answer = in_phases(
-            |mode_filter| {
-                started.borrow_mut().push(mode_filter);
+            PhasedRegistrations::default(),
+            |_registrations| {
+                started.set(started.get() + 1);
                 let refusal = public_error(NgsiLdErrorType::TooManyResults, "over the entity limit".to_owned(), &uri);
                 async move { Err::<ForwardReadOutcome<ForwardedEntities>, _>(refusal) }
             },
@@ -287,22 +305,19 @@ mod tests {
         .await;
 
         assert!(answer.is_err());
-        assert!(
-            matches!(started.borrow().as_slice(), [CsrModeFilter::ExcludeAuxiliary]),
-            "{:?}",
-            started.borrow().len()
-        );
+        pretty_assertions::assert_eq!(started.get(), 1);
     }
 
     /// Clause 4.3.6.2: an answered first phase is followed by the auxiliary one.
     #[tokio::test]
     async fn an_answered_first_phase_is_followed_by_the_auxiliary_phase() {
         let uri = uri();
-        let started = RefCell::new(Vec::new());
+        let started = Cell::new(0_usize);
 
         let answer = in_phases(
-            |mode_filter| {
-                started.borrow_mut().push(mode_filter);
+            PhasedRegistrations::default(),
+            |_registrations| {
+                started.set(started.get() + 1);
                 async { Ok::<_, ProblemResponse>(ForwardReadOutcome::<ForwardedEntities>::empty()) }
             },
             &uri,
@@ -310,10 +325,6 @@ mod tests {
         .await;
 
         assert!(answer.is_ok());
-        assert!(
-            matches!(started.borrow().as_slice(), [CsrModeFilter::ExcludeAuxiliary, CsrModeFilter::AuxiliaryOnly]),
-            "{:?}",
-            started.borrow().len()
-        );
+        pretty_assertions::assert_eq!(started.get(), 2);
     }
 }

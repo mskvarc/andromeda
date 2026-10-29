@@ -93,6 +93,8 @@ pub mod instance_budget;
 pub mod language_negotiation;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
+/// The registrations a read matched, read once and split by forwarding phase.
+pub mod matched_registrations;
 /// A mock Context Source answering the forwarding tests.
 #[cfg(test)]
 #[expect(
@@ -108,6 +110,13 @@ pub mod ordering_admission;
 pub mod outcome;
 /// Which registrations take part in a read.
 pub mod participating_read;
+/// The two forwarding phases of a query read the registrations once.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod phased_read_tests;
 #[cfg(test)]
 #[expect(
     clippy::expect_used,

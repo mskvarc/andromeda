@@ -84,20 +84,19 @@ impl SubscriptionForwardingService {
         // The whole entity is wanted from every other holder: no parameter of
         // a retrieval narrows what the re-assembly completes the part with.
         let whole_entity = GetEntityParams::default();
+        let request = ForwardRetrieveRequest {
+            entity_id: id,
+            exclude_registration: Some(sender),
+            client_query: ClientQuery::EntityRetrieve { id, params: &whole_entity },
+            context,
+            triggering: TriggeringRequest::default(),
+            mode_filter: CsrModeFilter::All,
+            entity_map: EntityMapInUse::None,
+        };
+        let matched = self.federation.match_retrieve(&self.live_target, &request).await?;
         let remote = self
             .federation
-            .forward_retrieve(
-                &self.live_target,
-                ForwardRetrieveRequest {
-                    entity_id: id,
-                    exclude_registration: Some(sender),
-                    client_query: ClientQuery::EntityRetrieve { id, params: &whole_entity },
-                    context,
-                    triggering: TriggeringRequest::default(),
-                    mode_filter: CsrModeFilter::All,
-                    entity_map: EntityMapInUse::None,
-                },
-            )
+            .forward_retrieve(&self.live_target, request, matched.into_registrations())
             .await?;
         // The received part is the base; the local copy and the other holders
         // are folded in the way a distributed retrieval merges its sources.

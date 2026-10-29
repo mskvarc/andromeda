@@ -105,6 +105,24 @@ impl FederationService {
         context: &ContextSpec,
         selection: RegistrationSelection<'_>,
     ) -> Result<Vec<ContextSourceRegistration>, FederationError> {
+        let mode_filter = selection.mode_filter;
+        let mut registrations = self.matching_registrations(context, selection).await?;
+        registrations.retain(|registration| mode_admitted(registration, mode_filter));
+        Ok(registrations)
+    }
+
+    /// The registrations a forwarded operation matches whatever their mode:
+    /// the mode of each is left for the phase that contacts it to decide, so a
+    /// request with several phases reads them once (clause 4.3.6.2).
+    ///
+    /// # Errors
+    ///
+    /// As [`FederationService::select_registrations`].
+    pub(crate) async fn matching_registrations(
+        &self,
+        context: &ContextSpec,
+        selection: RegistrationSelection<'_>,
+    ) -> Result<Vec<ContextSourceRegistration>, FederationError> {
         // Registrations store expanded type IRIs, so each selector's compact
         // type is expanded before matching.
         let registrations = if let Some(map) = selection.entity_map.referenced() {
@@ -127,7 +145,6 @@ impl FederationService {
             .filter(|registration| {
                 selection.serving.admits(registration)
                     && selection.exclude_registration.is_none_or(|excluded| excluded != &registration.id)
-                    && mode_admitted(registration, selection.mode_filter)
                     && filters.admits(registration).unwrap_or_else(|error| {
                         warn!(registration = %registration.id, %error, "the Context Source Properties of a stored registration could not be read for the context source filter");
                         false

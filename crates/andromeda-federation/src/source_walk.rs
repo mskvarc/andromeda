@@ -528,23 +528,19 @@ mod tests {
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
         let query: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle").expect("a valid query");
         let context = ContextSpec::none();
-        service
-            .forward_query(
-                &ContextTarget::Live,
-                ForwardQueryRequest {
-                    client_query: ClientQuery::EntityQuery(&query),
-                    delivery,
-                    split: SplitEntities::Complete,
-                    context: &context,
-                    triggering: TriggeringRequest::default(),
-                    csf_expr: None,
-                    geo: None,
-                    mode_filter: CsrModeFilter::All,
-                    entity_map: EntityMapInUse::None,
-                    budget,
-                },
-            )
-            .await
+        let request = ForwardQueryRequest {
+            client_query: ClientQuery::EntityQuery(&query),
+            delivery,
+            split: SplitEntities::Complete,
+            context: &context,
+            triggering: TriggeringRequest::default(),
+            csf_expr: None,
+            geo: None,
+            entity_map: EntityMapInUse::None,
+            budget,
+        };
+        let matched = service.match_query(&ContextTarget::Live, &request).await?;
+        service.forward_query(&ContextTarget::Live, request, matched.into_registrations()).await
     }
 
     /// One temporal page of `count` Vehicles numbered from `first`, answered

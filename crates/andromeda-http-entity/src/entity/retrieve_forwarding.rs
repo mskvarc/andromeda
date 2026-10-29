@@ -6,7 +6,9 @@ use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
     FederationService,
     entity_result::{collect_warnings, contributions_of, merge_retrieve_results},
+    error::FederationError,
     forwarded_query::client_query::ClientQuery,
+    matched_registrations::PhasedRegistrations,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
@@ -19,6 +21,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use axum::http::Uri as HttpUri;
 use tracing::warn;
@@ -67,7 +70,9 @@ impl RetrieveForwarding<'_> {
     /// representation (Table 6.4.3.2-3), which is the operation's answer, and
     /// the 503 of a registration store that is saturated or unreachable.
     pub(crate) async fn run(&self, local_entity: Option<ReceivedState>) -> Result<ForwardedRetrieval, ProblemResponse> {
-        let primary = self.phase(CsrModeFilter::ExcludeAuxiliary).await?;
+        // Both phases match the same registrations, so they are read once.
+        let phased = self.matched().await?;
+        let primary = self.phase(phased.primary).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));
         }
@@ -79,7 +84,7 @@ impl RetrieveForwarding<'_> {
         // they only supplement existing data (clause 4.3.6.2).
         let entity = match merged {
             Some(merged) => {
-                let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly).await?;
+                let auxiliary = self.phase(phased.auxiliary).await?;
                 warnings.extend(collect_warnings(&auxiliary.results));
                 contributions.extend(contributions_of(&auxiliary.results));
                 merge_retrieve_results(Some(merged), auxiliary.results)
@@ -93,43 +98,52 @@ impl RetrieveForwarding<'_> {
         })
     }
 
-    /// One forwarding phase over the registrations `mode_filter` admits.
-    ///
-    /// A source that could not be reached leaves the phase empty; a phase that
-    /// could not read the registrations to forward to, because this broker's
-    /// own store is saturated or unreachable, fails the retrieval rather than
-    /// hide every source.
-    async fn phase(&self, mode_filter: CsrModeFilter) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
-        let forwarded = self
-            .forwarding
-            .forward_retrieve(
-                self.target,
-                ForwardRetrieveRequest {
-                    entity_id: self.entity_id,
-                    exclude_registration: None,
-                    client_query: ClientQuery::EntityRetrieve {
-                        id: self.entity_id,
-                        params: self.params,
-                    },
-                    context: self.context,
-                    triggering: self.triggering,
-                    mode_filter,
-                    entity_map: self.entity_map,
-                },
-            )
-            .await;
-        match forwarded {
-            Ok(outcome) => Ok(outcome),
-            Err(error) => {
-                if let Some(report) = local_federation_failure(&error) {
-                    // clone: the problem response owns the request URI it names
-                    return Err(report.with_instance(self.uri.clone()));
-                }
-                // Retrieve forwarding is best-effort: a source that cannot be
-                // reached is a warning, not a failure.
-                warn!(%error, "context source forwarding failed during the entity retrieval");
-                Ok(ForwardReadOutcome::empty())
-            }
+    /// The forwarded retrieval, as both phases send it.
+    fn request(&self) -> ForwardRetrieveRequest<'_> {
+        ForwardRetrieveRequest {
+            entity_id: self.entity_id,
+            exclude_registration: None,
+            client_query: ClientQuery::EntityRetrieve {
+                id: self.entity_id,
+                params: self.params,
+            },
+            context: self.context,
+            triggering: self.triggering,
+            mode_filter: CsrModeFilter::All,
+            entity_map: self.entity_map,
         }
+    }
+
+    /// Read the registrations the retrieval matches, split by phase.
+    ///
+    /// One that could not be read because this broker's own store is saturated
+    /// or unreachable fails the retrieval rather than hide every source.
+    async fn matched(&self) -> Result<PhasedRegistrations, ProblemResponse> {
+        match self.forwarding.match_retrieve(self.target, &self.request()).await {
+            Ok(matched) => Ok(matched.into_phases()),
+            Err(error) => self.failed(&error).map(|()| PhasedRegistrations::default()),
+        }
+    }
+
+    /// One forwarding phase over the registrations it contacts.
+    ///
+    /// A source that could not be reached leaves the phase empty.
+    async fn phase(&self, registrations: Vec<ContextSourceRegistration>) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
+        match self.forwarding.forward_retrieve(self.target, self.request(), registrations).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => self.failed(&error).map(|()| ForwardReadOutcome::empty()),
+        }
+    }
+
+    /// The failure of a forwarding step: the failure of this broker's own
+    /// store is the retrieval's, while retrieve forwarding is best-effort for
+    /// a source that cannot be reached, which is only logged.
+    fn failed(&self, error: &FederationError) -> Result<(), ProblemResponse> {
+        if let Some(report) = local_federation_failure(error) {
+            // clone: the problem response owns the request URI it names
+            return Err(report.with_instance(self.uri.clone()));
+        }
+        warn!(%error, "context source forwarding failed during the entity retrieval");
+        Ok(())
     }
 }

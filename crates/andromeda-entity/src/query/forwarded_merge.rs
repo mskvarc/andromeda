@@ -128,7 +128,7 @@ mod tests {
     fn attrs_naming_nothing_held_leave_no_merged_entity() {
         let wanted = [iri("https://example.com/other")];
         let narrowed = EntityQueryService::narrow_merged(merged(), ListInForce::of(None, &wanted));
-        assert!(narrowed.is_empty());
+        pretty_assertions::assert_eq!(narrowed.len(), 0);
     }
 
     /// Clause 4.21: a `pick` naming nothing the entity holds still answers with
@@ -141,7 +141,7 @@ mod tests {
         };
         let narrowed = EntityQueryService::narrow_merged(merged(), ListInForce::of(Some(&projection), &[]));
         pretty_assertions::assert_eq!(narrowed.len(), 1);
-        assert!(names(&narrowed).is_empty());
+        pretty_assertions::assert_eq!(names(&narrowed), Vec::<&str>::new());
     }
 
     /// No list in force narrows nothing.

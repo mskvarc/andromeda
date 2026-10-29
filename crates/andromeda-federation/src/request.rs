@@ -245,8 +245,6 @@ pub struct ForwardQueryRequest<'a> {
     /// geometry has to admit for it to be contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
     pub geo: Option<&'a GeoQuery>,
-    /// Registration modes included in this forwarding phase.
-    pub mode_filter: CsrModeFilter,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// The entities the request may gather from every source it contacts,
@@ -269,7 +267,8 @@ pub struct ForwardRetrieveRequest<'a> {
     pub context: &'a ContextSpec,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
-    /// Registration modes included in this forwarding phase.
+    /// The registration modes the request contacts, applied when its
+    /// registrations are matched (clause 4.3.6.2).
     pub mode_filter: CsrModeFilter,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,

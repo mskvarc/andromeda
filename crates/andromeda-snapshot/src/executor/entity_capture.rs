@@ -35,7 +35,7 @@ use andromeda_federation::{
     instance_budget::InstanceBudgetExceeded,
     outcome::ForwardedEntities,
     query_forwarding_error::QueryForwardingError,
-    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
+    request::{EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
     result_budget::{ResultBudget, ResultBudgetExceeded},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -237,27 +237,24 @@ impl SnapshotExecutor {
     /// 5.16.1.4).
     async fn walk_sources(&self, params: &EntityQueryParameters, context: &ContextSpec) -> WalkedSources {
         let budget = ResultBudget::new(self.sources.forwarding.result_limits());
-        let forwarded = self
-            .sources
-            .forwarding
-            .forward_query(
-                &self.sources.live_target,
-                ForwardQueryRequest {
-                    client_query: ClientQuery::EntityQuery(params),
-                    // A Snapshot materialises its members through the GET query
-                    // binding (clause 5.5.15).
-                    delivery: QueryDelivery::Query,
-                    split: self.sources.forwarding.split_entities(params.split_entities),
-                    context,
-                    triggering: TriggeringRequest::default(),
-                    csf_expr: None,
-                    geo: None,
-                    mode_filter: CsrModeFilter::All,
-                    entity_map: EntityMapInUse::None,
-                    budget: &budget,
-                },
-            )
-            .await;
+        let forwarding = &self.sources.forwarding;
+        let request = ForwardQueryRequest {
+            client_query: ClientQuery::EntityQuery(params),
+            // A Snapshot materialises its members through the GET query
+            // binding (clause 5.5.15).
+            delivery: QueryDelivery::Query,
+            split: forwarding.split_entities(params.split_entities),
+            context,
+            triggering: TriggeringRequest::default(),
+            csf_expr: None,
+            geo: None,
+            entity_map: EntityMapInUse::None,
+            budget: &budget,
+        };
+        let forwarded = match forwarding.match_query(&self.sources.live_target, &request).await {
+            Ok(matched) => forwarding.forward_query(&self.sources.live_target, request, matched.into_registrations()).await,
+            Err(error) => Err(error),
+        };
         match forwarded {
             Ok(outcome) => WalkedSources::Answered(PendingSources { answers: outcome.results }),
             Err(QueryForwardingError::TooManyResults(exceeded)) => WalkedSources::TooManyResults(exceeded),

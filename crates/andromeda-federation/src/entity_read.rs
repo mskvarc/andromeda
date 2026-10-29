@@ -10,6 +10,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
     forwarding_context::BodyPresence,
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
+    matched_registrations::MatchedRegistrations,
     operation::ForwardingOperation,
     outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
@@ -62,19 +63,49 @@ fn own_loop_outcome() -> ForwardReadOutcome<ForwardedEntities> {
 }
 
 impl FederationService {
-    /// Forward an entity query to the matching context sources (clause
-    /// 5.7.2.4), each sent the part of the client's query it is registered
-    /// for, and gather every page of each source's answer (clauses 4.3.6.7,
-    /// 5.5.9.1).
+    /// Read the registrations an entity query matches (clause 5.12), whatever
+    /// their mode, for the phases of the request to contact. A request that
+    /// cannot be forwarded, because the target admits no federation or the
+    /// request already looped back onto this broker, matches none and reads
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`FederationService::forward_query`] for the selection of
+    /// registrations.
+    pub async fn match_query(&self, target: &ContextTarget, request: &ForwardQueryRequest<'_>) -> Result<MatchedRegistrations, QueryForwardingError> {
+        if !target.permits_federation() || self.is_loop_detected(request.triggering.via) {
+            return Ok(MatchedRegistrations::new(Vec::new()));
+        }
+        let registrations = self
+            .matching_registrations(
+                request.context,
+                RegistrationSelection {
+                    selectors: &request.client_query.selectors(),
+                    exclude_registration: None,
+                    csf: request.csf_expr,
+                    scope_q: request.client_query.scope_q(),
+                    geo: request.geo,
+                    serving: RegistrationServing::EntityQuery(read_intent(request.delivery)),
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: request.entity_map,
+                },
+            )
+            .await?;
+        Ok(MatchedRegistrations::new(registrations))
+    }
+
+    /// Forward an entity query to `registrations`, the ones a phase of the
+    /// request contacts (clause 5.7.2.4), each sent the part of the client's
+    /// query it is registered for, and gather every page of each source's
+    /// answer (clauses 4.3.6.7, 5.5.9.1).
     ///
     /// # Errors
     ///
     /// Returns [`FederationError::JsonLd`] when the query's entity type
-    /// cannot be expanded against the request's context,
-    /// [`FederationError::Registration`] when the matching registrations
-    /// cannot be read, and [`FederationError::Conflict`] when the selected
-    /// registrations are mutually exclusive, each as
-    /// [`QueryForwardingError::Federation`], and
+    /// cannot be expanded against the request's context, and
+    /// [`FederationError::Conflict`] when the registrations are mutually
+    /// exclusive, each as [`QueryForwardingError::Federation`], and
     /// [`QueryForwardingError::TooManyResults`] when the sources' answers
     /// exceed the request's budget. A source that fails to answer does not
     /// fail the call: its failure travels as a warning.
@@ -82,6 +113,7 @@ impl FederationService {
         &self,
         target: &ContextTarget,
         request: ForwardQueryRequest<'_>,
+        registrations: Vec<ContextSourceRegistration>,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError> {
         let timer = federation_ops::start(FederationOperation::Query);
         let result = async move {
@@ -94,34 +126,15 @@ impl FederationService {
                 split,
                 context,
                 triggering,
-                csf_expr,
-                geo,
-                mode_filter,
+                csf_expr: _,
+                geo: _,
                 entity_map,
                 budget,
             } = request;
             if self.is_loop_detected(triggering.via) {
                 return Ok(own_loop_outcome());
             }
-            let intent = match delivery {
-                QueryDelivery::Query => ReadIntent::Query,
-                QueryDelivery::Batch => ReadIntent::QueryBatch,
-            };
-            let registrations = self
-                .select_registrations(
-                    context,
-                    RegistrationSelection {
-                        selectors: &client_query.selectors(),
-                        exclude_registration: None,
-                        csf: csf_expr,
-                        scope_q: client_query.scope_q(),
-                        geo,
-                        serving: RegistrationServing::EntityQuery(intent),
-                        mode_filter,
-                        entity_map,
-                    },
-                )
-                .await?;
+            let intent = read_intent(delivery);
             // Clause 4.3.6.1: each registration is contacted through a read
             // operation it advertises, preferring the binding the client used --
             // a GET query, or a POST batch query. Clause 4.3.6.3: each of its
@@ -175,20 +188,56 @@ impl FederationService {
         result
     }
 
-    /// Forward an entity retrieval to the matching context sources (clause
-    /// 5.7.1.4), each sent the part of the client's parameters it is
-    /// registered for.
+    /// Read the registrations an entity retrieval matches (clause 5.12), in
+    /// the modes the request contacts, for its phases to split. A
+    /// request that cannot be forwarded, because the target admits no
+    /// federation or the request already looped back onto this broker,
+    /// matches none and reads nothing.
     ///
     /// # Errors
     ///
     /// Returns [`FederationError::Registration`] when the matching
-    /// registrations cannot be read, and [`FederationError::Conflict`] when
-    /// the selected registrations are mutually exclusive. A source that fails
-    /// to answer does not fail the call: its failure travels as a warning.
+    /// registrations cannot be read.
+    pub async fn match_retrieve(&self, target: &ContextTarget, request: &ForwardRetrieveRequest<'_>) -> Result<MatchedRegistrations, FederationError> {
+        if !target.permits_federation() || self.is_loop_detected(request.triggering.via) {
+            return Ok(MatchedRegistrations::new(Vec::new()));
+        }
+        let registrations = self
+            .select_registrations(
+                request.context,
+                RegistrationSelection {
+                    selectors: &request.client_query.selectors(),
+                    exclude_registration: request.exclude_registration,
+                    csf: None,
+                    scope_q: None,
+                    geo: None,
+                    // Clause 5.7.1.4: a retrieval is forwarded only to the
+                    // registrations that "match and support the
+                    // retrieveEntity operation" (Table 4.20-1); one
+                    // advertising only a query operation does not apply.
+                    serving: RegistrationServing::Operation(ForwardingOperation::RetrieveEntity),
+                    mode_filter: request.mode_filter,
+                    entity_map: request.entity_map,
+                },
+            )
+            .await?;
+        Ok(MatchedRegistrations::new(registrations))
+    }
+
+    /// Forward an entity retrieval to `registrations`, the ones a phase of the
+    /// request contacts (clause 5.7.1.4), each sent the part of the client's
+    /// parameters it is registered for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::Conflict`] when the registrations are
+    /// mutually exclusive. A source that fails to answer does not fail the
+    /// call: its failure travels as a warning.
     pub async fn forward_retrieve(
         &self,
         target: &ContextTarget,
         request: ForwardRetrieveRequest<'_>,
+        registrations: Vec<ContextSourceRegistration>,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
         let timer = federation_ops::start(FederationOperation::Retrieve);
         let result = async move {
@@ -197,35 +246,16 @@ impl FederationService {
             }
             let ForwardRetrieveRequest {
                 entity_id,
-                exclude_registration,
+                exclude_registration: _,
                 client_query,
                 context,
                 triggering,
-                mode_filter,
+                mode_filter: _,
                 entity_map,
             } = request;
             if self.is_loop_detected(triggering.via) {
                 return Ok(own_loop_outcome());
             }
-            let registrations = self
-                .select_registrations(
-                    context,
-                    RegistrationSelection {
-                        selectors: &client_query.selectors(),
-                        exclude_registration,
-                        csf: None,
-                        scope_q: None,
-                        geo: None,
-                        // Clause 5.7.1.4: a retrieval is forwarded only to the
-                        // registrations that "match and support the
-                        // retrieveEntity operation" (Table 4.20-1); one
-                        // advertising only a query operation does not apply.
-                        serving: RegistrationServing::Operation(ForwardingOperation::RetrieveEntity),
-                        mode_filter,
-                        entity_map,
-                    },
-                )
-                .await?;
             // A retrieval knows no split entities (clause 5.7.1.4), so every
             // parameter that is not narrowed travels with the request. Clause
             // 4.3.6.3: each of its blocks covering the entity contributes its
@@ -267,6 +297,14 @@ impl FederationService {
         .await;
         timer.finish_result(&result);
         result
+    }
+}
+
+/// What the binding a query arrived on asks of the registrations it reads.
+const fn read_intent(delivery: QueryDelivery) -> ReadIntent {
+    match delivery {
+        QueryDelivery::Query => ReadIntent::Query,
+        QueryDelivery::Batch => ReadIntent::QueryBatch,
     }
 }
 

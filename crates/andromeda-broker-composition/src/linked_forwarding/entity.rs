@@ -36,10 +36,11 @@ impl RemoteLinkedEntitySource for LinkedForwarding {
     ) -> Result<RemoteResolution<ReceivedState>, EntityError> {
         let parameters = linked_retrieval_parameters(remaining_depth, visited);
         let client_query = ClientQuery::EntityRetrieve { id, params: &parameters };
-        let forwarded = self
-            .federation
-            .forward_retrieve(&self.live_target, linked_request(id, client_query, context))
-            .await;
+        let request = linked_request(id, client_query, context);
+        let forwarded = match self.federation.match_retrieve(&self.live_target, &request).await {
+            Ok(matched) => self.federation.forward_retrieve(&self.live_target, request, matched.into_registrations()).await,
+            Err(error) => Err(error),
+        };
         Ok(resolution(id, forwarded, Vec::push))
     }
 }
