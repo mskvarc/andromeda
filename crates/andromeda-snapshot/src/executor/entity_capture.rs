@@ -218,7 +218,7 @@ impl SnapshotExecutor {
         }
 
         // The source entities no local page held, merged across sources.
-        let remaining = EntityQueryService::merge_with_forwarded(Vec::new(), pending.answers, &[]);
+        let remaining = EntityQueryService::merge_with_forwarded(Vec::new(), pending.answers);
         let mut remaining = remaining.into_iter().peekable();
         while remaining.peek().is_some() {
             let page = remaining.by_ref().take(self.capture_page_size as usize).collect();

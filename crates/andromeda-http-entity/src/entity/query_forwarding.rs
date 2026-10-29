@@ -27,12 +27,12 @@ use andromeda_federation::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::{HeaderMap, Uri as HttpUri};
-use iri_rs::IriBuf;
 use tracing::warn;
 
 /// What the two forwarding phases of a query brought back.
@@ -66,8 +66,8 @@ impl ForwardedQueryResults {
     /// Fold what the sources returned onto the entities the broker holds
     /// itself: the primary phase's answers first, then the auxiliary ones,
     /// which only supplement what is present already (clause 4.3.6.2).
-    /// `attrs` holds the expanded names of the query's `attrs`, which clause
-    /// 5.7.2 applies after the merge.
+    /// `list` is the request's `attrs`, `pick` or `omit`, which clauses 5.7.2
+    /// and 4.21 apply after the merge.
     ///
     /// # Errors
     ///
@@ -75,17 +75,18 @@ impl ForwardedQueryResults {
     /// budget the sources were walked under: the local rows were read one past
     /// it, so a larger collection is refused rather than paged from a
     /// truncation (clause 4.12).
-    pub(crate) fn merge_onto(self, local_entities: Vec<ReceivedState>, attrs: &[IriBuf]) -> Result<MergedEntities, ResultBudgetExceeded> {
+    pub(crate) fn merge_onto(self, local_entities: Vec<ReceivedState>, list: ListInForce<'_>) -> Result<MergedEntities, ResultBudgetExceeded> {
         let merged = if self.primary.is_empty() {
             local_entities
         } else {
-            EntityQueryService::merge_with_forwarded(local_entities, self.primary, attrs)
+            EntityQueryService::merge_with_forwarded(local_entities, self.primary)
         };
         let merged = if self.auxiliary.is_empty() {
             merged
         } else {
-            EntityQueryService::merge_with_forwarded(merged, self.auxiliary, attrs)
+            EntityQueryService::merge_with_forwarded(merged, self.auxiliary)
         };
+        let merged = EntityQueryService::narrow_merged(merged, list);
         self.budget.admit_collection(u64::try_from(merged.len()).unwrap_or(u64::MAX))?;
         Ok(MergedEntities {
             entities: merged,

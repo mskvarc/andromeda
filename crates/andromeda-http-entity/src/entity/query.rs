@@ -45,7 +45,7 @@ use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
-use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
+use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -194,9 +194,17 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let deferred = split_entities.then(|| query.defer_split_filters());
         let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers(), pagination.context);
 
+        // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern the
+        // merged entities, which hold every member their sources returned, and,
+        // through the list in force, every Linked Entity the traversal reaches
+        // (clause 5.7.2.5). Both read it off the compilation the query already
+        // ran, which has to outlive the join that borrows its terms.
+        let request_projection = RequestProjection::of(service, &query, &context).await.with_entity_instance(&uri)?;
+        let projection = request_projection.projection();
+
         let targeting = admitted.language.targeting;
         let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
-        let merged = merge_contributions(service, local_versions, forwarded, &query, &context, &uri).await?;
+        let merged = merge_contributions(local_versions, forwarded, request_projection.list(), &uri)?;
         let MergedEntities {
             entities: versions,
             warnings,
@@ -209,14 +217,6 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let (mut versions, reach, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
         let carried = ResolvedJoin::carried_by(&mut versions);
         let mut entities = compacted_page(service, &versions, opts.sys_attrs, &query, &context, &uri).await?;
-
-        // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern both
-        // the matching entities and, through the list in force, every Linked
-        // Entity the traversal reaches (clause 5.7.2.5). Both read it off the
-        // compilation the query already ran, which has to outlive the join
-        // that borrows its terms.
-        let request_projection = RequestProjection::of(service, &query, &context).await.with_entity_instance(&uri)?;
-        let projection = request_projection.projection();
 
         // The join resolves before the EntityMap is recorded so a minted map
         // can include the linked ids (clauses 5.5.14 and 5.7.2.4).
@@ -333,27 +333,18 @@ async fn compacted_page(
 ///
 /// # Errors
 ///
-/// The classified failure of expanding the query's `attrs`, which clause 5.7.2
-/// applies after the merge, and `TooManyResults` when the merged collection
-/// exceeds the budget the sources were walked under (clause 4.12).
-async fn merge_contributions(
-    service: &EntityQueryService,
+/// `TooManyResults` when the merged collection exceeds the budget the sources
+/// were walked under (clause 4.12).
+fn merge_contributions(
     local_entities: Vec<ReceivedState>,
     forwarded: Option<ForwardedQueryResults>,
-    query: &EntityQueryParameters,
-    context: &AdmittedContext,
+    list: ListInForce<'_>,
     instance: &HttpUri,
 ) -> Result<MergedEntities, ProblemResponse> {
     match forwarded {
-        Some(results) => {
-            let attrs = service
-                .expand_attribute_names(query.attrs.as_deref().unwrap_or_default(), context)
-                .await
-                .with_entity_instance(instance)?;
-            results
-                .merge_onto(local_entities, &attrs)
-                .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance))
-        }
+        Some(results) => results
+            .merge_onto(local_entities, list)
+            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance)),
         None => Ok(MergedEntities::local(local_entities)),
     }
 }

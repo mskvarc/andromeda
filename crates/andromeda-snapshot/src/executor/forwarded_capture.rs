@@ -53,7 +53,7 @@ impl ForwardedCapture {
                 linked: Vec::new(),
             })
             .collect();
-        self.states(EntityQueryService::merge_with_forwarded(versions, claimed, &[]), captured_at)
+        self.states(EntityQueryService::merge_with_forwarded(versions, claimed), captured_at)
     }
 
     /// Merged versions as the states the branch holds at `captured_at`.
