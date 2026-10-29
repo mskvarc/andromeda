@@ -365,7 +365,10 @@ mod tests {
     fn a_search_alias_reaches_the_semi_join_and_each_instance_carries_its_own_expiry_guard() {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("\"e\".\"entity_key\" IN (SELECT \"geo_default\".\"entity_key\""), "{sql}");
+        assert!(
+            sql.contains("\"e\".\"entity_key\" IN (SELECT DISTINCT \"geo_matched\".\"entity_key\" FROM (SELECT \"geo_default\".\"entity_key\""),
+            "{sql}"
+        );
         assert!(
             sql.contains("\"geo_default\".\"location_expires_at\" IS NULL OR \"geo_default\".\"location_expires_at\" > NOW()"),
             "the hoisted default instance is guarded by its own expiry: {sql}"

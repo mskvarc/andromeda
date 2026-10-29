@@ -18,10 +18,12 @@
 //! Each arm tests the box its index keys, the instance's great-circle reach
 //! first, before the exact relation.
 //!
-//! An entity is in the answer when either arm finds one of its instances, and
-//! the outer statement reaches the union as a semi-join, so the planner may
-//! drive either from the geo-query or from the enclosing statement's other
-//! predicates. Each arm excludes an instance past its own clause 4.22
+//! An entity is in the answer when either arm finds one of its instances. The
+//! outer statement reads the union once per entity and in `entity_key` order:
+//! a wide geo-query matches tens of thousands of entities, and the outer
+//! statement probes the entity tables' primary keys for each, which stay local
+//! in key order and land at random in the hash order the planner otherwise
+//! deduplicates them in. Each arm excludes an instance past its own clause 4.22
 //! `expiresAt`: the hoisted arm through `entity_search.location_expires_at`,
 //! the default instance's own expiry, and the instance arm through the row's
 //! `expires_at`.
@@ -38,7 +40,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Order, Query, SelectStatement, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
 const DEFAULT_ALIAS: &str = "geo_default";
@@ -49,6 +51,9 @@ const CANDIDATE_ALIAS: &str = "geo_candidate";
 
 /// Alias the `datasetId`-instance arm reads `current_attributes` under.
 const INSTANCE_ALIAS: &str = "geo_location_instance";
+
+/// Alias the union of the arms is read under.
+const MATCHED_ALIAS: &str = "geo_matched";
 
 /// The entities one of whose `location` instances meets `geo`.
 ///
@@ -81,7 +86,18 @@ pub fn any_location_instance(
     for arm in arms {
         matching.union(UnionType::All, arm);
     }
-    Ok(Condition::all().add(rows.entity_key_column().in_subquery(matching)))
+    Ok(Condition::all().add(rows.entity_key_column().in_subquery(matched_in_key_order(matching))))
+}
+
+/// Each entity `matching` holds, once, in `entity_key` order.
+fn matched_in_key_order(matching: SelectStatement) -> SelectStatement {
+    let matched = Alias::new(MATCHED_ALIAS);
+    Query::select()
+        .distinct()
+        .column((matched.clone(), EntitySearch::EntityKey)) // clone: the alias qualifies the column and names the subquery
+        .from_subquery(matching, matched.clone())
+        .order_by((matched, EntitySearch::EntityKey), Order::Asc)
+        .take()
 }
 
 /// The entities whose hoisted default instance meets `geo`, or `None` when an
@@ -124,7 +140,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
 /// `geo`.
 ///
 /// The hoisted instance of an entity whose every instance carries a
-/// `datasetId` is read by both arms, which the semi-join answers once.
+/// `datasetId` is read by both arms, and the entity is answered once.
 fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
     // clone: the alias qualifies every column the arm reads
@@ -206,7 +222,7 @@ mod tests {
             .expect("renders"),
         );
         assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND _ST_Within("geo_default"."location","#),
+            sql.contains(r#""entities"."entity_key" IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND _ST_Within("geo_default"."location","#),
             "{sql}"
         );
         assert!(
@@ -269,9 +285,26 @@ mod tests {
         );
         assert!(!sql.contains("geo_default"), "{sql}");
         assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT "geo_location_instance"."entity_key""#),
+            sql.contains(r#""entities"."entity_key" IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "geo_location_instance"."entity_key""#),
             "{sql}"
         );
+    }
+
+    /// The outer statement probes the entity tables once per matched entity,
+    /// in key order, so a wide geo-query's probes stay local.
+    #[test]
+    fn the_matched_entities_are_read_once_each_in_key_order() {
+        let (sql, _) = render(
+            any_location_instance(
+                &geo(near("1000000")),
+                &unaliased(),
+                &DefaultLocationNarrowing::Unnarrowed,
+                Some(AttributeNameKey::from(LOCATION_KEY)),
+            )
+            .expect("renders"),
+        );
+        assert!(sql.contains(r#"IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "#), "{sql}");
+        assert!(sql.ends_with(r#") AS "geo_matched" ORDER BY "geo_matched"."entity_key" ASC)"#), "{sql}");
     }
 
     /// Nothing can match when the index found no default instance and no
