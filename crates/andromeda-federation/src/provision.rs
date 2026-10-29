@@ -150,6 +150,12 @@ impl FederationService {
                 coverage.entity_types,
                 request.entity_id,
             )?))),
+            Some(ForwardedContent::Merge(document)) => Some(PlannedContent::Merge(Box::new(narrowed_document(
+                document,
+                &csr,
+                coverage.entity_types,
+                request.entity_id,
+            )?))),
             // The Scope history follows the evolution to every registration
             // that receives it, as the Scope paths of an entity do.
             Some(ForwardedContent::Evolution { document, scope_history }) => Some(PlannedContent::Evolution {

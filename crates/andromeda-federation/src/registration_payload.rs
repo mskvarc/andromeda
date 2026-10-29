@@ -9,7 +9,7 @@ use crate::{
     FederationService,
     error::FederationError,
     federation_invariant::FederationInvariant,
-    forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_items_payload},
+    forwarded_payload::{ForwardedPayload, ItemBody, ItemReading, OutgoingBody, build_forwarded_payload, build_items_payload},
     forwarding_context::{BodyPresence, ForwardingDecision, decide, decide_for_items},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -68,14 +68,15 @@ impl FederationService {
 
     /// Decide the representation of one forwarded batch array for
     /// `registration`, each entity read under the context it was submitted
-    /// with.
+    /// with, its attributes written as `reading` says.
     pub(crate) async fn payload_for_items(
         &self,
         registration: &ContextSourceRegistration,
         items: Vec<ItemBody<'_>>,
+        reading: ItemReading,
     ) -> Result<ForwardedPayload, FederationError> {
         let info = context_source_info(registration)?;
         let decision = decide_for_items(items.iter().map(|item| item.context), &info)?;
-        build_items_payload(&self.engine, &decision, items, &info).await
+        build_items_payload(&self.engine, &decision, items, reading, &info).await
     }
 }

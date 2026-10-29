@@ -97,33 +97,10 @@ impl<'a> ForwardedEntity<'a> {
 
 impl Serialize for ForwardedEntity<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let patch = self.patch;
         let mut object = serializer.serialize_map(None)?;
-        if let Some(id) = &patch.id {
-            object.serialize_entry(keyword::ID_ALIAS, id)?;
-        }
-        if let Some(types) = &patch.type_ {
-            match types.iter().next() {
-                Some(first) if self.walk.writes_single_type() => object.serialize_entry(keyword::TYPE_ALIAS, first)?,
-                Some(_) | None => object.serialize_entry(keyword::TYPE_ALIAS, types)?,
-            }
-        }
-        if let Some(scope) = &patch.scope
-            && self.walk.keeps_entity_member(EntityMember::Scope)
-        {
-            object.serialize_entry(compact_properties::SCOPE, scope)?;
-        }
-        if let Some(history) = self.scope_history
-            && self.walk.keeps_entity_member(EntityMember::Scope)
-        {
-            object.serialize_entry(compact_properties::SCOPE, &ForwardedAttribute::member(history, self.walk, self.layout))?;
-        }
-        if let Some(expires_at) = &patch.expires_at
-            && self.walk.keeps_entity_member(EntityMember::ExpiresAt)
-        {
-            object.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
-        }
-        for (name, member) in patch.attribute_members() {
+        let scope_history = self.scope_history.map(|history| ForwardedAttribute::member(history, self.walk, self.layout));
+        serialize_entity_members(&mut object, self.patch, self.walk, scope_history.as_ref())?;
+        for (name, member) in self.patch.attribute_members() {
             serialize_attribute_member(
                 &mut object,
                 name,
@@ -134,6 +111,42 @@ impl Serialize for ForwardedEntity<'_> {
         }
         object.end()
     }
+}
+
+/// Write the members of `patch` that are no attribute: its `id`, `type`,
+/// `scope` or reified Scope history, and `expiresAt`, each as the fallback of
+/// `walk` keeps it.
+pub(crate) fn serialize_entity_members<N, O: SerializeMap>(
+    object: &mut O,
+    patch: &EntityPatch<N>,
+    walk: MemberWalk<'_>,
+    scope_history: Option<&ForwardedAttribute<'_>>,
+) -> Result<(), O::Error> {
+    if let Some(id) = &patch.id {
+        object.serialize_entry(keyword::ID_ALIAS, id)?;
+    }
+    if let Some(types) = &patch.type_ {
+        match types.iter().next() {
+            Some(first) if walk.writes_single_type() => object.serialize_entry(keyword::TYPE_ALIAS, first)?,
+            Some(_) | None => object.serialize_entry(keyword::TYPE_ALIAS, types)?,
+        }
+    }
+    if let Some(scope) = &patch.scope
+        && walk.keeps_entity_member(EntityMember::Scope)
+    {
+        object.serialize_entry(compact_properties::SCOPE, scope)?;
+    }
+    if let Some(history) = scope_history
+        && walk.keeps_entity_member(EntityMember::Scope)
+    {
+        object.serialize_entry(compact_properties::SCOPE, history)?;
+    }
+    if let Some(expires_at) = &patch.expires_at
+        && walk.keeps_entity_member(EntityMember::ExpiresAt)
+    {
+        object.serialize_entry(compact_properties::EXPIRES_AT, &instant_text(*expires_at))?;
+    }
+    Ok(())
 }
 
 /// The one attribute a partial attribute update or a replacement carries

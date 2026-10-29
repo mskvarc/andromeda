@@ -43,6 +43,7 @@ use andromeda_ngsi_ld_render::{
     contextual_body::ContextualBody,
     forwarded_entity::{ForwardedAttribute, ForwardedEntity},
     forwarded_fragment::ForwardedFragment,
+    forwarded_merge_entity::ForwardedMergeEntity,
     forwarded_subscription::ForwardedSubscription,
     version::adapted_payload::AdaptedPayload,
 };
@@ -77,6 +78,12 @@ pub(crate) enum OutgoingBody<'a> {
         /// Which NGSI-LD Element its Entity data is, which decides how the
         /// clause 4.3.6.8 fallback reads it.
         element: AdaptedPayload,
+    },
+    /// The fragment of a Merge Entity (clause 5.6.17), whose attributes are
+    /// merge members.
+    Merge {
+        /// The admitted document.
+        document: &'a EntityDocument,
     },
     /// A Temporal Evolution whose Scope is reified (clause 4.5.6): the
     /// instances it adds, and the Scope history written as its `scope`.
@@ -171,6 +178,10 @@ async fn written_body(
             let patch = compacted_patch(engine, &naming, document).await?;
             written(inline.as_ref(), &ForwardedEntity::new(&patch, conformance, element))
         }
+        OutgoingBody::Merge { document } => {
+            let patch = compacted_fragment::<MergeMember>(engine, &naming, document).await?;
+            written(inline.as_ref(), &ForwardedMergeEntity::new(&patch, conformance))
+        }
         OutgoingBody::Evolution {
             document,
             scope_history,
@@ -259,10 +270,27 @@ pub(crate) struct ItemBody<'a> {
     pub(crate) context: &'a BatchContext,
 }
 
+/// How the attributes of the entities of a forwarded batch are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemReading {
+    /// Whole Attributes, as every batch operation but the merge writes them.
+    Attributes,
+    /// Merge members, which change only the members they name (clause 5.6.20).
+    Merge,
+}
+
+/// One entity of a forwarded batch array, compacted.
+enum BatchPatch {
+    /// An entity of whole Attributes.
+    Attributes(EntityPatch),
+    /// An entity of merge members.
+    Merge(EntityPatch<MergeMember>),
+}
+
 /// A forwarded batch array: each entity with the `@context` it carries inline.
 struct BatchBody<'a> {
     /// Every entity, with the inline context its body carries.
-    items: &'a [(Option<JsonLiteral>, EntityPatch)],
+    items: &'a [(Option<JsonLiteral>, BatchPatch)],
     /// The version the source conforms to.
     conformance: Option<SpecVersion>,
 }
@@ -271,15 +299,24 @@ impl Serialize for BatchBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut sequence = serializer.serialize_seq(Some(self.items.len()))?;
         for (context, patch) in self.items {
-            let entity = ForwardedEntity::new(patch, self.conformance, AdaptedPayload::Entity);
-            sequence.serialize_element(&ContextualBody::new(context.as_ref(), &entity))?;
+            match patch {
+                BatchPatch::Attributes(patch) => {
+                    let entity = ForwardedEntity::new(patch, self.conformance, AdaptedPayload::Entity);
+                    sequence.serialize_element(&ContextualBody::new(context.as_ref(), &entity))?;
+                }
+                BatchPatch::Merge(patch) => {
+                    let entity = ForwardedMergeEntity::new(patch, self.conformance);
+                    sequence.serialize_element(&ContextualBody::new(context.as_ref(), &entity))?;
+                }
+            }
         }
         sequence.end()
     }
 }
 
 /// Build the payload of one forwarded batch array, each entity compacted from
-/// its own context into the one `decision` names.
+/// its own context into the one `decision` names, its attributes written as
+/// `reading` says.
 ///
 /// # Errors
 ///
@@ -290,12 +327,16 @@ pub(crate) async fn build_items_payload(
     engine: &JsonLdEngine,
     decision: &ForwardingDecision,
     items: Vec<ItemBody<'_>>,
+    reading: ItemReading,
     info: &ContextSourceInfo,
 ) -> Result<ForwardedPayload, FederationError> {
     let mut patches = Vec::with_capacity(items.len());
     for ItemBody { document, context } in items {
         let naming = decision.context.naming(context.spec());
-        let patch = compacted_patch(engine, &naming, &document).await?;
+        let patch = match reading {
+            ItemReading::Attributes => BatchPatch::Attributes(compacted_patch(engine, &naming, &document).await?),
+            ItemReading::Merge => BatchPatch::Merge(compacted_fragment::<MergeMember>(engine, &naming, &document).await?),
+        };
         patches.push((decision.context.inline_for(context.spec())?, patch));
     }
     let body = BatchBody {

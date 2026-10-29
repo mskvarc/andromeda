@@ -20,6 +20,9 @@ pub enum ForwardedContent<'a> {
     /// 5.6.3, 5.6.17 and 5.6.18, or the Temporal Evolution of clauses 5.6.11,
     /// 5.6.12 and 5.6.14.
     Entity(&'a EntityDocument),
+    /// The fragment of a Merge Entity (clause 5.6.17): every attribute is a
+    /// merge member, which changes only the members it names (clause 5.5.12).
+    Merge(&'a EntityDocument),
     /// A Temporal Evolution whose Scope is reified (clauses 4.5.6 and
     /// 5.6.11.4): the instances it adds, and the Scope history it dates.
     Evolution {
@@ -57,8 +60,10 @@ impl ForwardedContent<'_> {
     /// The expanded names of the attributes the content writes.
     pub(crate) fn written_attributes(&self) -> Vec<AttributeName> {
         match self {
-            ForwardedContent::Entity(document) | ForwardedContent::Evolution { document, .. } => document.attributes().keys().cloned().collect(), // clone: the coverage check owns the names it reports
-            ForwardedContent::Attribute { name, .. } => vec![(*name).clone()],                                                                    // clone: same
+            ForwardedContent::Entity(document) | ForwardedContent::Merge(document) | ForwardedContent::Evolution { document, .. } => {
+                document.attributes().keys().cloned().collect() // clone: the coverage check owns the names it reports
+            }
+            ForwardedContent::Attribute { name, .. } => vec![(*name).clone()], // clone: same
         }
     }
 }

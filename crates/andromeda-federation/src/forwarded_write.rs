@@ -9,7 +9,7 @@ use crate::{
     FederationService,
     error::FederationError,
     forwarded_content::{AttributeWrite, ForwardedContent},
-    forwarded_payload::{ItemBody, OutgoingBody, build_identifiers_payload},
+    forwarded_payload::{ItemBody, ItemReading, OutgoingBody, build_identifiers_payload},
     forwarding_context::BodyPresence,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     registration_payload::forwarding_decision,
@@ -65,6 +65,8 @@ pub(crate) enum PlannedContent<'a> {
     /// An entity or an entity-shaped fragment, boxed because it is the widest
     /// member of a planned write.
     Entity(Box<Cow<'a, EntityDocument>>),
+    /// The fragment of a Merge Entity, narrowed as an entity is.
+    Merge(Box<Cow<'a, EntityDocument>>),
     /// A Temporal Evolution with a reified Scope: the narrowed instances, and
     /// the Scope history, which narrowing leaves whole.
     Evolution {
@@ -89,6 +91,7 @@ impl PlannedContent<'_> {
     fn forwarded(&self) -> ForwardedContent<'_> {
         match self {
             PlannedContent::Entity(document) => ForwardedContent::Entity(document),
+            PlannedContent::Merge(document) => ForwardedContent::Merge(document),
             PlannedContent::Evolution { document, scope_history } => ForwardedContent::Evolution { document, scope_history },
             PlannedContent::Attribute { name, instance, write } => ForwardedContent::Attribute { name, instance, write: *write },
         }
@@ -111,8 +114,13 @@ pub(crate) enum WritePayload<'a> {
         context: &'a ContextSpec,
     },
     /// A batch array whose entities each carry the context they were
-    /// submitted under.
-    Items(Vec<ItemBody<'a>>),
+    /// submitted under, its attributes written as `reading` says.
+    Items {
+        /// The entities of the array.
+        items: Vec<ItemBody<'a>>,
+        /// How their attributes are written.
+        reading: ItemReading,
+    },
     /// The bare Entity IDs of a batch deletion (clause 5.6.10.3), which name
     /// no term and so are read under no context.
     Identifiers(&'a [Identifier]),
@@ -225,7 +233,7 @@ impl FederationService {
                 self.payload_for(registration, context, Some(outgoing_body(content, element))).await,
                 single_write_naming(registration, context, BodyPresence::Present),
             ),
-            WritePayload::Items(items) => (self.payload_for_items(registration, items).await, Ok(None)),
+            WritePayload::Items { items, reading } => (self.payload_for_items(registration, items, reading).await, Ok(None)),
             WritePayload::Identifiers(ids) => (build_identifiers_payload(ids), Ok(None)),
         };
         let (payload, naming) = match (payload, naming) {
@@ -261,6 +269,7 @@ impl FederationService {
 const fn outgoing_body(content: ForwardedContent<'_>, element: AdaptedPayload) -> OutgoingBody<'_> {
     match content {
         ForwardedContent::Entity(document) => OutgoingBody::Entity { document, element },
+        ForwardedContent::Merge(document) => OutgoingBody::Merge { document },
         ForwardedContent::Evolution { document, scope_history } => OutgoingBody::Evolution {
             document,
             scope_history,

@@ -98,7 +98,7 @@ pub(crate) async fn merge(
                     headers: Some(&headers),
                 },
             },
-            Some(ForwardedContent::Entity(admitted.document())),
+            Some(ForwardedContent::Merge(admitted.document())),
         )
         .await
         .with_entity_instance(&uri)?;

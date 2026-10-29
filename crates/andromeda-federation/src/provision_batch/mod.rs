@@ -30,7 +30,7 @@ use crate::{
     FederationService,
     error::FederationError,
     forwarded_content::ForwardedContent,
-    forwarded_payload::ItemBody,
+    forwarded_payload::{ItemBody, ItemReading},
     forwarded_write::{ForwardWrite, WritePayload},
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
@@ -81,6 +81,17 @@ impl BatchProvisionOperation {
             BatchProvisionOperation::Update(_) => ForwardingOperation::UpdateBatch,
             BatchProvisionOperation::Delete => ForwardingOperation::DeleteBatch,
             BatchProvisionOperation::Merge => ForwardingOperation::MergeBatch,
+        }
+    }
+
+    /// How the entities of the forwarded array write their attributes: a merge
+    /// forwards merge members, every other operation whole Attributes.
+    const fn item_reading(self) -> ItemReading {
+        match self {
+            BatchProvisionOperation::Merge => ItemReading::Merge,
+            BatchProvisionOperation::Create | BatchProvisionOperation::Upsert(_) | BatchProvisionOperation::Update(_) | BatchProvisionOperation::Delete => {
+                ItemReading::Attributes
+            }
         }
     }
 
@@ -213,8 +224,8 @@ impl FederationService {
                     BatchProvisionOperation::Create
                     | BatchProvisionOperation::Upsert(_)
                     | BatchProvisionOperation::Update(_)
-                    | BatchProvisionOperation::Merge => WritePayload::Items(
-                        narrowed
+                    | BatchProvisionOperation::Merge => WritePayload::Items {
+                        items: narrowed
                             .iter_mut()
                             .filter_map(|entity| {
                                 Some(ItemBody {
@@ -223,7 +234,8 @@ impl FederationService {
                                 })
                             })
                             .collect(),
-                    ),
+                        reading: request.operation.item_reading(),
+                    },
                 };
                 let narrowed = narrowed;
                 let url = forwarding_url(
@@ -291,7 +303,7 @@ impl FederationService {
                 registration: csr,
                 url,
                 method,
-                payload: entity_payload(body.as_deref(), entity.context.spec()),
+                payload: entity_payload(body.as_deref(), entity.context.spec(), request.operation),
                 triggering: request.triggering,
                 linked_map: None,
             })
@@ -310,7 +322,7 @@ impl FederationService {
             registration: csr,
             url,
             method,
-            payload: entity_payload(body.as_deref(), entity.context.spec()),
+            payload: entity_payload(body.as_deref(), entity.context.spec(), request.operation),
             triggering: request.triggering,
             linked_map: None,
         })
@@ -320,10 +332,13 @@ impl FederationService {
 
 /// What one single-entity fallback write carries: the entity's document, or
 /// nothing for a deletion, under the context the entity was submitted with.
-const fn entity_payload<'a>(body: Option<&'a EntityDocument>, context: &'a ContextSpec) -> WritePayload<'a> {
+const fn entity_payload<'a>(body: Option<&'a EntityDocument>, context: &'a ContextSpec, operation: BatchProvisionOperation) -> WritePayload<'a> {
     match body {
         Some(document) => WritePayload::Document {
-            content: ForwardedContent::Entity(document),
+            content: match operation.item_reading() {
+                ItemReading::Merge => ForwardedContent::Merge(document),
+                ItemReading::Attributes => ForwardedContent::Entity(document),
+            },
             element: AdaptedPayload::Entity,
             context,
         },

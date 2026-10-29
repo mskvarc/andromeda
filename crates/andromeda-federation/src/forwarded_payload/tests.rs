@@ -1,6 +1,6 @@
 use crate::{
     forwarded_content::AttributeWrite,
-    forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_identifiers_payload, build_items_payload},
+    forwarded_payload::{ForwardedPayload, ItemBody, ItemReading, OutgoingBody, build_forwarded_payload, build_identifiers_payload, build_items_payload},
     forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, decide_for_items},
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
@@ -348,11 +348,11 @@ async fn an_inline_context_of_absolute_references_travels_as_written() {
 }
 
 /// The batch payload of one registration, each item under its own context.
-async fn items_payload(entries: &[(&str, &str)], items: Vec<ItemBody<'_>>) -> ForwardedPayload {
+async fn items_payload(entries: &[(&str, &str)], items: Vec<ItemBody<'_>>, reading: ItemReading) -> ForwardedPayload {
     let raw = pairs(entries);
     let info = ContextSourceInfo::try_from(raw.as_slice()).expect("valid info");
     let decision = decide_for_items(items.iter().map(|item| item.context), &info).expect("decides");
-    build_items_payload(&engine(), &decision, items, &info).await.expect("payload builds")
+    build_items_payload(&engine(), &decision, items, reading, &info).await.expect("payload builds")
 }
 
 /// Items submitted under different contexts have no single context a `Link`
@@ -383,7 +383,7 @@ async fn items_under_different_contexts_are_forwarded_under_one_core_link_each_f
             context: &configured,
         },
     ];
-    let forwarded = items_payload(&[], items).await;
+    let forwarded = items_payload(&[], items, ItemReading::Attributes).await;
     pretty_assertions::assert_eq!(forwarded.media_type, ResponseMediaType::Json);
     pretty_assertions::assert_eq!(forwarded.link_context.as_ref().map(IriBuf::as_str), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     let body = forwarded_json(&forwarded);
@@ -414,7 +414,7 @@ async fn a_forwarded_batch_spells_each_item_under_its_context() {
             context: &configured,
         },
     ];
-    let forwarded = items_payload(&[("contentType", "application/ld+json")], items).await;
+    let forwarded = items_payload(&[("contentType", "application/ld+json")], items, ItemReading::Attributes).await;
     assert!(forwarded.link_context.is_none());
     let body = forwarded_json(&forwarded);
     pretty_assertions::assert_eq!(body[0]["@context"], json!(USER_CONTEXT));
@@ -679,4 +679,79 @@ async fn a_partial_update_fragment_is_forwarded_as_the_client_wrote_it() {
     )
     .await;
     pretty_assertions::assert_eq!(forwarded_json(&payload), written);
+}
+
+/// The document the admission expands the merge fragment `written` to under
+/// `spec`, whose attributes are merge members.
+async fn merge_expanded(spec: &ContextSpec, written: &Value) -> EntityDocument {
+    let engine = engine();
+    let expansion = EntityExpansion::prepare(&engine, spec).await.expect("the context processes");
+    let text = JsonLiteral::admit(&written.to_string()).expect("a JSON text");
+    let patch = EntityPatch::<MergeMember>::from_fragment_node(text.piece()).expect("a merge fragment");
+    expansion
+        .entity_patch(&patch, Normalization::MemberDeletions)
+        .await
+        .expect("the fragment expands")
+}
+
+/// The attribute fragments Merge Entity and Batch Entity Merge accept that a
+/// whole Attribute reading refuses or rewrites (clause 5.5.12).
+fn merge_fragments() -> [Value; 3] {
+    [
+        json!({"speed": {"observedAt": "2024-01-01T00:00:00Z"}}),
+        json!({"speed": {"accuracy": {"type": "Property", "value": 1}}}),
+        json!({"speed": "urn:ngsi-ld:null"}),
+    ]
+}
+
+/// Clause 5.6.17: a Merge Entity fragment whose attribute holds only
+/// `observedAt`, only a sub-attribute, or the NGSI-LD Null is forwarded as
+/// written, rather than read as a whole Attribute.
+#[tokio::test]
+async fn a_merge_entity_fragment_is_forwarded_as_written() {
+    let inbound = link_spec(USER_CONTEXT);
+    for written in merge_fragments() {
+        let document = merge_expanded(&inbound, &written).await;
+        let payload = payload(&inbound, &[], Some(OutgoingBody::Merge { document: &document })).await;
+        pretty_assertions::assert_eq!(forwarded_json(&payload), written);
+    }
+}
+
+/// Clause 5.6.20: the same three fragments as the items of a Batch Entity
+/// Merge are forwarded as written.
+#[tokio::test]
+async fn the_items_of_a_batch_entity_merge_are_forwarded_as_written() {
+    let mut contexts = BatchContexts::per_entity();
+    let user = contexts.context_of(Some(literal(&json!(USER_CONTEXT))));
+    for written in merge_fragments() {
+        let mut item = written.clone(); // clone: the fixture keeps its written form
+        item["id"] = json!("urn:ngsi-ld:Vehicle:1");
+        let document = merge_expanded(user.spec(), &item).await;
+        let items = vec![ItemBody {
+            document: Cow::Owned(document),
+            context: &user,
+        }];
+        let forwarded = items_payload(&[], items, ItemReading::Merge).await;
+        pretty_assertions::assert_eq!(forwarded_json(&forwarded), json!([item]));
+    }
+}
+
+/// Create Entity and the other whole-Attribute operations keep reading an
+/// attribute as a whole Attribute: a fragment naming a bare value is a
+/// Property.
+#[tokio::test]
+async fn a_whole_attribute_batch_keeps_the_full_attribute_reading() {
+    let mut contexts = BatchContexts::per_entity();
+    let user = contexts.context_of(Some(literal(&json!(USER_CONTEXT))));
+    let document = expanded(
+        user.spec(),
+        &json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}}),
+    )
+    .await;
+    let items = vec![ItemBody {
+        document: Cow::Owned(document),
+        context: &user,
+    }];
+    let forwarded = items_payload(&[], items, ItemReading::Attributes).await;
+    pretty_assertions::assert_eq!(forwarded_json(&forwarded)[0]["speed"], json!({"type": "Property", "value": 10}));
 }
