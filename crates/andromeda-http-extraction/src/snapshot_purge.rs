@@ -8,7 +8,7 @@
 
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query, query_refusal::QueryRefusal};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
-use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError, parse_snapshot_q};
+use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::{
     query_parameter::{QueryParameter, QueryParameterSet},
@@ -70,7 +70,7 @@ fn resolve_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, ExtractorRejecti
 fn parse_purge_query(parts: &Parts) -> Result<SnapshotPurgeQ, SnapshotPurgeRefusal> {
     let raw: RawPurgeQuery = decode_query(parts.uri.query().unwrap_or(""))?;
     let q_value = raw.q.ok_or(SnapshotPurgeRefusal::MissingQ)?;
-    let filter = parse_snapshot_q(&q_value).map_err(SnapshotPurgeRefusal::InvalidQ)?;
+    let filter = q_value.parse::<SnapshotPurgeFilter>().map_err(SnapshotPurgeRefusal::InvalidQ)?;
     Ok(SnapshotPurgeQ(filter))
 }
 
@@ -138,6 +138,6 @@ mod tests {
             .expect("request");
         let (mut parts, ()) = req.into_parts();
         let SnapshotPurgeQ(filter) = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect("should parse");
-        pretty_assertions::assert_eq!(filter.terms.len(), 1);
+        pretty_assertions::assert_eq!(filter, "snapshotPriority==5".parse::<SnapshotPurgeFilter>().expect("a purge filter"));
     }
 }

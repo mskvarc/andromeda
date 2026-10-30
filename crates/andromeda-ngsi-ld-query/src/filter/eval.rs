@@ -47,6 +47,22 @@ pub fn predicate_holds_in<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(pred:
     })
 }
 
+/// Evaluate a parsed `q` expression (clause 4.9) against a resource that is
+/// not an entity, whose members `member_of` reads.
+///
+/// Such a resource, a Snapshot that Purge Snapshots selects by its members
+/// (clause 5.16.7.3) for one, holds at most one value per member, so
+/// `member_of` answers the one target a Query Term's path names, or `None`
+/// when the resource does not hold that member. Clause 4.9 makes every
+/// operator require the target element, `unequal` and `notPatternOp`
+/// included, so a member the resource does not hold matches no comparison.
+pub fn evaluate_members<'t, M>(expr: &Expr, member_of: &M) -> bool
+where
+    M: Fn(&QueryPath) -> Option<ResolvedTarget<'t>>,
+{
+    expression_holds(expr, &|path| member_of(path).into_iter().collect(), &|path| member_of(path).is_some())
+}
+
 /// Evaluate the boolean structure of an expression over the targets
 /// `targets_of` resolves each Query Term's attribute axis to, with
 /// `element_exists` answering a bare attribute path.
@@ -244,12 +260,14 @@ mod tests {
     use crate::{
         error::QueryError,
         filter::{
-            eval::{evaluate, predicate_holds_in},
+            eval::{evaluate, evaluate_members, predicate_holds_in},
             expansion::expand_q_expression,
             expression::Expr,
             json_key_attributes::JsonKeyAttributes,
             language_matching::LanguageMatching,
             parser::parse,
+            path::QueryPath,
+            target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
         },
         queried_entity::{
             expanded_fixture::{FixtureEntity, FixtureLinked},
@@ -258,8 +276,12 @@ mod tests {
         term_expander::TermExpander,
     };
     use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
     use serde_json::Value;
-    use std::future::{Future, ready};
+    use std::{
+        borrow::Cow,
+        future::{Future, ready},
+    };
 
     /// Whether an expanded entity satisfies an expression, read through the
     /// entity traits.
@@ -1408,5 +1430,33 @@ mod tests {
         assert!(!holds_under(&not_lift, &entity, LanguageMatching::ExtendedFiltering));
         let not_door = parse("\"https://example.com/name\"[en]!=\"Door\"").unwrap();
         assert!(holds_under(&not_door, &entity, LanguageMatching::ExtendedFiltering));
+    }
+
+    /// A resource that is not an entity answers each Query Term from the one
+    /// member its path names, and clause 4.9 requires the target element under
+    /// every operator, so a member it does not hold matches no comparison,
+    /// `unequal` included.
+    #[test]
+    fn a_resource_member_is_compared_and_one_it_does_not_hold_matches_nothing() {
+        let member_of = |path: &QueryPath| match path.terminal().attr.as_str() {
+            "priority" => Some(ResolvedTarget {
+                value: TargetValue::Number(Cow::Owned(7.into())),
+                origin: TargetOrigin::AttributeValue,
+                reading: MultiValueReading::WholeArray,
+            }),
+            _absent => None,
+        };
+        for (q, expected) in [
+            ("priority>5", true),
+            ("priority==1..6", false),
+            ("priority>5;(priority<7|priority==7)", true),
+            ("priority", true),
+            ("endpoint", false),
+            ("endpoint!=\"x\"", false),
+            ("endpoint!~=\"x\"", false),
+            ("endpoint!=\"x\"|priority==7", true),
+        ] {
+            assert_eq!(evaluate_members(&parse(q).unwrap(), &member_of), expected, "{q}");
+        }
     }
 }

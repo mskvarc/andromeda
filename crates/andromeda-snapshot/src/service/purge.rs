@@ -7,9 +7,10 @@ use andromeda_ngsi_ld_model::snapshot_filter::SnapshotPurgeFilter;
 impl SnapshotService {
     /// Purge snapshots matching a typed filter (ETSI GS CIM 009 clause 5.16.7).
     ///
-    /// Matches candidate identifiers, then deletes each row individually so
-    /// per-row failures can be surfaced in a 207 Multi-Status response
-    /// (clause 6.36.3.2). Returns a [`PurgeOutcome`] describing the result:
+    /// Decides the filter against every snapshot, then deletes each selected
+    /// one individually so per-row failures can be surfaced in a 207
+    /// Multi-Status response (clause 6.36.3.2). Returns a [`PurgeOutcome`]
+    /// describing the result:
     ///
     /// - [`PurgeOutcome::NoMatch`] when no snapshots match (maps to 404).
     /// - [`PurgeOutcome::FullSuccess`] when every matched row was deleted
@@ -19,11 +20,18 @@ impl SnapshotService {
     ///
     /// # Errors
     ///
-    /// Returns the store's own failure when matching the filter does not
+    /// Returns the store's own failure when reading the snapshots does not
     /// complete. A per-row deletion failure is collected into the returned
     /// outcome instead of aborting the purge.
     pub async fn purge_by_query(&self, filter: &SnapshotPurgeFilter) -> Result<PurgeOutcome, SnapshotError> {
-        let matched = self.repo.match_by_filter(filter).await?;
+        let matched: Vec<Identifier> = self
+            .repo
+            .purge_candidates()
+            .await?
+            .into_iter()
+            .filter(|candidate| filter.selects(candidate))
+            .map(|candidate| candidate.id)
+            .collect();
         if matched.is_empty() {
             return Ok(PurgeOutcome::NoMatch);
         }

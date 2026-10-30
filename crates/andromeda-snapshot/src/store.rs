@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_filter::SnapshotPurgeFilter,
+    snapshot_filter::PurgeCandidate,
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -227,14 +227,10 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Identifiers of all snapshots matching a purge filter (clause 5.16.7).
-    fn match_by_filter<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        filter: &'life1 SnapshotPurgeFilter,
-    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
+    /// Every snapshot, as the purge filter reads it (clause 5.16.7).
+    fn purge_candidates<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<PurgeCandidate>, SnapshotError>>
     where
         'life0: 'async_trait,
-        'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Delete one snapshot found by a purge filter. Returns rows affected.

@@ -30,7 +30,6 @@ pub mod order_geography;
 mod page_shape;
 pub mod result_ordering;
 pub mod selector_predicate;
-pub mod snapshot_purge;
 pub mod value_walk_page;
 mod walked_column;
 
@@ -39,7 +38,6 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-space",
         "andromeda-ngsi-ld-lexicon",
-        "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-branch",

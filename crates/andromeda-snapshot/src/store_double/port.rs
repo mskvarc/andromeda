@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifie
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_filter::SnapshotPurgeFilter,
+    snapshot_filter::PurgeCandidate,
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -249,15 +249,11 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { promoted })
     }
 
-    fn match_by_filter<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        _filter: &'life1 SnapshotPurgeFilter,
-    ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, SnapshotError>>
+    fn purge_candidates<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<PurgeCandidate>, SnapshotError>>
     where
         'life0: 'async_trait,
-        'life1: 'async_trait,
     {
-        unused("match_by_filter")
+        unused("purge_candidates")
     }
 
     fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>

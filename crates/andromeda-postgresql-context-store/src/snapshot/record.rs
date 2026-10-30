@@ -10,7 +10,7 @@ use crate::{
     snapshot::{
         branch_schema::{promote_staging_schema, publish_empty_branch},
         json_value::optional_json,
-        mapper::row_to_snapshot,
+        mapper::{row_to_purge_candidate, row_to_snapshot},
         metadata_change::MetadataChange,
         status_code::stored_status,
         status_outbox::enqueue_terminal_notification,
@@ -24,16 +24,15 @@ use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifie
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_filter::SnapshotPurgeFilter,
+    snapshot_filter::PurgeCandidate,
 };
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
-use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 use url::Url;
 
 /// The stored-snapshot projection every read shares, over the control record
@@ -266,20 +265,20 @@ pub(crate) async fn update_status(
     Ok(result.rows_affected())
 }
 
-/// The identifiers of every snapshot a purge filter (clause 5.16.7) matches.
-pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPurgeFilter) -> Result<Vec<Identifier>, SnapshotError> {
-    let rows = build_match_query(filter)
+/// Every snapshot, as the purge filter (clause 5.16.7) reads it.
+pub(crate) async fn read_purge_candidates(pool: &PgPool) -> Result<Vec<PurgeCandidate>, SnapshotError> {
+    let rows = Query::select()
+        .columns([Snapshots::Id, Snapshots::SnapshotLifetime, Snapshots::SnapshotPriority, Snapshots::Endpoint])
+        .from(Snapshots::Table)
+        .to_owned()
         .to_query()
         .fetch_all(pool)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let mut ids = Vec::with_capacity(rows.len());
-    for row in &rows {
-        let raw: String = row.try_get("id").map_err(|error| persistence_error::<SnapshotError>(error))?;
-        let parsed = raw.parse::<Identifier>().map_err(|e| SnapshotError::from(undecodable(&e)))?;
-        ids.push(parsed);
-    }
-    Ok(ids)
+    rows.iter()
+        .map(row_to_purge_candidate)
+        .collect::<Result<_, _>>()
+        .map_err(|error| persistence_error::<SnapshotError>(error))
 }
 
 /// Stamp the last-used instant of one Snapshot on its preparation row, unless

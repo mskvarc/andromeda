@@ -13,7 +13,7 @@ use crate::snapshot::{
     quota::enforce_snapshot_quotas,
     reap::{delete_expired_snapshots, delete_snapshot},
     record::{
-        match_snapshots_by_filter,
+        read_purge_candidates,
         read_snapshot,
         resolve_snapshot_staging_target,
         resolve_snapshot_target,
@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifie
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_filter::SnapshotPurgeFilter,
+    snapshot_filter::PurgeCandidate,
 };
 use andromeda_snapshot::{
     branch_condition::BranchCondition,
@@ -125,8 +125,8 @@ impl SnapshotStore for SnapshotRepository {
         delete_snapshot(self.pool(), id).await
     }
 
-    async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<Identifier>, SnapshotError> {
-        match_snapshots_by_filter(self.pool(), filter).await
+    async fn purge_candidates(&self) -> Result<Vec<PurgeCandidate>, SnapshotError> {
+        read_purge_candidates(self.pool()).await
     }
 
     async fn delete_one(&self, id: &Identifier) -> Result<u64, SnapshotError> {

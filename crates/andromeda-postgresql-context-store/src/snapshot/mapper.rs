@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority},
+    snapshot_filter::PurgeCandidate,
 };
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
@@ -60,30 +61,10 @@ pub fn row_query_context(row: &PgRow) -> Result<JsonLiteral, ContextStoreError> 
 /// back into its domain type: the Snapshot URI, the status code, the lifetime
 /// duration, the priority, the endpoint URL, or one of the JSON-encoded members.
 pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
-    let id_str: String = row.try_get("id")?;
-    let id = id_str.parse::<Identifier>().map_err(StoredSnapshotError::Id)?;
-
     // An unassigned status code is a typed decode failure naming the registry
     // rather than an opaque sqlx one.
     let status_code: i16 = row.try_get("status")?;
     let status = status_of(SnapshotStatusCode::try_from(status_code).map_err(StoredSnapshotError::Status)?);
-
-    let snapshot_lifetime = row
-        .try_get::<Option<String>, _>("snapshot_lifetime")?
-        .as_deref()
-        .map(str::parse::<Iso8601Duration>)
-        .transpose()
-        .map_err(StoredSnapshotError::Lifetime)?;
-    // The `snapshot_priority` column is `SMALLINT`; narrow it back to the byte
-    // the domain type validates before the domain range check runs.
-    let snapshot_priority_raw: i16 = row.try_get("snapshot_priority")?;
-    let snapshot_priority_byte = u8::try_from(snapshot_priority_raw).map_err(StoredSnapshotError::PriorityWidth)?;
-    let snapshot_priority = SnapshotPriority::try_from(snapshot_priority_byte).map_err(StoredSnapshotError::Priority)?;
-    let endpoint = row
-        .try_get::<Option<String>, _>("endpoint")?
-        .map(|value| Url::parse(&value))
-        .transpose()
-        .map_err(StoredSnapshotError::Endpoint)?;
 
     let queries_details: Option<Vec<ExecutionResultDetails>> =
         deserialize_json_column(row, SnapshotPreparation::QueriesDetails, StoredSnapshotError::QueriesDetails)?;
@@ -95,12 +76,12 @@ pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
     let receiver_info: Option<Vec<KeyValuePair>> = deserialize_json_column(row, Snapshots::ReceiverInfo, StoredSnapshotError::ReceiverInfo)?;
 
     Ok(Snapshot::builder()
-        .id(id)
+        .id(stored_id(row)?)
         .snapshot_queries(snapshot_queries)
         .snapshot_temporal_queries(snapshot_temporal_queries)
-        .snapshot_lifetime(snapshot_lifetime)
-        .snapshot_priority(snapshot_priority)
-        .endpoint(endpoint)
+        .snapshot_lifetime(stored_lifetime(row)?)
+        .snapshot_priority(stored_priority(row)?)
+        .endpoint(stored_endpoint(row)?)
         .receiver_info(receiver_info)
         .status(status)
         .queries_details(queries_details)
@@ -110,4 +91,57 @@ pub fn row_to_snapshot(row: &PgRow) -> Result<Snapshot, ContextStoreError> {
         .expires_at(row.try_get("expires_at")?)
         .last_used_at(row.try_get("last_used_at")?)
         .build())
+}
+
+/// Convert a `snapshots` row into what the purge filter reads of the Snapshot
+/// (clause 5.16.7).
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when a column cannot be read, and
+/// [`ContextStoreError::StoredSnapshot`] when the Snapshot URI, the lifetime
+/// duration, the priority or the endpoint URL no longer parses back into its
+/// domain type.
+pub fn row_to_purge_candidate(row: &PgRow) -> Result<PurgeCandidate, ContextStoreError> {
+    Ok(PurgeCandidate::builder()
+        .id(stored_id(row)?)
+        .snapshot_lifetime(stored_lifetime(row)?)
+        .snapshot_priority(stored_priority(row)?)
+        .endpoint(stored_endpoint(row)?)
+        .build())
+}
+
+/// The Snapshot URI a row's `id` column holds.
+fn stored_id(row: &PgRow) -> Result<Identifier, ContextStoreError> {
+    let id: String = row.try_get(Snapshots::Id.unquoted())?;
+    Ok(id.parse::<Identifier>().map_err(StoredSnapshotError::Id)?)
+}
+
+/// The lifetime a row's `snapshot_lifetime` column holds.
+fn stored_lifetime(row: &PgRow) -> Result<Option<Iso8601Duration>, ContextStoreError> {
+    Ok(row
+        .try_get::<Option<String>, _>(Snapshots::SnapshotLifetime.unquoted())?
+        .as_deref()
+        .map(str::parse::<Iso8601Duration>)
+        .transpose()
+        .map_err(StoredSnapshotError::Lifetime)?)
+}
+
+/// The priority a row's `snapshot_priority` column holds.
+///
+/// The column is `SMALLINT`, so it is narrowed back to the byte the domain
+/// type validates before the domain range check runs.
+fn stored_priority(row: &PgRow) -> Result<SnapshotPriority, ContextStoreError> {
+    let raw: i16 = row.try_get(Snapshots::SnapshotPriority.unquoted())?;
+    let byte = u8::try_from(raw).map_err(StoredSnapshotError::PriorityWidth)?;
+    Ok(SnapshotPriority::try_from(byte).map_err(StoredSnapshotError::Priority)?)
+}
+
+/// The endpoint a row's `endpoint` column holds.
+fn stored_endpoint(row: &PgRow) -> Result<Option<Url>, ContextStoreError> {
+    Ok(row
+        .try_get::<Option<String>, _>(Snapshots::Endpoint.unquoted())?
+        .map(|value| Url::parse(&value))
+        .transpose()
+        .map_err(StoredSnapshotError::Endpoint)?)
 }

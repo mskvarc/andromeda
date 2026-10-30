@@ -1673,7 +1673,6 @@ dependencies = [
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-branch",
