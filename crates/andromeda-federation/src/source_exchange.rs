@@ -3,6 +3,7 @@
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     cooldown::{AnswerKind, FailureScope},
     guarded_send::GuardedSendError,
     outcome::TransportFailure,
@@ -60,11 +61,14 @@ enum RegistryEffect {
 }
 
 /// Sort an attempt's outcome for the cooldown registry: a 404 is an answer
-/// clause 6.3.17 does not count as abnormal, and a transport failure is the
+/// clause 6.3.17 does not count as abnormal, neither is the error answer
+/// `acted_on` the operation follows up, and a transport failure is the
 /// endpoint's.
-fn registry_effect(outcome: &Result<SentResponse, TransportFailure>) -> RegistryEffect {
+fn registry_effect(outcome: &Result<SentResponse, TransportFailure>, acted_on: ActedOnAnswer) -> RegistryEffect {
     match outcome {
-        Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => RegistryEffect::Answered(AnswerKind::Succeeded),
+        Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND || acted_on.covers(sent.status) => {
+            RegistryEffect::Answered(AnswerKind::Succeeded)
+        }
         Ok(_) => RegistryEffect::Answered(AnswerKind::ErrorStatus),
         Err(_) => RegistryEffect::Failed,
     }
@@ -76,11 +80,13 @@ impl FederationService {
     /// Every attempt is recorded on the registration's clause 5.2.9 health
     /// members and on the cooldown registry. A 404 is not a failure: clause
     /// 6.3.17 says a source answering 404 is not behaving abnormally, so it
-    /// neither flips `status` nor opens a cooldown window.
+    /// neither flips `status` nor opens a cooldown window, and neither does
+    /// the error answer `acted_on` the operation follows up.
     pub(crate) async fn send_request(
         &self,
         registration: &ContextSourceRegistration,
         request: reqwest::RequestBuilder,
+        acted_on: ActedOnAnswer,
     ) -> Result<SentResponse, TransportFailure> {
         let timeout = self.timeout_for(registration);
         let outcome = match self.send_guarded(request.timeout(timeout)).await {
@@ -115,7 +121,7 @@ impl FederationService {
             Err(GuardedSendError::Refused(refusal)) => Err(TransportFailure::Refused(refusal)),
             Err(GuardedSendError::Send(error)) => Err(classify_transport_failure(error, timeout)),
         };
-        let health = match registry_effect(&outcome) {
+        let health = match registry_effect(&outcome, acted_on) {
             RegistryEffect::Answered(AnswerKind::Succeeded) => {
                 self.cooldowns.record_answer(registration, AnswerKind::Succeeded);
                 ForwardingOutcome::Succeeded
@@ -162,6 +168,7 @@ fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> Trans
 )]
 mod tests {
     use crate::{
+        acted_on_answer::ActedOnAnswer,
         cooldown::AnswerKind,
         outcome::TransportFailure,
         source_exchange::{RegistryEffect, SentResponse, classify_transport_failure, registry_effect},
@@ -195,13 +202,13 @@ mod tests {
             .await
             .expect_err("nothing listens on the released port");
         let outcome: Result<SentResponse, TransportFailure> = Err(classify_transport_failure(refused, timeout));
-        pretty_assertions::assert_eq!(registry_effect(&outcome), RegistryEffect::Failed);
+        pretty_assertions::assert_eq!(registry_effect(&outcome, ActedOnAnswer::NoErrorAnswer), RegistryEffect::Failed);
     }
 
     #[test]
     fn a_500_cools_down_only_the_registration() {
         pretty_assertions::assert_eq!(
-            registry_effect(&Ok(answered(reqwest::StatusCode::INTERNAL_SERVER_ERROR))),
+            registry_effect(&Ok(answered(reqwest::StatusCode::INTERNAL_SERVER_ERROR)), ActedOnAnswer::NoErrorAnswer),
             RegistryEffect::Answered(AnswerKind::ErrorStatus)
         );
     }
@@ -209,8 +216,32 @@ mod tests {
     #[test]
     fn a_404_records_success() {
         pretty_assertions::assert_eq!(
-            registry_effect(&Ok(answered(reqwest::StatusCode::NOT_FOUND))),
+            registry_effect(&Ok(answered(reqwest::StatusCode::NOT_FOUND)), ActedOnAnswer::NoErrorAnswer),
             RegistryEffect::Answered(AnswerKind::Succeeded)
+        );
+    }
+
+    #[test]
+    fn an_already_exists_the_upsert_follows_up_records_success() {
+        pretty_assertions::assert_eq!(
+            registry_effect(&Ok(answered(reqwest::StatusCode::CONFLICT)), ActedOnAnswer::AlreadyExists),
+            RegistryEffect::Answered(AnswerKind::Succeeded)
+        );
+    }
+
+    #[test]
+    fn an_already_exists_to_a_plain_forwarded_create_records_a_failure() {
+        pretty_assertions::assert_eq!(
+            registry_effect(&Ok(answered(reqwest::StatusCode::CONFLICT)), ActedOnAnswer::NoErrorAnswer),
+            RegistryEffect::Answered(AnswerKind::ErrorStatus)
+        );
+    }
+
+    #[test]
+    fn another_error_status_records_a_failure_even_where_already_exists_is_acted_on() {
+        pretty_assertions::assert_eq!(
+            registry_effect(&Ok(answered(reqwest::StatusCode::INTERNAL_SERVER_ERROR)), ActedOnAnswer::AlreadyExists),
+            RegistryEffect::Answered(AnswerKind::ErrorStatus)
         );
     }
 }

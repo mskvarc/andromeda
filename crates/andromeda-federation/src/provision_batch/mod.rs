@@ -25,9 +25,17 @@ mod narrowing;
 mod registration_fixture;
 /// The request a single-entity fallback write sends.
 mod single_write;
+/// The clause 5.6.8.4 follow-up of an upsert, against a source that holds itself back after a failure.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod upsert_follow_up_tests;
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     error::FederationError,
     forwarded_content::ForwardedContent,
     forwarded_payload::{ItemBody, ItemReading},
@@ -251,6 +259,7 @@ impl FederationService {
                         payload,
                         triggering: request.triggering,
                         linked_map: None,
+                        acted_on: ActedOnAnswer::NoErrorAnswer,
                     })
                     .await;
                 let outcomes = batch_outcomes(&ids, &outcome).into_iter().collect::<HashMap<_, _>>();
@@ -306,6 +315,7 @@ impl FederationService {
                 payload: entity_payload(body.as_deref(), entity.context.spec(), request.operation),
                 triggering: request.triggering,
                 linked_map: None,
+                acted_on: write.acted_on_answer(),
             })
             .await;
         let SingleWrite::CreateThenOnConflict(follow_up) = write else {
@@ -325,6 +335,7 @@ impl FederationService {
             payload: entity_payload(body.as_deref(), entity.context.spec(), request.operation),
             triggering: request.triggering,
             linked_map: None,
+            acted_on: follow_up.acted_on_answer(),
         })
         .await
     }

@@ -9,6 +9,7 @@
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     error::FederationError,
     forwarded_payload::OutgoingBody,
     forwarding_url::forwarding_url,
@@ -183,7 +184,7 @@ impl FederationService {
             Ok(request) => request,
             Err(error) => return unreachable(error),
         };
-        match self.send_request(registration, request).await {
+        match self.send_request(registration, request, ActedOnAnswer::NoErrorAnswer).await {
             Ok(sent) => ForwardedWriteOutcome::of_sent(&registration.id, &sent),
             Err(failure) => ForwardedWriteOutcome::Transport(failure),
         }

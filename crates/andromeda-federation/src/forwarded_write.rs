@@ -7,6 +7,7 @@
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     error::FederationError,
     forwarded_content::{AttributeWrite, ForwardedContent},
     forwarded_payload::{ItemBody, ItemReading, OutgoingBody, build_identifiers_payload},
@@ -143,6 +144,9 @@ pub(crate) struct ForwardWrite<'a> {
     pub(crate) triggering: TriggeringRequest<'a>,
     /// The `NGSILD-EntityMap` the forwarded request carries (clause 5.5.14).
     pub(crate) linked_map: Option<&'a Identifier>,
+    /// The error answer the operation follows up instead of counting it a
+    /// failure of the source.
+    pub(crate) acted_on: ActedOnAnswer,
 }
 
 impl FederationService {
@@ -184,6 +188,7 @@ impl FederationService {
                 payload,
                 triggering,
                 linked_map: linked_map.as_ref(),
+                acted_on: ActedOnAnswer::NoErrorAnswer,
             })
             .await;
         if let ForwardedWriteOutcome::Transport(failure) = &outcome {
@@ -206,6 +211,7 @@ impl FederationService {
             payload,
             triggering,
             linked_map,
+            acted_on,
         } = write;
         if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
@@ -250,7 +256,7 @@ impl FederationService {
             Err(error) => return unreachable(error),
         };
 
-        let sent = match self.send_request(registration, request).await {
+        let sent = match self.send_request(registration, request, acted_on).await {
             Ok(sent) => sent,
             Err(failure) => return ForwardedWriteOutcome::Transport(failure),
         };

@@ -1,7 +1,7 @@
 //! The clause 5.6.7.4 to 5.6.20.4 decision ladder: how one registration is
 //! driven for a batch operation it may not advertise.
 
-use crate::{operation::ForwardingOperation, provision_batch::BatchProvisionOperation};
+use crate::{acted_on_answer::ActedOnAnswer, operation::ForwardingOperation, provision_batch::BatchProvisionOperation};
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::options::UpsertMode;
@@ -35,6 +35,24 @@ pub(super) enum SingleWrite {
     Delete,
     /// Merge Entity (clause 5.6.17).
     Merge,
+}
+
+impl SingleWrite {
+    /// The error answer the batch operation follows up rather than counting
+    /// it a failure of the source: the `AlreadyExists` a create of an upsert
+    /// answers is a step of clause 5.6.8.4, whatever follow-up the update
+    /// mode calls for.
+    pub(super) const fn acted_on_answer(self) -> ActedOnAnswer {
+        match self {
+            SingleWrite::CreateThenOnConflict(_) => ActedOnAnswer::AlreadyExists,
+            SingleWrite::Create
+            | SingleWrite::Replace
+            | SingleWrite::UpdateAttributes
+            | SingleWrite::AppendAttributesNoOverwrite
+            | SingleWrite::Delete
+            | SingleWrite::Merge => ActedOnAnswer::NoErrorAnswer,
+        }
+    }
 }
 
 /// What a batch upsert does after a source reports `AlreadyExists` on the

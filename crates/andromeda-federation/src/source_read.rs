@@ -4,6 +4,7 @@
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     cache::{CacheKey, Cacheability, ForwardedGetCache},
     error::FederationError,
     forwarded_payload::OutgoingBody,
@@ -116,7 +117,7 @@ impl FederationService {
             Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
 
-        let sent = match self.send_request(registration, request).await {
+        let sent = match self.send_request(registration, request, ActedOnAnswer::NoErrorAnswer).await {
             Ok(sent) => sent,
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };
@@ -178,7 +179,7 @@ impl FederationService {
             Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
 
-        let sent = match self.send_request(registration, request).await {
+        let sent = match self.send_request(registration, request, ActedOnAnswer::NoErrorAnswer).await {
             Ok(sent) => sent,
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };

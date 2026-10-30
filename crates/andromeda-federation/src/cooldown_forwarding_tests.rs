@@ -3,6 +3,7 @@
 
 use crate::{
     FederationService,
+    acted_on_answer::ActedOnAnswer,
     cache::Cacheability,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_write::{ForwardWrite, WritePayload},
@@ -117,6 +118,7 @@ async fn read_then_write(source: &MockServer, registration: &ContextSourceRegist
             payload: WritePayload::Empty(&context),
             triggering: TriggeringRequest::default(),
             linked_map: None,
+            acted_on: ActedOnAnswer::NoErrorAnswer,
         })
         .await
 }
