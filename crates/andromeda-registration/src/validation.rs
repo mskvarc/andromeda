@@ -121,12 +121,7 @@ mod tests {
     #[test]
     fn a_custom_context_source_info_that_is_not_an_http_header_is_rejected() {
         let information = information();
-        for pairs in [
-            vec![pair("Bad Name", "x")],
-            vec![pair("X-Api-Key", "a\nb")],
-            vec![pair("NGSILD-Tenant", "t1")],
-            vec![pair("ngsild-tenant", "t1")],
-        ] {
+        for pairs in [vec![pair("Bad Name", "x")], vec![pair("X-Api-Key", "a\nb")]] {
             let shape = RegistrationShape {
                 mode: ForwardingMode::Inclusive,
                 information: &information,
@@ -136,7 +131,12 @@ mod tests {
             };
             assert!(validate_shape(&shape).is_err(), "{pairs:?} must be rejected");
         }
-        let valid = [pair("X-Api-Key", "secret"), pair("Authorization", "urn:ngsi-ld:request")];
+        let valid = [
+            pair("X-Api-Key", "secret"),
+            pair("Authorization", "urn:ngsi-ld:request"),
+            pair("NGSILD-Tenant", "t1"),
+            pair("Content-Length", "10"),
+        ];
         let shape = RegistrationShape {
             mode: ForwardingMode::Inclusive,
             information: &information,

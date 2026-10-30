@@ -206,6 +206,12 @@ mod tests {
 
     /// A registration naming `tenant`, or no tenant at all.
     fn registration(tenant: Option<&str>) -> ContextSourceRegistration {
+        registration_with_info(tenant, &[])
+    }
+
+    /// A registration naming `tenant`, or no tenant at all, whose
+    /// `contextSourceInfo` holds `pairs`.
+    fn registration_with_info(tenant: Option<&str>, pairs: &[(&str, &str)]) -> ContextSourceRegistration {
         let mut document = json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
@@ -217,6 +223,9 @@ mod tests {
         });
         if let Some(tenant) = tenant {
             document["tenant"] = json!(tenant);
+        }
+        if !pairs.is_empty() {
+            document["contextSourceInfo"] = pairs.iter().map(|(key, value)| json!({"key": key, "value": value})).collect();
         }
         serde_json::from_value(document).expect("valid registration")
     }
@@ -240,9 +249,9 @@ mod tests {
         headers_of(request)
     }
 
-    /// The `NGSILD-Tenant` a request forwarded to `registration` carries when
-    /// the triggering request ran in the tenant `triggering_tenant`.
-    fn forwarded_tenant(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> Option<String> {
+    /// The headers of a body-less GET forwarded to `registration` when the
+    /// triggering request ran in the tenant `triggering_tenant`.
+    fn forwarded_get_headers(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> HeaderMap {
         let mut incoming = HeaderMap::new();
         if let Some(tenant) = triggering_tenant {
             incoming.insert("ngsild-tenant", HeaderValue::from_static(tenant));
@@ -253,8 +262,25 @@ mod tests {
             body: None,
         };
         forwarded_headers(registration, reqwest::Method::GET, &payload, &incoming)
-            .get("ngsild-tenant")
+    }
+
+    /// The `NGSILD-Tenant` values a request forwarded to `registration`
+    /// carries when the triggering request ran in the tenant
+    /// `triggering_tenant`.
+    fn forwarded_tenants(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> Vec<String> {
+        forwarded_get_headers(registration, triggering_tenant)
+            .get_all("ngsild-tenant")
+            .iter()
             .map(|value| value.to_str().expect("a valid header value").to_owned())
+            .collect()
+    }
+
+    /// The one `NGSILD-Tenant` a request forwarded to `registration` carries,
+    /// if any.
+    fn forwarded_tenant(registration: &ContextSourceRegistration, triggering_tenant: Option<&'static str>) -> Option<String> {
+        let tenants = forwarded_tenants(registration, triggering_tenant);
+        assert!(tenants.len() <= 1, "at most one tenant travels: {tenants:?}");
+        tenants.into_iter().next()
     }
 
     /// Every JSON-LD context link-value across all `Link` field lines.
@@ -339,6 +365,21 @@ mod tests {
         pretty_assertions::assert_eq!(forwarded_tenant(&registration, Some("client-tenant")), None);
     }
 
+    /// Clause 4.3.6.5: tenant information and binding-specific headers in
+    /// `contextSourceInfo` "shall be ignored", and clause 4.14 takes the
+    /// tenant from the registration's `tenant` member, so neither entry
+    /// reaches the source.
+    #[test]
+    fn tenant_and_content_length_entries_of_context_source_info_never_reach_the_source() {
+        let entries = [("NGSILD-Tenant", "info-tenant"), ("Content-Length", "99")];
+        for (tenant, expected) in [(Some("domain-tenant"), vec!["domain-tenant".to_owned()]), (None, Vec::new())] {
+            let registration = registration_with_info(tenant, &entries);
+            pretty_assertions::assert_eq!(forwarded_tenants(&registration, Some("client-tenant")), expected, "{tenant:?}");
+            let headers = forwarded_get_headers(&registration, Some("client-tenant"));
+            assert!(headers.get("content-length").is_none(), "{tenant:?}: {headers:?}");
+        }
+    }
+
     fn pair(key: &str, value: &str) -> KeyValuePair {
         KeyValuePair {
             key: key.into(),
@@ -391,11 +432,12 @@ mod tests {
             assert!(protected_header(&HeaderName::from_static(name)), "{name}");
         }
         assert!(!protected_header(&HeaderName::from_static("authorization")));
-        let pairs = [pair("Via", "1.1 attacker"), pair("Content-Length", "99")];
+        let pairs = [pair("Via", "1.1 attacker"), pair("Content-Length", "99"), pair("NGSILD-Tenant", "t1")];
         let info = ContextSourceInfo::try_from(pairs.as_slice()).expect("valid info");
         let forwarded = apply_custom_headers(reqwest::Client::new().get("http://peer/"), &info, None);
         let headers = headers_of(forwarded);
         assert!(headers.get("via").is_none());
         assert!(headers.get("content-length").is_none());
+        assert!(headers.get("ngsild-tenant").is_none());
     }
 }

@@ -15,7 +15,6 @@ use crate::{
     key_value_pair::KeyValuePair,
 };
 use andromeda_ngsi_ld_lexicon::spec_version::{SpecVersion, SpecVersionParseError};
-use http::HeaderName;
 use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{
     MediaType,
@@ -27,9 +26,6 @@ use mediatype::{
 use std::str::FromStr;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
-
-/// The tenant header, which clause 4.3.6.5 keeps out of `contextSourceInfo`.
-static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
 
 /// The `accept` key: the media type the source must answer in.
 pub const ACCEPT_KEY: &str = "accept";
@@ -82,9 +78,6 @@ pub enum ContextSourceInfoError {
     /// A pair outside the reserved keys is not an HTTP header field (clause 6.3.19).
     #[error("contextSourceInfo holds an invalid HTTP header: {0}")]
     CustomHeader(#[source] HttpHeaderFieldError),
-    /// The `NGSILD-Tenant` key: the tenant is never part of `contextSourceInfo` (clause 4.3.6.5).
-    #[error("contextSourceInfo must not carry the NGSILD-Tenant key")]
-    TenantKey,
 }
 
 /// The reserved keys of a `contextSourceInfo` array, read into their types, and
@@ -100,8 +93,11 @@ pub struct ContextSourceInfo {
     /// The specification version the forwarded payload shall conform to.
     pub ngsild_conformance: Option<SpecVersion>,
     /// Every pair outside the reserved keys as an HTTP header field, in
-    /// registration order. Binding-specific connection headers are kept: the
-    /// forwarder ignores them (clauses 4.3.6.5 and 6.3.19).
+    /// registration order. Tenant information and binding-specific headers
+    /// such as `Content-Length` are kept and admitted: clause 4.3.6.5 has them
+    /// ignored rather than refused, so the forwarder never sends them and the
+    /// tenant comes from the registration's `tenant` member alone (clauses
+    /// 4.14 and 6.3.19).
     pub custom: Vec<HttpHeaderField>,
 }
 
@@ -136,13 +132,7 @@ impl TryFrom<&[KeyValuePair]> for ContextSourceInfo {
                 NGSILD_CONFORMANCE_KEY => {
                     info.ngsild_conformance = Some(SpecVersion::from_str(&pair.value).map_err(ContextSourceInfoError::InvalidConformance)?);
                 }
-                _custom => {
-                    let field = HttpHeaderField::try_from(pair).map_err(ContextSourceInfoError::CustomHeader)?;
-                    if field.name == NGSILD_TENANT {
-                        return Err(ContextSourceInfoError::TenantKey);
-                    }
-                    info.custom.push(field);
-                }
+                _custom => info.custom.push(HttpHeaderField::try_from(pair).map_err(ContextSourceInfoError::CustomHeader)?),
             }
         }
         Ok(info)
@@ -213,10 +203,17 @@ mod tests {
         ));
     }
 
+    /// Clause 4.3.6.5: tenant information "shall not be part of
+    /// contextSourceInfo" and, "If present, such information shall be
+    /// ignored", so the key is admitted in any casing and left for the
+    /// forwarder to ignore.
     #[test]
-    fn the_tenant_key_is_refused_in_any_casing() {
+    fn a_tenant_key_is_accepted_in_any_casing_and_left_for_the_forwarder_to_ignore() {
         for key in ["NGSILD-Tenant", "ngsild-tenant", "Ngsild-TENANT"] {
-            assert!(matches!(custom_error(key, "t1"), ContextSourceInfoError::TenantKey), "{key} must be refused");
+            let pairs = [pair(key, "t1")];
+            let info = ContextSourceInfo::try_from(pairs.as_slice()).expect("tenant information is ignored, not refused");
+            pretty_assertions::assert_eq!(info.custom.len(), 1, "{key}");
+            pretty_assertions::assert_eq!(info.custom[0].name, "ngsild-tenant", "{key}");
         }
     }
 
