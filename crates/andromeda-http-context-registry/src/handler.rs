@@ -96,7 +96,11 @@ pub(crate) async fn create(
 pub(crate) async fn query(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    RequestPagination { policy: pagination, context }: RequestPagination,
+    RequestPagination {
+        policy: pagination,
+        context,
+        query,
+    }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let detail_level = match params.details {
@@ -112,6 +116,7 @@ pub(crate) async fn query(
                 count: CountPolicy::Omit,
                 pointers: PagePointers::OverRequestUri,
                 context: &context,
+                query: &query,
             },
         )
         .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;

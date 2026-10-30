@@ -93,6 +93,7 @@ impl QueriedPage {
             count,
             pointers,
             context: &pagination.context,
+            query: &pagination.query,
         };
         let window = pagination.policy.window(&params.page, request)?;
         Ok(QueriedPage::of(window, count, pointers, pagination.context))

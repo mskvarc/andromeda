@@ -6,7 +6,8 @@
 //! [`RequestPagination`], so no handler can page by a default of its own.
 //! It reads beside the policy the `@context` the request is paged under, which
 //! the policy holds a followed pointer to and every pointer the page answers
-//! with carries (clause 5.5.9.1).
+//! with carries (clause 5.5.9.1), and the digest of the query it names, which
+//! the policy holds a followed cursor to.
 
 use crate::{addressed_uri::addressed_uri, context::ContextUrl};
 use andromeda_http_response::{
@@ -14,19 +15,21 @@ use andromeda_http_response::{
     extraction_rejection::ExtractorRejection,
     internal_failure_summary::InternalFailureSummary,
 };
-use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, policy::PaginationPolicy};
+use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery, policy::PaginationPolicy};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use iri_rs::IriBuf;
 use thiserror::Error;
 
 /// The pagination policy the API assembly installed for this request, and the
-/// `@context` the request is paged under.
+/// `@context` and query the request is paged under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestPagination {
     /// The installed policy.
     pub policy: PaginationPolicy,
     /// The context the request's `Link` header named, or the core context.
     pub context: PageContext,
+    /// The digest of the query the request's URI names.
+    pub query: PageQuery,
 }
 
 /// The request reached a paged collection without the policy installed: a
@@ -56,6 +59,7 @@ where
             policy,
             // clone: the walk's context outlives the request that named it
             context: PageContext::new(context.link_context().cloned().unwrap_or_else(|| IriBuf::from(context.effective_core_url()))),
+            query: PageQuery::of(parts.uri.query()),
         })
     }
 }
@@ -68,7 +72,7 @@ where
 mod tests {
     use crate::pagination_policy::RequestPagination;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, policy::PaginationPolicy};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery, policy::PaginationPolicy};
     use axum::{
         extract::FromRequestParts,
         http::{Request, StatusCode},
@@ -88,8 +92,21 @@ mod tests {
             RequestPagination {
                 policy: PaginationPolicy::OffsetDefault,
                 context: PageContext::new(IriBuf::from(ContextSpec::none().effective_core_url())),
+                query: PageQuery::of(None),
             }
         );
+    }
+
+    /// The request is paged under the digest of the query its URI names.
+    #[tokio::test]
+    async fn the_request_is_paged_under_the_digest_of_its_query() {
+        let (mut parts, ()) = Request::get("/ngsi-ld/v1/entities?type=Vehicle&limit=2")
+            .body(())
+            .expect("a request")
+            .into_parts();
+        parts.extensions.insert(PaginationPolicy::OffsetDefault);
+        let extracted = RequestPagination::from_request_parts(&mut parts, &()).await.expect("installed");
+        assert_eq!(extracted.query, PageQuery::of(Some("type=Vehicle")));
     }
 
     /// The request is paged under the context its `Link` header named.

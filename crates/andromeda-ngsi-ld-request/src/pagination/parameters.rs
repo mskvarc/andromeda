@@ -5,6 +5,7 @@ use crate::{
     pagination::{
         cursor_request::{CursorRequest, CursorRequestError},
         page_context::{PageContext, PageContextError},
+        page_query::{PageQuery, PageQueryError},
     },
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -32,20 +33,24 @@ pub struct PageParameters {
     /// The `@context` the walk a followed pointer belongs to is read under,
     /// absent on a request that follows no pointer (clause 5.5.9.1).
     pub context: Option<PageContext>,
+    /// The digest of the query the cursor walk a followed pointer belongs to,
+    /// absent on a request that follows no cursor pointer (clause 5.5.9.1).
+    pub query: Option<PageQuery>,
 }
 
 query_parameter_set!(PageParameters {
     Limit,
     Offset,
     Cursor,
-    PageContext
+    PageContext,
+    PageQuery
 });
 
 impl PageParameters {
     /// Whether the request named none of the pagination parameters.
     #[must_use]
     pub const fn is_absent(&self) -> bool {
-        self.limit.is_none() && self.offset.is_none() && self.cursor.is_none() && self.context.is_none()
+        self.limit.is_none() && self.offset.is_none() && self.cursor.is_none() && self.context.is_none() && self.query.is_none()
     }
 }
 
@@ -72,6 +77,7 @@ impl From<OffsetPageParameters> for PageParameters {
             offset: page.offset,
             cursor: None,
             context: None,
+            query: None,
         }
     }
 }
@@ -101,6 +107,9 @@ pub enum PageParameterError {
     /// A `pageContext` that is not a context the broker emitted.
     #[error(transparent)]
     Context(#[from] PageContextError),
+    /// A `pageQuery` that is not a digest the broker emitted.
+    #[error(transparent)]
+    Query(#[from] PageQueryError),
 }
 
 /// The wire form of [`PageParameters`].
@@ -115,6 +124,9 @@ struct PageParametersWire {
     /// The raw `pageContext`.
     #[serde(rename = "pageContext")]
     context: Option<String>,
+    /// The raw `pageQuery`.
+    #[serde(rename = "pageQuery")]
+    query: Option<String>,
 }
 
 /// The wire form of [`OffsetPageParameters`].
@@ -150,6 +162,12 @@ impl<'de> Deserialize<'de> for PageParameters {
                 .map(PageContext::try_from)
                 .transpose()
                 .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
+            query: wire
+                .query
+                .as_deref()
+                .map(PageQuery::try_from)
+                .transpose()
+                .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
         })
     }
 }
@@ -183,6 +201,7 @@ fn page_number(raw: Option<&str>, parameter: PageParameter) -> Result<Option<u32
 mod tests {
     use crate::pagination::{
         cursor_request::CursorRequest,
+        page_query::PageQuery,
         parameters::{OffsetPageParameters, PageParameters},
     };
     use andromeda_ngsi_ld_query::cursor::PageCursor;
@@ -223,6 +242,7 @@ mod tests {
                 offset: Some(5),
                 cursor: None,
                 context: None,
+                query: None,
             }
         );
     }
@@ -283,6 +303,7 @@ mod tests {
                 offset: Some(6),
                 cursor: None,
                 context: None,
+                query: None,
             }
         );
     }
@@ -303,6 +324,21 @@ mod tests {
         let message = rejection("pageContext=not%20an%20iri");
         assert!(!message.contains("unknown field"), "{message}");
         assert!(message.contains("pageContext"), "{message}");
+    }
+
+    /// A followed cursor pointer's `pageQuery` is read as the digest it spells.
+    #[test]
+    fn a_page_query_is_read_from_the_pointer() {
+        let digest = PageQuery::of(Some("type=Vehicle"));
+        assert_eq!(parsed(&format!("cursor=&pageQuery={}", digest.encode())).query, Some(digest));
+    }
+
+    /// A `pageQuery` that is not a digest is bad data, not an unknown parameter.
+    #[test]
+    fn a_malformed_page_query_is_refused_as_bad_data() {
+        let message = rejection("pageQuery=%25%25");
+        assert!(!message.contains("unknown field"), "{message}");
+        assert!(message.contains("pageQuery"), "{message}");
     }
 
     /// A request naming none of the parameters is absent of pagination.

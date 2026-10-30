@@ -53,6 +53,7 @@ pub(crate) fn membership_window(
                 count: CountPolicy::Emit,
                 pointers: PagePointers::NotDereferenceable,
                 context: &pagination.context,
+                query: &pagination.query,
             },
         )
         .map(|_ignored_page| PageWindow::unbounded())
@@ -71,6 +72,7 @@ mod tests {
     use andromeda_ngsi_ld_request::pagination::{
         cursor_request::CursorRequest,
         page_context::PageContext,
+        page_query::PageQuery,
         parameters::PageParameters,
         policy::PaginationPolicy,
     };
@@ -84,6 +86,7 @@ mod tests {
         RequestPagination {
             policy: PaginationPolicy::CursorDefault,
             context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+            query: PageQuery::of(None),
         }
     }
 
@@ -107,6 +110,7 @@ mod tests {
                 offset,
                 cursor: None,
                 context: None,
+                query: None,
             };
             let window = membership_window(&cursor_default(), &page, &OrderingParameters::default(), &uri()).ok();
             assert_eq!(window, Some(PageWindow::unbounded()), "limit {limit:?}, offset {offset:?}");

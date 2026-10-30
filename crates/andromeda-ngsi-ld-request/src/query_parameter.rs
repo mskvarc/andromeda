@@ -59,6 +59,8 @@ pub enum QueryParameter {
     Cursor,
     /// The `@context` a followed page pointer was read under (`pageContext`).
     PageContext,
+    /// The digest of the query a followed cursor walk belongs to (`pageQuery`).
+    PageQuery,
     /// Whether the answer reports a total (`count`).
     Count,
     /// Representation options (`options`).
@@ -245,6 +247,7 @@ mod tests {
             (QueryParameter::ScopeQ, "scopeQ"),
             (QueryParameter::LastN, "lastN"),
             (QueryParameter::PageContext, "pageContext"),
+            (QueryParameter::PageQuery, "pageQuery"),
         ] {
             pretty_assertions::assert_eq!(parameter.to_string(), spelling);
         }

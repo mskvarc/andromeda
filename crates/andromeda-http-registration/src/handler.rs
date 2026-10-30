@@ -104,6 +104,7 @@ pub(crate) async fn query(
     RequestPagination {
         policy: pagination,
         context: page_context,
+        query: page_query,
     }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
@@ -121,6 +122,7 @@ pub(crate) async fn query(
                 count: CountPolicy::Emit,
                 pointers: PagePointers::OverRequestUri,
                 context: &page_context,
+                query: &page_query,
             },
         )
         .with_registration_instance(&uri)?;

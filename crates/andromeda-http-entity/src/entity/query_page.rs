@@ -77,6 +77,7 @@ pub(crate) fn requested_window(
         count,
         pointers,
         context: &pagination.context,
+        query: &pagination.query,
     };
     pagination.policy.window(&query.page, request)
 }

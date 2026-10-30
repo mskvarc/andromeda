@@ -5,9 +5,10 @@
 //! inside the clause 6.3.10 `Link` header and the client only follows it, never
 //! constructing or reading its contents. A [`PageCursor`] is that opaque
 //! contents. It records a position in a collection ordered by its identifier,
-//! and the direction to walk from there, and nothing else: no server-side state,
-//! no expiry and no query fingerprint, so a cursor is meaningful on its own and
-//! costs the broker no storage.
+//! and the direction to walk from there, and nothing else: no server-side state
+//! and no expiry, so it costs the broker no storage. The query the position
+//! belongs to is not part of the cursor: the request layer binds it beside the
+//! token, in a digest every cursor pointer carries.
 //!
 //! The wire form is a `base64url` (no padding) token of a one-byte direction tag
 //! followed by the boundary identifier's own spelling. Because it is opaque, the

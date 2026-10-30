@@ -134,6 +134,7 @@ mod tests {
                 offset: Some(6),
                 cursor: None,
                 context: None,
+                query: None,
             }
         );
         pretty_assertions::assert_eq!(params.count, Some(true));

@@ -48,7 +48,11 @@ use headers::HeaderMapExt;
 pub async fn query(
     State(state): State<TenancyRouteState>,
     OriginalUri(uri): OriginalUri,
-    RequestPagination { policy: pagination, context }: RequestPagination,
+    RequestPagination {
+        policy: pagination,
+        context,
+        query,
+    }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<TenantListParams>,
 ) -> Result<Response, ProblemResponse> {
     let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| error.classify().with_instance(uri.clone()))?;
@@ -63,6 +67,7 @@ pub async fn query(
                 count: CountPolicy::Emit,
                 pointers: PagePointers::OverRequestUri,
                 context: &context,
+                query: &query,
             },
         )
         .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;

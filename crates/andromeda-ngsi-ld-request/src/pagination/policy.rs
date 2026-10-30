@@ -51,9 +51,9 @@ impl PaginationPolicy {
     ///
     /// Every pagination rule is applied here, in this order: a followed pointer
     /// under another `@context`, a cursor where none can be followed, a cursor
-    /// beside an offset, a cursor over a requested ordering, then `limit=0`
-    /// without a count; then the start is decided and the limit checked
-    /// against the collection's cap.
+    /// beside an offset, a cursor over a requested ordering, a cursor followed
+    /// under another query, then `limit=0` without a count; then the start is
+    /// decided and the limit checked against the collection's cap.
     ///
     /// # Errors
     ///
@@ -68,6 +68,10 @@ impl PaginationPolicy {
     ///   together (clause 5.5.9).
     /// - [`ParameterError::CursorWithOrdering`] for a `cursor` over a clause
     ///   4.23 ordering, which a cursor's identifier position cannot walk.
+    /// - [`ParameterError::CursorQueryChanged`] for a continued `cursor`
+    ///   without the digest of the query it was issued for, or a digest that
+    ///   is not the request's own: a position in one walk replayed over
+    ///   another result.
     /// - [`ParameterError::LimitZeroWithoutCount`] for `limit=0` without a
     ///   count (Table 6.3.10-1).
     /// - [`ParameterError::PageSizeExceeded`] for a `limit` above the
@@ -79,6 +83,7 @@ impl PaginationPolicy {
         if page.cursor.is_some() {
             refuse_unwalkable_cursor(self, page, request)?;
         }
+        refuse_foreign_cursor(page, request)?;
         if page.limit == Some(0) && request.count == CountPolicy::Omit {
             return Err(ParameterError::LimitZeroWithoutCount);
         }
@@ -130,6 +135,21 @@ const fn refuse_unwalkable_cursor(policy: PaginationPolicy, page: &PageParameter
     }
 }
 
+/// Refuse a cursor walk continued over another query than the one its
+/// pointer was issued for.
+///
+/// Every cursor pointer carries the digest of its query, so a continued cursor
+/// without one was not followed unchanged. A digest is checked wherever it is
+/// carried, so a `first` pointer is held to its query as well.
+fn refuse_foreign_cursor(page: &PageParameters, request: PageRequest<'_>) -> Result<(), ParameterError> {
+    let continued = matches!(page.cursor, Some(CursorRequest::Continue(_)));
+    match &page.query {
+        Some(walked) if walked != request.query => Err(ParameterError::CursorQueryChanged),
+        None if continued => Err(ParameterError::CursorQueryChanged),
+        Some(_) | None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -142,6 +162,7 @@ mod tests {
             cursor_request::CursorRequest,
             page_context::PageContext,
             page_pointers::PagePointers,
+            page_query::PageQuery,
             page_request::{CollectionOrder, PageRequest},
             page_size::{PageSizeBounds, PageSizeCap, PageSizeExceeded},
             parameters::PageParameters,
@@ -174,6 +195,9 @@ mod tests {
     /// The context a request naming none pages under.
     static CORE: LazyLock<PageContext> = LazyLock::new(|| PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"));
 
+    /// The query every request of these tests is read for.
+    static QUERY: LazyLock<PageQuery> = LazyLock::new(|| PageQuery::of(Some("type=Vehicle")));
+
     /// A query-string request under the core context over an
     /// identifier-ordered, uncounted collection.
     fn identifier() -> PageRequest<'static> {
@@ -183,6 +207,7 @@ mod tests {
             count: CountPolicy::Omit,
             pointers: PagePointers::OverRequestUri,
             context: &CORE,
+            query: &QUERY,
         }
     }
 
@@ -194,12 +219,16 @@ mod tests {
         PageCursor::After(id.parse().expect("valid URI"))
     }
 
+    /// The pagination parameters a request carries; a continued cursor carries
+    /// the digest of the query it was issued for, as a followed pointer does.
     fn page(limit: Option<u32>, offset: Option<u32>, cursor: Option<CursorRequest>) -> PageParameters {
+        let query = matches!(cursor, Some(CursorRequest::Continue(_))).then(|| QUERY.clone());
         PageParameters {
             limit,
             offset,
             cursor,
             context: None,
+            query,
         }
     }
 
@@ -479,5 +508,66 @@ mod tests {
             ..identifier()
         };
         assert_eq!(window(PaginationPolicy::OffsetDefault, &followed, request).ok(), Some(PageWindow::offset(1, 1)));
+    }
+
+    #[test]
+    fn a_cursor_followed_under_another_query_is_refused() {
+        let followed = PageParameters {
+            query: Some(PageQuery::of(Some("type=Vehicle&q=speed%3E10"))),
+            ..page(None, None, Some(CursorRequest::Continue(after("urn:e:1"))))
+        };
+        let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");
+        assert!(matches!(error, ParameterError::CursorQueryChanged), "{error}");
+    }
+
+    /// A cursor pointer always carries its query's digest, so a continued
+    /// cursor without one was not followed unchanged.
+    #[test]
+    fn a_continued_cursor_without_its_query_is_refused() {
+        let followed = PageParameters {
+            query: None,
+            ..page(None, None, Some(CursorRequest::Continue(after("urn:e:1"))))
+        };
+        let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");
+        assert!(matches!(error, ParameterError::CursorQueryChanged), "{error}");
+    }
+
+    #[test]
+    fn a_first_pointer_followed_under_another_query_is_refused() {
+        let followed = PageParameters {
+            query: Some(PageQuery::of(Some("type=Building"))),
+            ..page(None, None, Some(CursorRequest::Start))
+        };
+        let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");
+        assert!(matches!(error, ParameterError::CursorQueryChanged), "{error}");
+    }
+
+    /// The digest leaves out `limit`, so a pointer may be followed with
+    /// another page size.
+    #[test]
+    fn a_cursor_followed_with_another_limit_is_admitted() {
+        let start = window(
+            PaginationPolicy::CursorDefault,
+            &page(Some(7), None, Some(CursorRequest::Continue(after("urn:e:1")))),
+            identifier(),
+        )
+        .ok();
+        assert_eq!(
+            start,
+            Some(PageWindow {
+                limit: 7,
+                start: PageStart::Cursor(Some(after("urn:e:1"))),
+            })
+        );
+    }
+
+    /// An empty `cursor=` written by the client starts a walk of whatever
+    /// query it names.
+    #[test]
+    fn a_walk_started_without_a_digest_is_admitted() {
+        let start = window(PaginationPolicy::CursorDefault, &page(None, None, Some(CursorRequest::Start)), identifier())
+            .ok()
+            .map(|window| window.start);
+        assert_eq!(start, Some(PageStart::Cursor(None)));
     }
 }

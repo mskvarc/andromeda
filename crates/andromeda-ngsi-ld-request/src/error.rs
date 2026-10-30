@@ -100,6 +100,12 @@ pub enum ParameterError {
     /// pagination, and an attempt to use a different one is a `BadRequestData`.
     #[error("the page pointer belongs to a walk under another @context; follow it with the @context the walk started with")]
     PageContextChanged,
+    /// A continued `cursor` was requested over another query than the one its
+    /// pointer was issued for, or without the digest of that query: the
+    /// position belongs to another walk's result, and following it here would
+    /// page through a result the walk never had (clause 5.5.9.1).
+    #[error("the cursor belongs to a walk over another query; follow the page pointers unchanged or start a new walk")]
+    CursorQueryChanged,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them")]

@@ -7,6 +7,7 @@
 //! are therefore decided here, once.
 
 use crate::error::{SubscriptionResultExt, internal_problem};
+use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
@@ -23,7 +24,6 @@ use andromeda_ngsi_ld_request::{
         page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
-        policy::PaginationPolicy,
     },
     subscription_listing::{ListParams, SUBSCRIPTION_PAGE_SIZE},
 };
@@ -44,7 +44,8 @@ pub(crate) struct ListingRequest {
 }
 
 impl ListingRequest {
-    /// The page `params` asks for under `pagination`, paged under `context`.
+    /// The page `params` asks for under `pagination`, paged under its
+    /// `@context` and query.
     ///
     /// The subscriptions are listed in identifier order in either pagination
     /// mode, so a cursor can always walk them.
@@ -53,9 +54,10 @@ impl ListingRequest {
     ///
     /// Returns the `InvalidRequest` of an `options` value clauses 6.3.11 and
     /// 6.3.13 do not define, and whatever the pagination policy refuses.
-    pub(crate) fn of(pagination: PaginationPolicy, context: PageContext, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
+    pub(crate) fn of(pagination: RequestPagination, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
+        let RequestPagination { policy, context, query } = pagination;
         let options = params.list_options().with_subscription_instance(instance)?;
-        let window = pagination
+        let window = policy
             .window(
                 &params.page,
                 PageRequest {
@@ -64,6 +66,7 @@ impl ListingRequest {
                     count: options.count,
                     pointers: PagePointers::OverRequestUri,
                     context: &context,
+                    query: &query,
                 },
             )
             .with_subscription_instance(instance)?;

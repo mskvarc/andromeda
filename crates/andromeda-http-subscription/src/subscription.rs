@@ -108,14 +108,11 @@ pub async fn query(
     api_root: ApiRoot,
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
-    RequestPagination {
-        policy: pagination,
-        context: page_context,
-    }: RequestPagination,
+    pagination: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
-    let listing = ListingRequest::of(pagination, page_context, &params, &uri)?;
+    let listing = ListingRequest::of(pagination, &params, &uri)?;
     let SubscriptionListing {
         subscriptions,
         total,
