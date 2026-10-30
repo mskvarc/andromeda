@@ -134,18 +134,23 @@ pub(crate) fn expand_registration_targets<Q>(registration: ContextSourceRegistra
     }
 }
 
-/// Fold the answers of `matched` contacted registrations into the outcome of
-/// the read.
+/// Fold the answers of the contacted registrations into the outcome of the
+/// read, `matched` of them exclusive, redirect or inclusive.
+///
+/// An auxiliary source only supplements the data the others hold (clause
+/// 4.3.6.2), so it never makes an exclusive or redirect source share the
+/// data, and its answers take no part in deciding whether one does.
 pub(crate) fn read_outcome<T>(answers: Vec<SourceAnswer<T>>, matched: usize) -> ForwardReadOutcome<T> {
-    let single_source_status = match answers.as_slice() {
+    let mut primary = answers.iter().filter(|answer| answer.mode != ForwardingMode::Auxiliary);
+    let single_source_status = match (primary.next(), primary.next()) {
         // Table 6.4.3.2-3: a registered source alone holding the data answers
         // 501 when it cannot serve the representation, and that answer is
         // the operation's. An inclusive source declining is a clause 6.3.17
         // warning instead, because the rest of the data is still served.
-        [only] if matched == 1 && matches!(only.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect) => {
+        (Some(only), None) if matched == 1 && matches!(only.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect) => {
             only.error_status.filter(|status| *status == StatusCode::NOT_IMPLEMENTED.as_u16())
         }
-        [] | [_] | [_, _, ..] => None,
+        (None | Some(_), _) => None,
     };
     ForwardReadOutcome {
         results: answers.into_iter().filter_map(|answer| answer.entry).collect(),
@@ -189,5 +194,16 @@ mod tests {
         let several = read_outcome(vec![answer(ForwardingMode::Exclusive, Some(501)), answer(ForwardingMode::Inclusive, None)], 2);
         pretty_assertions::assert_eq!(several.sources.single_source_status, None);
         pretty_assertions::assert_eq!(several.sources.registrations, 2);
+    }
+
+    /// Clause 4.3.6.2: an auxiliary source answering beside the one exclusive
+    /// source does not share its data, so the exclusive source's 501 is still
+    /// the operation's answer.
+    #[test]
+    fn an_auxiliary_source_beside_a_lone_proxied_one_leaves_its_501_the_answer() {
+        let outcome = read_outcome(vec![answer(ForwardingMode::Auxiliary, None), answer(ForwardingMode::Exclusive, Some(501))], 1);
+        pretty_assertions::assert_eq!(outcome.sources.single_source_status, Some(501));
+        let auxiliary_alone = read_outcome(vec![answer(ForwardingMode::Auxiliary, Some(501))], 0);
+        pretty_assertions::assert_eq!(auxiliary_alone.sources.single_source_status, None);
     }
 }

@@ -110,9 +110,9 @@ async fn inclusive_sources_are_deduplicated_by_instance_id() {
     assert_eq!(instances(&result[0], SPEED), 2);
 }
 
-/// Clause 5.7.3.4: an auxiliary source adds an instance only when no instance
-/// of its attribute is observed at the same instant; and an entity only an
-/// auxiliary source holds is not added.
+/// Clauses 5.7.3.4 and 5.7.4.4: an auxiliary source adds an instance only when
+/// no instance of its attribute is observed at the same instant, so an entity
+/// only an auxiliary source holds joins with every instance it sent.
 #[tokio::test]
 async fn auxiliary_instances_fill_only_missing_instants() {
     let local = history(json!({"id": "urn:a", "type": "T", "speed": [observed(10, 1, None)]})).await;
@@ -124,10 +124,34 @@ async fn auxiliary_instances_fill_only_missing_instants() {
         vec![forwarded(ForwardingMode::Auxiliary, vec![supplement, unknown])],
         observed_unbounded(),
     );
-    assert_eq!(result.len(), 1);
+    assert_eq!(result.len(), 2);
     assert_eq!(id_of(&result[0]), "urn:a");
     assert_eq!(instances(&result[0], SPEED), 2);
     assert_eq!(instances(&result[0], FUEL), 1);
+    assert_eq!(id_of(&result[1]), "urn:b");
+    assert_eq!(instances(&result[1], SPEED), 1);
+}
+
+/// Clause 4.3.6.2: an auxiliary answer that arrives before an inclusive one
+/// still yields to it, so the inclusive instance at a shared instant is the
+/// only one kept, in a query and in a retrieval.
+#[tokio::test]
+async fn an_auxiliary_answer_yields_to_an_inclusive_one_whatever_their_order() {
+    let auxiliary = history(json!({"id": "urn:a", "type": "T", "speed": [observed(99, 1, None)], "fuel": [observed(50, 1, None)]})).await;
+    let inclusive = history(json!({"id": "urn:a", "type": "T", "speed": [observed(10, 1, Some("urn:i1"))]})).await;
+    let answers = || {
+        vec![
+            forwarded(ForwardingMode::Auxiliary, vec![auxiliary.clone()]),
+            forwarded(ForwardingMode::Inclusive, vec![inclusive.clone()]),
+        ]
+    };
+    let queried = merge_temporal_query_results(Vec::new(), answers(), observed_unbounded());
+    assert_eq!(queried.len(), 1);
+    assert_eq!(instances(&queried[0], SPEED), 1);
+    assert_eq!(instances(&queried[0], FUEL), 1);
+    let retrieved = merge_temporal_retrieve_results(None, answers(), observed_unbounded()).expect("an entity");
+    assert_eq!(instances(&retrieved, SPEED), 1);
+    assert_eq!(instances(&retrieved, FUEL), 1);
 }
 
 /// Instances of one attribute a remote holder adds are listed oldest first.
@@ -165,13 +189,14 @@ async fn merge_temporal_retrieve_combines_remote_attributes() {
     assert_eq!(instances(&merged, FUEL), 1);
 }
 
-/// A retrieval answered by a remote holder alone is that holder's history; an
-/// auxiliary holder alone answers nothing.
+/// A retrieval answered by a remote holder alone is that holder's history,
+/// whatever the holder's mode (clause 5.7.3.4).
 #[tokio::test]
 async fn a_retrieval_answered_by_one_remote_holder_is_its_history() {
     let entity = history(json!({"id": "urn:a", "type": "T", "speed": [observed(10, 1, None)]})).await;
     assert!(merge_temporal_retrieve_results(None, vec![forwarded(ForwardingMode::Inclusive, vec![entity.clone()])], observed_unbounded()).is_some());
-    assert!(merge_temporal_retrieve_results(None, vec![forwarded(ForwardingMode::Auxiliary, vec![entity])], observed_unbounded()).is_none());
+    let auxiliary = merge_temporal_retrieve_results(None, vec![forwarded(ForwardingMode::Auxiliary, vec![entity])], observed_unbounded()).expect("an entity");
+    assert_eq!(instances(&auxiliary, SPEED), 1);
 }
 
 /// Clause 4.5.7: a source's instance with no `observedAt` has no place in a

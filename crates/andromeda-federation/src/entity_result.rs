@@ -43,18 +43,28 @@ fn differentiate(held: &mut [ReceivedState], received: &mut [ForwardedEntities])
     differentiate_transient_versions(held.iter_mut().chain(remote).map(|version| &mut version.state));
 }
 
+/// Order `received` so every auxiliary answer follows the others: an
+/// auxiliary Attribute joins only where no other holder supplied one (clauses
+/// 5.7.1.4 and 5.7.2.4), which is known only once every other holder has been
+/// folded in. The sort is stable, so each group keeps its answer order.
+fn supplements_last(received: &mut [ForwardedEntities]) {
+    received.sort_by_key(|answer| matches!(policy_of(answer.mode), MergePolicy::SupplementMissing));
+}
+
 /// Merge local and remote entity query results (clause 5.7.2.4).
 ///
 /// The local entities are the base. An entity another source also returned
 /// has its attributes merged per clause 4.5.5; one only a source returned is
-/// added, except from an auxiliary source, which only supplements entities
-/// present already (clause 4.3.6.2).
+/// added. An auxiliary source adds only the Attributes no other holder
+/// supplied, so an entity only auxiliary sources returned joins whole
+/// (clause 4.3.6.2).
 #[must_use]
 pub fn merge_query_results(mut local_entities: Vec<ReceivedState>, mut remote_results: Vec<ForwardedEntities>) -> Vec<ReceivedState> {
     if remote_results.is_empty() {
         return local_entities;
     }
     differentiate(&mut local_entities, &mut remote_results);
+    supplements_last(&mut remote_results);
     let mut merged: IndexMap<Identifier, ReceivedState> = IndexMap::with_capacity(local_entities.len());
     for entity in local_entities {
         merged.insert(entity.state.id().clone(), entity); // clone: the index and entity each own the identifier
@@ -64,12 +74,9 @@ pub fn merge_query_results(mut local_entities: Vec<ReceivedState>, mut remote_re
         for remote_entity in forwarded.entities {
             match merged.get_mut(remote_entity.state.id()) {
                 Some(local_entity) => fold(local_entity, remote_entity, policy),
-                None => match policy {
-                    MergePolicy::Instances => {
-                        merged.insert(remote_entity.state.id().clone(), remote_entity); // clone: the index key and entity each own the identifier
-                    }
-                    MergePolicy::SupplementMissing => {}
-                },
+                None => {
+                    merged.insert(remote_entity.state.id().clone(), remote_entity); // clone: the index key and entity each own the identifier
+                }
             }
         }
     }
@@ -78,20 +85,20 @@ pub fn merge_query_results(mut local_entities: Vec<ReceivedState>, mut remote_re
 
 /// Merge remote entity results for a single entity retrieval (clause 5.7.1.4).
 ///
-/// Returns the merged entity, or `None` when no source held it.
+/// An auxiliary source adds only the Attributes no other holder supplied, so
+/// an entity only auxiliary sources held is answered with theirs (clause
+/// 4.3.6.2). Returns the merged entity, or `None` when no source held it.
 #[must_use]
 pub fn merge_retrieve_results(local_entity: Option<ReceivedState>, mut remote_results: Vec<ForwardedEntities>) -> Option<ReceivedState> {
     let mut result = local_entity;
     differentiate(result.as_mut_slice(), &mut remote_results);
+    supplements_last(&mut remote_results);
     for forwarded in remote_results {
         let policy = policy_of(forwarded.mode);
         for remote_entity in forwarded.entities {
             match &mut result {
                 Some(existing) => fold(existing, remote_entity, policy),
-                None => match policy {
-                    MergePolicy::Instances => result = Some(remote_entity),
-                    MergePolicy::SupplementMissing => {}
-                },
+                None => result = Some(remote_entity),
             }
         }
     }

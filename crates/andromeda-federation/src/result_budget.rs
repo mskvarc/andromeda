@@ -14,14 +14,14 @@
 //! The merged result holds each entity once however many sources answer it
 //! (clause 5.7.2.4), so the entity limit counts distinct identifiers across
 //! every source of the request, local answers included, which the caller checks
-//! against the same limit. An auxiliary source only supplements entities the
-//! other sources or the local store answer (clause 4.3.6.2), so an identifier
-//! only an auxiliary source answers is not charged as an entity. The transfer
+//! against the same limit. An entity only an auxiliary source answers is an
+//! entity of the result (clauses 5.7.2.4 and 4.3.6.2), so an auxiliary source
+//! is charged as every other; an identifier another holder answers too counts
+//! once. The transfer
 //! itself grows with every source answering the same entities again, so the
 //! rows the sources send, duplicates included, are bounded by a second limit.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use dashmap::DashSet;
 use std::{
     num::NonZeroU32,
@@ -46,7 +46,7 @@ pub struct ResultBudget {
     limits: ResultLimits,
     /// Every element every source sent, duplicates and discarded ones included.
     rows: AtomicU64,
-    /// The identifiers an inclusive, exclusive or redirect source answered.
+    /// The identifiers every source answered.
     distinct: DashSet<Identifier>,
     /// The elements naming no entity: none can be matched against another, so
     /// each is an entity of its own.
@@ -90,13 +90,9 @@ impl ResultBudget {
         self.limits
     }
 
-    /// Charge one page a source under `mode` answered: `sent` elements as the
-    /// source counts them, of which `ids` are the ones the walk kept, each the
-    /// entity it names when it names one.
-    ///
-    /// An identifier an auxiliary source answers is not charged; when an
-    /// inclusive, exclusive or redirect source answers it too, that charge
-    /// counts it, whichever walk comes first.
+    /// Charge one page a source answered: `sent` elements as the source counts
+    /// them, of which `ids` are the ones the walk kept, each the entity it
+    /// names when it names one.
     ///
     /// # Errors
     ///
@@ -104,7 +100,7 @@ impl ResultBudget {
     /// request together sent more elements than allowed, and
     /// [`ResultBudgetExceeded::DistinctEntities`] once they answered more
     /// distinct entities than allowed.
-    pub fn charge_page(&self, mode: ForwardingMode, sent: usize, ids: impl Iterator<Item = Option<Identifier>>) -> Result<(), ResultBudgetExceeded> {
+    pub fn charge_page(&self, sent: usize, ids: impl Iterator<Item = Option<Identifier>>) -> Result<(), ResultBudgetExceeded> {
         let sent = u64::try_from(sent).unwrap_or(u64::MAX);
         // Relaxed is enough: each counter is checked on its own, and every
         // charge sees every earlier one through the atomic addition itself.
@@ -114,21 +110,16 @@ impl ResultBudget {
                 maximum: self.limits.source_rows,
             });
         }
-        match mode {
-            ForwardingMode::Auxiliary => Ok(()),
-            ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
-                let anonymous = ids.fold(0_u64, |anonymous, id| match id {
-                    Some(id) => {
-                        self.distinct.insert(id);
-                        anonymous
-                    }
-                    None => anonymous.saturating_add(1),
-                });
-                let anonymous = self.anonymous.fetch_add(anonymous, Ordering::Relaxed).saturating_add(anonymous);
-                let distinct = u64::try_from(self.distinct.len()).unwrap_or(u64::MAX);
-                self.admit_collection(distinct.saturating_add(anonymous))
+        let anonymous = ids.fold(0_u64, |anonymous, id| match id {
+            Some(id) => {
+                self.distinct.insert(id);
+                anonymous
             }
-        }
+            None => anonymous.saturating_add(1),
+        });
+        let anonymous = self.anonymous.fetch_add(anonymous, Ordering::Relaxed).saturating_add(anonymous);
+        let distinct = u64::try_from(self.distinct.len()).unwrap_or(u64::MAX);
+        self.admit_collection(distinct.saturating_add(anonymous))
     }
 
     /// Whether everything charged so far, by every source of the request,
@@ -178,7 +169,6 @@ impl ResultBudget {
 mod tests {
     use crate::result_budget::{ResultBudget, ResultBudgetExceeded, ResultLimits};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use std::{num::NonZeroU32, ops::Range};
 
     fn positive(value: u32) -> NonZeroU32 {
@@ -198,15 +188,15 @@ mod tests {
             .collect()
     }
 
-    fn charge(budget: &ResultBudget, mode: ForwardingMode, ids: Vec<Option<Identifier>>) -> Result<(), ResultBudgetExceeded> {
-        budget.charge_page(mode, ids.len(), ids.into_iter())
+    fn charge(budget: &ResultBudget, ids: Vec<Option<Identifier>>) -> Result<(), ResultBudgetExceeded> {
+        budget.charge_page(ids.len(), ids.into_iter())
     }
 
     #[test]
     fn three_sources_answering_the_same_ids_charge_them_once() {
         let budget = budget(1_000, 3_000);
         for _ in 0..3 {
-            pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..400)), Ok(()));
+            pretty_assertions::assert_eq!(charge(&budget, ids(0..400)), Ok(()));
         }
     }
 
@@ -214,7 +204,7 @@ mod tests {
     fn distinct_ids_past_the_limit_are_distinct_entities_exceeded() {
         let budget = budget(1_000, 3_000);
         pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Inclusive, ids(0..1_001)),
+            charge(&budget, ids(0..1_001)),
             Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(1_000) })
         );
     }
@@ -222,10 +212,10 @@ mod tests {
     #[test]
     fn the_entity_limit_is_reached_exactly_without_refusal() {
         let budget = budget(10, 100);
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Exclusive, ids(0..4)), Ok(()));
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Redirect, ids(4..10)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..4)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(4..10)), Ok(()));
         pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Inclusive, ids(10..11)),
+            charge(&budget, ids(10..11)),
             Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(10) })
         );
     }
@@ -233,12 +223,9 @@ mod tests {
     #[test]
     fn duplicated_rows_past_the_row_ceiling_are_source_rows_exceeded() {
         let budget = budget(1_000, 1_000);
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..400)), Ok(()));
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..400)), Ok(()));
-        pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Inclusive, ids(0..400)),
-            Err(ResultBudgetExceeded::SourceRows { maximum: positive(1_000) })
-        );
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..400)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..400)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..400)), Err(ResultBudgetExceeded::SourceRows { maximum: positive(1_000) }));
     }
 
     /// Rows count what the source sent, so elements the walk discarded still
@@ -247,38 +234,26 @@ mod tests {
     fn discarded_elements_count_as_rows() {
         let budget = budget(10, 5);
         pretty_assertions::assert_eq!(
-            budget.charge_page(ForwardingMode::Inclusive, 6, ids(0..1).into_iter()),
+            budget.charge_page(6, ids(0..1).into_iter()),
             Err(ResultBudgetExceeded::SourceRows { maximum: positive(5) })
         );
     }
 
+    /// Clause 5.7.2.4: an entity only an auxiliary source answers is part of
+    /// the result, so its identifier is charged as an entity.
     #[test]
-    fn an_auxiliary_only_id_counts_a_row_but_no_entity() {
-        let budget = budget(2, 3);
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..2)), Ok(()));
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Auxiliary, ids(5..6)), Ok(()));
-        pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Auxiliary, ids(6..7)),
-            Err(ResultBudgetExceeded::SourceRows { maximum: positive(3) })
-        );
-    }
-
-    #[test]
-    fn an_id_an_auxiliary_source_answered_first_is_charged_when_an_inclusive_one_answers_it() {
-        let budget = budget(1, 10);
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Auxiliary, ids(1..2)), Ok(()));
-        pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Inclusive, ids(0..2)),
-            Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(1) })
-        );
+    fn an_auxiliary_only_id_is_charged_as_an_entity() {
+        let budget = budget(2, 10);
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..2)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(5..6)), Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(2) }));
     }
 
     #[test]
     fn elements_naming_no_entity_each_count_as_one() {
         let budget = budget(2, 10);
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, vec![None, None]), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, vec![None, None]), Ok(()));
         pretty_assertions::assert_eq!(
-            charge(&budget, ForwardingMode::Inclusive, vec![None]),
+            charge(&budget, vec![None]),
             Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(2) })
         );
     }
@@ -287,16 +262,16 @@ mod tests {
     fn a_budget_checks_clean_until_a_charge_crosses_a_limit_and_then_stays_refused() {
         let budget = budget(3, 100);
         pretty_assertions::assert_eq!(budget.check(), Ok(()));
-        pretty_assertions::assert_eq!(charge(&budget, ForwardingMode::Inclusive, ids(0..3)), Ok(()));
+        pretty_assertions::assert_eq!(charge(&budget, ids(0..3)), Ok(()));
         pretty_assertions::assert_eq!(budget.check(), Ok(()));
-        assert!(charge(&budget, ForwardingMode::Inclusive, ids(3..4)).is_err());
+        assert!(charge(&budget, ids(3..4)).is_err());
         pretty_assertions::assert_eq!(budget.check(), Err(ResultBudgetExceeded::DistinctEntities { maximum: positive(3) }));
     }
 
     #[test]
     fn a_budget_past_its_row_ceiling_checks_as_source_rows_exceeded() {
         let budget = budget(100, 2);
-        assert!(charge(&budget, ForwardingMode::Auxiliary, ids(0..3)).is_err());
+        assert!(charge(&budget, ids(0..3)).is_err());
         pretty_assertions::assert_eq!(budget.check(), Err(ResultBudgetExceeded::SourceRows { maximum: positive(2) }));
     }
 

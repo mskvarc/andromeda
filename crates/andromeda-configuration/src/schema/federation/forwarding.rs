@@ -80,12 +80,12 @@ pub struct ForwardingConfig {
     pub split_entities: SplitEntitiesDefault,
     /// The most distinct entities one federated query gathers from the local
     /// store and every Context Source it walks together, an entity several
-    /// sources answer counting once and one only an auxiliary source answers
-    /// not counting; a query whose answers exceed it is refused with
+    /// sources answer counting once, one only an auxiliary source answers
+    /// included; a query whose answers exceed it is refused with
     /// `TooManyResults` (403, clause 4.12) rather than answered with a
     /// truncated collection.
     #[schemars(
-        description = "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers does not count. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection. Zero is refused."
+        description = "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers counts too. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection. Zero is refused."
     )]
     pub max_query_entities: NonZeroU32,
     /// The most entities the Context Sources of one federated query send

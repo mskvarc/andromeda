@@ -13,7 +13,7 @@ use andromeda_http_headers::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
-use serde_json::json;
+use serde_json::{Value, json};
 use url::Url;
 
 fn attribute_name(raw: &str) -> AttributeName {
@@ -271,28 +271,55 @@ fn csr_mode_filter_auxiliary_only() {
     pretty_assertions::assert_ne!(filter, CsrModeFilter::ExcludeAuxiliary);
 }
 
+/// Clause 5.7.2.4: auxiliary data is added only where an Attribute is not
+/// present already, so it supplements a held entity and an entity no other
+/// holder returned joins with every Attribute the source sent.
 #[test]
-fn merge_query_auxiliary_supplements_without_adding_entities() {
+fn merge_query_auxiliary_supplements_held_entities_and_adds_the_ones_nobody_else_returned() {
     let local = vec![version("urn:a", &[("speed", json!([{"value": 100}]))])];
     let remote = vec![ForwardedEntities {
         registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Auxiliary,
         entities: vec![
-            version("urn:a", &[("fuel", json!([{"value": 50}]))]),
+            version("urn:a", &[("speed", json!([{"value": 1}])), ("fuel", json!([{"value": 50}]))]),
             version("urn:b", &[("speed", json!([{"value": 80}]))]),
         ],
         warnings: Vec::new(),
         linked_map: None,
     }];
     let result = merge_query_results(local, remote);
-    // Clause 5.7.2.4: auxiliary data is added only where an attribute is not
-    // present already, and an entity no other source returned is not added.
-    pretty_assertions::assert_eq!(result.len(), 1, "an auxiliary source supplements, it never supplies new entities");
+    pretty_assertions::assert_eq!(result.len(), 2);
     let entity_a = result
         .iter()
         .find(|merged| merged.state.id().as_str() == "urn:a")
         .expect("urn:a should be present");
     assert!(entity_a.state.attributes().contains(&iri("fuel")), "Auxiliary attrs should be merged");
+    pretty_assertions::assert_eq!(instance_count(entity_a, "speed"), 1);
+    let entity_b = result
+        .iter()
+        .find(|merged| merged.state.id().as_str() == "urn:b")
+        .expect("urn:b should be present");
+    pretty_assertions::assert_eq!(instance_count(entity_b, "speed"), 1);
+}
+
+/// Clause 4.3.6.2: an auxiliary answer listed before an inclusive one still
+/// yields to it, so an Attribute both supply keeps the inclusive instance
+/// alone while an Attribute only the auxiliary source holds is added.
+#[test]
+fn merge_query_an_auxiliary_answer_yields_to_an_inclusive_one_whatever_their_order() {
+    let answer = |mode, value| ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
+        mode,
+        entities: vec![version("urn:a", &[("speed", json!([{"value": value}])), ("fuel", json!([{"value": value}]))])],
+        warnings: Vec::new(),
+        linked_map: None,
+    };
+    let mut inclusive = answer(ForwardingMode::Inclusive, 10);
+    inclusive.entities = vec![version("urn:a", &[("speed", json!([{"value": 10}]))])];
+    let result = merge_query_results(Vec::new(), vec![answer(ForwardingMode::Auxiliary, 99), inclusive]);
+    pretty_assertions::assert_eq!(result.len(), 1);
+    pretty_assertions::assert_eq!(instance_count(&result[0], "speed"), 1);
+    pretty_assertions::assert_eq!(instance_count(&result[0], "fuel"), 1);
 }
 
 #[test]
@@ -367,16 +394,41 @@ fn merge_retrieve_merges_remote_instances_onto_the_local_base() {
     pretty_assertions::assert_eq!(instance_count(&merged, "brand"), 1);
 }
 
-/// Clause 4.3.6.2: an auxiliary source never supplies an entity that no other
-/// source holds.
+/// Clause 5.7.1.4: an auxiliary source's Attributes are added when no other
+/// holder supplied them, so an entity only an auxiliary source holds is
+/// answered with its Attributes.
 #[test]
-fn merge_retrieve_ignores_an_auxiliary_source_when_nothing_else_holds_the_entity() {
+fn merge_retrieve_answers_with_an_auxiliary_source_when_nothing_else_holds_the_entity() {
     let remote = vec![ForwardedEntities {
         registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Auxiliary,
-        entities: vec![version("urn:a", &[])],
+        entities: vec![version("urn:a", &[("speed", json!([{"value": 80}]))])],
         warnings: Vec::new(),
         linked_map: None,
     }];
-    assert!(merge_retrieve_results(None, remote).is_none());
+    let merged = merge_retrieve_results(None, remote).expect("the auxiliary entity");
+    pretty_assertions::assert_eq!(instance_count(&merged, "speed"), 1);
+}
+
+/// Clause 4.3.6.2: in a retrieval too, an auxiliary answer listed before an
+/// inclusive one never puts its instance beside the inclusive one.
+#[test]
+fn merge_retrieve_an_auxiliary_answer_yields_to_an_inclusive_one_whatever_their_order() {
+    let answer = |mode, attributes: &[(&str, Value)]| ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
+        mode,
+        entities: vec![version("urn:a", attributes)],
+        warnings: Vec::new(),
+        linked_map: None,
+    };
+    let remote = vec![
+        answer(
+            ForwardingMode::Auxiliary,
+            &[("speed", json!([{"value": 99}])), ("fuel", json!([{"value": 50}]))],
+        ),
+        answer(ForwardingMode::Inclusive, &[("speed", json!([{"value": 10}]))]),
+    ];
+    let merged = merge_retrieve_results(None, remote).expect("merged entity");
+    pretty_assertions::assert_eq!(instance_count(&merged, "speed"), 1);
+    pretty_assertions::assert_eq!(instance_count(&merged, "fuel"), 1);
 }

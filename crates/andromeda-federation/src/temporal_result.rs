@@ -4,7 +4,8 @@
 //! two holders' parts of one entity are put together as the model puts
 //! histories together: instances are united, one carrying an `instanceId`
 //! already held counting once, and an auxiliary holder fills only the instants
-//! no other holder has (clauses 4.3.6.2 and 5.7.3.4). Clauses 5.7.3.4 and
+//! no other holder has (clauses 4.3.6.2 and 5.7.3.4), which makes an entity
+//! only auxiliary holders answered for theirs whole. Clauses 5.7.3.4 and
 //! 5.7.4.4 merge a source's data into the set the temporal query has already
 //! narrowed, so what a source answers outside the request's window is left
 //! out as it joins, as the local read leaves out its own: an instance with no
@@ -34,6 +35,14 @@ const fn merge_mode(mode: ForwardingMode) -> MergeMode {
     }
 }
 
+/// Order `received` so every auxiliary answer follows the others: an
+/// auxiliary instance joins only where no other holder has one (clauses 5.7.3.4
+/// and 5.7.4.4), which is known only once every other holder has been merged.
+/// The sort is stable, so each group keeps its answer order.
+fn supplements_last(received: &mut [ForwardedTemporalEntities]) {
+    received.sort_by_key(|answer| matches!(merge_mode(answer.mode), MergeMode::Auxiliary));
+}
+
 /// Narrow a source's `entity` to `window`, and say whether it still joins:
 /// without a temporal query it always does, under one only while it holds
 /// data in the window.
@@ -48,12 +57,13 @@ fn in_window(entity: &mut TemporalHistory, window: TemporalWindow) -> bool {
 #[must_use]
 pub fn merge_temporal_query_results(
     local_entities: Vec<TemporalHistory>,
-    remote_results: Vec<ForwardedTemporalEntities>,
+    mut remote_results: Vec<ForwardedTemporalEntities>,
     window: TemporalWindow,
 ) -> Vec<TemporalHistory> {
     if remote_results.is_empty() {
         return local_entities;
     }
+    supplements_last(&mut remote_results);
 
     let mut entity_map: IndexMap<Identifier, TemporalHistory> = IndexMap::new();
     for entity in local_entities {
@@ -72,11 +82,9 @@ pub fn merge_temporal_query_results(
             let Some(remote_id) = remote_entity.id().cloned() else {
                 continue; // clone: the map is keyed by the identifier the history names
             };
-            match (entity_map.get_mut(&remote_id), mode) {
-                (Some(local_entity), _) => local_entity.merge(remote_entity, mode, window.timeproperty),
-                // An auxiliary source only supplements what is already held.
-                (None, MergeMode::Auxiliary) => {}
-                (None, MergeMode::Inclusive) => {
+            match entity_map.get_mut(&remote_id) {
+                Some(local_entity) => local_entity.merge(remote_entity, mode, window.timeproperty),
+                None => {
                     entity_map.insert(remote_id, remote_entity);
                 }
             }
@@ -93,10 +101,11 @@ pub fn merge_temporal_query_results(
 #[must_use]
 pub fn merge_temporal_retrieve_results(
     local_entity: Option<TemporalHistory>,
-    remote_results: Vec<ForwardedTemporalEntities>,
+    mut remote_results: Vec<ForwardedTemporalEntities>,
     window: TemporalWindow,
 ) -> Option<TemporalHistory> {
     let mut result = local_entity;
+    supplements_last(&mut remote_results);
 
     for forwarded in remote_results {
         let mode = merge_mode(forwarded.mode);
@@ -104,10 +113,9 @@ pub fn merge_temporal_retrieve_results(
             if !in_window(&mut remote_entity, window) {
                 continue;
             }
-            match (&mut result, mode) {
-                (Some(existing), _) => existing.merge(remote_entity, mode, window.timeproperty),
-                (None, MergeMode::Inclusive) => result = Some(remote_entity),
-                (None, MergeMode::Auxiliary) => {}
+            match &mut result {
+                Some(existing) => existing.merge(remote_entity, mode, window.timeproperty),
+                None => result = Some(remote_entity),
             }
         }
     }

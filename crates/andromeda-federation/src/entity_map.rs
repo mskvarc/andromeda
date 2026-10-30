@@ -10,6 +10,7 @@
 use crate::{
     FederationService,
     cache::Cacheability,
+    entity_read::mode_admitted,
     error::FederationError,
     expanded_registration_filters::ExpandedRegistrationFilters,
     forwarded_query::client_query::ClientQuery,
@@ -148,9 +149,10 @@ impl FederationService {
                     scope_q: client_query.scope_q(),
                     geo: filters.geo(),
                     serving: RegistrationServing::Operation(query.operation()),
-                    // Clause 4.3.6.2: an auxiliary source only supplements
-                    // data held elsewhere, so it holds no map of its own.
-                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                    // Clause 4.5.25: the map lists every registration that
+                    // returned data, and an auxiliary source can return an
+                    // entity nobody else holds (clause 5.7.2.4).
+                    mode_filter: CsrModeFilter::All,
                     // Clauses 5.14.4.3 and 5.14.5.3 ignore the location of an
                     // EntityMap on a creation request.
                     entity_map: EntityMapInUse::None,
@@ -160,7 +162,12 @@ impl FederationService {
         if registrations.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
-        let matched = registrations.len();
+        // Clause 6.3.17 counts the registrations that hold the data; an
+        // auxiliary one only supplements it.
+        let matched = registrations
+            .iter()
+            .filter(|registration| mode_admitted(registration, CsrModeFilter::ExcludeAuxiliary))
+            .count();
         let lone = matched == 1;
         let resolver = TermResolver::new(&self.engine, context);
         let resolver = &resolver;

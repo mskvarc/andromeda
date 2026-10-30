@@ -260,7 +260,7 @@ impl FederationService {
         };
         let first_page = mem::take(gathered.elements());
         *gathered.elements() = position.fresh::<A>(first_page);
-        budget.charge_page(mode, first_sent, gathered.elements().iter().map(A::identifier))?;
+        budget.charge_page(first_sent, gathered.elements().iter().map(A::identifier))?;
         // The offset walk of the POST binding ends on the first empty page.
         if first_sent == 0 && matches!(next, PageEnd::Continue(NextPage::Offset { .. })) {
             next = PageEnd::Stop(None);
@@ -309,7 +309,7 @@ impl FederationService {
                 break;
             };
             let fresh = position.fresh::<A>(mem::take(page.elements()));
-            budget.charge_page(mode, sent, fresh.iter().map(A::identifier))?;
+            budget.charge_page(sent, fresh.iter().map(A::identifier))?;
             let progressed = !fresh.is_empty();
             gathered.elements().extend(fresh);
             gathered.absorb(page);
@@ -403,7 +403,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_ngsi_ld_model::{
-        registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+        registration::ContextSourceRegistration,
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
     };
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
@@ -905,7 +905,7 @@ mod tests {
         let service = service(registration(&source, &["queryEntity"]));
         let budget = ResultBudget::new(limits(1, u32::MAX));
         let crossing = (0..2_u32).map(|number| Some(format!("urn:ngsi-ld:Vehicle:{number:04}").parse().expect("a valid identifier")));
-        assert!(budget.charge_page(ForwardingMode::Inclusive, 2, crossing).is_err());
+        assert!(budget.charge_page(2, crossing).is_err());
 
         let refused = refusal(walk_against(&service, QueryDelivery::Query, &budget).await);
 
@@ -1139,11 +1139,10 @@ mod tests {
         pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::SourceRows { maximum: positive(14) });
     }
 
-    /// Clause 4.3.6.2: an auxiliary source only supplements what the other
-    /// sources answer, so the entities only it answers are not charged as
-    /// entities; every element it sends is still a row.
-    #[tokio::test]
-    async fn an_auxiliary_source_adds_rows_but_no_entities() {
+    /// Walk two inclusive sources answering entities 0 to 4 and an auxiliary
+    /// one answering 0, 1, 2, 100 and 101 under `distinct_entities`, returning
+    /// the walk and the auxiliary source.
+    async fn walk_beside_an_auxiliary_source(distinct_entities: u32) -> (Result<ForwardReadOutcome<ForwardedEntities>, QueryForwardingError>, MockServer) {
         let mut registrations = Vec::new();
         let mut sources = Vec::new();
         for index in 0..2 {
@@ -1166,13 +1165,21 @@ mod tests {
             &["queryEntity"],
         ));
         let service = service_over(Arc::new(FixedRegistrationStore::new(registrations)));
+        (walk_under(&service, QueryDelivery::Query, limits(distinct_entities, 15)).await, auxiliary)
+    }
 
-        let outcome = walk_under(&service, QueryDelivery::Query, limits(5, 15))
-            .await
-            .expect("the walk fits its limits");
-
+    /// Clause 5.7.2.4: an entity only an auxiliary source answers is part of
+    /// the result, so it is charged as an entity, while one it shares with
+    /// another source counts once: seven distinct entities, fifteen rows.
+    #[tokio::test]
+    async fn an_auxiliary_source_charges_the_entities_only_it_answers() {
+        let (outcome, auxiliary) = walk_beside_an_auxiliary_source(7).await;
+        let outcome = outcome.expect("the walk fits its limits");
         pretty_assertions::assert_eq!(gathered(&outcome).len(), 15);
         pretty_assertions::assert_eq!(received(&auxiliary).await.len(), 1);
+
+        let (refused, _auxiliary) = walk_beside_an_auxiliary_source(6).await;
+        assert!(refused.is_err(), "the two entities only the auxiliary source answers cross a limit of six");
     }
 
     /// The temporal walk shares the request's budget the same way: three

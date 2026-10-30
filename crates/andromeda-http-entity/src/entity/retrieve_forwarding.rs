@@ -81,17 +81,14 @@ impl RetrieveForwarding<'_> {
         let mut contributions: Vec<SourceContribution> = contributions_of(&primary.results).collect();
         let merged = merge_retrieve_results(local_entity, primary.results);
 
-        // Auxiliary sources are consulted only when an entity was found, since
-        // they only supplement existing data (clause 4.3.6.2).
-        let entity = match merged {
-            Some(merged) => {
-                let auxiliary = self.phase(phased.auxiliary).await?;
-                warnings.extend(collect_warnings(&auxiliary.results));
-                contributions.extend(contributions_of(&auxiliary.results));
-                merge_retrieve_results(Some(merged), auxiliary.results)
-            }
-            None => None,
-        };
+        // Clause 5.7.1.4 answers ResourceNotFound only when no matching
+        // registration applies, and a matching auxiliary one does: its sources
+        // are asked even when nobody else held the entity, and their
+        // Attributes fill whatever no other holder supplied.
+        let auxiliary = self.phase(phased.auxiliary).await?;
+        warnings.extend(collect_warnings(&auxiliary.results));
+        contributions.extend(contributions_of(&auxiliary.results));
+        let entity = merge_retrieve_results(merged, auxiliary.results);
         Ok(ForwardedRetrieval {
             entity,
             warnings,
