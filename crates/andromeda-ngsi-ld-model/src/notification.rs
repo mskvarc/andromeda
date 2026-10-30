@@ -201,18 +201,6 @@ pub enum CsrChange {
     },
 }
 
-impl CsrChange {
-    /// When the registration this mutation wrote was last modified, `None` for
-    /// a deletion, which writes none.
-    #[must_use]
-    pub fn written_at(&self) -> Option<DateTime<Utc>> {
-        match self {
-            CsrChange::Created { written } | CsrChange::Updated { written, .. } => Some(written.lifecycle.modified_at),
-            CsrChange::Deleted { .. } => None,
-        }
-    }
-}
-
 /// NGSI-LD `CsourceNotification` sent to a subscriber (ETSI GS CIM 009 clause
 /// 5.3.2).
 ///

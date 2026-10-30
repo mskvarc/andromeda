@@ -24,8 +24,9 @@ impl CsourceMembership {
     /// `before` is the registration as it stood before an update or deletion
     /// and `after` is the registration as it stands now, absent once deleted.
     /// A `noLongerMatching` notification carries `before`, the state the
-    /// subscriber was told matched; without it the withdrawal is still
-    /// recorded, but there is nothing matching to carry.
+    /// subscriber was told matched; without it, or when the subscription does
+    /// not select it, the withdrawal is still recorded, but there is nothing
+    /// matching to carry.
     pub(crate) async fn plan_registration_change<'registration>(
         &self,
         subscriptions: &[Arc<CompiledCsrSubscription>],
@@ -79,9 +80,17 @@ impl CsourceMembership {
                 },
                 CsrTriggerReason::NewlyMatching | CsrTriggerReason::NoLongerMatching => None,
             };
-            let carried = match reason {
-                CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated => after,
-                CsrTriggerReason::NoLongerMatching => before,
+            // A notification carries only the `RegistrationInfo` elements the
+            // subscription matches (clause 5.11.7), and clause 5.2.9 forbids an
+            // empty `information`. Every change is evaluated in commit order, so
+            // `before` filtered against the subscription is what the subscriber
+            // was last told; when the subscription never selected `before`, the
+            // record was written from a later state, and nothing matching is
+            // left to carry.
+            let carried = match (reason, previously) {
+                (CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated, _) => after,
+                (CsrTriggerReason::NoLongerMatching, Selection::Selected) => before,
+                (CsrTriggerReason::NoLongerMatching, Selection::Unselected) => None,
             };
             if let Some(registration) = carried {
                 planned.push(PlannedNotification {

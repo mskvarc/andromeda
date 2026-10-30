@@ -45,8 +45,6 @@ use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, error};
 
-mod reconcile;
-
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
 /// Applies context-source subscription and registration events to notification policy.

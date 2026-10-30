@@ -75,7 +75,8 @@ impl RegistrationService {
                 written: Box::new(written.registration),
             },
             revision: written.revision,
-        });
+        })
+        .await;
         Ok(())
     }
 }
@@ -101,7 +102,6 @@ mod tests {
         context_spec::ContextSpec,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
-
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         notification::{CsrChange, CsrChangeEvent},
@@ -109,7 +109,7 @@ mod tests {
         request_body::RequestBody,
     };
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
-
+    use futures::future::{self, BoxFuture};
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
 
@@ -120,8 +120,9 @@ mod tests {
     struct RecordingSink(Mutex<Vec<CsrChangeEvent>>);
 
     impl RegistrationChangeSink for RecordingSink {
-        fn publish(&self, event: CsrChangeEvent) {
+        fn publish(&self, event: CsrChangeEvent) -> BoxFuture<'static, ()> {
             self.0.lock().expect("event log").push(event);
+            Box::pin(future::ready(()))
         }
     }
 

@@ -18,7 +18,6 @@
 //! the same record, so the step also decides which of them sends it. The
 //! transition rules themselves live in [`crate::csource_transition`].
 
-mod reconciliation;
 mod registration_change;
 
 use crate::{

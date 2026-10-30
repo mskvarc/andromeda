@@ -2,7 +2,7 @@
 
 use crate::{
     blocking_executor::TokioBlockingExecutor,
-    event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
+    event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::QueuedRegistrationChangeSink},
     linked_forwarding::LinkedForwarding,
     local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
@@ -372,7 +372,7 @@ fn compose_registration_service(
         Arc::clone(&storage.registration_store),
         probe,
         storage.engine.clone(), // clone: registration policy owns its engine handle.
-        Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
+        Some(Arc::new(QueuedRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
         geo_admission,
     );
     Arc::new(match forwarding {

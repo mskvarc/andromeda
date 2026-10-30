@@ -6,6 +6,7 @@ use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemov
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
+use futures::future::BoxFuture;
 use std::sync::Arc;
 
 mod context_source_properties;
@@ -78,8 +79,14 @@ pub struct RegistrationService {
 
 /// Publishes registration lifecycle changes without coupling policy to a runtime transport.
 pub trait RegistrationChangeSink: Send + Sync + 'static {
-    /// Publish one completed registration change.
-    fn publish(&self, event: CsrChangeEvent);
+    /// Publish one committed registration change.
+    ///
+    /// The returned future resolves once the change is handed over, which may
+    /// wait while the consumer catches up: clause 5.11.7 owes a notification
+    /// for every change of a matching registration, so none is dropped. The
+    /// change has already committed, so dropping the future does not withdraw
+    /// it.
+    fn publish(&self, event: CsrChangeEvent) -> BoxFuture<'static, ()>;
 }
 
 impl RegistrationService {
@@ -118,9 +125,9 @@ impl RegistrationService {
         &self.engine
     }
 
-    fn emit_csr_change(&self, event: CsrChangeEvent) {
+    async fn emit_csr_change(&self, event: CsrChangeEvent) {
         if let Some(ref sink) = self.change_sink {
-            sink.publish(event);
+            sink.publish(event).await;
         }
     }
 }

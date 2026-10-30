@@ -36,7 +36,8 @@ impl RegistrationService {
                 before: existing.map(Box::new),
             },
             revision,
-        });
+        })
+        .await;
         Ok(())
     }
 }
@@ -54,10 +55,8 @@ mod tests {
         service_fixture::{offline_engine, service_over},
         store::RegistrationStore,
     };
-
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-
     use futures::future::BoxFuture;
     use pretty_assertions::assert_eq;
     use serde_json::json;

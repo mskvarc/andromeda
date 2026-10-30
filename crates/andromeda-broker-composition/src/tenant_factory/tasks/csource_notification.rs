@@ -25,7 +25,6 @@ use andromeda_notification::{
     csource_change_order::CsourceChangeOrder,
     csource_interval::CsourceIntervalNotificationOperation,
     csource_processor::{CsourceNotificationProcessor, CsourceNotificationProcessorDeps},
-    csource_reconciled_window::ReconciledWindow,
     notified_registration_store::NotifiedRegistrationStore,
 };
 use andromeda_postgresql_context_store::csource_subscription::{notified_registrations::NotifiedRegistrationLedger, revision_ledger::CsourceRevisionLedger};
@@ -40,41 +39,16 @@ use andromeda_task_runtime::{
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
     task_name::TaskName,
-    wake_trigger::wake_channel,
+    wake_trigger::{DrainWakeReceiver, WakeHandle, wake_channel},
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
+    Mutex,
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
+    mpsc,
 };
-
-/// What emptying the registration change queue after an overflow found.
-///
-/// The queued events are older than the reconciliation that follows, which
-/// reads every registration as it stands, so they are consumed rather than
-/// evaluated: evaluating them as well would report the same change twice.
-struct DrainedRegistrations {
-    /// Events the channel dropped, including any dropped again while draining.
-    lost: u64,
-    /// The latest modification time among the consumed events and those
-    /// evaluated before them.
-    evaluated_through: Option<DateTime<Utc>>,
-}
-
-impl DrainedRegistrations {
-    /// Consume every event queued on `receiver`.
-    fn absorb(&mut self, receiver: &mut broadcast::Receiver<CsrChangeEvent>) {
-        loop {
-            match receiver.try_recv() {
-                Ok(event) => self.evaluated_through = self.evaluated_through.max(event.change.written_at()),
-                Err(TryRecvError::Lagged(skipped)) => self.lost = self.lost.saturating_add(skipped),
-                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-            }
-        }
-    }
-}
 
 /// The change streams a context-source notification worker reacts to.
 ///
@@ -82,8 +56,9 @@ impl DrainedRegistrations {
 /// clause 5.11 notifications are produced from registration changes, evaluated
 /// against the context-source subscriptions the second stream keeps current.
 pub(super) struct CsourceNotificationStreams {
-    /// Registration lifecycle changes evaluated against context-source subscriptions.
-    pub(super) registrations: broadcast::Sender<CsrChangeEvent>,
+    /// The one reader of the queue of registration lifecycle changes evaluated
+    /// against context-source subscriptions, held across worker restarts.
+    pub(super) registrations: Arc<Mutex<mpsc::Receiver<CsrChangeEvent>>>,
     /// Context-source subscription changes keeping the evaluated set current.
     pub(super) subscriptions: broadcast::Sender<CsourceSubscriptionChange>,
 }
@@ -127,14 +102,18 @@ pub(super) fn register_csource_notification_workers(
     interval_max_sleep: Duration,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    // clone: the periodic sweep subscribes to the same registration and
-    // context-source-subscription streams so a change wakes it, while the
-    // event-driven processor owns the senders.
-    let registration_changes = streams.registrations.clone();
+    // Both streams change what a periodic csource notification would report: the
+    // registrations it carries (clause 5.11.7) and the subscription set it is
+    // evaluated against. The processor, the one reader of the registration
+    // queue, wakes the sweep on each registration change; the wake coalesces.
+    let (interval_wake, interval_receiver) = wake_channel();
+    // clone: the periodic sweep subscribes to the same context-source-subscription
+    // stream so a change wakes it, while the event-driven processor owns the sender.
     let subscription_changes = streams.subscriptions.clone();
     register_csource_notification_processor(
         supervisor,
         streams,
+        interval_wake.clone(), // clone: the processor and the subscription wake each pulse the sweep.
         CsourceNotificationPorts {
             target: storage.live_target.clone(),                    // clone: the resident processor owns the live branch it evaluates.
             subscriptions: Arc::clone(&csource_subscriptions),      // clone: the processor and the interval worker share one store.
@@ -156,16 +135,30 @@ pub(super) fn register_csource_notification_workers(
             Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
             storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
         )),
-        registration_changes,
-        subscription_changes,
+        IntervalWake {
+            handle: interval_wake,
+            receiver: interval_receiver,
+            subscription_changes,
+        },
         interval_max_sleep,
         pacer,
     )
 }
 
+/// What wakes the periodic context source sweep before its schedule.
+struct IntervalWake {
+    /// The handle the subscription stream pulses the sweep through.
+    handle: WakeHandle,
+    /// The receiver the sweep's drain waits on.
+    receiver: DrainWakeReceiver,
+    /// Context-source subscription changes, each of which wakes the sweep.
+    subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
+}
+
 fn register_csource_notification_processor(
     supervisor: &TaskSupervisor,
     streams: CsourceNotificationStreams,
+    interval_wake: WakeHandle,
     ports: CsourceNotificationPorts,
 ) -> Result<(), TenantAssemblyError> {
     let CsourceNotificationStreams {
@@ -191,7 +184,8 @@ fn register_csource_notification_processor(
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let mut registration_receiver = registration_changes.subscribe();
+        let registration_changes = Arc::clone(&registration_changes); // clone: every resident attempt takes the one queue reader in turn.
+        let interval_wake = interval_wake.clone(); // clone: each resident attempt owns a wake handle it pulses.
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = CsourceNotificationProcessor::new(CsourceNotificationProcessorDeps {
             target: target.clone(), // clone: each resident restart owns the same immutable live branch target.
@@ -204,11 +198,9 @@ fn register_csource_notification_processor(
             tenant: tenant.clone(), // clone: each resident restart owns the same tenant partition.
         });
         async move {
+            let mut registration_receiver = registration_changes.lock_owned().await;
             processor.reload_cache().await.map_err(worker_notification_failure)?;
             execution.mark_running();
-            let mut lost_registration_changes: u64 = 0;
-            let mut evaluated_through = Some(Utc::now());
-            let mut reconciled = ReconciledWindow::default();
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
@@ -221,10 +213,7 @@ fn register_csource_notification_processor(
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::CsourceSubscription)),
                     },
                     received = registration_receiver.recv() => match received {
-                        Ok(event) => {
-                            if reconciled.covers(&event.change) {
-                                continue;
-                            }
+                        Some(event) => {
                             loop {
                                 match subscription_receiver.try_recv() {
                                     Ok(change) => processor.apply_subscription_change(change).await,
@@ -235,22 +224,12 @@ fn register_csource_notification_processor(
                                     Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                                 }
                             }
-                            evaluated_through = evaluated_through.max(event.change.written_at());
+                            // The sweep reads the store, so it is woken whether or
+                            // not this evaluation sends anything.
+                            let _ = interval_wake.wake();
                             processor.apply_registration_change(event).await;
                         }
-                        Err(RecvError::Lagged(skipped)) => {
-                            let mut drained = DrainedRegistrations { lost: skipped, evaluated_through };
-                            drained.absorb(&mut registration_receiver);
-                            lost_registration_changes = lost_registration_changes.saturating_add(drained.lost);
-                            tracing::warn!(skipped = drained.lost, lost_registration_changes, "registration stream lagged; reconciling context source notifications");
-                            let read_through = processor
-                                .reconcile_registrations(drained.evaluated_through)
-                                .await
-                                .map_err(worker_notification_failure)?;
-                            evaluated_through = drained.evaluated_through.max(read_through);
-                            reconciled = ReconciledWindow::through(read_through);
-                        }
-                        Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Registration)),
+                        None => return Err(channel_closed(ChangeChannel::Registration)),
                     },
                 }
             }
@@ -265,26 +244,19 @@ fn register_csource_notification_processor(
 fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,
-    registration_changes: broadcast::Sender<CsrChangeEvent>,
-    subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
+    wake: IntervalWake,
     interval_max_sleep: Duration,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let (interval_wake, receiver) = wake_channel();
-    // Both streams change what a periodic csource notification would report: the
-    // registrations it carries (clause 5.11.7) and the subscription set it is
-    // evaluated against. Either waking the sweep is correct; the wake coalesces.
-    register_periodic_wake(
-        supervisor,
-        "csource-notification-interval-registration-wake",
-        interval_wake.clone(),
-        ChangeChannel::Registration,
-        registration_changes,
-    )?;
+    let IntervalWake {
+        handle,
+        receiver,
+        subscription_changes,
+    } = wake;
     register_periodic_wake(
         supervisor,
         "csource-notification-interval-subscription-wake",
-        interval_wake,
+        handle,
         ChangeChannel::CsourceSubscription,
         subscription_changes,
     )?;

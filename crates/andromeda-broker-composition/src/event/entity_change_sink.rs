@@ -2,19 +2,14 @@
 //! evaluation.
 //!
 //! Clause 5.8.6 owes a notification for every change of a watched Attribute,
-//! and clause 5.5.11.3 a separate one for each update, so the queue never drops
-//! a change: a write that finds it full waits for room. A change queues behind
-//! every change already waiting for room, since a full queue hands each freed
-//! slot to the longest waiter, so the changes of one write stay in commit
-//! order. Once a write waits, a task of its own finishes the hand-off: the
-//! changes have committed, and abandoning the request must not lose them.
+//! and clause 5.5.11.3 a separate one for each update, so a change is queued
+//! as [`queue_in_order`] queues it: never dropped, in commit order.
 
+use crate::event::queued_handoff::{QueuedChange, queue_in_order};
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_entity::change_sink::EntityChangeSink;
-use futures::{future, future::BoxFuture};
-use std::{iter, vec};
-use tokio::sync::{mpsc, mpsc::error::TrySendError};
-use tracing::{debug, warn};
+use futures::future::BoxFuture;
+use tokio::sync::mpsc;
 
 /// Queues committed entity changes for the tenant's live notification
 /// evaluation.
@@ -31,34 +26,8 @@ impl QueuedEntityChangeSink {
 
 impl EntityChangeSink for QueuedEntityChangeSink {
     fn publish(&self, changes: Vec<ContextChangeEvent>) -> BoxFuture<'static, ()> {
-        let mut changes = changes.into_iter();
-        match changes.by_ref().find_map(|change| self.sender.try_send(change).err()) {
-            None => Box::pin(future::ready(())),
-            Some(TrySendError::Full(change)) => wait_for_room(self.sender.clone(), change, changes), // clone: the hand-off task owns its sender handle.
-            Some(TrySendError::Closed(_)) => {
-                debug!("no live notification evaluation receives entity changes");
-                Box::pin(future::ready(()))
-            }
-        }
+        queue_in_order(&self.sender, changes, QueuedChange::Entity)
     }
-}
-
-/// Queue `first` and then `rest` from a task of their own, resolving once the
-/// last of them is queued.
-fn wait_for_room(sender: mpsc::Sender<ContextChangeEvent>, first: ContextChangeEvent, rest: vec::IntoIter<ContextChangeEvent>) -> BoxFuture<'static, ()> {
-    let handoff = tokio::spawn(async move {
-        for change in iter::once(first).chain(rest) {
-            if sender.send(change).await.is_err() {
-                debug!("no live notification evaluation receives entity changes");
-                return;
-            }
-        }
-    });
-    Box::pin(async move {
-        if let Err(error) = handoff.await {
-            warn!(%error, "the hand-off of committed entity changes to live notification evaluation did not finish");
-        }
-    })
 }
 
 #[cfg(test)]

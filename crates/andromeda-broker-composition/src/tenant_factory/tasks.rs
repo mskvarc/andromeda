@@ -61,6 +61,10 @@ use tokio::{
     task::JoinHandle,
 };
 
+/// Committed registration changes queued for context source notification
+/// evaluation before a further write waits for room.
+const REGISTRATION_QUEUE_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1023);
+
 /// Change channels shared by tenant services and their workers.
 pub(super) struct TenantSignals {
     /// Where committed entity changes queue for live notification evaluation.
@@ -69,7 +73,13 @@ pub(super) struct TenantSignals {
     /// so a change queued while it restarts is still evaluated.
     pub(super) entity_receiver: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
-    pub(super) registration: broadcast::Sender<CsrChangeEvent>,
+    /// Where committed registration changes queue for context source
+    /// notification evaluation.
+    pub(super) registration: mpsc::Sender<CsrChangeEvent>,
+    /// The registration queue's one reader, held across restarts of the
+    /// context source notification worker so a change queued while it
+    /// restarts is still evaluated.
+    pub(super) registration_receiver: Arc<Mutex<mpsc::Receiver<CsrChangeEvent>>>,
     pub(super) csource_subscription: broadcast::Sender<CsourceSubscriptionChange>,
 }
 
@@ -79,13 +89,14 @@ impl TenantSignals {
     pub(super) fn new(entity_capacity: NonZeroUsize) -> TenantSignals {
         let (entity, entity_receiver) = mpsc::channel(entity_capacity.get());
         let (subscription, _) = broadcast::channel(1024);
-        let (registration, _) = broadcast::channel(1024);
+        let (registration, registration_receiver) = mpsc::channel(REGISTRATION_QUEUE_CAPACITY.get());
         let (csource_subscription, _) = broadcast::channel(1024);
         TenantSignals {
             entity,
             entity_receiver: Arc::new(Mutex::new(entity_receiver)),
             subscription,
             registration,
+            registration_receiver: Arc::new(Mutex::new(registration_receiver)),
             csource_subscription,
         }
     }
@@ -159,6 +170,7 @@ pub(super) fn supervise_tasks(
         entity_receiver,
         subscription,
         registration,
+        registration_receiver,
         csource_subscription,
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
@@ -221,7 +233,7 @@ pub(super) fn supervise_tasks(
         transport,
         csource_subscriptions,
         CsourceNotificationStreams {
-            registrations: registration,
+            registrations: registration_receiver,
             subscriptions: csource_subscription,
         },
         config.notifications.periodic.max_poll_interval.duration(),

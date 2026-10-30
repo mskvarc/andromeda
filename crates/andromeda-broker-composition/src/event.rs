@@ -7,6 +7,7 @@
 //! serialisable shapes and stay in the model crate.
 
 pub mod entity_change_sink;
+pub(crate) mod queued_handoff;
 pub mod registration_change_sink;
 pub mod snapshot_notification_sink;
 pub mod snapshot_status_queue;

@@ -93,7 +93,8 @@ impl RegistrationExpiry {
                         before: Some(Box::new(registration)),
                     },
                     revision,
-                });
+                })
+                .await;
             }
             expired.push(identifier);
         }

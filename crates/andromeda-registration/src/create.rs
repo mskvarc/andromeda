@@ -71,7 +71,8 @@ impl RegistrationService {
                 written: Box::new(written.registration),
             },
             revision: written.revision,
-        });
+        })
+        .await;
         Ok(id)
     }
 }
