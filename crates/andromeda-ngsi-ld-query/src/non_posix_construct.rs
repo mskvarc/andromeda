@@ -34,9 +34,12 @@ pub enum NonPosixConstruct {
     /// A repetition count above `RE_DUP_MAX`.
     #[display("a repetition count above 255")]
     RepetitionCount,
-    /// A bracket expression nested inside another.
-    #[display("a bracket expression nested inside another ([[=a=]], [[.a.]], [[abc]])")]
-    NestedBracketExpression,
+    /// A `[:` inside a bracket expression that does not open a character class with a known name.
+    #[display("a malformed or unknown character class name ([[:alpha]], [[:foo:]])")]
+    UnknownCharacterClass,
+    /// An equivalence class or collating symbol that does not name exactly one character, or that names whitespace `(?x)` would skip.
+    #[display("an equivalence class or collating symbol that does not name one character ([[=ch=]], [[.hyphen.]]; write [[.-.]] for a hyphen)")]
+    CollatingElement,
     /// A class set operation.
     #[display("a class set operation ([a&&b], [a--b], [a~~b])")]
     ClassSetOperation,

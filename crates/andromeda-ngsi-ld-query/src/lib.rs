@@ -25,6 +25,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod bracket_expression;
 pub mod candidate_filters;
 pub mod comma_separated_list;
 pub mod count_policy;

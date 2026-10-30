@@ -2,25 +2,37 @@
 //!
 //! NGSI-LD puts a regular expression in the `idPattern` parameter (clause 5.7.2) and in the `~=` / `!~=` operands of a `q` filter (clause 4.9). Both are an untrusted pattern from a request, so both use [`Pattern`].
 //!
-//! A pattern is evaluated by two engines: the `regex` crate in memory and PostgreSQL's Advanced Regular Expression operators (`~`, `!~`) in the store. Clause 4.9 and Table 5.2.8-1 mandate IEEE 1003.2, which both implement, but each extends it in its own direction. The `regex` crate therefore compiles the pattern as the client wrote it, and the store is handed a [`PortablePattern`] rendered from what the `regex` crate compiled, with every embedded option applied and every class written out. That is what lets `(?i)` fold `Č` to `č` in the store as it does in memory, where PostgreSQL's own case-insensitive option folds only ASCII.
+//! A pattern is evaluated by two engines: the `regex` crate in memory and PostgreSQL's Advanced Regular Expression operators (`~`, `!~`) in the store. Clause 4.9 and Table 5.2.8-1 mandate IEEE 1003.2, which both implement, but each extends it in its own direction. The `regex` crate therefore compiles the pattern, and the store is handed a [`PortablePattern`] rendered from what the `regex` crate compiled, with every embedded option applied and every class written out. That is what lets `(?i)` fold `Č` to `č` in the store as it does in memory, where PostgreSQL's own case-insensitive option folds only ASCII.
+//!
+//! The `regex` crate parses neither of the IEEE 1003.2 bracket-expression terms `[=c=]` and `[.c.]`, and reads a `[` inside a bracket expression as a nested one, so neither engine is handed the client's text as written: [`restate_bracket_expressions`] first rewrites every bracket expression into the form the `regex` crate reads as IEEE 1003.2 does, and both engines start from that.
 //!
 //! [`check_posix_dialect`] decides which patterns are admitted: IEEE 1003.2, less the constructs the `regex` crate reads differently from POSIX.2 (accepting on the `regex` crate's terms alone would let `\b` mean a word boundary where IEEE 1003.2 gives it no meaning), plus the extensions the broker supports.
 //!
 //! One divergence is settled by configuration rather than refusal, because the construct is POSIX.2 itself: `.` matches a newline in POSIX.2 and in PostgreSQL's default newline-insensitive matching, but not in the `regex` crate's default. The in-memory engine is built with `dot_matches_new_line`, so `name~="a.b"` selects a value spelled `a\nb` on both sides.
 
-use crate::{error::QueryError, portable_pattern::PortablePattern, posix_dialect::check_posix_dialect, subject_start::SubjectStart};
+use crate::{
+    bracket_expression::restate_bracket_expressions,
+    error::QueryError,
+    portable_pattern::PortablePattern,
+    posix_dialect::check_posix_dialect,
+    subject_start::SubjectStart,
+};
+use derive_more::Display;
 use regex::{Regex, RegexBuilder};
 use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 
 /// A regular expression from a query parameter or a `q` predicate, compiled at parse time.
 ///
 /// Equality is over the source text, not the compiled automaton: two patterns are the same predicate exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Display, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
+#[display("{source}")]
 pub struct Pattern {
-    /// The client's text, compiled for the in-memory engine.
+    /// The pattern as the client wrote it.
+    source: Box<str>,
+    /// The client's text with its bracket expressions restated, compiled for the in-memory engine.
     compiled: Regex,
     /// The restatement the store evaluates.
     portable: PortablePattern,
@@ -33,17 +45,19 @@ impl Pattern {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the pattern, [`QueryError::PatternRepeatedQuantifier`] or [`QueryError::PatternNonPosixConstruct`] when [`check_posix_dialect`] finds a construct outside the admitted dialect, and [`QueryError::PatternTranslation`] when the pattern cannot be translated for rendering.
+    /// Returns [`QueryError::PatternNonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`QueryError::PatternRegex`] when the `regex` crate rejects the pattern, [`QueryError::PatternRepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`QueryError::PatternTranslation`] when the pattern cannot be translated for rendering.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
+        let restated = restate_bracket_expressions(pattern)?;
         // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
-        let compiled = RegexBuilder::new(pattern).dot_matches_new_line(true).build()?;
-        let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
+        let compiled = RegexBuilder::new(&restated).dot_matches_new_line(true).build()?;
+        let ast = Parser::new().parse(&restated).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
         check_posix_dialect(&ast)?;
         // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
-        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(pattern, &ast)?;
+        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(&restated, &ast)?;
         let portable = PortablePattern::render(&hir)?;
         let subject_start = SubjectStart::of(&hir);
         Ok(Pattern {
+            source: pattern.into(),
             compiled,
             portable,
             subject_start,
@@ -53,7 +67,7 @@ impl Pattern {
     /// The pattern as the client wrote it: the wire form, and what a request forwarded to a Context Source carries.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.compiled.as_str()
+        &self.source
     }
 
     /// The restatement a store evaluates in place of the client's text.
@@ -93,26 +107,18 @@ impl TryFrom<String> for Pattern {
     }
 }
 
-// `derive_more::Display` cannot reach through a foreign newtype's private
-// field, which is where the source text lives.
-impl fmt::Display for Pattern {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.compiled.as_str())
-    }
-}
-
 // `#[serde(into = "String")]` demands an `Into<String>`.
 impl From<Pattern> for String {
     fn from(pattern: Pattern) -> String {
-        pattern.compiled.as_str().to_string()
+        pattern.source.into()
     }
 }
 
-// `regex::Regex` carries no equality of its own, and no derive can produce one
-// over the source text of a private field of a foreign type.
+// `regex::Regex` carries no equality of its own, so no derive covers every
+// field; equality is over the source text alone.
 impl PartialEq for Pattern {
     fn eq(&self, other: &Pattern) -> bool {
-        self.compiled.as_str() == other.compiled.as_str()
+        self.source == other.source
     }
 }
 

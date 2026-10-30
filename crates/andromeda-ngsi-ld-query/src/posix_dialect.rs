@@ -5,9 +5,11 @@
 //! 1003.2 is POSIX.2, whose extended regular expressions both engines the
 //! broker uses largely implement alike. Neither engine stops there: PostgreSQL's
 //! `~` operator is an Advanced Regular Expression and the `regex` crate is a
-//! Perl-flavoured superset, and the two supersets do not agree. Neither engine
-//! reaches POSIX.2 in full, either: the `regex` crate has no parse path at all
-//! for a bracket expression's equivalence classes and collating symbols.
+//! Perl-flavoured superset, and the two supersets do not agree. The `regex`
+//! crate does not reach POSIX.2 in full, either: it has no parse path for a
+//! bracket expression's equivalence classes and collating symbols, which
+//! [`crate::bracket_expression`] restates before the pattern is parsed, so the
+//! tree walked here is that of the restatement.
 //!
 //! The store never compiles the client's text: it runs the
 //! [`crate::portable_pattern::PortablePattern`] rendered from what the `regex`
@@ -26,7 +28,7 @@
 //!   Rendering follows the `regex` crate's reading, so admitting one would make
 //!   both engines agree on something the client did not write.
 //!
-//! Three rejections of the second kind narrow what clause 4.9 mandates: a bracket expression nested inside another (how the `regex` crate parses POSIX.2's equivalence classes `[[=a=]]` and collating symbols `[[.a.]]`); a hyphen where POSIX.2 makes it a range operator and the `regex` crate a literal; and a negated POSIX character class, which POSIX.2 does not define.
+//! Three rejections narrow what clause 4.9 mandates: an equivalence class or collating symbol naming more than one character, whose meaning depends on the collating-element table of some locale; a hyphen where POSIX.2 makes it a range operator and the `regex` crate a literal; and a negated POSIX character class, which POSIX.2 does not define.
 //!
 //! Every reading recorded here was established by executing the construct against both engines (PostgreSQL 18 over a `COLLATE "C"` operand, the collation every column a pattern is applied to carries) rather than from either engine's documentation.
 
@@ -198,8 +200,8 @@ const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
 
 /// Walk a bracket expression, which may nest the same constructs.
 ///
-/// A set operation between two class sets — `[a-z&&b-d]`, `[[a-z]--[aeiou]]`,
-/// `[[a-z]~~[a-c]]` — is a `regex`-crate extension with no POSIX.2 counterpart.
+/// A set operation between two class sets (`[a-z&&b-d]`, `[a-z--aeiou]`,
+/// `[a-z~~a-c]`) is a `regex`-crate extension with no POSIX.2 counterpart.
 /// IEEE 1003.2 and PostgreSQL read `&`, `-` and `~` as ordinary members, so
 /// `[a-z&&b-d]` is the intersection `[b-d]` to the `regex` crate and the union
 /// of `a-z`, `&` and `b-d` to POSIX.2.
@@ -219,7 +221,8 @@ fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
 fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
     match item {
         ClassSetItem::Unicode(_) => Err(unsupported(NonPosixConstruct::UnicodePropertyClass)),
-        ClassSetItem::Bracketed(_) => Err(unsupported(NonPosixConstruct::NestedBracketExpression)),
+        // Every `[` inside a bracket expression that does not open a known character class is escaped or refused before parsing, so a nested one is a `[:` the `regex` crate could not read as a class.
+        ClassSetItem::Bracketed(_) => Err(unsupported(NonPosixConstruct::UnknownCharacterClass)),
         ClassSetItem::Ascii(class) => check_ascii_class(class),
         ClassSetItem::Literal(literal) => check_literal(literal),
         ClassSetItem::Range(range) => check_class_set_range(range),
@@ -299,6 +302,7 @@ const fn unsupported(construct: NonPosixConstruct) -> QueryError {
 )]
 mod tests {
     use crate::{error::QueryError, pattern::Pattern};
+    use pretty_assertions::assert_eq;
 
     /// Assert that every pattern is refused as a construct the two engines do
     /// not share.
@@ -363,28 +367,49 @@ mod tests {
         each_is_refused(&["\\bword", "a\\Bb"]);
     }
 
-    /// The `regex` crate has no parse path for POSIX.2's equivalence classes or collating symbols, so it reads `[[=a=]]` as a nested class over `{'=', 'a'}` where POSIX.2 reads `a`. Nesting a plain bracket expression diverges the same way: `[[abc]]` is `[abc]` to the `regex` crate and `[abc]` followed by a literal `]` to POSIX.2. A mistyped class name such as `[[:alpha]]` takes the same parse and PostgreSQL refuses it outright. Refusing these narrows what clause 4.9 mandates, deliberately: translating POSIX.2's reading instead would depend on the collating-element table of some collation.
+    /// Over a `COLLATE "C"` operand an equivalence class holds only the character naming it and a collating symbol is that character, so `[[=e=]]` and `[[.e.]]` are `e`. A `[` inside a bracket expression that opens neither term nor a character class is an ordinary member, so `[[abc]]` is `[` or `a`, `b`, `c`, followed by a literal `]`.
     #[test]
-    fn a_bracket_expression_nested_inside_another_is_refused() {
-        each_is_refused(&[
-            "[[=a=]]",
-            "^[[=a=]]$",
-            "[[=a=]x]",
-            "[[=a=][:digit:]]",
-            "[[.a.]]",
-            "[[.hyphen.]]",
-            "[[abc]]",
-            "[[a-c]]",
-            "[x[abc]]",
-            "[[:alpha]]",
-            "[[:foo:]]",
-        ]);
+    fn an_equivalence_class_collating_symbol_or_bracket_in_a_list_means_what_posix_means() {
+        for (raw, matching, rejecting) in [
+            ("M[[=e=]]rc", &["Merc", "Mercedes"][..], &["Mrc", "M=rc", "M[rc"][..]),
+            ("[[.e.]]des", &["edes", "Mercedes"], &["des", ".des"]),
+            ("^[[abc]]$", &["a]", "[]", "c]"], &["a", "[", "abc"]),
+            ("^[[=a=]x]$", &["a", "x"], &["=", "[", "]"]),
+            ("^[[=a=][:digit:]]$", &["a", "7"], &["b", ":"]),
+            ("^[[.a.]-[.c.]]$", &["a", "b", "c"], &["d", "-", "."]),
+            ("^[[.-.]]$", &["-"], &["a", "."]),
+            ("^[x[a-c]]$", &["x]", "b]", "[]"], &["x", "b", "-]"]),
+            ("^[^[=a=]]$", &["b", "="], &["a"]),
+            ("^[[a-z]--[aeiou]]$", &["b--a]", "[--e]"], &["b", "a", "b-a]"]),
+        ] {
+            let pattern = Pattern::parse(raw).unwrap_or_else(|error| panic!("{raw} is a POSIX.2 extended regular expression: {error:?}"));
+            for subject in matching {
+                assert!(pattern.is_match(subject), "{raw} must match {subject:?}");
+            }
+            for subject in rejecting {
+                assert!(!pattern.is_match(subject), "{raw} must not match {subject:?}");
+            }
+        }
+    }
+
+    /// The store runs the restatement, so it reads the term as the in-memory engine does; the wire form stays the client's text.
+    #[test]
+    fn an_equivalence_class_keeps_its_text_beside_the_restatement_the_store_runs() {
+        let pattern = Pattern::parse("M[[=e=]]rc").expect("admitted");
+        assert_eq!(pattern.as_str(), "M[[=e=]]rc");
+        assert_eq!(pattern.portable(), Pattern::parse("M[e]rc").expect("admitted").portable());
+    }
+
+    /// A multi-character collating element depends on the collating-element table of some locale, and PostgreSQL refuses a malformed or unknown class name.
+    #[test]
+    fn a_multi_character_term_or_an_unknown_class_name_is_refused() {
+        each_is_refused(&["[[.hyphen.]]", "[[=ch=]]", "[[.a]", "[[:alpha]]", "[[:foo:]]", "[a-[:digit:]]"]);
     }
 
     /// POSIX.2 reads the operator characters as ordinary members: `[a-z&&b-d]` selects `b`, `c` and `d` to the `regex` crate and also `a`, `e`…`z` and `&` to POSIX.2.
     #[test]
     fn a_class_set_operation_is_refused() {
-        each_is_refused(&["[a-z&&b-d]", "[[a-z]--[aeiou]]", "[[a-z]~~[a-c]]", "[+--]", "[a-b--d]"]);
+        each_is_refused(&["[a-z&&b-d]", "[a-z--aeiou]", "[a-z~~a-c]", "[+--]", "[a-b--d]"]);
     }
 
     /// `[]-a]` is the range `]`…`a` to POSIX.2 and the members `]`, `-`, `a` to the `regex` crate, and `[--/]` is the range `-`…`/` to POSIX.2 and two members to the `regex` crate.
@@ -507,7 +532,7 @@ mod tests {
             "(ab)*\\p{L}",
             "^(x(y\\bz))$",
             "[a-z]|(?:\\x{61})",
-            "(a|[[=a=]])",
+            "(a|[[.ab.]])",
             "^(x[[:^alpha:]])$",
             "(ab)*[]-a]",
         ] {
