@@ -30,7 +30,7 @@ use andromeda_registration::error::RegistrationError;
 #[must_use]
 pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
     match error {
-        FederationError::Conflict(reason) => ClassifiedReport::public(NgsiLdErrorType::Conflict, reason.to_string()),
+        FederationError::Conflict { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
         FederationError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
         FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
         FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
@@ -60,7 +60,7 @@ pub fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
     match error {
         FederationError::JsonLd(source) => classify_jsonld_error(source),
         FederationError::Query(source) => classify_query_error(source),
-        FederationError::Conflict(_)
+        FederationError::Conflict { .. }
         | FederationError::OperationNotSupported(_)
         | FederationError::LoopDetected { .. }
         | FederationError::GatewayTimeout { .. }
@@ -125,7 +125,7 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
             | RegistrationError::Persistence(_)
             | RegistrationError::Internal(_),
         )
-        | FederationError::Conflict(_)
+        | FederationError::Conflict { .. }
         | FederationError::OperationNotSupported(_)
         | FederationError::LoopDetected { .. }
         | FederationError::GatewayTimeout { .. }
@@ -154,7 +154,6 @@ mod tests {
     };
     use andromeda_federation::{
         error::FederationError,
-        federation_conflict_reason::FederationConflictReason,
         federation_invariant::FederationInvariant,
         federation_operation_unsupported::FederationOperationUnsupported,
         gateway_failure::GatewayFailure,
@@ -235,7 +234,9 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:test");
         for (error, expected) in [
             (
-                FederationError::Conflict(FederationConflictReason::RemoteRejected(Box::new(RemoteAnswer { status: 409, problem: None }))),
+                FederationError::Conflict {
+                    registration: registration.clone(), // clone: each case owns its registration
+                },
                 ProblemClassification::Category(NgsiLdErrorType::Conflict),
             ),
             (

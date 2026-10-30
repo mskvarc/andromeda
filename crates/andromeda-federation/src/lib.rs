@@ -43,8 +43,6 @@ pub mod entity_result;
 pub mod error;
 /// The filters a query places on registrations, expanded under its context.
 pub mod expanded_registration_filters;
-/// The concrete reasons a single forwarded write is reported as a conflict.
-pub mod federation_conflict_reason;
 /// The invariants federation relies on.
 pub mod federation_invariant;
 /// The concrete reasons a single registered source cannot serve an operation.

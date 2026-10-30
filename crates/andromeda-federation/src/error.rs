@@ -1,11 +1,6 @@
 //! Errors produced by context-source federation.
 
-use crate::{
-    federation_conflict_reason::FederationConflictReason,
-    federation_invariant::FederationInvariant,
-    federation_operation_unsupported::FederationOperationUnsupported,
-    gateway_failure::GatewayFailure,
-};
+use crate::{federation_invariant::FederationInvariant, federation_operation_unsupported::FederationOperationUnsupported, gateway_failure::GatewayFailure};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -22,9 +17,13 @@ use thiserror::Error;
 /// status and detail the clause assigns rather than folded into a 207.
 #[derive(Debug, Error)]
 pub enum FederationError {
-    /// Federation cannot satisfy mutually exclusive registration rules.
-    #[error("federation conflict: {0}")]
-    Conflict(FederationConflictReason),
+    /// The single registered source covers the data but does not advertise the
+    /// operation the request needs of it (clauses 5.6.1.4 and following).
+    #[error("registration {registration} covers the data but does not advertise the requested operation")]
+    Conflict {
+        /// The registration that covers the data without advertising the operation.
+        registration: Identifier,
+    },
     /// The single registered source cannot perform the operation the request
     /// needs of it (422; clause 5.6.8.4).
     #[error("operation not supported at the registered source: {0}")]

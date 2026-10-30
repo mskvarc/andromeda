@@ -20,6 +20,7 @@ use crate::{
     read_fan_out::{SourceAnswer, read_outcome},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
+    single_source_failure::single_source_read_failure,
     source_reach::SourceReach,
     source_read::SourceRead,
     term_resolver::TermResolver,
@@ -27,7 +28,7 @@ use crate::{
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity_map::EntityMap;
+use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use futures::{StreamExt, stream};
 use thiserror::Error;
@@ -118,10 +119,13 @@ impl FederationService {
     /// Returns [`FederationError::Query`] when a selector's type cannot be
     /// expanded against the request's context, and
     /// [`FederationError::Registration`] when the matching registrations
-    /// cannot be read. A source that fails to answer does not fail the
-    /// call: its attempt is reported as a [`ForwardedEntityMap`] without a
-    /// map, except for the one case Table 6.34.3.1-1 relays, which the
-    /// returned [`ForwardReadOutcome`] carries on its `sources`.
+    /// cannot be read. When the only matching registration is exclusive or
+    /// redirect, its failure is the creation's (clause 6.3.17):
+    /// [`FederationError::LoopDetected`], [`FederationError::GatewayTimeout`]
+    /// or [`FederationError::BadGateway`], except for the 501 Table 6.34.3.1-1
+    /// relays, which the returned [`ForwardReadOutcome`] carries on its
+    /// `sources`. Any other source that fails to answer does not fail the call:
+    /// its attempt is reported as a [`ForwardedEntityMap`] without a map.
     pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
             query,
@@ -157,9 +161,10 @@ impl FederationService {
             return Ok(ForwardReadOutcome::empty());
         }
         let matched = registrations.len();
+        let lone = matched == 1;
         let resolver = TermResolver::new(&self.engine, context);
         let resolver = &resolver;
-        let answers = stream::iter(registrations)
+        let (answers, failures): (Vec<_>, Vec<_>) = stream::iter(registrations)
             .map(|registration| async move {
                 // Clause 4.3.6.6: the query's names are spelled in the
                 // registration's forwarding context.
@@ -178,6 +183,12 @@ impl FederationService {
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
                 let error_status = outcome.error_status();
+                let mode = registration.access.mode.unwrap_or_default();
+                let failure = if lone && matches!(mode, ForwardingMode::Exclusive | ForwardingMode::Redirect) {
+                    single_source_read_failure(&registration.id, &outcome)
+                } else {
+                    None
+                };
                 let (map, warnings) = match outcome {
                     ForwardGetOutcome::Success(response) => match serde_json::from_slice::<EntityMap>(&response.body) {
                         Ok(map) => (Some(map), response.warnings),
@@ -200,19 +211,23 @@ impl FederationService {
                         (None, other.warning(&registration.id).into_iter().collect())
                     }
                 };
-                SourceAnswer {
-                    mode: registration.access.mode.unwrap_or_default(),
+                let answer = SourceAnswer {
+                    mode,
                     error_status,
                     entry: Some(ForwardedEntityMap {
                         registration_id: registration.id,
                         map,
                         warnings,
                     }),
-                }
+                };
+                (answer, failure)
             })
             .buffer_unordered(self.csr_concurrency)
-            .collect()
+            .unzip()
             .await;
+        if let Some(failure) = failures.into_iter().flatten().next() {
+            return Err(failure);
+        }
         Ok(read_outcome(answers, matched))
     }
 }
