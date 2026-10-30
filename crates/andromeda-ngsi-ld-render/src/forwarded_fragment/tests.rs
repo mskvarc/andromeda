@@ -73,14 +73,22 @@ fn a_language_property_is_forwarded_as_a_property_below_1_4() {
 }
 
 /// Table 4.3.6.8-1: a `ListRelationship` reaches a source below 1.8 as a
-/// Relationship naming the first target of its list.
+/// Relationship whose `object` names every target of its list, in order
+/// (Table 4.3.6.8-3: "String or String[]").
 #[test]
-fn a_list_relationship_keeps_its_first_target_below_1_8() {
-    let text = r#"{"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:T:a"}, {"object": "urn:ngsi-ld:T:b"}]}"#;
+fn a_list_relationship_keeps_every_target_below_1_8() {
+    let three = r#"{"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:T:c"}, {"object": "urn:ngsi-ld:T:a"}, {"object": "urn:ngsi-ld:T:b"}]}"#;
     pretty_assertions::assert_eq!(
-        forwarded(text, Some(SpecVersion::V1_4)),
+        forwarded(three, Some(SpecVersion::new(1, 7))),
+        json!({"type": "Relationship", "object": ["urn:ngsi-ld:T:c", "urn:ngsi-ld:T:a", "urn:ngsi-ld:T:b"]})
+    );
+    let one = r#"{"type": "ListRelationship", "objectList": ["urn:ngsi-ld:T:a"]}"#;
+    pretty_assertions::assert_eq!(
+        forwarded(one, Some(SpecVersion::new(1, 7))),
         json!({"type": "Relationship", "object": "urn:ngsi-ld:T:a"})
     );
+    let none = r#"{"type": "ListRelationship", "objectList": []}"#;
+    pretty_assertions::assert_eq!(forwarded(none, Some(SpecVersion::new(1, 7))), json!({"type": "Relationship", "object": null}));
 }
 
 /// Table 4.3.6.8-1 notes 2 and 3: a source below 1.3 receives one instance of

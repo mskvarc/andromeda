@@ -16,9 +16,10 @@ use crate::{
         adapted_payload::AdaptedPayload,
         deletion::{DeletionEncoding, DeletionSite},
         fallback::{InstanceMember, VersionFallback},
+        list_as_relationship::ListAsRelationship,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion, time::rendering::instant_text, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::attribute::{
     merge_instance::MergeInstance,
     merge_member::MergeMember,
@@ -208,16 +209,16 @@ impl Serialize for FragmentInstance<'_> {
 enum WrittenValue<'a> {
     /// The value as the fragment wrote it.
     Held(&'a MergeValue),
-    /// The one target a `ListRelationship` written as a Relationship keeps
-    /// (Table 4.3.6.8-1): the first of its list.
-    FirstTarget(Option<&'a Uri>),
+    /// A `ListRelationship`'s targets, written as the `object` of the
+    /// Relationship Table 4.3.6.8-1 reformats it as.
+    ListAsRelationship(ListAsRelationship<'a>),
 }
 
 impl<'a> WrittenValue<'a> {
     /// `value`, written under the value key of `family`.
     fn of(value: &'a MergeValue, family: AttributeType) -> WrittenValue<'a> {
         match value {
-            MergeValue::ListRelationship(list) if family == AttributeType::Relationship => WrittenValue::FirstTarget(list.0.first()),
+            MergeValue::ListRelationship(list) if family == AttributeType::Relationship => WrittenValue::ListAsRelationship(ListAsRelationship::new(&list.0)),
             MergeValue::Property(_)
             | MergeValue::Relationship(_)
             | MergeValue::GeoProperty(_)
@@ -234,7 +235,7 @@ impl Serialize for WrittenValue<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             WrittenValue::Held(value) => value.serialize(serializer),
-            WrittenValue::FirstTarget(target) => target.serialize(serializer),
+            WrittenValue::ListAsRelationship(object) => object.serialize(serializer),
         }
     }
 }

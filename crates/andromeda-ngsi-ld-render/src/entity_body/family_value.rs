@@ -7,10 +7,13 @@
 //! read alike), so one writer serves both -- whichever instance the previous
 //! value is read from.
 
-use crate::entity_body::{
-    object_list_body::ObjectListBody,
-    reified_member::Reification,
-    value_body::{ValueBody, ValueListBody},
+use crate::{
+    entity_body::{
+        object_list_body::ObjectListBody,
+        reified_member::Reification,
+        value_body::{ValueBody, ValueListBody},
+    },
+    version::list_as_relationship::ListAsRelationship,
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, coerced_term::CoercedTerm, uri::Uri};
@@ -36,10 +39,9 @@ pub(crate) enum FamilyValue<'a> {
     ValueList(ValueListBody<'a>),
     /// A `ListRelationship`'s targets.
     ObjectList(ObjectListBody<'a>),
-    /// The one target a `ListRelationship` reformatted as a Relationship
-    /// keeps (Table 4.3.6.8-1): the first of its list, or the Null of an
-    /// empty one.
-    FirstTarget(Option<&'a Uri>),
+    /// A `ListRelationship`'s targets, written as the `object` of the
+    /// Relationship Table 4.3.6.8-1 reformats it as.
+    ListAsRelationship(ListAsRelationship<'a>),
 }
 
 impl<'a> FamilyValue<'a> {
@@ -59,11 +61,11 @@ impl<'a> FamilyValue<'a> {
 
     /// The value, as the member of `family` writes it once Table 4.3.6.8-1
     /// reformats the family that carries it: a `ListRelationship`'s list
-    /// becomes the single `object` of a Relationship, and every other value
+    /// becomes the `object` of a Relationship, and every other value
     /// moves under its generalization's key unchanged.
     pub(crate) fn written_as(self, family: AttributeType) -> FamilyValue<'a> {
         match self {
-            FamilyValue::ObjectList(list) if family == AttributeType::Relationship => FamilyValue::FirstTarget(list.first()),
+            FamilyValue::ObjectList(list) if family == AttributeType::Relationship => FamilyValue::ListAsRelationship(list.as_relationship()),
             unchanged @ (FamilyValue::Value(_)
             | FamilyValue::Targets(_)
             | FamilyValue::Vocab(_)
@@ -72,7 +74,7 @@ impl<'a> FamilyValue<'a> {
             | FamilyValue::Json(_)
             | FamilyValue::ValueList(_)
             | FamilyValue::ObjectList(_)
-            | FamilyValue::FirstTarget(_)) => unchanged,
+            | FamilyValue::ListAsRelationship(_)) => unchanged,
         }
     }
 
@@ -108,7 +110,7 @@ impl Serialize for FamilyValue<'_> {
             FamilyValue::Json(json) => json.serialize(serializer),
             FamilyValue::ValueList(values) => values.serialize(serializer),
             FamilyValue::ObjectList(list) => list.serialize(serializer),
-            FamilyValue::FirstTarget(target) => target.serialize(serializer),
+            FamilyValue::ListAsRelationship(object) => object.serialize(serializer),
         }
     }
 }

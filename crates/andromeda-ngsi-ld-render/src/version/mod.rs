@@ -15,8 +15,9 @@
 //! ([`adapted_payload`]) decides how two of the rows read, because an
 //! attribute's array is the clause 4.5.7 sequence of instances in time rather
 //! than the clause 4.5.5 set separated by `datasetId`. [`deletion`] says how a
-//! forwarded update writes a deletion for its target, or that it cannot. Every
-//! payload is written
+//! forwarded update writes a deletion for its target, or that it cannot.
+//! [`list_as_relationship`] is the `object` a `ListRelationship` reformatted
+//! as a Relationship is written with. Every payload is written
 //! from its typed form ([`crate::entity_body`], [`crate::temporal`],
 //! [`crate::forwarded_entity`]), which asks the rule table member by member as
 //! it is written; no rendered document is read back.
@@ -25,3 +26,4 @@ pub mod adaptation;
 pub mod adapted_payload;
 pub mod deletion;
 pub mod fallback;
+pub(crate) mod list_as_relationship;

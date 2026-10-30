@@ -127,21 +127,22 @@ fn a_reformatted_value_holding_a_geometry_keeps_the_property_type_in_concise() {
     );
 }
 
-/// The normalized reformat keeps the first target as the Relationship's
-/// `object`; the simplified rendering of either family is the same array of
-/// URIs, which the reformat leaves as it is.
+/// The normalized and concise reformats keep every target as the
+/// Relationship's `object` (Table 4.3.6.8-3: "String or String[]"); the
+/// simplified rendering of either family is the same array of URIs, which the
+/// reformat leaves as it is.
 #[test]
-fn a_list_relationship_is_written_as_its_first_target_below_1_8() {
+fn a_list_relationship_is_written_as_a_relationship_of_every_target_below_1_8() {
     let document = carrying(json!({
         "rel": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:A:1"}, {"object": "urn:ngsi-ld:B:1"}], "objectType": "A"}
     }));
     assert_eq!(
         attribute(document.clone(), "rel", ResponseFormat::Normalized, SpecVersion::V1_4), // clone: read in three representations
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1"})
+        json!({"type": "Relationship", "object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:B:1"]})
     );
     assert_eq!(
         attribute(document.clone(), "rel", ResponseFormat::Concise, SpecVersion::V1_4), // clone: read in three representations
-        json!({"object": "urn:ngsi-ld:A:1"})
+        json!({"object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:B:1"]})
     );
     assert_eq!(
         attribute(document, "rel", ResponseFormat::KeyValues, SpecVersion::V1_4),

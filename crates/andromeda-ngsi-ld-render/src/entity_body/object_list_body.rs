@@ -8,8 +8,7 @@
 //! stored: RFC 3986 section 6.2.2.2 does not make a percent-encoded reserved
 //! character equivalent to the character itself.
 
-use crate::entity_body::reified_member::Reification;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use crate::{entity_body::reified_member::Reification, version::list_as_relationship::ListAsRelationship};
 use andromeda_ngsi_ld_model::attribute::object_list::RelationshipObjectList;
 use serde::{Serialize, Serializer};
 
@@ -28,9 +27,10 @@ impl<'a> ObjectListBody<'a> {
         ObjectListBody { list, reification }
     }
 
-    /// The first target of the list.
-    pub(crate) fn first(self) -> Option<&'a Uri> {
-        self.list.0.first()
+    /// The list, as the `object` of the Relationship Table 4.3.6.8-1
+    /// reformats it as.
+    pub(crate) fn as_relationship(self) -> ListAsRelationship<'a> {
+        ListAsRelationship::new(&self.list.0)
     }
 }
 

@@ -15,7 +15,7 @@ use crate::{
         common_members::{carries_nothing, serialize_common_members, serialize_present, serialize_sub_attributes},
         family_value::FamilyValue,
         instance_fallback::{GeneralizationError, GeneralizedValue},
-        linked_entities::{first_target_entities, list_relationship_entities, relationship_entities},
+        linked_entities::{list_as_relationship_entities, list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
         negotiated_instance::NegotiatedInstance,
         notified_member::{InstanceReport, previous_value_of},
@@ -254,10 +254,12 @@ impl ReifiedInstance<'_> {
                 serialize_present(object, compact_properties::ENTITY, relationship_entities(relationship, format, self.walk))
             }
             // A `ListRelationship` reformatted as a Relationship nests the
-            // entity its one remaining target names, as a Relationship does.
-            Attribute::ListRelationship(list_relationship) if family == AttributeType::Relationship => {
-                serialize_present(object, compact_properties::ENTITY, first_target_entities(list_relationship, format, self.walk))
-            }
+            // entities its targets name, as a Relationship does.
+            Attribute::ListRelationship(list_relationship) if family == AttributeType::Relationship => serialize_present(
+                object,
+                compact_properties::ENTITY,
+                list_as_relationship_entities(list_relationship, format, self.walk),
+            ),
             Attribute::ListRelationship(list_relationship) => serialize_present(
                 object,
                 compact_properties::ENTITY_LIST,

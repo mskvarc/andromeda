@@ -51,6 +51,13 @@ pub mod forwarded_subscription;
 pub mod geometry_selection;
 pub mod joined_notification;
 pub mod language_negotiation;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod list_as_relationship_tests;
 pub mod notification_data;
 pub mod notification_entity;
 pub mod notification_language;

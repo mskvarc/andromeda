@@ -163,21 +163,23 @@ pub(crate) fn list_relationship_entities<'a>(
     resolved.or_else(|| list_relationship.entity_list.as_ref().map(|carried| carried_entities(carried, format, walk)))
 }
 
-/// The entity a `ListRelationship` reformatted as a Relationship nests under
-/// `entity` (Table 4.3.6.8-1): the one its first target resolved to under the
-/// walk's join, or else the first one it carries.
-pub(crate) fn first_target_entities<'a>(list_relationship: &'a ListRelationship, format: ResponseFormat, walk: MemberWalk<'a>) -> Option<NestedEntities<'a>> {
-    let first = list_relationship.object_list.0.first();
-    let resolved = walk.join.zip(first).and_then(|(join, target)| join.linked_entity(target, format, walk));
-    let carried = || {
-        list_relationship.entity_list.as_ref().and_then(|carried| match carried {
-            OneOrMany::One(entity) => Some(entity),
-            OneOrMany::Many(entities) => entities.first(),
-        })
-    };
-    resolved
-        .or_else(|| carried().map(|entity| carried_entity(entity, format, walk)))
-        .map(|entity| NestedEntities::One(Box::new(entity)))
+/// The entities a `ListRelationship` reformatted as a Relationship nests under
+/// `entity` (Table 4.3.6.8-1): those its targets resolved to under the walk's
+/// join, or else those it carries.
+///
+/// The member mirrors the `object` the list is written as, as a
+/// Relationship's does: one target nests one entity, several nest the ordered
+/// array of them.
+pub(crate) fn list_as_relationship_entities<'a>(
+    list_relationship: &'a ListRelationship,
+    format: ResponseFormat,
+    walk: MemberWalk<'a>,
+) -> Option<NestedEntities<'a>> {
+    let resolved = walk.join.and_then(|join| match list_relationship.object_list.as_slice() {
+        [only] => join.linked_entity(only, format, walk).map(|entity| NestedEntities::One(Box::new(entity))),
+        targets => join.linked_entities(targets, format, walk),
+    });
+    resolved.or_else(|| list_relationship.entity_list.as_ref().map(|carried| carried_entities(carried, format, walk)))
 }
 
 /// Entities a Relationship already carries, written in `format` as they were
