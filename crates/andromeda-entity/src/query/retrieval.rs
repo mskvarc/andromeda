@@ -3,7 +3,7 @@
 use crate::{
     entity_type_match::entity_satisfies,
     error::EntityError,
-    port::retrieved_entity::RetrievedEntity,
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::{
         EntityQueryService,
         entity_versions::held_version,
@@ -127,7 +127,10 @@ impl EntityQueryService {
     ///
     /// The states are what [`EntityQueryService::compact_versions`] writes:
     /// no expiry (clause 4.22), `datasetId` (clause 4.5.5) or system-time
-    /// (clause 4.8) rule of the rendering has been applied to them yet.
+    /// (clause 4.8) rule of the rendering has been applied to them yet. A
+    /// matching entity whose stored rows no longer read back keeps its place
+    /// in the page as [`StoredEntry::Unreadable`], so the caller decides
+    /// whether the page continues past it and how to report it.
     ///
     /// # Errors
     ///
@@ -144,9 +147,9 @@ impl EntityQueryService {
         count: CountPolicy,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
-    ) -> Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> {
+    ) -> Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
-        let result: Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> = async {
+        let result: Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> = async {
             let compiled = self.compile_query_cached(query, context, language_targeting).await?;
             // The spatial index narrows only the default `location` instances;
             // the store still evaluates the geo-query, so the refusal below reads
@@ -156,9 +159,11 @@ impl EntityQueryService {
             let outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
             let mut page = finish_page(outcome, window, count)?;
             for row in &mut page.rows {
-                // The store decoded each state into its own allocation, so this
-                // borrows it mutably without a copy.
-                narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
+                if let StoredEntry::Read(row) = row {
+                    // The store decoded each state into its own allocation, so
+                    // this borrows it mutably without a copy.
+                    narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
+                }
             }
             Ok((page.rows, page.total_count))
         }

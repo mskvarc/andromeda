@@ -68,7 +68,7 @@ impl StoredState {
     ///
     /// Returns [`StoredEntityError`] when a type key has no name, when the
     /// state carries no type, or when its rows do not assemble.
-    pub fn assemble(self, id: Identifier, names: &KeyNames) -> Result<EntityState, StoredEntityError> {
+    pub fn assemble(self, id: &Identifier, names: &KeyNames) -> Result<EntityState, StoredEntityError> {
         let attributes = assemble(self.rows, names).map_err(|error| StoredEntityError::Attributes(Box::new(error)))?;
         let type_names = self
             .types
@@ -81,6 +81,8 @@ impl StoredState {
             .map(NgsiLdDateTime::normalise)
             .transpose()
             .map_err(StoredEntityError::ExpiresAt)?;
-        Ok(EntityState::from_parts(id, entity_types, self.scope, expires_at, attributes))
+        // clone: the state owns its identifier, which a caller keeps to name
+        // the Entity when its state does not assemble.
+        Ok(EntityState::from_parts(id.clone(), entity_types, self.scope, expires_at, attributes))
     }
 }

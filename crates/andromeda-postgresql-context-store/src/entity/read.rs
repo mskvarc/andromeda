@@ -20,6 +20,7 @@ use crate::{
         mapper::stored_uri,
         repo::EntityRepository,
         stored_entities::{GatheredEntities, VersionedEntity},
+        unreadable_entity::every_entity,
     },
     error::ContextStoreError,
 };
@@ -178,17 +179,18 @@ impl EntityRepository {
     }
 
     /// Run a statement built by [`entities_query`] on `lane` and assemble the
-    /// Entities it read.
+    /// Entities it read, failing when one of them does not read back: the
+    /// caller asked for each of them by identifier.
     async fn read_joined(&self, lane: PoolLane, statement: SelectStatement) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
         let rows = self.fetch_on(lane, &statement).await?;
-        self.assembled(GatheredEntities::of_joined(&rows)?).await
+        every_entity(self.assembled(GatheredEntities::of_joined(&rows)?).await?)
     }
 
     /// [`read_joined`](EntityRepository::read_joined), each Entity with the
     /// version its row stood at.
     async fn read_versioned(&self, lane: PoolLane, statement: SelectStatement) -> Result<Vec<VersionedEntity>, ContextStoreError> {
         let rows = self.fetch_on(lane, &statement).await?;
-        self.versioned(GatheredEntities::of_joined(&rows)?).await
+        every_entity(self.versioned(GatheredEntities::of_joined(&rows)?).await?)
     }
 }
 

@@ -3,7 +3,7 @@
 
 use crate::{
     current_attribute::read::RowSelection,
-    entity::{mapper::stored_uri, repo::EntityRepository, stored_entities::heads_statement},
+    entity::{mapper::stored_uri, repo::EntityRepository, stored_entities::heads_statement, unreadable_entity::stored_entry},
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -39,10 +39,13 @@ impl EntityRepository {
 
     /// Read every entity that holds a past-due attribute instance.
     ///
+    /// A candidate whose stored rows no longer read back is logged and left
+    /// out, so the sweep still reaches the candidates after it.
+    ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when a candidate read or a name lookup
-    /// fails, or when the stored rows no longer read back as entity states.
+    /// fails, or when a candidate's key or identifier does not read back.
     pub async fn entities_with_expired_attributes(
         &self,
         target: &ContextTarget,
@@ -57,6 +60,7 @@ impl EntityRepository {
             .versioned_entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
             .into_iter()
+            .filter_map(|entity| stored_entry(entity).read())
             // clone: the identifier keys the candidate and stays in the state it names
             .map(|entity| (entity.retrieved.state.id().clone(), entity.into_snapshot()))
             .collect())

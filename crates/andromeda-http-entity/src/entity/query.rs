@@ -24,6 +24,7 @@ use crate::{
         query_admission::admit_request,
         query_binding::QueryBinding,
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
+        query_local_page::local_versions,
         query_page::{QueryPage, requested_window},
         query_response::{QueryCollectionMetadata, query_response},
         query_split_filters::retain_matching,
@@ -36,21 +37,19 @@ use crate::{
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::{
-    EntityQueryService,
-    entity_versions::{VersionRead, held_version},
-};
+use andromeda_entity::query::{EntityQueryService, entity_versions::VersionRead};
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
+use andromeda_http_response::unreadable_entity_warning::with_unreadable_entity_warnings;
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities, filter::language_targeting::LanguageTargeting};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -203,8 +202,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let projection = request_projection.projection();
 
         let targeting = admitted.language.targeting;
-        let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
-        let merged = merge_contributions(local_versions, forwarded, request_projection.list(), &uri)?;
+        let local = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
+        let merged = merge_contributions(local.versions, forwarded, request_projection.list(), &uri)?;
         let MergedEntities {
             entities: versions,
             warnings,
@@ -213,8 +212,9 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 6.3.17: a query evaluated by tag equality because a reached
         // source lacks extended filtering says so.
         let warnings = warnings.into_iter().chain(admitted.language.warning).collect::<Vec<_>>();
+        let warnings = with_unreadable_entity_warnings(warnings, &local.unreadable);
         let split_survivors = split_entities.then(|| split_match_set(&versions));
-        let (mut versions, reach, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
+        let (mut versions, reach, total_count) = page.cut(versions, |version| version.state.id().as_str(), local.total, local.reach);
         let carried = ResolvedJoin::carried_by(&mut versions);
         let mut entities = compacted_page(service, &versions, opts.sys_attrs, &query, &context, &uri).await?;
 
@@ -281,29 +281,6 @@ fn geometry_selection(query: &EntityQueryParameters) -> GeometrySelection<'_> {
 /// before the page window narrows it. A non-split page prunes per source.
 fn split_match_set(versions: &[ReceivedState]) -> Vec<Identifier> {
     versions.iter().map(|version| version.state.id().clone()).collect() // clone: the map pruning owns the identifiers it keeps
-}
-
-/// The page of entities this broker holds itself, read as the versions a
-/// merge builds on, with the count the store took.
-///
-/// # Errors
-///
-/// The classified failure of the local query.
-async fn local_versions(
-    service: &EntityQueryService,
-    target: &ContextTarget,
-    query: &EntityQueryParameters,
-    page: &QueryPage,
-    context: &AdmittedContext,
-    targeting: LanguageTargeting,
-    instance: &HttpUri,
-) -> Result<(Vec<ReceivedState>, Option<i64>), ProblemResponse> {
-    let (local_window, local_count) = page.local_read();
-    let (rows, total) = service
-        .query_states(target, query, &local_window, local_count, context, targeting)
-        .await
-        .with_entity_instance(instance)?;
-    Ok((rows.into_iter().map(held_version).collect(), total))
 }
 
 /// The page of merged entities, compacted once under the request context:

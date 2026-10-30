@@ -4,7 +4,7 @@
 
 use crate::error::NotificationError;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::port::payload_pages::EntityPayloadPages;
+use andromeda_entity::port::{payload_pages::EntityPayloadPages, stored_entry::StoredEntry};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_subscription::compiled::CompiledSubscription;
@@ -61,7 +61,9 @@ impl IntervalCandidates<'_> {
     }
 
     /// Read entities a page at a time, each page continuing after the last
-    /// identifier of the one before, keeping only those `keep` accepts.
+    /// identifier of the one before, keeping only those `keep` accepts. An
+    /// entity whose stored rows no longer read back is left out, and the walk
+    /// continues after it.
     ///
     /// `entity_type` narrows the read to one entity type when the selector names
     /// exactly one; otherwise every entity is a candidate and the predicate is
@@ -88,8 +90,10 @@ impl IntervalCandidates<'_> {
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
             // clone: the next read names the last identifier of a page that is consumed below
-            after = page.last().map(|entity| entity.id().clone());
-            kept.extend(page.into_iter().filter(|entity| keep(entity)));
+            after = page.last().map(|entry| entry.id(EntityState::id).clone());
+            // The store logged each entity that does not read back; the others
+            // are still notified.
+            kept.extend(page.into_iter().filter_map(StoredEntry::read).filter(|entity| keep(entity)));
             if exhausted {
                 return Ok(kept);
             }
@@ -106,7 +110,10 @@ mod tests {
     use crate::interval_candidates::IntervalCandidates;
     use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_entity::{error::EntityError, port::payload_pages::EntityPayloadPages};
+    use andromeda_entity::{
+        error::EntityError,
+        port::{payload_pages::EntityPayloadPages, stored_entry::StoredEntry},
+    };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
@@ -120,24 +127,31 @@ mod tests {
     /// The stored entities in identifier order, served a page at a time, with
     /// the `after` of every read noted.
     struct StoredEntities {
-        entities: Vec<EntityState>,
+        entities: Vec<StoredEntry<EntityState>>,
         reads: Mutex<Vec<Option<Identifier>>>,
     }
 
     impl StoredEntities {
         fn of(entities: Vec<EntityState>) -> StoredEntities {
+            StoredEntities::with_entries(entities.into_iter().map(StoredEntry::Read).collect())
+        }
+
+        fn with_entries(entities: Vec<StoredEntry<EntityState>>) -> StoredEntities {
             StoredEntities {
                 entities,
                 reads: Mutex::new(Vec::new()),
             }
         }
 
-        fn page(&self, entity_type: Option<&EntityTypeName>, after: Option<&Identifier>, limit: u16) -> Vec<EntityState> {
+        fn page(&self, entity_type: Option<&EntityTypeName>, after: Option<&Identifier>, limit: u16) -> Vec<StoredEntry<EntityState>> {
             self.reads.lock().expect("the notes are not poisoned").push(after.cloned()); // clone: the note outlives the read
             self.entities
                 .iter()
-                .filter(|entity| entity_type.is_none_or(|wanted| entity.types().as_slice().contains(wanted)))
-                .filter(|entity| after.is_none_or(|after| entity.id().as_str() > after.as_str()))
+                .filter(|entry| match entry {
+                    StoredEntry::Read(entity) => entity_type.is_none_or(|wanted| entity.types().as_slice().contains(wanted)),
+                    StoredEntry::Unreadable(_) => true,
+                })
+                .filter(|entry| after.is_none_or(|after| entry.id(EntityState::id).as_str() > after.as_str()))
                 .take(usize::from(limit))
                 .cloned() // clone: each read hands out its own states
                 .collect()
@@ -152,11 +166,16 @@ mod tests {
             entity_type: &EntityTypeName,
             after: Option<&Identifier>,
             limit: u16,
-        ) -> Result<Vec<EntityState>, EntityError> {
+        ) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
             Ok(self.page(Some(entity_type), after, limit))
         }
 
-        async fn get_all_entities(&self, _target: &ContextTarget, after: Option<&Identifier>, limit: u16) -> Result<Vec<EntityState>, EntityError> {
+        async fn get_all_entities(
+            &self,
+            _target: &ContextTarget,
+            after: Option<&Identifier>,
+            limit: u16,
+        ) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
             Ok(self.page(None, after, limit))
         }
     }
@@ -239,5 +258,34 @@ mod tests {
         let reads = pages.reads.lock().expect("the notes are not poisoned");
         let afters: Vec<Option<&str>> = reads.iter().map(|after| after.as_ref().map(Identifier::as_str)).collect();
         pretty_assertions::assert_eq!(afters, vec![None, Some("urn:ngsi-ld:Vehicle:00499"), Some("urn:ngsi-ld:Vehicle:00999")]);
+    }
+
+    /// An entity stored in a form the broker no longer reads, last on its
+    /// page, is left out, and the next page still continues after it.
+    #[tokio::test]
+    async fn an_unreadable_entity_is_left_out_and_the_walk_continues_after_it() {
+        let ids: Vec<String> = (0..600).map(|n| format!("urn:ngsi-ld:Vehicle:{n:05}")).collect();
+        let unreadable = "urn:ngsi-ld:Vehicle:00499";
+        let pages = StoredEntities::with_entries(
+            ids.iter()
+                .map(|id| match id.as_str() {
+                    raw if raw == unreadable => StoredEntry::Unreadable(raw.parse().expect("a valid URI")),
+                    readable => StoredEntry::Read(vehicle(readable)),
+                })
+                .collect(),
+        );
+        let candidates = IntervalCandidates {
+            target: &ContextTarget::Live,
+            pages: &pages,
+        };
+
+        let matched = candidates.matching(&all_vehicles()).await.expect("the pages read");
+
+        let matched_ids: Vec<&str> = matched.iter().map(|entity| entity.id().as_str()).collect();
+        let expected: Vec<&str> = ids.iter().map(String::as_str).filter(|id| *id != unreadable).collect();
+        pretty_assertions::assert_eq!(matched_ids, expected);
+        let reads = pages.reads.lock().expect("the notes are not poisoned");
+        let afters: Vec<Option<&str>> = reads.iter().map(|after| after.as_ref().map(Identifier::as_str)).collect();
+        pretty_assertions::assert_eq!(afters, vec![None, Some(unreadable)]);
     }
 }

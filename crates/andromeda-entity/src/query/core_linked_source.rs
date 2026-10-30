@@ -223,7 +223,7 @@ mod tests {
     use crate::{
         configured_policy::{filter_complexity_limits, geometry_census_limits},
         entity_snapshot::EntitySnapshot,
-        port::{query::EntityQueryStore, reader::EntityReader},
+        port::{query::EntityQueryStore, reader::EntityReader, stored_entry::StoredEntry},
         query::{core_linked_source::*, remote_linked::RemoteLinkedEntitySource},
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
@@ -389,7 +389,7 @@ mod tests {
             _compiled: &CompiledEntityQuery,
             _window: &PageWindow,
             _count: CountPolicy,
-        ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+        ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
             Err(unsupported("query_compiled"))
         }
 

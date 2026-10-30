@@ -252,8 +252,7 @@ fn read_event(row: RawClaimedEventRow) -> Result<ReadEvent, ClaimedEventError> {
 fn assemble_event(read: ReadEvent, names: &KeyNames) -> Result<NotificationEvent, ClaimedEventError> {
     let state = |stored: Option<StoredState>| {
         stored
-            // clone: every state of the event owns the identifier it is assembled under.
-            .map(|stored| stored.assemble(read.entity_id.clone(), names).map(Arc::new))
+            .map(|stored| stored.assemble(&read.entity_id, names).map(Arc::new))
             .transpose()
             .map_err(|source| ClaimedEventError::UnreadableSnapshot { source })
     };

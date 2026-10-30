@@ -11,7 +11,7 @@ use crate::{
     entity_invariant::EntityInvariant,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
-    port::retrieved_entity::RetrievedEntity,
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
     query_residual::ResidualFilter,
@@ -26,8 +26,9 @@ use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow
 #[derive(Debug)]
 pub(super) struct FinishedPage {
     /// The stored states of the page's matching entities, each with its
-    /// entity-level system times.
-    pub rows: Vec<RetrievedEntity>,
+    /// entity-level system times, or its identifier in its place when it does
+    /// not read back.
+    pub rows: Vec<StoredEntry<RetrievedEntity>>,
     /// Total number of matches, present when the query asked to be counted.
     pub total_count: Option<i64>,
 }
@@ -41,7 +42,7 @@ pub(super) struct FinishedPage {
 /// taken over rows a later filter will thin leaves the page short and every
 /// subsequent page misaligned, so the combination is a broken store rather than
 /// a case to compensate for.
-pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, window: &PageWindow, count: CountPolicy) -> Result<FinishedPage, EntityError> {
+pub(super) fn finish_page(outcome: QueryOutcome<StoredEntry<RetrievedEntity>>, window: &PageWindow, count: CountPolicy) -> Result<FinishedPage, EntityError> {
     let QueryOutcome {
         rows,
         unapplied,
@@ -56,7 +57,16 @@ pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, window: &PageW
             Ok(FinishedPage { rows, total_count: total })
         }
         PaginationOutcome::Deferred => {
-            let admitted: Vec<RetrievedEntity> = rows.into_iter().filter(|row| residual_filter::matches(&unapplied, &row.state)).collect();
+            // An entity that does not read back cannot be judged, so it stays
+            // where the store read it and is reported rather than dropped
+            // unseen.
+            let admitted: Vec<StoredEntry<RetrievedEntity>> = rows
+                .into_iter()
+                .filter(|row| match row {
+                    StoredEntry::Read(row) => residual_filter::matches(&unapplied, &row.state),
+                    StoredEntry::Unreadable(_) => true,
+                })
+                .collect();
             Ok(cut_window(admitted, window, count))
         }
     }
@@ -67,12 +77,12 @@ pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, window: &PageW
 ///
 /// Clause 6.3.13 counts matching entities rather than returned ones, so the
 /// count is taken before the window and after the filter.
-fn cut_window(admitted: Vec<RetrievedEntity>, window: &PageWindow, count: CountPolicy) -> FinishedPage {
+fn cut_window(admitted: Vec<StoredEntry<RetrievedEntity>>, window: &PageWindow, count: CountPolicy) -> FinishedPage {
     let total_count = match count {
         CountPolicy::Emit => Some(i64::try_from(admitted.len()).unwrap_or(i64::MAX)),
         CountPolicy::Omit => None,
     };
-    let rows = window.cut(admitted, |row| row.state.id().as_str());
+    let rows = window.cut(admitted, |row| row.id(|row| row.state.id()).as_str());
     FinishedPage { rows, total_count }
 }
 
@@ -131,7 +141,7 @@ impl EntityQueryService {
 mod tests {
     use crate::{
         pagination_outcome::PaginationOutcome,
-        port::retrieved_entity::RetrievedEntity,
+        port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
         query::residual::{FinishedPage, finish_page},
         query_outcome::QueryOutcome,
         query_residual::ResidualFilter,
@@ -160,24 +170,32 @@ mod tests {
         EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state")
     }
 
+    fn retrieved(temperature: f64) -> StoredEntry<RetrievedEntity> {
+        StoredEntry::Read(RetrievedEntity {
+            state: Arc::new(entity(temperature)),
+            sys_attrs: SysAttrsSnapshot {
+                created_at: DateTime::<Utc>::UNIX_EPOCH,
+                modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                expires_at: None,
+            },
+        })
+    }
+
     /// Five entities at 10, 20, 30, 40 and 50 degrees, as a store reads them.
-    fn five() -> Vec<RetrievedEntity> {
-        [10.0, 20.0, 30.0, 40.0, 50.0]
-            .into_iter()
-            .map(|temperature| RetrievedEntity {
-                state: Arc::new(entity(temperature)),
-                sys_attrs: SysAttrsSnapshot {
-                    created_at: DateTime::<Utc>::UNIX_EPOCH,
-                    modified_at: DateTime::<Utc>::UNIX_EPOCH,
-                    expires_at: None,
-                },
-            })
-            .collect()
+    fn five() -> Vec<StoredEntry<RetrievedEntity>> {
+        [10.0, 20.0, 30.0, 40.0, 50.0].into_iter().map(retrieved).collect()
     }
 
     /// The states a finished page holds, in page order.
     fn states(finished: &FinishedPage) -> Vec<&EntityState> {
-        finished.rows.iter().map(|row| row.state.as_ref()).collect()
+        finished
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                StoredEntry::Read(row) => Some(row.state.as_ref()),
+                StoredEntry::Unreadable(_) => None,
+            })
+            .collect()
     }
 
     /// A residual admitting the three entities above 25 degrees.
@@ -286,17 +304,8 @@ mod tests {
 
     /// Ten entities at 0 to 9 degrees, as a store reads them in identifier
     /// order (`urn:ngsi-ld:Building:0` to `urn:ngsi-ld:Building:9`).
-    fn ten() -> Vec<RetrievedEntity> {
-        (0..10)
-            .map(|temperature| RetrievedEntity {
-                state: Arc::new(entity(f64::from(temperature))),
-                sys_attrs: SysAttrsSnapshot {
-                    created_at: DateTime::<Utc>::UNIX_EPOCH,
-                    modified_at: DateTime::<Utc>::UNIX_EPOCH,
-                    expires_at: None,
-                },
-            })
-            .collect()
+    fn ten() -> Vec<StoredEntry<RetrievedEntity>> {
+        (0..10).map(|temperature| retrieved(f64::from(temperature))).collect()
     }
 
     /// Clause 5.5.9.1: a deferred backward cursor page is cut from the whole
@@ -316,5 +325,24 @@ mod tests {
         let finished = finish_page(outcome, &window, CountPolicy::Emit).expect("coherent outcome");
         pretty_assertions::assert_eq!(states(&finished), vec![&entity(3.0), &entity(4.0), &entity(5.0)]);
         pretty_assertions::assert_eq!(finished.total_count, Some(10));
+    }
+
+    /// An entity that does not read back cannot be judged by a residual, so a
+    /// deferred page keeps it in its place, where it is reported.
+    #[test]
+    fn a_deferred_page_keeps_an_unreadable_entity_in_its_place() {
+        let mut rows = five();
+        rows.insert(2, StoredEntry::Unreadable("urn:ngsi-ld:Building:broken".parse().expect("a valid URI")));
+        let outcome = QueryOutcome {
+            rows,
+            unapplied: above_25(),
+            pagination: PaginationOutcome::Deferred,
+        };
+        let finished = finish_page(outcome, &page(20, 0), CountPolicy::Emit).expect("coherent outcome");
+        assert!(matches!(
+            finished.rows.as_slice(),
+            [StoredEntry::Unreadable(id), StoredEntry::Read(_), StoredEntry::Read(_), StoredEntry::Read(_)] if id.as_str() == "urn:ngsi-ld:Building:broken"
+        ));
+        pretty_assertions::assert_eq!(states(&finished), vec![&entity(30.0), &entity(40.0), &entity(50.0)]);
     }
 }

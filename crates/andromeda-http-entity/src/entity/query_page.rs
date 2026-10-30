@@ -40,6 +40,20 @@ enum PageCut {
     },
 }
 
+/// Whether the local store cut the page itself, and if so whether the
+/// collection continues past it.
+///
+/// Only [`QueryPage::settle_local`] produces one, so a page the store cut is
+/// never cut a second time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalReach {
+    /// The store read the page and the element past it, and this is whether
+    /// that element was there.
+    Settled(PageReach),
+    /// The window is cut from the merged collection.
+    AfterMerge,
+}
+
 /// The window an entity query asked for, and where it is cut.
 pub(crate) struct QueryPage {
     /// The page size and where the page starts, as the policy decided them.
@@ -127,20 +141,34 @@ impl QueryPage {
         }
     }
 
+    /// Settle the rows the local store read: a window the store cut loses the
+    /// element past the page, whose presence says whether the collection
+    /// continues; rows a merge reads are left whole.
+    ///
+    /// Done on what the store read, before anything is taken out of it, so an
+    /// element the page leaves out still counts towards that answer.
+    pub(crate) fn settle_local<T>(&self, read: Vec<T>) -> (Vec<T>, LocalReach) {
+        match self.cut_at {
+            PageCut::Local => {
+                let (read, reach) = self.window.settle(read);
+                (read, LocalReach::Settled(reach))
+            }
+            PageCut::AfterMerge { .. } => (read, LocalReach::AfterMerge),
+        }
+    }
+
     /// Cut the page out of the collection the query answers with, and report
     /// whether the collection continues past it and, when the request asked to
     /// be told, the total.
     ///
     /// `local_total` is what the store counted, which stands whenever the store
-    /// held the whole collection. A merged collection is ordered by `id` before
-    /// the window is cut from it.
-    pub(crate) fn cut<T>(&self, entities: Vec<T>, id: impl Fn(&T) -> &str, local_total: Option<i64>) -> (Vec<T>, PageReach, Option<i64>) {
-        match self.cut_at {
-            PageCut::Local => {
-                let (entities, reach) = self.window.settle(entities);
-                (entities, reach, local_total)
-            }
-            PageCut::AfterMerge { .. } => {
+    /// held the whole collection, and `local` what
+    /// [`QueryPage::settle_local`] made of the store's rows. A merged
+    /// collection is ordered by `id` before the window is cut from it.
+    pub(crate) fn cut<T>(&self, entities: Vec<T>, id: impl Fn(&T) -> &str, local_total: Option<i64>, local: LocalReach) -> (Vec<T>, PageReach, Option<i64>) {
+        match local {
+            LocalReach::Settled(reach) => (entities, reach, local_total),
+            LocalReach::AfterMerge => {
                 let total = match self.count {
                     CountPolicy::Emit => Some(i64::try_from(entities.len()).unwrap_or(i64::MAX)),
                     CountPolicy::Omit => None,
@@ -199,7 +227,7 @@ impl QueryPage {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::entity::query_page::{PageCut, QueryPage};
+    use crate::entity::query_page::{LocalReach, PageCut, QueryPage};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::{
@@ -242,7 +270,8 @@ mod tests {
     /// deterministic order, the `id` order the local store pages in.
     #[test]
     fn a_merged_collection_is_cut_from_its_identifier_order() {
-        let (page, _, total) = merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, _, total) =
+            merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None, LocalReach::AfterMerge);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -253,7 +282,7 @@ mod tests {
     #[test]
     fn a_cursor_continues_a_walk_over_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
-        let (page, _, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, _, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None, LocalReach::AfterMerge);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:c", "urn:d"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -263,7 +292,7 @@ mod tests {
     #[test]
     fn a_backward_cursor_pages_back_through_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:d"))));
-        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None, LocalReach::AfterMerge);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
         pretty_assertions::assert_eq!(reach, PageReach::Continues);
     }
@@ -273,7 +302,7 @@ mod tests {
     #[test]
     fn a_backward_page_holding_the_first_merged_entities_is_exhausted() {
         let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:c"))));
-        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None, LocalReach::AfterMerge);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:a", "urn:b"]);
         pretty_assertions::assert_eq!(reach, PageReach::Exhausted);
     }
@@ -283,10 +312,12 @@ mod tests {
     #[test]
     fn the_count_of_a_merged_collection_is_its_whole_size() {
         let merged = vec![entity("urn:a"), entity("urn:b"), entity("urn:c")];
-        let (page, _, total) = merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, |entity| entity.id.as_str(), Some(1));
+        let (page, _, total) =
+            merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, |entity| entity.id.as_str(), Some(1), LocalReach::AfterMerge);
         assert!(page.is_empty());
         pretty_assertions::assert_eq!(total, Some(3));
-        let (_, _, total) = merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], |entity| entity.id.as_str(), Some(1));
+        let (_, _, total) =
+            merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], |entity| entity.id.as_str(), Some(1), LocalReach::AfterMerge);
         pretty_assertions::assert_eq!(total, None);
     }
 
@@ -297,9 +328,36 @@ mod tests {
             cut_at: PageCut::Local,
             ..merged_page(10, PageStart::Offset(0), CountPolicy::Emit)
         };
-        let (entities, _, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], |entity| entity.id.as_str(), Some(7));
+        let (read, local) = page.settle_local(vec![entity("urn:b"), entity("urn:a")]);
+        let (entities, _, total) = page.cut(read, |entity| entity.id.as_str(), Some(7), local);
         pretty_assertions::assert_eq!(ids(&entities), vec!["urn:b", "urn:a"]);
         pretty_assertions::assert_eq!(total, Some(7));
+    }
+
+    /// Clause 5.5.9.1: a page the store cut is settled on everything it read,
+    /// so an entity later left out of the page still says the collection
+    /// continues when it was the element past the page.
+    #[test]
+    fn a_locally_cut_page_is_settled_on_what_the_store_read() {
+        let page = QueryPage {
+            cut_at: PageCut::Local,
+            ..merged_page(2, PageStart::Offset(0), CountPolicy::Omit)
+        };
+        let (read, local) = page.settle_local(vec![entity("urn:a"), entity("urn:b"), entity("urn:c")]);
+        pretty_assertions::assert_eq!(ids(&read), vec!["urn:a", "urn:b"]);
+        pretty_assertions::assert_eq!(local, LocalReach::Settled(PageReach::Continues));
+        let (read, local) = page.settle_local(vec![entity("urn:a")]);
+        let (entities, reach, _) = page.cut(read, |entity| entity.id.as_str(), None, local);
+        pretty_assertions::assert_eq!(ids(&entities), vec!["urn:a"]);
+        pretty_assertions::assert_eq!(reach, PageReach::Exhausted);
+    }
+
+    /// Rows a merge reads are left whole for the cut after the merge.
+    #[test]
+    fn a_merged_page_leaves_the_local_rows_whole() {
+        let (read, local) = merged_page(1, PageStart::Offset(0), CountPolicy::Omit).settle_local(vec![entity("urn:a"), entity("urn:b")]);
+        pretty_assertions::assert_eq!(ids(&read), vec!["urn:a", "urn:b"]);
+        pretty_assertions::assert_eq!(local, LocalReach::AfterMerge);
     }
 
     /// Without a merge the store reads the requested window and the element

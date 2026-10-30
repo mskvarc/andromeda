@@ -38,6 +38,7 @@ pub mod store_failure;
 pub mod temporal_continuation;
 pub mod temporal_failure;
 pub mod tenant_state_rejection;
+pub mod unreadable_entity_warning;
 pub mod version_negotiation;
 mod written_body;
 

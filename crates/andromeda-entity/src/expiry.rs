@@ -46,12 +46,17 @@ impl EntityExpirySweep {
 
     /// Reconcile entity and attribute-instance expiry at one explicit UTC cutoff.
     ///
+    /// A failure that belongs to one entity (its stored rows no longer read
+    /// back, its write is refused or cannot be built) is logged and the entity
+    /// is skipped, so it stays a candidate while the sweep reaches the
+    /// candidates after it.
+    ///
     /// # Errors
     ///
     /// Reports [`EntityError::Persistence`] when the expiry source cannot be
-    /// read or the sweep's writes cannot be committed, and
-    /// [`EntityError::Internal`] when a due entity's reduced state cannot be
-    /// projected for its write.
+    /// read or the sweep's writes cannot be committed, and the retryable
+    /// store failures when the store is saturated, unreachable or contended
+    /// on any entity, since every entity after it would fail alike.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<EntityExpiryOutcome, EntityError> {
         let expired_entities = self
             .entity_policy
@@ -108,7 +113,12 @@ impl EntityService {
             match self.delete(target, WriteTarget::new(&entity_id, None)).await {
                 Ok(()) => expired += 1,
                 Err(EntityError::NotFound { identifier: _ }) => {}
-                Err(error) => return Err(error),
+                Err(error) => match failure_reach(&error) {
+                    FailureReach::Sweep => return Err(error),
+                    FailureReach::Entity => {
+                        warn!(entity = %entity_id, %error, "entity expiry failed; the entity stays a candidate while the sweep goes on");
+                    }
+                },
             }
         }
         Ok(expired)
@@ -130,7 +140,16 @@ impl EntityService {
                 warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
                 continue;
             };
-            let ModificationWrite { mut write, events } = self.modification_write(target, &identifier, &purged.previous, purged.current, purged.history)?;
+            let ModificationWrite { mut write, events } = match self.modification_write(target, &identifier, &purged.previous, purged.current, purged.history) {
+                Ok(write) => write,
+                Err(error) => match failure_reach(&error) {
+                    FailureReach::Sweep => return Err(error),
+                    FailureReach::Entity => {
+                        warn!(entity = %identifier, %error, "attribute-expiry write could not be built; the entity stays a candidate while the sweep goes on");
+                        continue;
+                    }
+                },
+            };
             write.precondition = Precondition::UnchangedSince(purged.version);
             writes.push(write);
             pending.push((identifier, events));
@@ -155,6 +174,40 @@ impl EntityService {
             }
         }
         Ok(landed)
+    }
+}
+
+/// How far a failure met on one entity reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailureReach {
+    /// The store cannot serve the sweep right now, so every entity after this
+    /// one would fail alike and the sweep stops until its next run.
+    Sweep,
+    /// The failure belongs to this entity, which is skipped.
+    Entity,
+}
+
+/// How far `error`, met while expiring one entity, reaches.
+const fn failure_reach(error: &EntityError) -> FailureReach {
+    match error {
+        EntityError::StoreSaturated | EntityError::StoreUnavailable | EntityError::TransactionContended => FailureReach::Sweep,
+        EntityError::Validation(_)
+        | EntityError::NotFound { .. }
+        | EntityError::TypeNotFound { .. }
+        | EntityError::AttributeNotFound { .. }
+        | EntityError::MemberNotFound(_)
+        | EntityError::AlreadyExists { .. }
+        | EntityError::Contention { .. }
+        | EntityError::OperationNotSupported(_)
+        | EntityError::PayloadBudget(_)
+        | EntityError::AttributeNesting(_)
+        | EntityError::JsonLd(_)
+        | EntityError::Query(_)
+        | EntityError::Request(_)
+        | EntityError::Representation(_)
+        | EntityError::Commit(_)
+        | EntityError::Persistence(_)
+        | EntityError::Internal(_) => FailureReach::Entity,
     }
 }
 
@@ -229,11 +282,13 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
 mod tests {
     use crate::{
         entity_snapshot::EntitySnapshot,
-        expiry::{EntityExpiryBatchSize, landed_ids, purge_write},
+        error::EntityError,
+        expiry::{EntityExpiryBatchSize, FailureReach, failure_reach, landed_ids, purge_write},
     };
     use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
     use std::{num::NonZeroU32, sync::Arc};
@@ -307,6 +362,29 @@ mod tests {
         let payload =
             json!([{"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/T"], "https://example.org/speed": [expiring_instance("1971-01-01T00:00:00Z")]}]);
         assert!(purge_write(snapshot(&payload), cutoff()).is_none());
+    }
+
+    /// A store that cannot serve the sweep fails every entity after this one
+    /// alike, so only those failures stop it.
+    #[test]
+    fn a_saturated_unreachable_or_contended_store_stops_the_sweep() {
+        for error in [EntityError::StoreSaturated, EntityError::StoreUnavailable, EntityError::TransactionContended] {
+            pretty_assertions::assert_eq!(failure_reach(&error), FailureReach::Sweep, "{error}");
+        }
+    }
+
+    /// An entity stored in a form the broker no longer reads, or whose write
+    /// cannot be built, is skipped while the sweep goes on.
+    #[test]
+    fn an_undecodable_entity_or_a_failed_write_is_skipped() -> Result<(), IdentifierParseError> {
+        for error in [
+            EntityError::Persistence(PersistenceFailure::Undecodable),
+            EntityError::Persistence(PersistenceFailure::ConstraintViolated),
+            EntityError::contention(&"urn:ngsi-ld:A".parse()?, 3),
+        ] {
+            pretty_assertions::assert_eq!(failure_reach(&error), FailureReach::Entity, "{error}");
+        }
+        Ok(())
     }
 
     #[test]

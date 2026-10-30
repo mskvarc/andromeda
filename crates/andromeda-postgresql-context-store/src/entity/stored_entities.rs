@@ -6,6 +6,10 @@
 //! read, and only then assembles. Rows come in no order: each Entity's are put
 //! in written order by their ordinal, and the Entities keep the order their
 //! heads were read in.
+//!
+//! Each Entity is assembled on its own: one whose head past its key and
+//! identifier, one of whose rows, or whose assembly does not read back is
+//! named unreadable in its place, and the others assemble around it.
 
 use crate::{
     current_attribute::{
@@ -17,6 +21,7 @@ use crate::{
         mapper::{stored_entity_key, stored_uri},
         repo::EntityRepository,
         stored_entity_error::StoredEntityError,
+        unreadable_entity::UnreadableEntity,
     },
     entity_state_record::stored_state::StoredState,
     error::ContextStoreError,
@@ -60,13 +65,51 @@ pub struct StoredHead {
 
 impl StoredHead {
     /// The head a statement read through
-    /// [`select_head`](andromeda_postgresql_context_query::entity_head::select_head).
+    /// [`select_head`](andromeda_postgresql_context_query::entity_head::select_head),
+    /// or the Entity it names when a column past its key and identifier does
+    /// not read back.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when a column does not decode, or when the
-    /// key, the identifier or a Scope does not read back.
-    pub fn of(row: &PgRow) -> Result<StoredHead, ContextStoreError> {
+    /// Returns [`ContextStoreError`] when the key or the identifier does not
+    /// read back, without which the Entity cannot be named.
+    pub(crate) fn of(row: &PgRow) -> Result<Result<StoredHead, UnreadableEntity>, ContextStoreError> {
+        let key = stored_entity_key(row.try_get(EntityHead::EntityKey.unquoted())?)?;
+        let id = stored_uri(row.try_get(EntityHead::Id.unquoted())?)?;
+        Ok(match HeadColumns::of(row) {
+            Ok(columns) => Ok(StoredHead {
+                key,
+                id,
+                types: columns.types,
+                scope: columns.scope,
+                sys_attrs: columns.sys_attrs,
+                version: EntityVersion::new(key.get(), columns.write_count),
+            }),
+            Err(fault) => Err(UnreadableEntity { id, fault: Box::new(fault) }),
+        })
+    }
+}
+
+/// The columns of a head beside its key and identifier.
+struct HeadColumns {
+    /// The type keys, in written order.
+    types: Vec<EntityTypeNameKey>,
+    /// The Scopes as written, `None` when the Entity has none.
+    scope: Option<Scopes>,
+    /// The clause 4.8 and 4.22 instants.
+    sys_attrs: SysAttrsSnapshot,
+    /// The number of writes the Entity's row has taken.
+    write_count: i64,
+}
+
+impl HeadColumns {
+    /// The columns of `row` beside its key and identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when a column does not decode or a Scope
+    /// does not read back.
+    fn of(row: &PgRow) -> Result<HeadColumns, ContextStoreError> {
         // An entity without a Scope stores NULL rather than an empty list.
         let written: Option<Vec<String>> = row.try_get(EntityHead::VerbatimScopePaths.unquoted())?;
         let paths = written
@@ -76,10 +119,7 @@ impl StoredHead {
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoredEntityError::Scope)?;
         let types: Vec<i32> = row.try_get(EntityHead::EntityTypeNameKeys.unquoted())?;
-        let key = stored_entity_key(row.try_get(EntityHead::EntityKey.unquoted())?)?;
-        Ok(StoredHead {
-            key,
-            id: stored_uri(row.try_get(EntityHead::Id.unquoted())?)?,
+        Ok(HeadColumns {
             types: types.into_iter().map(EntityTypeNameKey::from).collect(),
             scope: Scopes::try_from_paths(paths).ok(),
             sys_attrs: SysAttrsSnapshot {
@@ -87,7 +127,7 @@ impl StoredHead {
                 modified_at: row.try_get(EntityHead::ModifiedAt.unquoted())?,
                 expires_at: row.try_get(EntityHead::ExpiresAt.unquoted())?,
             },
-            version: EntityVersion::new(key.get(), row.try_get(EntityHead::WriteCount.unquoted())?),
+            write_count: row.try_get(EntityHead::WriteCount.unquoted())?,
         })
     }
 }
@@ -115,10 +155,14 @@ impl VersionedEntity {
 /// Entity.
 #[derive(Debug, Default)]
 pub struct GatheredEntities {
-    /// The heads, in read order.
-    heads: Vec<StoredHead>,
-    /// The rows of each Entity, in no order.
+    /// The heads, in read order, each read back or naming its Entity
+    /// unreadable.
+    heads: Vec<Result<StoredHead, UnreadableEntity>>,
+    /// The rows of each Entity that read back, in no order.
     rows: HashMap<EntityKey, Vec<CurrentAttributeRow>>,
+    /// The first row of each Entity that did not read back, which makes the
+    /// Entity unreadable.
+    row_faults: HashMap<EntityKey, ContextStoreError>,
 }
 
 impl GatheredEntities {
@@ -128,11 +172,12 @@ impl GatheredEntities {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when a head does not read back.
+    /// Returns [`ContextStoreError`] when a head's key or identifier does not
+    /// read back.
     pub fn of_heads(rows: &[PgRow]) -> Result<GatheredEntities, ContextStoreError> {
         Ok(GatheredEntities {
             heads: rows.iter().map(StoredHead::of).collect::<Result<_, _>>()?,
-            rows: HashMap::new(),
+            ..GatheredEntities::default()
         })
     }
 
@@ -142,7 +187,8 @@ impl GatheredEntities {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when a head or a row does not read back.
+    /// Returns [`ContextStoreError`] when a head's key or identifier does not
+    /// read back.
     pub fn of_joined(rows: &[PgRow]) -> Result<GatheredEntities, ContextStoreError> {
         let mut gathered = GatheredEntities::default();
         for row in rows {
@@ -150,10 +196,7 @@ impl GatheredEntities {
             if !gathered.rows.contains_key(&key) {
                 gathered.heads.push(StoredHead::of(row)?);
             }
-            let held = gathered.rows.entry(key).or_default();
-            if let Some(row) = row_of(row)? {
-                held.push(row);
-            }
+            gathered.hold(key, row);
         }
         Ok(gathered)
     }
@@ -164,27 +207,39 @@ impl GatheredEntities {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when a row does not read back.
+    /// Returns [`ContextStoreError`] when a row's Entity key does not read
+    /// back.
     pub fn add_rows(&mut self, rows: &[PgRow]) -> Result<(), ContextStoreError> {
         for row in rows {
             let key = stored_entity_key(row.try_get(CurrentAttributes::EntityKey.unquoted())?)?;
-            if let Some(row) = row_of(row)? {
-                self.rows.entry(key).or_default().push(row);
-            }
+            self.hold(key, row);
         }
         Ok(())
     }
 
-    /// The keys of the Entities gathered, in the order their heads were read.
-    #[must_use]
-    pub fn keys(&self) -> Vec<EntityKey> {
-        self.heads.iter().map(|head| head.key).collect()
+    /// Hold the attribute row `row` carries under the Entity `key`, or its
+    /// fault when it does not read back.
+    fn hold(&mut self, key: EntityKey, row: &PgRow) {
+        let held = self.rows.entry(key).or_default();
+        match row_of(row) {
+            Ok(Some(read)) => held.push(read),
+            Ok(None) => {}
+            Err(fault) => {
+                self.row_faults.entry(key).or_insert(fault);
+            }
+        }
     }
 
-    /// Whether no Entity was gathered.
+    /// The keys of the Entities whose heads read back, in the order they were
+    /// read.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.heads.is_empty()
+    pub fn keys(&self) -> Vec<EntityKey> {
+        self.readable_heads().map(|head| head.key).collect()
+    }
+
+    /// The heads that read back, in read order.
+    fn readable_heads(&self) -> impl Iterator<Item = &StoredHead> {
+        self.heads.iter().filter_map(|head| head.as_ref().ok())
     }
 
     /// Every dictionary key the heads and rows hold, each once.
@@ -193,34 +248,46 @@ impl GatheredEntities {
         for row in self.rows.values().flatten() {
             held.collect(&row.members, &row.sub_attributes);
         }
-        held.types.extend(self.heads.iter().flat_map(|head| head.types.iter().copied()));
+        held.types.extend(self.readable_heads().flat_map(|head| head.types.iter().copied()));
         held.distinct()
     }
 
     /// The states of the gathered Entities with their versions, in the order
-    /// their heads were read, every key read back through `names`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextStoreError::StoredEntity`] when a type key has no name,
-    /// when an Entity carries no type, or when its rows do not assemble.
-    fn assemble(mut self, names: &KeyNames) -> Result<Vec<VersionedEntity>, ContextStoreError> {
+    /// their heads were read, every key read back through `names`; an Entity
+    /// whose head or a row did not read back, one with a type key that has no
+    /// name or no type at all, and one whose rows do not assemble are named
+    /// unreadable in their place.
+    fn assemble(mut self, names: &KeyNames) -> Vec<Result<VersionedEntity, UnreadableEntity>> {
         self.heads
             .into_iter()
             .map(|head| {
+                let head = head?;
+                let rows = self.rows.remove(&head.key).unwrap_or_default();
+                if let Some(fault) = self.row_faults.remove(&head.key) {
+                    return Err(UnreadableEntity {
+                        id: head.id,
+                        fault: Box::new(fault),
+                    });
+                }
                 let stored = StoredState {
                     types: head.types,
                     scope: head.scope,
                     expires_at: head.sys_attrs.expires_at,
-                    rows: self.rows.remove(&head.key).unwrap_or_default(),
+                    rows,
                 };
-                Ok(VersionedEntity {
-                    retrieved: RetrievedEntity {
-                        state: Arc::new(stored.assemble(head.id, names)?),
-                        sys_attrs: head.sys_attrs,
-                    },
-                    version: head.version,
-                })
+                match stored.assemble(&head.id, names) {
+                    Ok(state) => Ok(VersionedEntity {
+                        retrieved: RetrievedEntity {
+                            state: Arc::new(state),
+                            sys_attrs: head.sys_attrs,
+                        },
+                        version: head.version,
+                    }),
+                    Err(fault) => Err(UnreadableEntity {
+                        id: head.id,
+                        fault: Box::new(fault.into()),
+                    }),
+                }
             })
             .collect()
     }
@@ -245,22 +312,23 @@ pub(crate) fn heads_statement(target: &ContextTarget) -> SelectStatement {
 
 impl EntityRepository {
     /// The Entities whose heads a statement read into `heads`, with the rows
-    /// `selection` takes, in the order of their heads.
+    /// `selection` takes, in the order of their heads, each one that does not
+    /// read back named unreadable in its place.
     ///
     /// The rows are a second statement on `lane`, by the keys of the heads; it
-    /// is not sent when there is no head or the selection takes no row.
+    /// is not sent when no head read back or the selection takes no row.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the row read or a dictionary lookup
-    /// fails, or when a head or the rows of an Entity do not read back.
+    /// fails, or when a head's key or identifier does not read back.
     pub(crate) async fn entities_of_heads(
         &self,
         lane: PoolLane,
         target: &ContextTarget,
         heads: &[PgRow],
         selection: &RowSelection,
-    ) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+    ) -> Result<Vec<Result<RetrievedEntity, UnreadableEntity>>, ContextStoreError> {
         Ok(retrieved(self.versioned_entities_of_heads(lane, target, heads, selection).await?))
     }
 
@@ -276,23 +344,24 @@ impl EntityRepository {
         target: &ContextTarget,
         heads: &[PgRow],
         selection: &RowSelection,
-    ) -> Result<Vec<VersionedEntity>, ContextStoreError> {
+    ) -> Result<Vec<Result<VersionedEntity, UnreadableEntity>>, ContextStoreError> {
         let mut gathered = GatheredEntities::of_heads(heads)?;
-        if !gathered.is_empty() && !selection.takes_none() {
-            let rows = self.fetch_on(lane, &rows_of(target, &gathered.keys(), selection)).await?;
+        let keys = gathered.keys();
+        if !keys.is_empty() && !selection.takes_none() {
+            let rows = self.fetch_on(lane, &rows_of(target, &keys, selection)).await?;
             gathered.add_rows(&rows)?;
         }
         self.versioned(gathered).await
     }
 
     /// The states of the Entities `gathered` holds, in the order their heads
-    /// were read, the names of every key they hold looked up once.
+    /// were read, the names of every key they hold looked up once, each one
+    /// that does not read back named unreadable in its place.
     ///
     /// # Errors
     ///
-    /// Returns [`ContextStoreError`] when a dictionary lookup fails, or when a
-    /// head or the rows of an Entity do not read back.
-    pub(crate) async fn assembled(&self, gathered: GatheredEntities) -> Result<Vec<RetrievedEntity>, ContextStoreError> {
+    /// Returns [`ContextStoreError`] when a dictionary lookup fails.
+    pub(crate) async fn assembled(&self, gathered: GatheredEntities) -> Result<Vec<Result<RetrievedEntity, UnreadableEntity>>, ContextStoreError> {
         Ok(retrieved(self.versioned(gathered).await?))
     }
 
@@ -302,15 +371,15 @@ impl EntityRepository {
     /// # Errors
     ///
     /// As [`assembled`](EntityRepository::assembled).
-    pub(crate) async fn versioned(&self, gathered: GatheredEntities) -> Result<Vec<VersionedEntity>, ContextStoreError> {
+    pub(crate) async fn versioned(&self, gathered: GatheredEntities) -> Result<Vec<Result<VersionedEntity, UnreadableEntity>>, ContextStoreError> {
         let names = names_of(&gathered.held_keys(), self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
-        gathered.assemble(&names)
+        Ok(gathered.assemble(&names))
     }
 }
 
 /// The states of `entities`, their versions dropped.
-fn retrieved(entities: Vec<VersionedEntity>) -> Vec<RetrievedEntity> {
-    entities.into_iter().map(|entity| entity.retrieved).collect()
+fn retrieved(entities: Vec<Result<VersionedEntity, UnreadableEntity>>) -> Vec<Result<RetrievedEntity, UnreadableEntity>> {
+    entities.into_iter().map(|entity| entity.map(|entity| entity.retrieved)).collect()
 }
 
 #[cfg(test)]
@@ -321,7 +390,12 @@ fn retrieved(entities: Vec<VersionedEntity>) -> Vec<RetrievedEntity> {
 mod tests {
     use crate::{
         current_attribute::{flatten::flatten, row::CurrentAttributeRow},
-        entity::stored_entities::{GatheredEntities, StoredHead},
+        entity::{
+            stored_entities::{GatheredEntities, StoredHead, VersionedEntity},
+            stored_entity_error::StoredEntityError,
+            unreadable_entity::{UnreadableEntity, every_entity},
+        },
+        error::ContextStoreError,
     };
     use andromeda_context_commit::entity_version::EntityVersion;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -415,7 +489,7 @@ mod tests {
         let mut gathered = GatheredEntities::default();
         let mut interleaved: Vec<(EntityKey, CurrentAttributeRow)> = Vec::new();
         for (key, id, seed) in page {
-            gathered.heads.push(head(key, id));
+            gathered.heads.push(Ok(head(key, id)));
             let rows = flatten(committed(id, seed).attributes(), &keys).expect("the state flattens");
             interleaved.extend(rows.into_iter().map(|row| (EntityKey::try_from(key).expect("a surrogate key"), row)));
         }
@@ -424,7 +498,7 @@ mod tests {
             gathered.rows.entry(key).or_default().push(row);
         }
 
-        let assembled = gathered.assemble(&names).expect("the rows assemble");
+        let assembled = every_entity(gathered.assemble(&names)).expect("the rows assemble");
         let ids: Vec<&str> = assembled.iter().map(|entity| entity.retrieved.state.id().as_str()).collect();
         assert_eq!(ids, vec!["urn:ngsi-ld:Building:c", "urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:b"]);
         for ((key, id, seed), entity) in page.iter().zip(&assembled) {
@@ -439,8 +513,8 @@ mod tests {
     fn an_entity_without_rows_assembles_without_attributes() {
         let (_, names) = names();
         let mut gathered = GatheredEntities::default();
-        gathered.heads.push(head(1, "urn:ngsi-ld:Building:a"));
-        let assembled = gathered.assemble(&names).expect("the head assembles");
+        gathered.heads.push(Ok(head(1, "urn:ngsi-ld:Building:a")));
+        let assembled = every_entity(gathered.assemble(&names)).expect("the head assembles");
         assert!(assembled.first().is_some_and(|entity| entity.retrieved.state.attributes().is_empty()));
     }
 
@@ -449,7 +523,90 @@ mod tests {
     #[test]
     fn a_type_key_without_a_name_is_refused() {
         let mut gathered = GatheredEntities::default();
-        gathered.heads.push(head(1, "urn:ngsi-ld:Building:a"));
-        assert!(gathered.assemble(&KeyNames::default()).is_err());
+        gathered.heads.push(Ok(head(1, "urn:ngsi-ld:Building:a")));
+        assert!(matches!(
+            gathered.assemble(&KeyNames::default()).as_slice(),
+            [Err(UnreadableEntity { fault, .. })] if matches!(**fault, ContextStoreError::StoredEntity(StoredEntityError::TypeKey(_)))
+        ));
+    }
+
+    /// What each assembled entry is: the identifier of an Entity that read
+    /// back, or of one named unreadable.
+    fn outcome(entry: &Result<VersionedEntity, UnreadableEntity>) -> Result<&str, &str> {
+        entry
+            .as_ref()
+            .map(|entity| entity.retrieved.state.id().as_str())
+            .map_err(|unreadable| unreadable.id.as_str())
+    }
+
+    /// One Entity that does not assemble is named unreadable in its place, and
+    /// the Entities before and after it still read back.
+    #[test]
+    fn an_entity_that_does_not_assemble_leaves_its_neighbours_readable() {
+        let (_, names) = names();
+        let mut gathered = GatheredEntities::default();
+        let mut untyped = head(2, "urn:ngsi-ld:Building:b");
+        untyped.types = vec![EntityTypeNameKey::from(99)];
+        gathered
+            .heads
+            .extend([Ok(head(1, "urn:ngsi-ld:Building:a")), Ok(untyped), Ok(head(3, "urn:ngsi-ld:Building:c"))]);
+        let assembled = gathered.assemble(&names);
+        let outcomes: Vec<_> = assembled.iter().map(outcome).collect();
+        assert_eq!(
+            outcomes,
+            vec![Ok("urn:ngsi-ld:Building:a"), Err("urn:ngsi-ld:Building:b"), Ok("urn:ngsi-ld:Building:c")]
+        );
+    }
+
+    /// A row that did not read back makes only its own Entity unreadable,
+    /// with that row's fault.
+    #[test]
+    fn a_row_that_does_not_read_back_makes_only_its_entity_unreadable() {
+        let (keys, names) = names();
+        let mut gathered = GatheredEntities::default();
+        for (key, id) in [(1, "urn:ngsi-ld:Building:a"), (2, "urn:ngsi-ld:Building:b")] {
+            gathered.heads.push(Ok(head(key, id)));
+            let rows = flatten(committed(id, 10).attributes(), &keys).expect("the state flattens");
+            gathered.rows.insert(EntityKey::try_from(key).expect("a surrogate key"), rows);
+        }
+        gathered
+            .row_faults
+            .insert(EntityKey::try_from(2).expect("a surrogate key"), StoredEntityError::Untyped.into());
+        let assembled = gathered.assemble(&names);
+        assert!(matches!(
+            assembled.as_slice(),
+            [Ok(_), Err(UnreadableEntity { id, fault })]
+                if id.as_str() == "urn:ngsi-ld:Building:b" && matches!(**fault, ContextStoreError::StoredEntity(StoredEntityError::Untyped))
+        ));
+        assert_eq!(outcome(&assembled[0]), Ok("urn:ngsi-ld:Building:a"));
+    }
+
+    /// A head that did not read back keeps its place among the heads, and its
+    /// rows are not asked for.
+    #[test]
+    fn an_unreadable_head_keeps_its_place_and_asks_for_no_rows() {
+        let (_, names) = names();
+        let mut gathered = GatheredEntities::default();
+        gathered.heads.extend([
+            Ok(head(1, "urn:ngsi-ld:Building:a")),
+            Err(UnreadableEntity {
+                id: "urn:ngsi-ld:Building:b".parse().expect("an identifier"),
+                fault: Box::new(StoredEntityError::Untyped.into()),
+            }),
+            Ok(head(3, "urn:ngsi-ld:Building:c")),
+        ]);
+        assert_eq!(
+            gathered.keys(),
+            vec![
+                EntityKey::try_from(1).expect("a surrogate key"),
+                EntityKey::try_from(3).expect("a surrogate key")
+            ]
+        );
+        let assembled = gathered.assemble(&names);
+        let outcomes: Vec<_> = assembled.iter().map(outcome).collect();
+        assert_eq!(
+            outcomes,
+            vec![Ok("urn:ngsi-ld:Building:a"), Err("urn:ngsi-ld:Building:b"), Ok("urn:ngsi-ld:Building:c")]
+        );
     }
 }

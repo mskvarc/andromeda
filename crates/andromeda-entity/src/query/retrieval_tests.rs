@@ -10,7 +10,7 @@ use crate::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     pagination_outcome::PaginationOutcome,
-    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::{
         EntityQueryService,
         entity_versions::{VersionRead, held_version},
@@ -106,9 +106,9 @@ impl EntityQueryStore for RetrievalStore {
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
         Ok(QueryOutcome {
-            rows: vec![self.retrieved.clone()], // clone: the store hands out its row, as a real store does
+            rows: vec![StoredEntry::Read(self.retrieved.clone())], // clone: the store hands out its row, as a real store does
             unapplied: ResidualFilter::default(),
             pagination: PaginationOutcome::Applied { total: None },
         })
@@ -338,7 +338,7 @@ async fn query(parameters: &str) -> Vec<Entity> {
         )
         .await
         .expect("queried");
-    let versions: Vec<_> = rows.into_iter().map(held_version).collect();
+    let versions: Vec<_> = rows.into_iter().filter_map(StoredEntry::read).map(held_version).collect();
     let read = VersionRead {
         id_override: None,
         sys_attrs: parameters.parse_options().expect("options").sys_attrs,

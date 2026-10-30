@@ -10,7 +10,7 @@ use crate::{
     configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
     spatial_acceleration::SpatialAcceleration,
@@ -92,7 +92,7 @@ impl EntityQueryStore for UnusedStore {
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
         Err(unused("query_compiled"))
     }
 

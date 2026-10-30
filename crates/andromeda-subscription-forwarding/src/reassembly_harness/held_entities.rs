@@ -5,7 +5,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query_outcome::QueryOutcome,
     storage_profile::StorageProfile,
 };
@@ -116,7 +116,7 @@ impl EntityQueryStore for HeldEntities {
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
         Err(EntityError::StoreUnavailable)
     }
 

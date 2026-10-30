@@ -285,8 +285,7 @@ impl ReadChangeEvent {
         let change = decode_change(self.lifecycle, self.change_kinds, attributes, self.change_dataset_ids)?;
         let state = |stored: Option<StoredState>| {
             stored
-                // clone: every state of the change owns the identifier it is assembled under.
-                .map(|stored| stored.assemble(self.entity_id.clone(), names).map(Arc::new))
+                .map(|stored| stored.assemble(&self.entity_id, names).map(Arc::new))
                 .transpose()
                 .map_err(|source| PendingChangeEventError::UnreadableSnapshot { source })
         };

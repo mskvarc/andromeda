@@ -3,12 +3,15 @@
 
 use crate::{
     current_attribute::read::RowSelection,
-    entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
+    entity::{mapper::stored_uri, pushdown, repo::EntityRepository, unreadable_entity::stored_entry},
     error::ContextStoreError,
     store_invariant::StoreInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{port::retrieved_entity::RetrievedEntity, query_outcome::QueryOutcome};
+use andromeda_entity::{
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    query_outcome::QueryOutcome,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -35,7 +38,8 @@ use sqlx::{Row, postgres::PgRow};
 impl EntityRepository {
     /// Execute a compiled entity query and return the matching stored states
     /// `window` selects, each with its clause 4.8 system attributes, counting
-    /// every match when `count` asks for it.
+    /// every match when `count` asks for it. A match whose stored rows no
+    /// longer read back keeps its place in the page, named by its identifier.
     ///
     /// Two statements: the page's heads, then the `current_attributes` rows of
     /// the Entities it kept, by their keys and limited to the attributes the
@@ -58,14 +62,14 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when a name the query reads cannot be
     /// resolved through the dictionaries, when the statement cannot be rendered
     /// from the compiled query, when a statement or the separate count fails,
-    /// or when the stored rows no longer read back as entity states.
+    /// or when a head's key or identifier does not read back.
     pub async fn query_compiled(
         &self,
         target: &ContextTarget,
         compiled: &CompiledEntityQuery,
         window: &PageWindow,
         count: CountPolicy,
-    ) -> Result<QueryOutcome<RetrievedEntity>, ContextStoreError> {
+    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, ContextStoreError> {
         let planned = pushdown::plan(compiled, EntityRepository::PROFILE, window, count);
         self.ensure_collations(&planned.query.ordering).await?;
         let names = self.resolve_names(&planned.query).await?;
@@ -79,7 +83,12 @@ impl EntityRepository {
         };
         let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
-        let mut rows = self.entities_of_heads(PoolLane::Reads, target, &head_rows, &selection).await?;
+        let mut rows: Vec<StoredEntry<RetrievedEntity>> = self
+            .entities_of_heads(PoolLane::Reads, target, &head_rows, &selection)
+            .await?
+            .into_iter()
+            .map(stored_entry)
+            .collect();
         built.read_order.present(&mut rows);
         let rows = rows;
 

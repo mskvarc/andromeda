@@ -3,6 +3,7 @@
 use crate::error::SnapshotError;
 use andromeda_context_commit::error::CommitError;
 use andromeda_federation::error::FederationError;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
 use thiserror::Error;
@@ -31,6 +32,13 @@ pub(super) enum ExecutionFailure<'error> {
     DistributedExecution {
         /// The forwarding failure.
         cause: &'error FederationError,
+    },
+    /// A matching local entity is stored in a form this broker no longer reads,
+    /// so a capture without it would not be the result of the query.
+    #[error("the stored entity {id} matched the query but does not read back")]
+    UnreadableEntity {
+        /// The entity that does not read back.
+        id: &'error Identifier,
     },
     /// The captured states could not be turned into branch writes.
     #[error("failed to read results: {cause}")]

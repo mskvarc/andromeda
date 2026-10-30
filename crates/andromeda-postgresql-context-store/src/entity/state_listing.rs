@@ -2,14 +2,17 @@
 //!
 //! Neither answer aggregates: both read the head of every Entity the caller
 //! asked for, ordered by entity id and continued after the last id of the
-//! previous page, and then the rows of the Entities the page kept.
+//! previous page, and then the rows of the Entities the page kept. An Entity
+//! whose stored rows no longer read back keeps its place in the page, named by
+//! its identifier, so the next page still continues after it.
 
 use crate::{
     current_attribute::read::RowSelection,
-    entity::{entity_types::Search, repo::EntityRepository, stored_entities::heads_statement},
+    entity::{entity_types::Search, repo::EntityRepository, stored_entities::heads_statement, unreadable_entity::stored_entry},
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity::port::stored_entry::StoredEntry;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_pool::read_share::PoolLane;
@@ -25,15 +28,15 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the dictionary lookup for the type, a
-    /// read or a name lookup fails, or when the stored rows no longer read back
-    /// as entity states.
+    /// read or a name lookup fails, or when a head's key or identifier does not
+    /// read back.
     pub async fn get_entities_by_type(
         &self,
         target: &ContextTarget,
         entity_type: &EntityTypeName,
         after: Option<&Identifier>,
         limit: u16,
-    ) -> Result<Vec<EntityState>, ContextStoreError> {
+    ) -> Result<Vec<StoredEntry<EntityState>>, ContextStoreError> {
         // A type the dictionary never interned was never carried by any entity.
         let Some(type_key) = self.entity_type_names.lookup(from_ref(entity_type)).await?.get(entity_type) else {
             return Ok(Vec::new());
@@ -49,20 +52,25 @@ impl EntityRepository {
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when a read or a name lookup fails, or
-    /// when the stored rows no longer read back as entity states.
-    pub async fn get_all_entities(&self, target: &ContextTarget, after: Option<&Identifier>, limit: u16) -> Result<Vec<EntityState>, ContextStoreError> {
+    /// when a head's key or identifier does not read back.
+    pub async fn get_all_entities(
+        &self,
+        target: &ContextTarget,
+        after: Option<&Identifier>,
+        limit: u16,
+    ) -> Result<Vec<StoredEntry<EntityState>>, ContextStoreError> {
         self.stored_states(target, keyset_page(heads_statement(target), after, limit)).await
     }
 
     /// Run a statement selecting heads and read the states of the Entities it
     /// selected, in its order.
-    async fn stored_states(&self, target: &ContextTarget, statement: SelectStatement) -> Result<Vec<EntityState>, ContextStoreError> {
+    async fn stored_states(&self, target: &ContextTarget, statement: SelectStatement) -> Result<Vec<StoredEntry<EntityState>>, ContextStoreError> {
         let heads = statement.to_query().fetch_all(&self.pool).await?;
         Ok(self
             .entities_of_heads(PoolLane::Whole, target, &heads, &RowSelection::Every)
             .await?
             .into_iter()
-            .map(|retrieved| Arc::unwrap_or_clone(retrieved.state))
+            .map(|entity| stored_entry(entity).map(|retrieved| Arc::unwrap_or_clone(retrieved.state)))
             .collect())
     }
 }

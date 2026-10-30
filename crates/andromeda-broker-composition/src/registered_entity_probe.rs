@@ -184,7 +184,7 @@ mod tests {
     use andromeda_entity::{
         error::EntityError,
         pagination_outcome::PaginationOutcome,
-        port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity},
+        port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
         query_outcome::QueryOutcome,
         query_residual::ResidualFilter,
         storage_profile::StorageProfile,
@@ -221,7 +221,7 @@ mod tests {
             _compiled: &'life2 CompiledEntityQuery,
             _window: &'life3 PageWindow,
             _count: CountPolicy,
-        ) -> BoxFuture<'async_trait, Result<QueryOutcome<RetrievedEntity>, EntityError>>
+        ) -> BoxFuture<'async_trait, Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError>>
         where
             'life0: 'async_trait,
             'life1: 'async_trait,

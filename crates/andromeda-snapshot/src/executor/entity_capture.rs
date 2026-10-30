@@ -27,7 +27,10 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::{
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    query::EntityQueryService,
+};
 use andromeda_federation::{
     entity_result::collect_warnings,
     error::FederationError,
@@ -168,29 +171,10 @@ impl SnapshotExecutor {
             start: PageStart::Cursor(None),
         };
         loop {
-            let (rows, _) = match self
-                .sources
-                .entity_query
-                .query_states(
-                    &self.sources.live_target,
-                    &params,
-                    &window,
-                    CountPolicy::Omit,
-                    context,
-                    self.sources.entity_query.language_targeting(),
-                )
-                .await
-            {
-                Ok(result) => result,
-                Err(error) => {
-                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
-                    return entity_query_failure(error);
-                }
+            let mut states = match self.local_page(&params, &window, context, snapshot_id, index).await? {
+                LocalPage::States(states) => states,
+                LocalPage::Ended(detail) => return Ok(detail),
             };
-            // The page statement decoded each state into its own allocation,
-            // so taking it out of its `Arc` never copies; the entity-level
-            // system times read beside it are not part of a captured entity.
-            let mut states: Vec<EntityState> = rows.into_iter().map(|row| Arc::unwrap_or_clone(row.state)).collect();
             let local_page_len = states.len();
             // clone: the next page starts after the last identifier of this one,
             // while the states themselves move into the capture below.
@@ -237,6 +221,44 @@ impl SnapshotExecutor {
             }
         }
         Ok(success_detail(ledger.captured.len()))
+    }
+
+    /// One local page of the states `params` selects within `window`, or the
+    /// result the query ends with when the page cannot be read whole.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transient store failure the page met.
+    async fn local_page(
+        &self,
+        params: &EntityQueryParameters,
+        window: &PageWindow,
+        context: &ContextSpec,
+        snapshot_id: &Identifier,
+        index: usize,
+    ) -> Result<LocalPage, SnapshotError> {
+        let query = &self.sources.entity_query;
+        let rows = match query
+            .query_states(
+                &self.sources.live_target,
+                params,
+                window,
+                CountPolicy::Omit,
+                context,
+                query.language_targeting(),
+            )
+            .await
+        {
+            Ok((rows, _)) => rows,
+            Err(error) => {
+                warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
+                return entity_query_failure(error).map(LocalPage::Ended);
+            }
+        };
+        Ok(match captured_states(rows) {
+            Ok(states) => LocalPage::States(states),
+            Err(id) => LocalPage::Ended(failure_detail(ExecutionFailure::UnreadableEntity { id: &id }.to_string())),
+        })
     }
 
     /// The query's context source filter and geoquery expanded under `context`,
@@ -305,6 +327,28 @@ impl SnapshotExecutor {
         }
         Ok(None)
     }
+}
+
+/// What one local page of a capture read.
+enum LocalPage {
+    /// The page's states, every one read back.
+    States(Vec<EntityState>),
+    /// The page could not be read whole, and the query ends with this result.
+    Ended(ExecutionResultDetails),
+}
+
+/// The states of one local page, or the first entity of it that does not read
+/// back, without which the capture would not be the query's result.
+fn captured_states(rows: Vec<StoredEntry<RetrievedEntity>>) -> Result<Vec<EntityState>, Identifier> {
+    rows.into_iter()
+        .map(|row| match row {
+            // The page statement decoded each state into its own allocation,
+            // so taking it out of its `Arc` never copies; the entity-level
+            // system times read beside it are not part of a captured entity.
+            StoredEntry::Read(row) => Ok(Arc::unwrap_or_clone(row.state)),
+            StoredEntry::Unreadable(id) => Err(id),
+        })
+        .collect()
 }
 
 /// One local page's states, the ones a source also answered for merged with

@@ -2,7 +2,7 @@ use crate::entity::{port::classify, repo::EntityRepository};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
-    port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity},
+    port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query_outcome::QueryOutcome,
     storage_profile::StorageProfile,
 };
@@ -22,7 +22,7 @@ impl EntityQueryStore for EntityRepository {
         compiled: &CompiledEntityQuery,
         window: &PageWindow,
         count: CountPolicy,
-    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
         EntityRepository::query_compiled(self, target, compiled, window, count)
             .await
             .map_err(|error| classify(&error))

@@ -1,6 +1,11 @@
 //! Compiled entity-query execution.
 
-use crate::{error::EntityError, port::retrieved_entity::RetrievedEntity, query_outcome::QueryOutcome, storage_profile::StorageProfile};
+use crate::{
+    error::EntityError,
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    query_outcome::QueryOutcome,
+    storage_profile::StorageProfile,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
@@ -26,7 +31,7 @@ pub trait EntityQueryStore: Send + Sync + 'static {
         compiled: &'life2 CompiledEntityQuery,
         window: &'life3 PageWindow,
         count: CountPolicy,
-    ) -> BoxFuture<'async_trait, Result<QueryOutcome<RetrievedEntity>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

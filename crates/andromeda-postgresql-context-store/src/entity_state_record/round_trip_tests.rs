@@ -42,7 +42,7 @@ fn state(head: &Value, attributes: &Value) -> EntityState {
 
 /// The state `record` holds, every key read back through `names`.
 fn state_of(record: EntityStateRecord, names: &KeyNames) -> Result<EntityState, StoredEntityError> {
-    StoredState::try_from(record)?.assemble(building_id(), names)
+    StoredState::try_from(record)?.assemble(&building_id(), names)
 }
 
 /// The record of the type-only Building, through its own dictionary.

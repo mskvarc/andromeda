@@ -26,3 +26,5 @@ pub mod retrieved_entity;
 pub mod service_ports;
 /// Typed spatial-index rebuild snapshots.
 pub mod spatial_snapshot;
+/// One Entity of a read over many, read back or named as unreadable.
+pub mod stored_entry;

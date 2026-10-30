@@ -98,6 +98,8 @@ pub mod query_admission;
 pub mod query_binding;
 /// The forwarding phases of an entity query.
 pub mod query_forwarding;
+/// The entities this broker holds itself for one page of an entity query.
+pub mod query_local_page;
 /// Where the page of an entity query is cut.
 pub mod query_page;
 /// Assembling the response an entity query answers with.

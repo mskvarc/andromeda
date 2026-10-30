@@ -38,5 +38,7 @@ pub mod stored_entities;
 pub mod stored_entity_error;
 /// The clause 4.5.1 invariant that every stored entity carries at least one type.
 pub mod types_present;
+/// An Entity a read over many reached that does not read back.
+pub(crate) mod unreadable_entity;
 /// The statements that write the three current-state entity relations.
 pub mod write;

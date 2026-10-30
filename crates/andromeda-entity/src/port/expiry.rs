@@ -20,6 +20,9 @@ pub trait EntityExpirySource: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
     /// Read at most `batch_size` versioned entities carrying attribute instances due at `cutoff`.
+    ///
+    /// A candidate whose stored rows no longer read back is left out, with
+    /// why recorded by the store, so the candidates after it are still read.
     fn entities_with_expired_attributes<'life0, 'life1, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,

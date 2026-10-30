@@ -30,7 +30,7 @@ mod tests {
         entity_snapshot::EntitySnapshot,
         error::EntityError,
         pagination_outcome::PaginationOutcome,
-        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
+        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
         query::EntityQueryService,
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
@@ -217,7 +217,7 @@ mod tests {
             _compiled: &CompiledEntityQuery,
             _window: &PageWindow,
             _count: CountPolicy,
-        ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+        ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
             Err(unused("query_compiled"))
         }
 

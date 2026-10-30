@@ -1,6 +1,6 @@
 //! Reading whole entity states a page at a time.
 
-use crate::error::EntityError;
+use crate::{error::EntityError, port::stored_entry::StoredEntry};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
@@ -10,7 +10,9 @@ use futures::future::BoxFuture;
 /// type, in identifier order and one page at a time.
 ///
 /// A page continues after the last identifier of the one before it, so reading
-/// a page costs the same however far into the listing it lies.
+/// a page costs the same however far into the listing it lies. An entity whose
+/// stored rows no longer read back keeps its place in the page as
+/// [`StoredEntry::Unreadable`], so the next page still continues after it.
 pub trait EntityPayloadPages: Send + Sync + 'static {
     /// Up to `limit` stored states of the entities carrying one type, from the
     /// first identifier after `after` (from the first entity when `None`).
@@ -20,7 +22,7 @@ pub trait EntityPayloadPages: Send + Sync + 'static {
         entity_type: &'life2 EntityTypeName,
         after: Option<&'life3 Identifier>,
         limit: u16,
-    ) -> BoxFuture<'async_trait, Result<Vec<EntityState>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<StoredEntry<EntityState>>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -34,7 +36,7 @@ pub trait EntityPayloadPages: Send + Sync + 'static {
         target: &'life1 ContextTarget,
         after: Option<&'life2 Identifier>,
         limit: u16,
-    ) -> BoxFuture<'async_trait, Result<Vec<EntityState>, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<Vec<StoredEntry<EntityState>>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
