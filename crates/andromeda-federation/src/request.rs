@@ -5,6 +5,7 @@ use crate::{
     instance_budget::InstanceBudget,
     operation::{ForwardingOperation, ProvisionResource},
     result_budget::ResultBudget,
+    source_reach::SourceReach,
     split_entities::SplitEntities,
 };
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -202,10 +203,9 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub geo: Option<&'a GeoQuery>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
-    /// The one registration contacted, for a request repeated to a source
-    /// already known to hold what it asks for; every matching registration is
-    /// contacted when it is `None`.
-    pub only_registration: Option<&'a Identifier>,
+    /// Which of the matching registrations are contacted: a request repeated
+    /// to follow up one source's answer goes to that source alone.
+    pub reach: SourceReach<'a>,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// How much of each source's answer is read.
@@ -256,9 +256,11 @@ pub struct ForwardQueryRequest<'a> {
 pub struct ForwardRetrieveRequest<'a> {
     /// The entity to retrieve.
     pub entity_id: &'a Identifier,
-    /// A registration that is not contacted: the sender of a notification
-    /// being re-assembled already supplied its part (clause 5.8.6).
-    pub exclude_registration: Option<&'a Identifier>,
+    /// Which of the matching registrations are contacted: the sender of a
+    /// notification being re-assembled already supplied its part (clause
+    /// 5.8.6), and a request repeated to follow up one source's answer goes
+    /// to that source alone.
+    pub reach: SourceReach<'a>,
     /// The client's retrieval parameters, narrowed per registration before
     /// they are forwarded (clause 4.3.6.1). Clauses 5.7.1.4 and 5.7.3.4 know
     /// no split entities, so every parameter that is not narrowed travels.

@@ -11,6 +11,7 @@ use andromeda_federation::{
     matched_registrations::PhasedRegistrations,
     outcome::{ForwardReadOutcome, ForwardedEntities},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+    source_reach::SourceReach,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
@@ -102,7 +103,7 @@ impl RetrieveForwarding<'_> {
     const fn request(&self) -> ForwardRetrieveRequest<'_> {
         ForwardRetrieveRequest {
             entity_id: self.entity_id,
-            exclude_registration: None,
+            reach: SourceReach::Every,
             client_query: ClientQuery::EntityRetrieve {
                 id: self.entity_id,
                 params: self.params,

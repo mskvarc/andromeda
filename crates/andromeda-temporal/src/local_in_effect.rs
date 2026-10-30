@@ -7,10 +7,19 @@
 //! source's answer is, every instance carrying the system times a window on
 //! `createdAt` or `modifiedAt` places it by.
 
-use crate::{error::TemporalError, port::read_scope::ScopeReach, query_reading::QueryReading, service::TemporalService, temporal_invariant::TemporalInvariant};
+use crate::{
+    error::TemporalError,
+    port::{
+        in_effect_reads::{InEffectReads, ScopeRead},
+        read_scope::ScopeReach,
+    },
+    query_reading::QueryReading,
+    service::TemporalService,
+    temporal_invariant::TemporalInvariant,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
@@ -65,27 +74,35 @@ impl TemporalService {
         entity_ids: &[Identifier],
     ) -> Result<LocalInEffect, TemporalError> {
         let compiled = self.compile_temporal_query(params, reading.context, reading.language_targeting).await?;
-        if entity_ids.is_empty() || SplitFilter::of(&compiled.entities).is_empty() || compiled.window.in_effect_start().is_none() {
+        let filter = SplitFilter::of(&compiled.entities);
+        if entity_ids.is_empty() || filter.is_empty() || compiled.window.in_effect_start().is_none() {
             return Ok(LocalInEffect::default());
         }
+        let attributes = filter.read_attributes();
+        let reads = InEffectReads {
+            attributes: &attributes,
+            scope: if filter.reads_scope() { ScopeRead::Read } else { ScopeRead::Unread },
+        };
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
-        let rows = self.reader.in_effect_instances(&scope, &compiled, entity_ids).await?;
+        let rows = self.reader.in_effect_instances(&scope, &compiled, entity_ids, reads).await?;
         let parts = rows
             .into_iter()
-            .map(|(entity_id, rows)| part_document(&entity_id, rows).map(|part| (entity_id, part)))
+            .map(|(entity_id, rows)| part_document(&entity_id, &[], rows).map(|part| (entity_id, part)))
             .collect::<Result<_, _>>()?;
         Ok(LocalInEffect { parts })
     }
 }
 
 /// The document the `rows` this broker holds of `entity_id` make up, every
-/// instance carrying its system times, as a split query judges a part.
+/// instance carrying its system times, as a split query judges a part, the
+/// entity named by `types`, which a part whose types another part names may
+/// leave empty.
 ///
 /// # Errors
 ///
 /// Returns [`TemporalInvariant::RenderedInstance`] when a stored row no longer
 /// reads as the instance it recorded.
-pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
+pub(crate) fn part_document(entity_id: &Identifier, types: &[EntityTypeName], rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
     let mut instances: IndexMap<AttributeName, Vec<InstanceDocument>> = IndexMap::new();
     for row in rows {
         // clone: the document keys each attribute by the name its rows carry
@@ -98,7 +115,7 @@ pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow
         .into_iter()
         .map(|(attribute, instances)| (attribute, AttributeMember::Instances(instances)))
         .collect();
-    let entity = EntityDocument::new(Some(entity_id.clone()), Vec::new(), None, None, attributes); // clone: the document owns the identifier it names
+    let entity = EntityDocument::new(Some(entity_id.clone()), types.to_vec(), None, None, attributes); // clone: the document owns the identifier and the types it names
     Ok(TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new()))
 }
 
@@ -158,7 +175,7 @@ mod tests {
                 "urn:ngsi-ld:Instance:2",
             ),
         ];
-        let part = part_document(&entity, rows).expect("the rows read as instances");
+        let part = part_document(&entity, &[], rows).expect("the rows read as instances");
         let instances = part.entity().attributes().get("https://example.com/speed").expect("speed").instances();
         pretty_assertions::assert_eq!(instances.len(), 2);
         let value = instances.first().expect("the value");
@@ -191,7 +208,7 @@ mod tests {
             metadata: None,
             stream_extent: StreamExtent::Whole,
         };
-        let part = part_document(&entity, vec![row]).expect("the row reads as an instance");
+        let part = part_document(&entity, &[], vec![row]).expect("the row reads as an instance");
         let removed = part.entity().attributes().get(scope).expect("scope").instances();
         pretty_assertions::assert_eq!(
             removed.first().expect("the removal").instant_on(TimeProp::Observed),

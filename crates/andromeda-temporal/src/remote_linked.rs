@@ -114,6 +114,16 @@ impl TemporalLinkedWindow {
     }
 }
 
+/// One holder's answer about an entity, kept apart from every other holder's.
+#[derive(Debug, Clone)]
+pub struct HeldPart {
+    /// The registration of the source that answered; `None` for an answer
+    /// that names none.
+    pub registration: Option<Identifier>,
+    /// What the source answered of the entity.
+    pub history: TemporalHistory,
+}
+
 /// Fetches the temporal evolution of an `objectType`-annotated Linked Entity
 /// whose history this broker does not hold (clause 4.5.23.1).
 ///
@@ -160,4 +170,24 @@ pub trait RemoteTemporalLinkedSource: fmt::Debug + Send + Sync + 'static {
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
     ) -> Result<RemoteResolution<TemporalHistory>, TemporalError>;
+
+    /// Ask every holder of `id`, or the one registration `only` names, for
+    /// the retrieval `params` states of `id` alone, each holder's answer kept
+    /// apart.
+    ///
+    /// The instance in effect when a window opens is decided per stream
+    /// across every holder, and a holder is asked again about what its own
+    /// answer left out, so the answers are not merged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::fetch_linked_temporal`].
+    #[must_use = "a probe of a Linked Entity's holders must be awaited"]
+    async fn fetch_held_parts(
+        &self,
+        id: &Identifier,
+        params: &TemporalQueryParameters,
+        only: Option<&Identifier>,
+        context: &ContextSpec,
+    ) -> Result<RemoteResolution<HeldPart>, TemporalError>;
 }

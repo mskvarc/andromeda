@@ -391,6 +391,7 @@ mod tests {
             TriggeringRequest,
         },
         result_budget::{ResultBudget, ResultBudgetExceeded, ResultLimits},
+        source_reach::SourceReach,
         split_entities::SplitEntities,
     };
     use andromeda_configuration::schema::federation::FederationConfig;
@@ -594,7 +595,7 @@ mod tests {
                     csf_expr: None,
                     geo: None,
                     mode_filter: CsrModeFilter::All,
-                    only_registration: None,
+                    reach: SourceReach::Every,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::Walk(&budget),
                 },
@@ -1239,7 +1240,7 @@ mod tests {
                     csf_expr: None,
                     geo: None,
                     mode_filter: CsrModeFilter::All,
-                    only_registration: None,
+                    reach: SourceReach::Every,
                     entity_map: EntityMapInUse::None,
                     paging: SourcePaging::WalkHistory(HistoryBudget {
                         entities: &entities,
@@ -1257,10 +1258,7 @@ mod tests {
             .results
             .iter()
             .flat_map(|answer| answer.entities.iter())
-            .filter_map(|history| match history {
-                TemporalHistory::Instances(document) => Some(document),
-                TemporalHistory::Aggregates(_) => None,
-            })
+            .filter_map(TemporalHistory::instances)
             .flat_map(TemporalDocument::instances)
             .filter_map(|(_, instance)| instance.instance_id()?.as_str().rsplit(':').next()?.parse().ok())
             .collect()

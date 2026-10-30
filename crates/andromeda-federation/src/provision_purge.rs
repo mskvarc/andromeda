@@ -19,6 +19,7 @@ use crate::{
     provision::{is_proxied, proxied_mode},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
+    source_reach::SourceReach,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -153,7 +154,7 @@ impl FederationService {
                 request.context,
                 RegistrationSelection {
                     selectors: &client_query.selectors(),
-                    exclude_registration: None,
+                    reach: SourceReach::Every,
                     csf: request.filters.csf(),
                     scope_q: client_query.scope_q(),
                     geo: request.filters.geo(),

@@ -15,6 +15,7 @@ use crate::{
             TemporalHistoryReader,
             TemporalReaderCapabilities,
         },
+        in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     query_reading::QueryReading,
@@ -145,6 +146,7 @@ impl TemporalHistoryReader for ShapedReader {
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _entity_ids: &[Identifier],
+        _reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
         panic!("no split query is read")
     }

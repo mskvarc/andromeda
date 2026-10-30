@@ -20,6 +20,7 @@ use crate::{
     read_fan_out::{SourceAnswer, read_outcome},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
+    source_reach::SourceReach,
     source_read::SourceRead,
     term_resolver::TermResolver,
 };
@@ -138,7 +139,7 @@ impl FederationService {
                 context,
                 RegistrationSelection {
                     selectors: &client_query.selectors(),
-                    exclude_registration: None,
+                    reach: SourceReach::Every,
                     csf: filters.csf(),
                     scope_q: client_query.scope_q(),
                     geo: filters.geo(),

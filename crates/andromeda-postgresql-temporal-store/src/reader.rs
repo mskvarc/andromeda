@@ -43,6 +43,7 @@ use andromeda_temporal::{
             TemporalHistoryReader,
             TemporalReaderCapabilities,
         },
+        in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope},
     },
 };
@@ -262,8 +263,9 @@ impl TemporalHistoryReader for TemporalRepository {
         scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
+        reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
-        self.read_in_effect_instances(&branch_of(scope), compiled, entity_ids).await
+        self.read_in_effect_instances(&branch_of(scope), compiled, entity_ids, reads).await
     }
 
     async fn window_relationship_instances(

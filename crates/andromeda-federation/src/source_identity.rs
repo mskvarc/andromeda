@@ -26,6 +26,7 @@ use crate::{
     participating_read::ParticipatingRead,
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
+    source_reach::SourceReach,
     transport::ForwardedRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -154,7 +155,7 @@ impl FederationService {
                         id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
                         ..EntitySelectorParams::default()
                     }],
-                    exclude_registration: None,
+                    reach: SourceReach::Every,
                     csf: None,
                     scope_q: None,
                     geo: None,

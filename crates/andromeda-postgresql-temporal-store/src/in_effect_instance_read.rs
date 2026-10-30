@@ -12,17 +12,20 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
-use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::split_part_rows::{PART_ENTITY_ID, build_in_effect_attribute_instances, build_in_effect_scope};
-use andromeda_temporal::error::TemporalError;
+use andromeda_temporal::{
+    error::TemporalError,
+    port::in_effect_reads::{InEffectReads, ScopeRead},
+};
 use sqlx::{Row, postgres::PgRow};
 use std::collections::HashMap;
 
 impl TemporalRepository {
-    /// The instances the query's filters read in effect when its window
-    /// opens, in the part of each of `entity_ids` this store holds, the Scope
+    /// The instances in effect when the query's window opens of what `reads`
+    /// covers, in the part of each of `entity_ids` this store holds, the Scope
     /// event in force first; an entity holding none is absent.
     ///
     /// # Errors
@@ -34,13 +37,13 @@ impl TemporalRepository {
         branch: &HistoryBranch,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
+        reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
-        let filter = SplitFilter::of(&compiled.entities);
         let mut in_effect: HashMap<Identifier, Vec<TemporalHistoryRow>> = HashMap::new();
         if entity_ids.is_empty() {
             return Ok(in_effect);
         }
-        if filter.reads_scope()
+        if reads.scope == ScopeRead::Read
             && let Some(statement) = build_in_effect_scope(branch, compiled, entity_ids)
         {
             let rows = self
@@ -51,8 +54,12 @@ impl TemporalRepository {
                 in_effect.entry(entity_id).or_default().extend(events.into_iter().map(|event| event.row));
             }
         }
-        let names = self.resolve_query_names(compiled).await?;
-        let keys = names.attributes.keys_of(filter.read_attributes().into_iter().map(AttributeName::as_str));
+        if reads.attributes.is_empty() {
+            return Ok(in_effect);
+        }
+        let names: Vec<AttributeName> = reads.attributes.iter().map(|name| (*name).clone()).collect(); // clone: the dictionary is asked for owned names
+        let resolved = self.attribute_names.lookup(&names).await.map_err(TemporalStoreError::from)?;
+        let keys = resolved.keys_of(reads.attributes.iter().map(|name| name.as_str()));
         if keys.is_empty() {
             return Ok(in_effect);
         }

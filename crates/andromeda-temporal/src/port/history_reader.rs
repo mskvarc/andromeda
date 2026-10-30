@@ -4,7 +4,10 @@ use crate::{
     append_intent::TemporalObservationIdentity,
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::read_scope::{ScopeReach, TemporalReadScope},
+    port::{
+        in_effect_reads::InEffectReads,
+        read_scope::{ScopeReach, TemporalReadScope},
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
@@ -228,11 +231,11 @@ pub trait TemporalHistoryReader: Send + Sync {
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError>;
 
-    /// The instances the query's filters read in effect when its window
-    /// opens, in the part of each of `entity_ids` this view holds: the latest
-    /// instance of every stream of the attributes the filters read placed
-    /// before the start, a deletion included, and the Scope event in force at
-    /// the start, as history rows.
+    /// The instances in effect when the query's window opens, in the part of
+    /// each of `entity_ids` this view holds: the latest instance of every
+    /// stream of the attributes `reads` names placed before the start, a
+    /// deletion included, and the Scope event in force at the start when
+    /// `reads` covers it, as history rows.
     ///
     /// Clause 4.11 counts the instance in effect when the window opens among
     /// the instances valid within it, and under clause 5.7.4.4 that is the
@@ -247,6 +250,7 @@ pub trait TemporalHistoryReader: Send + Sync {
         scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
+        reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError>;
 
     /// The instances inside the window of the Relationships the first hop of

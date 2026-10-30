@@ -3,7 +3,7 @@ use crate::{
     error::TemporalError,
     local_in_effect::LocalInEffect,
     query_reading::QueryReading,
-    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::{HeldPart, RemoteTemporalLinkedSource, TemporalLinkedWindow},
     split_settlement::{AnsweredParts, SplitSettlement},
     stub_broker::{StubBroker, live_target, service, service_over, uri},
 };
@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::temporal::{
     temporal_history::TemporalHistory,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, split_filter::LeafTruths};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, split_filter::LeafTruths};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -246,33 +246,66 @@ async fn a_query_without_filters_keeps_every_contributed_entity() {
 
 const OPERATED_BY: &str = "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/employees\"}}>10";
 
+/// What a probe for the instances before an instant names: the entity, the
+/// Temporal Property, the exclusive bound, the one dataset and the one
+/// registration asked, when the probe names them.
+type ProbeKey = (Identifier, TimeProp, DateTime<Utc>, Option<DatasetSelector>, Option<Identifier>);
+
+/// One holder's scripted answer to a probe of an entity before an instant.
+#[derive(Debug)]
+struct Probed {
+    /// The entity, the Temporal Property, the bound and the dataset the probe
+    /// names.
+    asks: (Identifier, TimeProp, DateTime<Utc>, Option<DatasetSelector>),
+    /// The registration of the holder answering.
+    registration: Identifier,
+    /// What it answers.
+    history: TemporalHistory,
+}
+
 /// The remainder of the system as the entities it holds, a request it refuses,
 /// and the attributes each request asked for.
 #[derive(Debug)]
 struct OtherHolders {
     /// What the sources answer for each entity: one history per source.
     held: HashMap<Identifier, Vec<TemporalHistory>>,
+    /// What each holder answers each probe with.
+    probes: Vec<Probed>,
     /// Whether the remainder of the system cannot be consulted at all.
     unreachable: bool,
     /// The entities and attributes each request named, in order.
     asked: Mutex<Vec<(Identifier, Option<Vec<AttributeName>>)>>,
+    /// Every probe sent, in order.
+    probed: Mutex<Vec<ProbeKey>>,
 }
 
 impl OtherHolders {
     fn new(held: impl IntoIterator<Item = (Identifier, Vec<TemporalHistory>)>) -> Arc<OtherHolders> {
+        OtherHolders::probing(held, Vec::new())
+    }
+
+    fn probing(held: impl IntoIterator<Item = (Identifier, Vec<TemporalHistory>)>, probes: Vec<Probed>) -> Arc<OtherHolders> {
         Arc::new(OtherHolders {
             held: held.into_iter().collect(),
+            probes,
             unreachable: false,
             asked: Mutex::new(Vec::new()),
+            probed: Mutex::new(Vec::new()),
         })
     }
 
     fn unreachable() -> Arc<OtherHolders> {
         Arc::new(OtherHolders {
             held: HashMap::new(),
+            probes: Vec::new(),
             unreachable: true,
             asked: Mutex::new(Vec::new()),
+            probed: Mutex::new(Vec::new()),
         })
+    }
+
+    fn probes_sent(&self) -> Vec<ProbeKey> {
+        self.probed.lock().expect("the lock is never poisoned").clone() // clone: the lock is released before the test compares
     }
 
     fn asked(&self) -> Vec<(Identifier, Option<Vec<AttributeName>>)> {
@@ -300,6 +333,39 @@ impl RemoteTemporalLinkedSource for OtherHolders {
         }
         Ok(RemoteResolution {
             entities: self.held.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned values
+            failures: Vec::new(),
+        })
+    }
+
+    async fn fetch_held_parts(
+        &self,
+        id: &Identifier,
+        params: &TemporalQueryParameters,
+        only: Option<&Identifier>,
+        _context: &ContextSpec,
+    ) -> Result<RemoteResolution<HeldPart>, TemporalError> {
+        let timeproperty = params.timeproperty_or_default();
+        let before = params.time_at.expect("a probe names its bound");
+        let dataset = params.dataset_id.as_ref().and_then(|datasets| datasets.first()).cloned(); // clone: the recording owns what it reports
+        // clone: the recording owns what it reports
+        self.probed
+            .lock()
+            .expect("the lock is never poisoned")
+            .push((id.clone(), timeproperty, before, dataset.clone(), only.cloned()));
+        if self.unreachable {
+            return Err(TemporalError::from(PersistenceFailure::Unavailable));
+        }
+        let asks = (id.clone(), timeproperty, before, dataset); // clone: the key owns the identifier it compares
+        Ok(RemoteResolution {
+            entities: self
+                .probes
+                .iter()
+                .filter(|probe| probe.asks == asks && only.is_none_or(|only| *only == probe.registration))
+                .map(|probe| HeldPart {
+                    registration: Some(probe.registration.clone()), // clone: the source hands back owned values
+                    history: probe.history.clone(),
+                })
+                .collect(),
             failures: Vec::new(),
         })
     }
@@ -437,6 +503,239 @@ async fn a_two_hop_term_reads_each_depth_from_every_holder_for_the_attributes_it
         vec![
             (uri(PARKING), Some(vec![name("https://example.com/operator")])),
             (uri("urn:ngsi-ld:Company:1"), Some(vec![name("https://example.com/employees")])),
+        ]
+    );
+}
+
+const FREE: &str = "https://example.com/free";
+const NOON: &str = "2020-08-01T12:00:00Z";
+
+/// What a holder answers of the Parking, holding `members`.
+async fn parking_history(members: Value) -> TemporalHistory {
+    let (_, mut histories) = held_by_source(PARKING, members).await;
+    histories.remove(0)
+}
+
+/// The Parking holding `free` spots, observed at `observed`, in `dataset`
+/// when one is named.
+fn free_spots(free: u32, observed: &str, dataset: Option<&str>) -> Value {
+    let mut instance = json!({"type": "Property", "value": free, "observedAt": observed});
+    if let (Some(dataset), Value::Object(instance)) = (dataset, &mut instance) {
+        instance.insert("datasetId".to_owned(), json!(dataset));
+    }
+    json!({FREE: [instance]})
+}
+
+/// The answer `registration` gives to the probe of the Parking before
+/// `before` on `timeproperty`, in `dataset` when one is named.
+async fn probed(registration: &str, timeproperty: TimeProp, before: &str, dataset: Option<DatasetSelector>, members: Value) -> Probed {
+    Probed {
+        asks: (uri(PARKING), timeproperty, at(before), dataset),
+        registration: uri(registration),
+        history: parking_history(members).await,
+    }
+}
+
+/// Whether the parked Vehicle is kept under `parkedIn{free}>0`, this broker
+/// holding `broker` and the remainder of the system answering `probes`.
+async fn parked_vehicle_kept(broker: StubBroker, probes: Vec<Probed>) -> bool {
+    let window = parked_vehicle().await;
+    let holders = OtherHolders::probing([], probes);
+    !settled_beside(broker, &holders, FREE_PARKING, &window).await.retained.is_empty()
+}
+
+/// Clause 4.11: the Parking was last written at 11:00 and holds nothing
+/// inside the window, so the hop reads the value in effect at 12:00.
+#[tokio::test]
+async fn a_hop_target_written_only_before_the_window_is_judged_on_its_value_in_effect() {
+    for (free, kept) in [(3, true), (0, false)] {
+        let probes = vec![
+            probed(
+                "urn:ngsi-ld:csr:1",
+                TimeProp::Observed,
+                NOON,
+                None,
+                free_spots(free, "2020-08-01T11:00:00Z", None),
+            )
+            .await,
+        ];
+        pretty_assertions::assert_eq!(parked_vehicle_kept(StubBroker::new([]), probes).await, kept, "{free} free spots");
+    }
+}
+
+/// This broker's own history answers for a target it records alone.
+#[tokio::test]
+async fn a_hop_target_this_broker_wrote_only_before_the_window_is_judged_on_its_value_in_effect() {
+    for (spots, kept) in [(3.0, true), (0.0, false)] {
+        let broker = StubBroker::new([(uri(PARKING), Vec::new())]).holding_in_effect(uri(PARKING), vec![free(spots, "2020-08-01T11:00:00Z")]);
+        let window = parked_vehicle().await;
+        let settlement = settled_beside(broker, &OtherHolders::new([]), FREE_PARKING, &window).await;
+        pretty_assertions::assert_eq!(!settlement.retained.is_empty(), kept, "{spots} free spots");
+    }
+}
+
+/// Clause 5.7.4.4: the instance in effect is the latest across every holder,
+/// so a later value another holder keeps supersedes the one this broker or a
+/// first source holds, and an older one does not.
+#[tokio::test]
+async fn a_later_value_on_another_holder_supersedes_the_value_in_effect() {
+    let local = || StubBroker::new([(uri(PARKING), Vec::new())]).holding_in_effect(uri(PARKING), vec![free(3.0, "2020-08-01T11:00:00Z")]);
+    let other = |observed: &'static str| async move { vec![probed("urn:ngsi-ld:csr:2", TimeProp::Observed, NOON, None, free_spots(0, observed, None)).await] };
+    assert!(!parked_vehicle_kept(local(), other("2020-08-01T11:30:00Z").await).await);
+    assert!(parked_vehicle_kept(local(), other("2020-08-01T10:30:00Z").await).await);
+    let first = probed("urn:ngsi-ld:csr:1", TimeProp::Observed, NOON, None, free_spots(3, "2020-08-01T11:00:00Z", None)).await;
+    let mut probes = other("2020-08-01T11:30:00Z").await;
+    probes.push(first);
+    assert!(!parked_vehicle_kept(StubBroker::new([]), probes).await);
+}
+
+/// The undated deletion of `free`, deleted at `deleted_at`.
+fn free_deleted(deleted_at: &str) -> Value {
+    json!({FREE: [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": deleted_at}]})
+}
+
+/// Clause 4.5.7: a deletion placed after the value in effect leaves nothing
+/// in effect, whichever holder recorded it, so the hop is never satisfied.
+#[tokio::test]
+async fn a_hop_target_deleted_before_the_window_never_satisfies_the_hop() {
+    let value = || probed("urn:ngsi-ld:csr:1", TimeProp::Observed, NOON, None, free_spots(3, "2020-08-01T11:00:00Z", None));
+    let deletion = probed("urn:ngsi-ld:csr:2", TimeProp::Deleted, NOON, None, free_deleted("2020-08-01T11:30:00Z")).await;
+    assert!(!parked_vehicle_kept(StubBroker::new([]), vec![value().await, deletion]).await);
+    let older = probed("urn:ngsi-ld:csr:2", TimeProp::Deleted, NOON, None, free_deleted("2020-08-01T10:30:00Z")).await;
+    assert!(parked_vehicle_kept(StubBroker::new([]), vec![value().await, older]).await);
+}
+
+/// Clauses 4.5.7 and 4.11: the deletion with the latest `deletedAt` is dated
+/// at 10:00, below the value in effect, while an undated deletion with an
+/// older `deletedAt` is placed at 11:20, so the source that answered is asked
+/// again, alone, before the `deletedAt` it returned, and the one it left out
+/// ends the stream. Without it the value observed at 11:00 is in effect.
+#[tokio::test]
+async fn an_older_deletion_a_holder_left_out_is_asked_for_and_ends_the_stream() {
+    let source = "urn:ngsi-ld:csr:1";
+    let first_answers = || async {
+        let dated =
+            json!({FREE: [{"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2020-08-01T10:00:00Z", "deletedAt": "2020-08-01T11:50:00Z"}]});
+        vec![
+            probed(source, TimeProp::Observed, NOON, None, free_spots(3, "2020-08-01T11:00:00Z", None)).await,
+            probed(source, TimeProp::Deleted, NOON, None, dated).await,
+        ]
+    };
+    assert!(parked_vehicle_kept(StubBroker::new([]), first_answers().await).await);
+    let mut probes = first_answers().await;
+    probes.push(
+        probed(
+            source,
+            TimeProp::Deleted,
+            "2020-08-01T11:50:00Z",
+            Some(DatasetSelector::Default),
+            free_deleted("2020-08-01T11:20:00Z"),
+        )
+        .await,
+    );
+    let window = parked_vehicle().await;
+    let holders = OtherHolders::probing([], probes);
+    assert!(settled_beside(StubBroker::new([]), &holders, FREE_PARKING, &window).await.retained.is_empty());
+    assert!(
+        holders.probes_sent().contains(&(
+            uri(PARKING),
+            TimeProp::Deleted,
+            at("2020-08-01T11:50:00Z"),
+            Some(DatasetSelector::Default),
+            Some(uri(source))
+        )),
+        "{:?}",
+        holders.probes_sent()
+    );
+}
+
+/// Table 6.18.3.2-1 with clause 4.5.5: the first source applies `lastN` per
+/// Attribute and answers its latest dataset `d2` alone, while the second holds
+/// `d1`, so the first is asked about `d1` on its own, and its later `d1`
+/// value supersedes the second source's, which is in effect without it.
+#[tokio::test]
+async fn a_dataset_a_holder_left_out_of_its_answer_is_asked_about_on_its_own() {
+    const D1: &str = "urn:ngsi-ld:dataset:d1";
+    const D2: &str = "urn:ngsi-ld:dataset:d2";
+    let d1 = DatasetSelector::Id(D1.parse().expect("a valid identifier"));
+    let first_answers = || async {
+        vec![
+            probed(
+                "urn:ngsi-ld:csr:1",
+                TimeProp::Observed,
+                NOON,
+                None,
+                free_spots(0, "2020-08-01T11:40:00Z", Some(D2)),
+            )
+            .await,
+            probed(
+                "urn:ngsi-ld:csr:2",
+                TimeProp::Observed,
+                NOON,
+                None,
+                free_spots(3, "2020-08-01T11:00:00Z", Some(D1)),
+            )
+            .await,
+        ]
+    };
+    assert!(parked_vehicle_kept(StubBroker::new([]), first_answers().await).await);
+    let mut probes = first_answers().await;
+    probes.push(
+        probed(
+            "urn:ngsi-ld:csr:1",
+            TimeProp::Observed,
+            NOON,
+            Some(d1.clone()),
+            free_spots(0, "2020-08-01T11:30:00Z", Some(D1)),
+        )
+        .await,
+    ); // clone: the expectation below names the dataset too
+    let window = parked_vehicle().await;
+    let holders = OtherHolders::probing([], probes);
+    assert!(settled_beside(StubBroker::new([]), &holders, FREE_PARKING, &window).await.retained.is_empty());
+    assert!(
+        holders.probes_sent().contains(&(uri(PARKING), TimeProp::Observed, at(NOON), Some(d1), None)),
+        "{:?}",
+        holders.probes_sent()
+    );
+}
+
+/// Clause 4.9: hops nest, so a Relationship the Parking holds in effect when
+/// the window opens names the Company the second hop reads.
+#[tokio::test]
+async fn a_relationship_in_effect_when_the_window_opens_reaches_the_next_depth() {
+    let window = parked_vehicle().await;
+    let local = StubBroker::new([(uri(PARKING), Vec::new())]).holding_in_effect(
+        uri(PARKING),
+        vec![row(
+            "https://example.com/operator",
+            AttributeType::Relationship,
+            TemporalValue::Uri(uri("urn:ngsi-ld:Company:1").as_uri().clone()), // clone: the row owns the object it names
+            "2020-08-01T11:00:00Z",
+        )],
+    );
+    let company = held_by_source(
+        "urn:ngsi-ld:Company:1",
+        json!({"https://example.com/employees": [{"type": "Property", "value": 40, "observedAt": "2020-08-01T12:30:00Z"}]}),
+    )
+    .await;
+    let source = OtherHolders::new([company]);
+    let settlement = settled_beside(local, &source, OPERATED_BY, &window).await;
+    pretty_assertions::assert_eq!(settlement.retained.into_iter().collect::<Vec<_>>(), vec![uri(VEHICLE)]);
+}
+
+/// Each holder is asked only for the attributes the hop reads of the target,
+/// on the window's Temporal Property and on `deletedAt`, before the start.
+#[tokio::test]
+async fn the_holders_are_asked_for_the_latest_instance_and_deletion_before_the_start() {
+    let window = parked_vehicle().await;
+    let holders = OtherHolders::probing([], Vec::new());
+    let _ = settled_beside(StubBroker::new([]), &holders, FREE_PARKING, &window).await;
+    pretty_assertions::assert_eq!(
+        holders.probes_sent(),
+        vec![
+            (uri(PARKING), TimeProp::Observed, at(NOON), None, None),
+            (uri(PARKING), TimeProp::Deleted, at(NOON), None, None),
         ]
     );
 }

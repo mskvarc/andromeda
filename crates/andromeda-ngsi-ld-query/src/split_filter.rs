@@ -87,6 +87,37 @@ impl LeafTruths {
     }
 }
 
+/// What the entities one hop depth reaches are read for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HopReads<'q> {
+    /// The Relationships crossed at the next depth and the attributes a Query
+    /// Term ends in at this one, without repetition.
+    pub attributes: Vec<&'q AttributeName>,
+    /// Whether a term ending in a structural member needs the entity whole.
+    pub members: HopMembers,
+}
+
+/// Which members of the entities one hop depth reaches are read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HopMembers {
+    /// The attributes [`HopReads::attributes`] names alone.
+    Attributes,
+    /// The entity whole: a term ends in `id`, `type` or `scope`, which name
+    /// structural members.
+    WholeEntity,
+}
+
+impl HopReads<'_> {
+    /// The attributes the entities are read with, `None` for every one.
+    #[must_use]
+    pub fn projection(&self) -> Option<&[&AttributeName]> {
+        match self.members {
+            HopMembers::Attributes => Some(&self.attributes),
+            HopMembers::WholeEntity => None,
+        }
+    }
+}
+
 /// The value, geo and scope filters of an [`EntitySelection`], read as a
 /// formula over their leaves.
 #[derive(Debug, Clone, Copy)]
@@ -180,14 +211,11 @@ impl<'q> SplitFilter<'q> {
         levels
     }
 
-    /// The attributes the entities each hop depth reaches are read for,
-    /// parallel to [`Self::hop_relationships`]: the Relationships crossed at
-    /// the next depth and the attribute a Query Term ends in, without
-    /// repetition. `None` at a depth where a term ends in `id`, `type` or
-    /// `scope`, which name structural members and need the entity whole.
+    /// What the entities each hop depth reaches are read for, parallel to
+    /// [`Self::hop_relationships`].
     #[must_use]
-    pub fn hop_reads(&self) -> Vec<Option<Vec<&'q AttributeName>>> {
-        let mut levels: Vec<Option<Vec<&'q AttributeName>>> = Vec::new();
+    pub fn hop_reads(&self) -> Vec<HopReads<'q>> {
+        let mut levels: Vec<HopReads<'q>> = Vec::new();
         for leaf in self.leaves() {
             let FilterLeaf::Term(pred) = leaf else {
                 continue;
@@ -196,7 +224,10 @@ impl<'q> SplitFilter<'q> {
             let mut depth = 0;
             while let QueryPath::Linked { inner, .. } = path {
                 if levels.len() <= depth {
-                    levels.push(Some(Vec::new()));
+                    levels.push(HopReads {
+                        attributes: Vec::new(),
+                        members: HopMembers::Attributes,
+                    });
                 }
                 let read = match inner.as_ref() {
                     QueryPath::Linked { relationship, .. } => Some(relationship),
@@ -204,10 +235,10 @@ impl<'q> SplitFilter<'q> {
                     QueryPath::Local(local) => Some(&local.attr),
                 };
                 if let Some(level) = levels.get_mut(depth) {
-                    match (read, level.as_mut()) {
-                        (None, _) => *level = None,
-                        (Some(name), Some(names)) if !names.contains(&name) => names.push(name),
-                        (Some(_), Some(_) | None) => {}
+                    match read {
+                        None => level.members = HopMembers::WholeEntity,
+                        Some(name) if !level.attributes.contains(&name) => level.attributes.push(name),
+                        Some(_) => {}
                     }
                 }
                 path = inner;
@@ -325,7 +356,7 @@ mod tests {
             scoped_entity::ScopedEntity,
         },
         scope::query::ScopeQuery,
-        split_filter::{FilterLeaf, LeafTruths, SplitFilter},
+        split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
@@ -483,10 +514,10 @@ mod tests {
             None,
             None,
         );
-        let reads: Vec<Option<Vec<&str>>> = SplitFilter::of(&selection)
-            .hop_reads()
-            .into_iter()
-            .map(|level| level.map(|names| names.into_iter().map(AttributeName::as_str).collect()))
+        let levels = SplitFilter::of(&selection).hop_reads();
+        let reads: Vec<Option<Vec<&str>>> = levels
+            .iter()
+            .map(|level| level.projection().map(|names| names.iter().map(|name| name.as_str()).collect()))
             .collect();
         pretty_assertions::assert_eq!(
             reads,
@@ -497,10 +528,21 @@ mod tests {
         );
     }
 
+    /// The attributes the other terms of a depth read stay named beside a
+    /// structural member, so what is in effect of them can still be asked for.
     #[test]
     fn a_depth_where_a_term_ends_in_a_structural_member_is_read_whole() {
-        let selection = selection(Some("\"https://example.com/parkedIn\"{type}==\"https://example.com/Parking\""), None, None);
-        pretty_assertions::assert_eq!(SplitFilter::of(&selection).hop_reads(), [None]);
+        let selection = selection(
+            Some("\"https://example.com/parkedIn\"{type}==\"https://example.com/Parking\";\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0"),
+            None,
+            None,
+        );
+        let reads = SplitFilter::of(&selection).hop_reads();
+        pretty_assertions::assert_eq!(reads.len(), 1);
+        pretty_assertions::assert_eq!(reads[0].members, HopMembers::WholeEntity);
+        pretty_assertions::assert_eq!(reads[0].projection(), None);
+        let attributes: Vec<&str> = reads[0].attributes.iter().map(|name| name.as_str()).collect();
+        pretty_assertions::assert_eq!(attributes, ["https://example.com/free"]);
     }
 
     #[test]

@@ -102,7 +102,7 @@ impl TemporalService {
         } else {
             let rows = self.reader.window_relationship_instances(&scope, &compiled, &entity_ids).await?;
             rows.into_iter()
-                .map(|(entity_id, rows)| part_document(&entity_id, rows))
+                .map(|(entity_id, rows)| part_document(&entity_id, &[], rows))
                 .collect::<Result<Vec<_>, _>>()?
         };
         let windowed: Vec<&TemporalDocument> = answered.in_window.iter().copied().chain(&local_links).collect();
@@ -118,7 +118,7 @@ impl TemporalService {
             self.read_hop_targets(target, params, reading.context, (&hops, &filter.hop_reads()), &reached)
                 .await?
         };
-        let linked = HopTargets::of(&hop_reading.targets, compiled.window);
+        let linked = HopTargets::of(&hop_reading, compiled.window);
         for part in windowed {
             let Some(entity_id) = part.id() else {
                 continue;

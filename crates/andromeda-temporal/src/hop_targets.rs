@@ -16,13 +16,16 @@
 //! registration covers it, which is asked for the attributes the hops read of
 //! it and the window alone. The parts are merged by Attribute and `datasetId`
 //! into one entity. A holder that fails leaves its part out and is reported, so
-//! the query is answered with a warning. Its instances inside the window
-//! count; the instance in effect when the window opens is the latest across
-//! the target's own parts, which a hop does not gather.
+//! the query is answered with a warning. A hop judges a target on its
+//! instances inside the window and on those it holds in effect when the window
+//! opens, gathered from every holder, so a target written only before the
+//! window is reached, and so is any entity a Relationship in effect names.
 
 use crate::{
     answered_evolution::AnsweredEvolution,
     error::TemporalError,
+    hop_target::HopTarget,
+    in_effect_entity::InEffectEntity,
     port::read_scope::{ScopeReach, TemporalReadScope},
     read::rendered_entity::HistoryPresence,
     remote_linked::TemporalLinkedWindow,
@@ -39,6 +42,7 @@ use andromeda_ngsi_ld_model::temporal::{
 };
 use andromeda_ngsi_ld_query::{
     queried_entity::linked_entities::LinkedEntities,
+    split_filter::HopReads,
     temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow},
 };
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
@@ -48,52 +52,76 @@ use std::{
     num::NonZeroU32,
 };
 
-/// The entities a hop reaches, each read over the window, by identifier.
+/// The entities a hop reaches, by identifier.
 #[derive(Debug, Default)]
 pub(crate) struct HopTargets<'a> {
-    /// Every target read, as the filters read an answered part.
-    entities: HashMap<&'a str, AnsweredEvolution<'a>>,
+    /// Every target read, as a hop judges it.
+    entities: HashMap<&'a str, HopTarget<'a>>,
 }
 
 impl<'a> HopTargets<'a> {
-    /// The targets `documents` hold, read over `window`.
-    pub(crate) fn of(documents: &'a [TemporalDocument], window: TemporalWindow) -> HopTargets<'a> {
-        HopTargets {
-            entities: documents
-                .iter()
-                .filter_map(|document| Some((document.id()?.as_str(), AnsweredEvolution::of(document, window))))
-                .collect(),
+    /// The targets `reading` found, read over `window`.
+    pub(crate) fn of(reading: &'a HopReading, window: TemporalWindow) -> HopTargets<'a> {
+        let mut in_effect: HashMap<&str, Vec<&TemporalDocument>> = HashMap::new();
+        for part in &reading.in_effect {
+            if let Some(id) = part.id() {
+                in_effect.entry(id.as_str()).or_default().push(part);
+            }
         }
+        let mut entities: HashMap<&str, HopTarget<'a>> = HashMap::new();
+        for document in &reading.targets {
+            if let Some(id) = document.id() {
+                entities.insert(
+                    id.as_str(),
+                    HopTarget {
+                        window: Some(AnsweredEvolution::of(document, window)),
+                        in_effect: None,
+                    },
+                );
+            }
+        }
+        for (id, parts) in in_effect {
+            let held = InEffectEntity::merged(&parts, window);
+            entities.entry(id).or_insert(HopTarget { window: None, in_effect: None }).in_effect = held;
+        }
+        HopTargets { entities }
     }
 }
 
 impl<'a> LinkedEntities<'a> for &'a HopTargets<'a> {
-    type Entity = &'a AnsweredEvolution<'a>;
+    type Entity = &'a HopTarget<'a>;
 
-    fn linked(self, object: &str) -> Option<&'a AnsweredEvolution<'a>> {
+    fn linked(self, object: &str) -> Option<&'a HopTarget<'a>> {
         self.entities.get(object)
     }
 }
 
 /// How the targets of one level are read.
-struct TargetRead<'r> {
+pub(crate) struct TargetRead<'r> {
     /// The branch the targets are read from.
-    target: &'r ContextTarget,
+    pub(crate) target: &'r ContextTarget,
     /// The read scope this broker's history is read in.
-    scope: &'r TemporalReadScope<'r>,
+    pub(crate) scope: &'r TemporalReadScope<'r>,
     /// The window as this broker's own history answers it.
-    compiled: &'r CompiledTemporalQuery,
+    pub(crate) compiled: &'r CompiledTemporalQuery,
     /// The same window as a remote holder is asked for it.
-    window: &'r TemporalLinkedWindow,
+    pub(crate) window: &'r TemporalLinkedWindow,
+    /// The attributes whose instance in effect when the window opens the hops
+    /// read.
+    pub(crate) in_effect: &'r [&'r AttributeName],
     /// The request context.
-    context: &'r ContextSpec,
+    pub(crate) context: &'r ContextSpec,
 }
 
 /// What reading the entities the hops reach found.
 #[derive(Debug, Default)]
 pub(crate) struct HopReading {
-    /// Every target read, each the union of what its holders answered.
+    /// Every target read over the window, each the union of what its holders
+    /// answered.
     pub(crate) targets: Vec<TemporalDocument>,
+    /// What every holder answered for the instances the targets hold in
+    /// effect when the window opens, unmerged.
+    pub(crate) in_effect: Vec<TemporalDocument>,
     /// The holders that could not be consulted or whose answer was unusable;
     /// the targets they hold are judged on the parts that did answer.
     pub(crate) incomplete: Vec<LinkedResolutionFailure>,
@@ -101,8 +129,9 @@ pub(crate) struct HopReading {
 
 impl TemporalService {
     /// Read over the window of `params` every entity the hops reach from
-    /// `parts`, `hops` naming the Relationships crossed at each depth and
-    /// `reads` the attributes each depth is read for.
+    /// `parts`, and what each holds in effect when the window opens, `hops`
+    /// naming the Relationships crossed at each depth and `reads` what each
+    /// depth is read for.
     ///
     /// # Errors
     ///
@@ -116,7 +145,7 @@ impl TemporalService {
         target: &ContextTarget,
         params: &TemporalQueryParameters,
         context: &ContextSpec,
-        (hops, reads): (&[Vec<&AttributeName>], &[Option<Vec<&AttributeName>>]),
+        (hops, reads): (&[Vec<&AttributeName>], &[HopReads<'_>]),
         parts: &[&TemporalDocument],
     ) -> Result<HopReading, TemporalError> {
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -128,6 +157,7 @@ impl TemporalService {
             if frontier.is_empty() {
                 break;
             }
+            let level_reads = reads.get(depth - 1);
             // A filter reads instances whatever representation the client
             // asked for, and every instance of the window, before any `lastN`
             // cut; a target is asked only for what the hops read of it.
@@ -136,9 +166,8 @@ impl TemporalService {
                 last_n: None,
                 aggr_methods: None,
                 aggr_period_duration: None,
-                attrs: reads
-                    .get(depth - 1)
-                    .and_then(Option::as_ref)
+                attrs: level_reads
+                    .and_then(HopReads::projection)
                     .map(|names| names.iter().map(|name| (*name).clone()).collect()), // clone: the window owns the names it asks for
                 ..TemporalLinkedWindow::of_request(params)
             };
@@ -148,21 +177,27 @@ impl TemporalService {
                 scope: &scope,
                 compiled: &compiled,
                 window: &window,
+                in_effect: level_reads.map_or(&[][..], |level| level.attributes.as_slice()),
                 context,
             };
             let level = self.read_target_level(&read, &frontier, &seen).await?;
-            frontier = objects_of(level.targets.iter(), hops.get(depth));
+            frontier = objects_of(level.targets.iter().chain(&level.in_effect), hops.get(depth));
             reading.targets.extend(level.targets);
-            reading.incomplete.extend(level.incomplete);
+            reading.in_effect.extend(level.in_effect);
+            for failure in level.incomplete {
+                if !reading.incomplete.contains(&failure) {
+                    reading.incomplete.push(failure);
+                }
+            }
         }
         Ok(reading)
     }
 
-    /// Read `ids` over the window from every holder: this broker when it
-    /// records them, and the remainder of the system whether or not it does,
-    /// since clause 5.7.4.4 makes the Temporal Evolution of an Entity the union
-    /// of what every part holds. `visited` names every target the walk has read
-    /// or is reading.
+    /// Read `ids` over the window, and what they hold in effect when it
+    /// opens, from every holder: this broker when it records them, and the
+    /// remainder of the system whether or not it does, since clause 5.7.4.4
+    /// makes the Temporal Evolution of an Entity the union of what every part
+    /// holds. `visited` names every target the walk has read or is reading.
     ///
     /// # Errors
     ///
@@ -200,6 +235,9 @@ impl TemporalService {
             }
             level.targets.extend(union_of(parts, read.window.timeproperty));
         }
+        let in_effect = self.read_level_in_effect(read, ids, &catalogued, &level.targets).await?;
+        level.in_effect = in_effect.parts;
+        level.incomplete.extend(in_effect.incomplete);
         Ok(level)
     }
 }
@@ -214,15 +252,7 @@ fn union_of(parts: Vec<TemporalHistory>, timeproperty: TimeProp) -> impl Iterato
             None => gathered.push(part),
         }
     }
-    gathered.into_iter().filter_map(instances_of)
-}
-
-/// The instances `history` holds; an aggregate holds none a filter reads.
-fn instances_of(history: TemporalHistory) -> Option<TemporalDocument> {
-    match history {
-        TemporalHistory::Instances(document) => Some(document),
-        TemporalHistory::Aggregates(_) => None,
-    }
+    gathered.into_iter().filter_map(TemporalHistory::into_instances)
 }
 
 /// Every entity the instances of `relationships` in `parts` name, without
@@ -262,7 +292,7 @@ mod tests {
     use crate::{
         answered_evolution::AnsweredEvolution,
         answered_fixture::answered,
-        hop_targets::{HopTargets, objects_of},
+        hop_targets::{HopReading, HopTargets, objects_of},
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
@@ -317,13 +347,13 @@ mod tests {
     /// `targets`.
     async fn holds_over(part: &Value, targets: &[Value]) -> bool {
         let part = answered(part).await;
-        let mut documents = Vec::new();
+        let mut reading = HopReading::default();
         for target in targets {
-            documents.push(answered(target).await);
+            reading.targets.push(answered(target).await);
         }
         let selection = free_parking();
         let filter = SplitFilter::of(&selection);
-        let linked = HopTargets::of(&documents, noon_to_one());
+        let linked = HopTargets::of(&reading, noon_to_one());
         filter.holds(&filter.truths_of(&AnsweredEvolution::of(&part, noon_to_one()), &linked))
     }
 
@@ -383,8 +413,11 @@ mod tests {
             .build();
         let filter = SplitFilter::of(&selection);
         for (name, expected) in [("Acme", true), ("Other", false)] {
-            let documents = vec![answered(&parking).await, answered(&company(name)).await];
-            let linked = HopTargets::of(&documents, noon_to_one());
+            let reading = HopReading {
+                targets: vec![answered(&parking).await, answered(&company(name)).await],
+                ..HopReading::default()
+            };
+            let linked = HopTargets::of(&reading, noon_to_one());
             pretty_assertions::assert_eq!(
                 filter.holds(&filter.truths_of(&AnsweredEvolution::of(&part, noon_to_one()), &linked)),
                 expected,

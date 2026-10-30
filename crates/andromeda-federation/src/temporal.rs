@@ -74,7 +74,7 @@ impl FederationService {
             csf_expr,
             geo,
             mode_filter,
-            only_registration,
+            reach,
             entity_map,
             paging,
         } = request;
@@ -87,7 +87,7 @@ impl FederationService {
                 context,
                 RegistrationSelection {
                     selectors: &client.selectors(),
-                    exclude_registration: None,
+                    reach,
                     csf: csf_expr,
                     scope_q: client_query.scope_q.as_ref(),
                     geo,
@@ -110,10 +110,7 @@ impl FederationService {
             .temporal_answer(paging.temporal_answer())
             .presence(BodyPresence::Absent)
             .build();
-        for registration in registrations
-            .into_iter()
-            .filter(|registration| only_registration.is_none_or(|only| only == &registration.id))
-        {
+        for registration in registrations {
             let reads = self
                 .registration_queries(&registration, &narrowing)
                 .await?
@@ -175,7 +172,7 @@ impl FederationService {
         }
         let ForwardRetrieveRequest {
             entity_id,
-            exclude_registration,
+            reach,
             client_query,
             context,
             triggering,
@@ -193,7 +190,7 @@ impl FederationService {
                         id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
                         ..EntitySelectorParams::default()
                     }],
-                    exclude_registration,
+                    reach,
                     csf: None,
                     scope_q: None,
                     geo: None,

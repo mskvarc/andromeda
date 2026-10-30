@@ -15,9 +15,9 @@ use crate::{
     read_binding::{ReadIntent, read_binding_for},
     request::{CsrModeFilter, EntityMapInUse},
     selector_expansion::ExpandedSelectors,
+    source_reach::SourceReach,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     registration::{
@@ -36,8 +36,8 @@ pub(crate) struct RegistrationSelection<'a> {
     /// registration is contacted when some selector matches it (clause 5.12), each
     /// by its own type selector, identifiers and identifier pattern.
     pub(crate) selectors: &'a [EntitySelectorParams],
-    /// A registration never contacted (clause 5.8.6 re-assembly).
-    pub(crate) exclude_registration: Option<&'a Identifier>,
+    /// Which of the matching registrations are contacted.
+    pub(crate) reach: SourceReach<'a>,
     /// The expanded context source filter, evaluated against each
     /// registration's Context Source Properties (clause 4.9).
     pub(crate) csf: Option<&'a Expr>,
@@ -144,7 +144,7 @@ impl FederationService {
             .into_iter()
             .filter(|registration| {
                 selection.serving.admits(registration)
-                    && selection.exclude_registration.is_none_or(|excluded| excluded != &registration.id)
+                    && selection.reach.admits(&registration.id)
                     && filters.admits(registration).unwrap_or_else(|error| {
                         warn!(registration = %registration.id, %error, "the Context Source Properties of a stored registration could not be read for the context source filter");
                         false
@@ -181,6 +181,7 @@ mod tests {
         read_binding::ReadIntent,
         registration_selection::{RegistrationSelection, RegistrationServing},
         request::{CsrModeFilter, EntityMapInUse},
+        source_reach::SourceReach,
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
@@ -289,7 +290,7 @@ mod tests {
                         context,
                         RegistrationSelection {
                             selectors: &[],
-                            exclude_registration: None,
+                            reach: SourceReach::Every,
                             csf: Some(&filter),
                             scope_q: None,
                             geo: None,
@@ -330,7 +331,7 @@ mod tests {
                 &ContextSpec::none(),
                 RegistrationSelection {
                     selectors: &[],
-                    exclude_registration: None,
+                    reach: SourceReach::Every,
                     csf: None,
                     scope_q: None,
                     geo: Some(&near_madrid),
@@ -351,7 +352,7 @@ mod tests {
     fn unfiltered<'a>() -> RegistrationSelection<'a> {
         RegistrationSelection {
             selectors: &[],
-            exclude_registration: None,
+            reach: SourceReach::Every,
             csf: None,
             scope_q: None,
             geo: None,

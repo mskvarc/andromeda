@@ -7,14 +7,11 @@
 //! the latest instance of each stream before the start, across every part,
 //! unless that latest one is a deletion. The forwarded window query returns
 //! the instances inside the window only, so the instance a source held before
-//! the start is asked for with standard clause 5.7.4 parameters alone: the
-//! filter attributes as `attrs`, `timerel=before` at the start, and `lastN=1`,
-//! which Table 6.18.3.2-1 applies "per Attribute, per Entity". The latest
-//! deletion is asked for on `deletedAt`, where a deletion carrying no instant
-//! on the window's axis is placed. A source applying `lastN` per Attribute
-//! answers one dataset only; the `datasetId` filter runs before the `lastN`
-//! cut (clause 5.7.4.4, step S8 before the instance selection), so a probe
-//! naming one dataset reads that dataset's latest instance. The latest deletion
+//! the start is asked for with standard clause 5.7.4 parameters alone, the
+//! filter attributes as `attrs`. The latest deletion is asked for on
+//! `deletedAt`, where a deletion carrying no instant on the window's axis is
+//! placed. A source applying `lastN` per Attribute answers one dataset only,
+//! so a probe may name one dataset. The latest deletion
 //! is only the one with the latest `deletedAt`, so the probe is repeated to the
 //! source that answered, with `timeAt` at the `deletedAt` it returned (clause
 //! 4.11 makes `before` exclusive), for the deletions placed after the instance
@@ -27,20 +24,14 @@ use crate::{
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
     request::ForwardTemporalQueryRequest,
+    source_reach::SourceReach,
     split_entities::SplitEntities,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    identifier::Identifier,
-    reference::NgsiLdReferenceError,
-    time_prop::TimeProp,
-    time_rel::TimeRel,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::referenced_attributes::referenced_attributes, temporal::earlier_deletions::EarlierDeletions};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
-use std::num::NonZeroU32;
 
 /// Which instance before the window a probe asks for.
 #[derive(Debug, Clone, Copy)]
@@ -104,13 +95,7 @@ impl InEffectProbe<'_> {
             entity_type: client.entity_type.clone(),
             id_pattern: client.id_pattern.clone(),
             csf: client.csf.clone(),
-            attrs,
-            timerel: Some(TimeRel::Before),
-            time_at: Some(start),
-            timeproperty: Some(timeproperty),
-            last_n: Some(NonZeroU32::MIN),
-            dataset_id: self.dataset.map(|dataset| vec![dataset.clone()]), // clone: the probe owns the dataset it names
-            ..TemporalQueryParameters::default()
+            ..TemporalQueryParameters::latest_before(start, timeproperty, attrs, self.dataset.cloned()) // clone: the probe owns the dataset it names
         };
         Ok(Some(match self.reading {
             InEffectReading::Placed | InEffectReading::Deletion => params,
@@ -126,12 +111,12 @@ impl InEffectProbe<'_> {
         }))
     }
 
-    /// The one registration the probe is sent to; every matching registration
-    /// when it asks across all of them.
-    const fn registration(&self) -> Option<&Identifier> {
+    /// The registrations the probe is sent to: the one source an earlier
+    /// deletion follows up, every matching registration otherwise.
+    const fn reach(&self) -> SourceReach<'_> {
         match self.reading {
-            InEffectReading::Placed | InEffectReading::Deletion => None,
-            InEffectReading::EarlierDeletion(earlier) => Some(&earlier.source),
+            InEffectReading::Placed | InEffectReading::Deletion => SourceReach::Every,
+            InEffectReading::EarlierDeletion(earlier) => SourceReach::Only(&earlier.source),
         }
     }
 }
@@ -203,7 +188,7 @@ impl FederationService {
             ForwardTemporalQueryRequest {
                 client_query: &params,
                 split: SplitEntities::Complete,
-                only_registration: probe.registration(),
+                reach: probe.reach(),
                 ..request
             },
         )
@@ -224,6 +209,7 @@ mod tests {
         forwarding_context::Rewording,
         in_effect_probe::{InEffectProbe, InEffectReading},
         request::TemporalAnswer,
+        source_reach::SourceReach,
         split_entities::SplitEntities,
         term_resolver::TermResolver,
     };
@@ -353,7 +339,7 @@ mod tests {
             reading: InEffectReading::EarlierDeletion(&earlier),
             dataset: None,
         };
-        pretty_assertions::assert_eq!(probe.registration(), Some(&earlier.source));
+        pretty_assertions::assert_eq!(probe.reach(), SourceReach::Only(&earlier.source));
         let query = forwarded(&format!("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&{WINDOW}&q=speed>50&attrs=brand"), probe)
             .await
             .expect("probed");

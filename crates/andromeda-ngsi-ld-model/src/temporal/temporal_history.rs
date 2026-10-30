@@ -110,6 +110,24 @@ impl TemporalHistory {
         }
     }
 
+    /// The instances the history holds; an aggregate holds none.
+    #[must_use]
+    pub const fn instances(&self) -> Option<&TemporalDocument> {
+        match self {
+            TemporalHistory::Instances(document) => Some(document),
+            TemporalHistory::Aggregates(_) => None,
+        }
+    }
+
+    /// The instances the history holds, owned; an aggregate holds none.
+    #[must_use]
+    pub fn into_instances(self) -> Option<TemporalDocument> {
+        match self {
+            TemporalHistory::Instances(document) => Some(document),
+            TemporalHistory::Aggregates(_) => None,
+        }
+    }
+
     /// How many instances the history holds; an aggregate holds none.
     #[must_use]
     pub fn instance_count(&self) -> usize {

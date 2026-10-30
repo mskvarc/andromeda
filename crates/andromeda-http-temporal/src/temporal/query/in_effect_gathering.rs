@@ -35,15 +35,14 @@ use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, tem
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, temporal::window::TemporalWindow};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
-    deletion_follow_up::{DeletionAnswer, earlier_deletions},
+    deletion_follow_up::{SourcedDocuments, follow_earlier_deletions},
     in_effect_follow_up::follow_up_datasets,
     local_in_effect::LocalInEffect,
     query_reading::QueryReading,
     service::TemporalService,
 };
 use axum::http::Uri;
-use chrono::{DateTime, Utc};
-use std::{collections::HashMap, iter, slice};
+use std::{collections::HashMap, slice};
 
 /// The probe for the latest instance, asked across every dataset.
 const PLACED_ACROSS_DATASETS: InEffectProbe<'static> = InEffectProbe {
@@ -86,10 +85,7 @@ impl InEffectGathering {
 
 /// Every part `sources` answered with its instances; an aggregate holds none.
 pub(crate) fn instance_documents(sources: &[ForwardedTemporalEntities]) -> impl Iterator<Item = &TemporalDocument> {
-    sources.iter().flat_map(|source| source.entities.iter()).filter_map(|answer| match answer {
-        TemporalHistory::Instances(document) => Some(document),
-        TemporalHistory::Aggregates(_) => None,
-    })
+    sources.iter().flat_map(|source| source.entities.iter()).filter_map(TemporalHistory::instances)
 }
 
 /// What gathering the in-effect parts reads of the request.
@@ -141,12 +137,8 @@ pub(crate) async fn gather_in_effect(
     forwarded: Option<&ForwardedHistory>,
 ) -> Result<Option<InEffectGathering>, ProblemResponse> {
     let GatheringRequest { target, query } = request;
-    let window = query
-        .params
-        .window()
-        .ok()
-        .and_then(|window| window.in_effect_start().map(|start| (window, start)));
-    let (Some(forwarded), SplitEntities::Split, true, Some((window, start))) = (forwarded, filtering, carries_split_filters(query.params), window) else {
+    let window = query.params.window().ok().filter(|window| window.in_effect_start().is_some());
+    let (Some(forwarded), SplitEntities::Split, true, Some(window)) = (forwarded, filtering, carries_split_filters(query.params), window) else {
         return Ok(None);
     };
     let mut probed = forward_in_effect_probes(sources, target, query, &[PLACED_ACROSS_DATASETS]).await?;
@@ -184,7 +176,7 @@ pub(crate) async fn gather_in_effect(
         window_parts: &window_parts,
         probed: &probed,
     };
-    let deletions = follow_up_deletions(sources, target, query, (window, start), held, deletions).await?;
+    let deletions = follow_up_deletions(sources, target, query, window, held, deletions).await?;
     probed.extend(deletions);
     Ok(Some(InEffectGathering { sources: probed, local }))
 }
@@ -205,9 +197,6 @@ fn dataset_probes<'a>(datasets: &'a [DatasetSelector], reading: InEffectReading<
 /// followed to the instance in effect; `deletions` and the answers to the
 /// repeated requests.
 ///
-/// `window` is the window of the query and the instant it opens at, the bound
-/// the first probes carried.
-///
 /// # Errors
 ///
 /// The failures of [`forward_in_effect_probes`].
@@ -215,46 +204,31 @@ async fn follow_up_deletions(
     sources: TemporalForwarding<'_>,
     target: &ContextTarget,
     query: InEffectRequest<'_>,
-    (window, start): (TemporalWindow, DateTime<Utc>),
+    window: TemporalWindow,
     held: HeldParts<'_>,
-    mut deletions: Vec<ForwardedTemporalEntities>,
+    deletions: Vec<ForwardedTemporalEntities>,
 ) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
-    let mut bounds = vec![start; deletions.len()];
-    let mut latest_round = 0;
-    loop {
-        let requests = {
-            let answers: Vec<DeletionAnswer<'_>> = deletions[latest_round..]
-                .iter()
-                .zip(&bounds[latest_round..])
-                .filter_map(|(answer, bound)| {
-                    Some(DeletionAnswer {
-                        source: answer.registration_id.as_ref()?,
-                        bound: *bound,
-                        documents: instance_documents(slice::from_ref(answer)).collect(),
-                    })
-                })
-                .collect();
-            let known = held
-                .local
-                .parts()
-                .chain(held.window_parts.iter().copied())
-                .chain(instance_documents(held.probed))
-                .chain(instance_documents(&deletions));
-            earlier_deletions(&answers, known, window)
+    let known: Vec<&TemporalDocument> = held
+        .local
+        .parts()
+        .chain(held.window_parts.iter().copied())
+        .chain(instance_documents(held.probed))
+        .collect();
+    follow_earlier_deletions(window, &known, deletions, sourced_documents, async |request| {
+        let probe = InEffectProbe {
+            reading: InEffectReading::EarlierDeletion(request),
+            dataset: None,
         };
-        if requests.is_empty() {
-            return Ok(deletions);
-        }
-        latest_round = deletions.len();
-        for request in &requests {
-            let probe = InEffectProbe {
-                reading: InEffectReading::EarlierDeletion(request),
-                dataset: None,
-            };
-            let answers = forward_in_effect_probes(sources, target, query, &[probe]).await?;
-            bounds.extend(iter::repeat_n(request.before, answers.len()));
-            deletions.extend(answers);
-        }
+        forward_in_effect_probes(sources, target, query, &[probe]).await
+    })
+    .await
+}
+
+/// The source `answer` came from and the parts it holds.
+fn sourced_documents(answer: &ForwardedTemporalEntities) -> SourcedDocuments<'_> {
+    SourcedDocuments {
+        source: answer.registration_id.as_ref(),
+        documents: instance_documents(slice::from_ref(answer)).collect(),
     }
 }
 

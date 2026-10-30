@@ -8,7 +8,13 @@
 
 use crate::{
     instance_limits::TemporalInstanceLimits,
-    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
+    port::{
+        history_reader::TemporalHistoryReader,
+        in_effect_reads::{InEffectReads, ScopeRead},
+        mutation_barrier::TemporalMutationBarrier,
+        mutator::TemporalMutator,
+        service_ports::TemporalServicePorts,
+    },
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
     service_limits::TemporalServiceLimits,
@@ -38,6 +44,7 @@ use andromeda_ngsi_ld_query::{
     geo::near_distance_band::NearDistanceBand,
     split_filter::LeafTruths,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_retry::retry_delay::RetryDelay;
 use async_trait::async_trait;
 use std::{
@@ -144,9 +151,22 @@ impl StubBroker {
         StubBroker::of_entities(&self.leaf_truths, entity_ids)
     }
 
-    /// The in-effect rows the broker holds of `entity_ids`.
-    pub(crate) fn in_effect_of(&self, entity_ids: &[Identifier]) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
-        StubBroker::of_entities(&self.in_effect, entity_ids)
+    /// The in-effect rows the broker holds of `entity_ids`, of what `reads`
+    /// covers.
+    pub(crate) fn in_effect_of(&self, entity_ids: &[Identifier], reads: InEffectReads<'_>) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
+        let covered = |row: &TemporalHistoryRow| {
+            if row.attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
+                reads.scope == ScopeRead::Read
+            } else {
+                reads.attributes.contains(&&row.attribute_name)
+            }
+        };
+        let mut held = StubBroker::of_entities(&self.in_effect, entity_ids);
+        for rows in held.values_mut() {
+            rows.retain(covered);
+        }
+        held.retain(|_, rows| !rows.is_empty());
+        held
     }
 
     /// The window Relationship rows the broker holds of `entity_ids`.

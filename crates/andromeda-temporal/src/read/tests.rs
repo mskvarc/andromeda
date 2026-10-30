@@ -14,6 +14,7 @@ use crate::{
             TemporalHistoryReader,
             TemporalReaderCapabilities,
         },
+        in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     read::ensure_aggregation_supported,
@@ -112,6 +113,7 @@ impl TemporalHistoryReader for RefusingReader {
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _entity_ids: &[Identifier],
+        _reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")

@@ -1,6 +1,8 @@
 //! Storage capabilities consumed by temporal policy.
 
 pub mod history_reader;
+/// What a read of the instances in effect when a window opens covers.
+pub mod in_effect_reads;
 pub mod mutation_barrier;
 pub mod mutator;
 /// What one temporal read knows of its branch before its first statement.

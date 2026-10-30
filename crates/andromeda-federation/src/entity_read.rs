@@ -19,6 +19,7 @@ use crate::{
     registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
+    source_reach::SourceReach,
     source_walk::SOURCE_PAGE_SIZE,
     split_entities::SplitEntities,
     term_resolver::TermResolver,
@@ -82,7 +83,7 @@ impl FederationService {
                 request.context,
                 RegistrationSelection {
                     selectors: &request.client_query.selectors(),
-                    exclude_registration: None,
+                    reach: SourceReach::Every,
                     csf: request.csf_expr,
                     scope_q: request.client_query.scope_q(),
                     geo: request.geo,
@@ -207,7 +208,7 @@ impl FederationService {
                 request.context,
                 RegistrationSelection {
                     selectors: &request.client_query.selectors(),
-                    exclude_registration: request.exclude_registration,
+                    reach: request.reach,
                     csf: None,
                     scope_q: None,
                     geo: None,
@@ -246,7 +247,7 @@ impl FederationService {
             }
             let ForwardRetrieveRequest {
                 entity_id,
-                exclude_registration: _,
+                reach: _,
                 client_query,
                 context,
                 triggering,

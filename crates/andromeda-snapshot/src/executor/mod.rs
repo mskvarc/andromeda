@@ -23,6 +23,8 @@ mod status;
 mod temporal_capture;
 /// Recording a failed temporal step of a snapshot query.
 mod temporal_failure;
+/// Capturing one page of a snapshot temporal query's entities.
+mod temporal_page_capture;
 mod translation;
 
 use crate::{

@@ -21,6 +21,7 @@ use andromeda_federation::{
     query_forwarding_error::QueryForwardingError,
     request::{EntityMapInUse, HistoryBudget, SourcePaging, TriggeringRequest},
     result_budget::{ResultBudget, ResultBudgetExceeded},
+    source_reach::SourceReach,
     split_entities::SplitEntities,
 };
 use andromeda_http_response::{
@@ -217,7 +218,7 @@ pub(crate) async fn forward_temporal_history(
                 csf_expr: filters.csf(),
                 geo: filters.geo(),
                 mode_filter: CsrModeFilter::All,
-                only_registration: None,
+                reach: SourceReach::Every,
                 entity_map: EntityMapInUse::from(map_use),
                 paging,
             },
@@ -320,7 +321,7 @@ pub(crate) async fn forward_in_effect_probes(
                     csf_expr: filters.csf(),
                     geo: filters.geo(),
                     mode_filter: CsrModeFilter::All,
-                    only_registration: None,
+                    reach: SourceReach::Every,
                     entity_map: EntityMapInUse::from(map_use),
                     paging: SourcePaging::Walk(&budget),
                 },

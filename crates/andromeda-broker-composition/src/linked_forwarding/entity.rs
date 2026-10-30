@@ -41,7 +41,7 @@ impl RemoteLinkedEntitySource for LinkedForwarding {
             Ok(matched) => self.federation.forward_retrieve(&self.live_target, request, matched.into_registrations()).await,
             Err(error) => Err(error),
         };
-        Ok(resolution(id, forwarded, Vec::push))
+        Ok(resolution(id, forwarded, |gathered, _, entity| gathered.push(entity)))
     }
 }
 

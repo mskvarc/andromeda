@@ -30,6 +30,7 @@ use andromeda_federation::{
     forwarded_query::client_query::ClientQuery,
     outcome::ForwardedEntities,
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+    source_reach::SourceReach,
     split_entities::SplitEntities,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -88,7 +89,7 @@ impl SubscriptionForwardingService {
         let whole_entity = GetEntityParams::default();
         let request = ForwardRetrieveRequest {
             entity_id: id,
-            exclude_registration: Some(sender),
+            reach: SourceReach::AllBut(sender),
             client_query: ClientQuery::EntityRetrieve { id, params: &whole_entity },
             context,
             triggering: TriggeringRequest::default(),

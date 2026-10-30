@@ -26,6 +26,7 @@ use andromeda_federation::{
     forwarded_query::client_query::ClientQuery,
     outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
     request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+    source_reach::SourceReach,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -60,7 +61,7 @@ impl LinkedForwarding {
 fn linked_request<'a>(id: &'a Identifier, client_query: ClientQuery<'a>, context: &'a ContextSpec) -> ForwardRetrieveRequest<'a> {
     ForwardRetrieveRequest {
         entity_id: id,
-        exclude_registration: None,
+        reach: SourceReach::Every,
         client_query,
         context,
         // A linked retrieval starts at this broker rather than being a hop of
@@ -79,38 +80,39 @@ trait LinkedAnswer {
     /// The form the source's entities arrive in.
     type Entity;
 
-    /// The entities the source answered with, beside the clause 6.3.17
-    /// warnings the attempt raised.
-    fn into_parts(self) -> (Vec<Self::Entity>, Vec<NgsiLdWarning>);
+    /// The registration the source answered for, the entities it answered
+    /// with, and the clause 6.3.17 warnings the attempt raised.
+    fn into_parts(self) -> (Option<Identifier>, Vec<Self::Entity>, Vec<NgsiLdWarning>);
 }
 
 impl LinkedAnswer for ForwardedEntities {
     type Entity = ReceivedState;
 
-    fn into_parts(self) -> (Vec<ReceivedState>, Vec<NgsiLdWarning>) {
-        (self.entities, self.warnings)
+    fn into_parts(self) -> (Option<Identifier>, Vec<ReceivedState>, Vec<NgsiLdWarning>) {
+        (self.registration_id, self.entities, self.warnings)
     }
 }
 
 impl LinkedAnswer for ForwardedTemporalEntities {
     type Entity = TemporalHistory;
 
-    fn into_parts(self) -> (Vec<TemporalHistory>, Vec<NgsiLdWarning>) {
-        (self.entities, self.warnings)
+    fn into_parts(self) -> (Option<Identifier>, Vec<TemporalHistory>, Vec<NgsiLdWarning>) {
+        (self.registration_id, self.entities, self.warnings)
     }
 }
 
 /// What the forwarded retrieval of the Linked Entity `id` resolved, each
-/// source's entities taken into the resolution by `gather`.
+/// source's entities taken into the resolution by `gather` beside the
+/// registration of the source that answered them.
 ///
 /// A Linked Entity that cannot be reached degrades the join instead of the
 /// request (clause 4.5.23): the Relationship keeps its plain URI and the
 /// caller is told what is missing, so a failed forwarding is an answer too.
-fn resolution<A: LinkedAnswer>(
+fn resolution<A: LinkedAnswer, T>(
     id: &Identifier,
     forwarded: Result<ForwardReadOutcome<A>, FederationError>,
-    mut gather: impl FnMut(&mut Vec<A::Entity>, A::Entity),
-) -> RemoteResolution<A::Entity> {
+    mut gather: impl FnMut(&mut Vec<T>, Option<&Identifier>, A::Entity),
+) -> RemoteResolution<T> {
     match forwarded {
         Ok(outcome) => {
             let mut resolved = RemoteResolution {
@@ -118,10 +120,10 @@ fn resolution<A: LinkedAnswer>(
                 failures: Vec::new(),
             };
             for source in outcome.results {
-                let (entities, warnings) = source.into_parts();
+                let (registration, entities, warnings) = source.into_parts();
                 resolved.failures.extend(source_failures(id, warnings));
                 for entity in entities {
-                    gather(&mut resolved.entities, entity);
+                    gather(&mut resolved.entities, registration.as_ref(), entity);
                 }
             }
             resolved
@@ -146,7 +148,7 @@ mod tests {
     };
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
+    use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
     use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 
     fn uri(value: &str) -> Identifier {
@@ -177,7 +179,7 @@ mod tests {
             sources: MatchedSources::default(),
         };
 
-        let resolved = resolution(&id, Ok(outcome), Vec::push);
+        let resolved = resolution(&id, Ok(outcome), |gathered: &mut Vec<_>, _, history| gathered.push(history));
 
         let kinds: Vec<_> = resolved.failures.iter().map(|failure| (failure.id.clone(), failure.kind)).collect(); // clone: the expectation owns its identifiers
         pretty_assertions::assert_eq!(
@@ -199,7 +201,7 @@ mod tests {
         };
         let detail = error.to_string();
 
-        let resolved = resolution::<ForwardedTemporalEntities>(&id, Err(error), Vec::push);
+        let resolved = resolution::<ForwardedTemporalEntities, TemporalHistory>(&id, Err(error), |gathered, _, history| gathered.push(history));
 
         assert!(resolved.entities.is_empty());
         pretty_assertions::assert_eq!(

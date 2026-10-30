@@ -65,6 +65,9 @@ pub mod delete_parameters;
 pub mod delete_validation;
 /// Boundary deserialisers for the temporal-only parameters.
 pub mod deserialization;
+/// The temporal query for the instance each stream held just before an
+/// instant.
+pub mod latest_before;
 /// The operations a temporal query parameter set is read for.
 pub mod operation;
 /// The URL parameters the POST binding carries beside its clause 5.2.23 body.

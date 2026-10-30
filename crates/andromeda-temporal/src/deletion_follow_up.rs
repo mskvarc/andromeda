@@ -12,7 +12,9 @@
 //! earliest deletion returned reaches the next older one. The asking stops for
 //! a stream when an answer holds no deletion, or when the `deletedAt` returned
 //! is earlier than the latest placement already known for the stream, which no
-//! older deletion can pass.
+//! older deletion can pass. The asking is the same whoever is asked, the
+//! sources of a split query's roots or the holders of an entity a hop reaches,
+//! so it runs over any answer that names its source.
 
 use crate::in_effect_entity::placement;
 use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
@@ -24,22 +26,86 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::{collections::HashMap, iter};
 
 /// One stream of an attribute of an entity: the `datasetId` it is written
 /// under is `None` for the default instance (clause 4.5.5).
 type StreamOf<'a> = (&'a Identifier, &'a AttributeName, Option<&'a Identifier>);
 
+/// The source an answer came from and the parts it holds.
+#[derive(Debug)]
+pub struct SourcedDocuments<'a> {
+    /// The registration of the source that answered; `None` for an answer
+    /// naming none, which is never asked again.
+    pub source: Option<&'a Identifier>,
+    /// The parts the answer holds.
+    pub documents: Vec<&'a TemporalDocument>,
+}
+
+/// Ask each source that answered `deletions` again with `ask`, for the older
+/// deletions of the stream it answered, until every stream is followed to the
+/// instance in effect when `window` opens; `deletions` and the answers to
+/// every repeated request.
+///
+/// `sourced` reads an answer, and `held` is every other part known: the
+/// instances in effect and the parts inside the window. The first answers
+/// were asked for with `before` at the window's start.
+///
+/// # Errors
+///
+/// The first failure of `ask`.
+pub async fn follow_earlier_deletions<A, E>(
+    window: TemporalWindow,
+    held: &[&TemporalDocument],
+    mut deletions: Vec<A>,
+    sourced: impl for<'x> Fn(&'x A) -> SourcedDocuments<'x>,
+    mut ask: impl AsyncFnMut(&EarlierDeletions) -> Result<Vec<A>, E>,
+) -> Result<Vec<A>, E> {
+    let Some(start) = window.in_effect_start() else {
+        return Ok(deletions);
+    };
+    let mut bounds = vec![start; deletions.len()];
+    let mut latest_round = 0;
+    loop {
+        let requests = {
+            let answers: Vec<DeletionAnswer<'_>> = deletions
+                .iter()
+                .zip(&bounds)
+                .skip(latest_round)
+                .filter_map(|(answer, bound)| {
+                    let SourcedDocuments { source, documents } = sourced(answer);
+                    Some(DeletionAnswer {
+                        source: source?,
+                        bound: *bound,
+                        documents,
+                    })
+                })
+                .collect();
+            let known = held.iter().copied().chain(deletions.iter().flat_map(|answer| sourced(answer).documents));
+            earlier_deletions(&answers, known, window)
+        };
+        if requests.is_empty() {
+            return Ok(deletions);
+        }
+        latest_round = deletions.len();
+        for request in &requests {
+            let answers = ask(request).await?;
+            bounds.extend(iter::repeat_n(request.before, answers.len()));
+            deletions.extend(answers);
+        }
+    }
+}
+
 /// What one source answered a deletion request with.
 #[derive(Debug)]
-pub struct DeletionAnswer<'a> {
+struct DeletionAnswer<'a> {
     /// The registration of the source that answered.
-    pub source: &'a Identifier,
+    source: &'a Identifier,
     /// The exclusive upper bound on `deletedAt` the request carried; a
     /// deletion at or after it answers some other request.
-    pub bound: DateTime<Utc>,
+    bound: DateTime<Utc>,
     /// The parts the source answered with.
-    pub documents: Vec<&'a TemporalDocument>,
+    documents: Vec<&'a TemporalDocument>,
 }
 
 /// The deletion requests to send next, given the answers to the last ones
@@ -50,8 +116,7 @@ pub struct DeletionAnswer<'a> {
 /// A source is sent a request for a stream only when it answered a deletion
 /// for it, and one request covers every entity whose stream of the same
 /// attribute and `datasetId` reached the same instant.
-#[must_use]
-pub fn earlier_deletions<'a>(
+fn earlier_deletions<'a>(
     answers: &[DeletionAnswer<'a>],
     known: impl IntoIterator<Item = &'a TemporalDocument>,
     window: TemporalWindow,

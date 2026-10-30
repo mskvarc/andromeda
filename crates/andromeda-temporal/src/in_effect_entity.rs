@@ -51,7 +51,8 @@ pub(crate) struct InEffectEntity<'a> {
     attributes: HashMap<&'a AttributeName, Vec<&'a InstanceDocument>>,
     /// The paths the Scope in force names.
     scopes: Vec<ScopePath>,
-    /// The entity's types, as the first part names them.
+    /// The entity's types, as the first part naming any names them: a part
+    /// this broker read from its history names none.
     types: &'a [EntityTypeName],
 }
 
@@ -129,7 +130,11 @@ impl<'a> InEffectEntity<'a> {
         Some(InEffectEntity {
             attributes,
             scopes: scope.map(|latest| reified_paths(latest.instances)).unwrap_or_default(),
-            types: parts.first().map_or(&[][..], |part| part.entity().types()),
+            types: parts
+                .iter()
+                .map(|part| part.entity().types())
+                .find(|types| !types.is_empty())
+                .unwrap_or_default(),
         })
     }
 }

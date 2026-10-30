@@ -191,6 +191,8 @@ mod source_continuation;
 mod source_exchange;
 /// What a registered Context Source says about its own configuration.
 pub mod source_identity;
+/// Which of the registrations matching a forwarded read it contacts.
+pub mod source_reach;
 /// Reads forwarded to one registration and how their answers are read back.
 mod source_read;
 /// The warnings of a forwarded read that failed or came back partial.

@@ -37,6 +37,11 @@ mod evolution_write;
 pub mod forwarded_evolution;
 /// How many grouping terms nest the aggregates of a read.
 mod grouping_depth;
+/// The instances the entities a split query's hops reach hold in effect when
+/// its window opens, gathered from every holder.
+mod hop_in_effect;
+/// One entity a split query's hop reaches, as the hop judges it.
+mod hop_target;
 /// The entities a split query's hops reach, read over its window.
 mod hop_targets;
 /// The instances a split query's filters read in effect when its window

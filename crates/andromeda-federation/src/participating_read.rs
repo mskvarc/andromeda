@@ -14,6 +14,7 @@ use crate::{
     operation::ForwardingOperation,
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse},
+    source_reach::SourceReach,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -73,7 +74,7 @@ impl FederationService {
             context,
             RegistrationSelection {
                 selectors: &read.client_query.selectors(),
-                exclude_registration: None,
+                reach: SourceReach::Every,
                 csf: None,
                 scope_q: read.client_query.scope_q(),
                 geo: read.geo,

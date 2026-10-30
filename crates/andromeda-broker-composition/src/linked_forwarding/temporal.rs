@@ -19,7 +19,9 @@ use crate::linked_forwarding::{LinkedForwarding, linked_request, resolution, tra
 use andromeda_extensions::{advertisement::advertises, enabled::Extension};
 use andromeda_federation::{
     forwarded_query::client_query::{ClientQuery, TemporalTraversal},
+    request::ForwardRetrieveRequest,
     source_identity::SourceConfiguration,
+    source_reach::SourceReach,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
@@ -28,7 +30,7 @@ use andromeda_ngsi_ld_model::temporal::{temporal_document::MergeMode, temporal_h
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
     error::TemporalError,
-    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::{HeldPart, RemoteTemporalLinkedSource, TemporalLinkedWindow},
 };
 use async_trait::async_trait;
 use std::num::NonZeroU32;
@@ -92,11 +94,36 @@ impl RemoteTemporalLinkedSource for LinkedForwarding {
         let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
         // Every source holding part of an entity's history contributes it; an
         // instance two of them answer is one instance.
-        Ok(resolution(id, forwarded, |gathered: &mut Vec<TemporalHistory>, history| {
+        Ok(resolution(id, forwarded, |gathered: &mut Vec<TemporalHistory>, _, history| {
             match gathered.iter_mut().find(|held| held.id() == history.id()) {
                 Some(held) => held.merge(history, MergeMode::Inclusive, window.timeproperty),
                 None => gathered.push(history),
             }
+        }))
+    }
+
+    async fn fetch_held_parts(
+        &self,
+        id: &Identifier,
+        params: &TemporalQueryParameters,
+        only: Option<&Identifier>,
+        context: &ContextSpec,
+    ) -> Result<RemoteResolution<HeldPart>, TemporalError> {
+        let client_query = ClientQuery::TemporalRetrieve {
+            id,
+            params,
+            traversal: TemporalTraversal::WalkedHere,
+        };
+        let request = ForwardRetrieveRequest {
+            reach: only.map_or(SourceReach::Every, SourceReach::Only),
+            ..linked_request(id, client_query, context)
+        };
+        let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
+        Ok(resolution(id, forwarded, |held: &mut Vec<HeldPart>, registration, history| {
+            held.push(HeldPart {
+                registration: registration.cloned(), // clone: each part names the registration it came from
+                history,
+            });
         }))
     }
 }

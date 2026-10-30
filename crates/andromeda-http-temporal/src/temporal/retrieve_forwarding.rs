@@ -37,6 +37,7 @@ use andromeda_federation::{
     forwarded_query::client_query::{ClientQuery, TemporalTraversal},
     outcome::ForwardReadOutcome,
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+    source_reach::SourceReach,
 };
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
@@ -149,7 +150,7 @@ pub(crate) async fn distributed_retrieval(
             target,
             ForwardRetrieveRequest {
                 entity_id: id,
-                exclude_registration: None,
+                reach: SourceReach::Every,
                 client_query: ClientQuery::TemporalRetrieve {
                     id,
                     params,
