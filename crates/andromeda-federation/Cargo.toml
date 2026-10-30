@@ -15,6 +15,7 @@ andromeda-entity-map.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-expansion.workspace = true

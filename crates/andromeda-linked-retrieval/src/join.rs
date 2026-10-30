@@ -47,6 +47,26 @@ impl RetrievingJoin {
     }
 }
 
+/// What the retrieval of one entity answers with under its join (clause 4.5.23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalShape {
+    /// One Entity, the Linked Entities of `join=inline` nested in it.
+    Entity,
+    /// The entity and its Linked Entities side by side in one array (`join=flat`).
+    EntityBesideLinked,
+}
+
+impl RetrievalShape {
+    /// What a retrieval asking for the join `mode` answers with.
+    #[must_use]
+    pub const fn of(mode: Option<JoinMode>) -> RetrievalShape {
+        match RetrievingJoin::from_mode(mode) {
+            Some(RetrievingJoin::Flat) => RetrievalShape::EntityBesideLinked,
+            Some(RetrievingJoin::Inline) | None => RetrievalShape::Entity,
+        }
+    }
+}
+
 /// How far a traversal goes and which identifiers it must not retrieve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraversalBounds {
@@ -98,7 +118,7 @@ pub const fn traversal_depth(join_level: Option<NonZeroU32>) -> NonZeroU32 {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::join::{RetrievingJoin, TraversalBounds};
+    use crate::join::{RetrievalShape, RetrievingJoin, TraversalBounds};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use pretty_assertions::assert_eq;
@@ -130,6 +150,15 @@ mod tests {
             assert_eq!(retrieving, expected);
             assert_eq!(retrieving.mode(), mode);
         }
+    }
+
+    /// Clause 4.5.23: only a flat join answers a retrieval with the Linked Entities beside the entity.
+    #[test]
+    fn only_a_flat_join_answers_a_retrieval_side_by_side() {
+        assert_eq!(RetrievalShape::of(Some(JoinMode::Flat)), RetrievalShape::EntityBesideLinked);
+        assert_eq!(RetrievalShape::of(Some(JoinMode::Inline)), RetrievalShape::Entity);
+        assert_eq!(RetrievalShape::of(Some(JoinMode::None)), RetrievalShape::Entity);
+        assert_eq!(RetrievalShape::of(None), RetrievalShape::Entity);
     }
 
     /// Clause 4.5.23: a `join` without a `joinLevel` walks exactly one hop.

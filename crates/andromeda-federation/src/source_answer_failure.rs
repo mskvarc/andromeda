@@ -44,6 +44,22 @@ pub(crate) enum SourceAnswerFailure<'a> {
         #[source]
         reading: EntityReading,
     },
+    /// The answer to a retrieval is an entity other than the one requested.
+    #[error("context source {registration} answered the retrieval of {requested} with another entity")]
+    OtherEntity {
+        /// The registration that answered.
+        registration: &'a Identifier,
+        /// The entity the retrieval asked for.
+        requested: &'a Identifier,
+    },
+    /// The answer to a retrieval continuing a flat join holds entities, none of them the one requested.
+    #[error("context source {registration} answered the flat join of {requested} without that entity")]
+    RequestedEntityMissing {
+        /// The registration that answered.
+        registration: &'a Identifier,
+        /// The entity the retrieval asked for.
+        requested: &'a Identifier,
+    },
     /// The context the answer is spelled in does not resolve or process.
     #[error("context source {registration} answered under a context its entities cannot be read under")]
     AnswerContext {

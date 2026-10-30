@@ -88,6 +88,9 @@ pub enum ReceivedDocumentError {
     /// The document is JSON, but neither an array nor an object.
     #[error("the document is neither an array nor an object")]
     NotAnElementOrArray,
+    /// The document is an array where a single object is expected.
+    #[error("the document is an array where a single entity is expected")]
+    ArrayForElement,
 }
 
 /// A compact entity as a peer wrote it, with the `@context` it named for
@@ -165,6 +168,20 @@ impl ReceivedEntities {
         ))
     }
 
+    /// Read the one entity of a received document that answers with a single
+    /// object, such as a Retrieve Entity (clause 5.7.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReceivedDocumentError`] for text that is no JSON, or that is
+    /// not an object; a refused entity is not an error.
+    pub fn from_entity_slice(text: &[u8]) -> Result<ReceivedEntities, ReceivedDocumentError> {
+        match received_document(text)? {
+            ReceivedDocument::Object(object) => Ok(ReceivedEntities(vec![contextual_entity(0, object)])),
+            ReceivedDocument::Array(_) => Err(ReceivedDocumentError::ArrayForElement),
+        }
+    }
+
     /// Read the entities a notification carried in its `data` member (clause
     /// 5.3.1), already sliced out of the notification.
     #[must_use]
@@ -211,14 +228,30 @@ pub(crate) fn inadmissible_text(element: JsonPiece<'_>) -> Option<ElementRefusal
     admit_json_text(element.text().as_bytes()).err().map(ElementRefusalReason::Inadmissible)
 }
 
-/// The elements of a received document: those of an array, or the one object.
-pub(crate) fn received_elements(text: &[u8]) -> Result<Vec<JsonPiece<'_>>, ReceivedDocumentError> {
+/// A received document, by its outermost shape.
+enum ReceivedDocument<'a> {
+    /// An array, holding its elements.
+    Array(Vec<JsonPiece<'a>>),
+    /// One object.
+    Object(JsonPiece<'a>),
+}
+
+/// The received document `text` is, by its outermost shape.
+fn received_document(text: &[u8]) -> Result<ReceivedDocument<'_>, ReceivedDocumentError> {
     let raw: &RawValue = serde_json::from_slice(text).map_err(ReceivedDocumentError::Syntax)?;
     let document = JsonPiece::new(raw);
     match document.kind() {
-        JsonKind::Array => Ok(document.elements().unwrap_or_default()),
-        JsonKind::Object => Ok(vec![document]),
+        JsonKind::Array => Ok(ReceivedDocument::Array(document.elements().unwrap_or_default())),
+        JsonKind::Object => Ok(ReceivedDocument::Object(document)),
         JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String => Err(ReceivedDocumentError::NotAnElementOrArray),
+    }
+}
+
+/// The elements of a received document: those of an array, or the one object.
+pub(crate) fn received_elements(text: &[u8]) -> Result<Vec<JsonPiece<'_>>, ReceivedDocumentError> {
+    match received_document(text)? {
+        ReceivedDocument::Array(elements) => Ok(elements),
+        ReceivedDocument::Object(object) => Ok(vec![object]),
     }
 }
 
@@ -521,5 +554,25 @@ mod tests {
     fn a_document_that_is_not_json_is_an_error() {
         assert!(matches!(ReceivedEntities::from_slice(b"<html>"), Err(ReceivedDocumentError::Syntax(_))));
         assert!(matches!(ReceivedEntities::from_slice(b"5"), Err(ReceivedDocumentError::NotAnElementOrArray)));
+    }
+
+    #[test]
+    fn a_single_entity_document_reads_its_object() {
+        let ReceivedEntities(elements) = ReceivedEntities::from_entity_slice(br#"{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}"#).expect("one entity");
+        pretty_assertions::assert_eq!(entities(&elements), vec![Ok("urn:ngsi-ld:Vehicle:1".to_owned())]);
+    }
+
+    /// Clause 5.7.1: a retrieval answers one Entity, so an array is no answer
+    /// to it, even one holding the requested entity alone.
+    #[test]
+    fn a_single_entity_document_refuses_an_array() {
+        assert!(matches!(
+            ReceivedEntities::from_entity_slice(br#"[{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}]"#),
+            Err(ReceivedDocumentError::ArrayForElement)
+        ));
+        assert!(matches!(
+            ReceivedEntities::from_entity_slice(b"5"),
+            Err(ReceivedDocumentError::NotAnElementOrArray)
+        ));
     }
 }

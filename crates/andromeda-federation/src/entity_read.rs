@@ -19,6 +19,7 @@ use crate::{
     registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
+    retrieval_answer::{document, settle, shape_of},
     source_reach::SourceReach,
     source_walk::SOURCE_PAGE_SIZE,
     split_entities::SplitEntities,
@@ -284,10 +285,11 @@ impl FederationService {
                 return Ok(ForwardReadOutcome::empty());
             }
             let matched = targets.len();
+            let shape = shape_of(client_query);
             let answers = self
                 .fan_out_read(
                     targets,
-                    |registration, outcome| received_answer(registration, outcome).answer,
+                    |registration, outcome| received_answer(registration, outcome, document(shape)).answer,
                     ForwardedGetConditions {
                         context,
                         triggering,
@@ -296,7 +298,11 @@ impl FederationService {
                     },
                 )
                 .await;
-            Ok(self.answered_states(read_outcome(answers, matched)).await)
+            let mut outcome = self.answered_states(read_outcome(answers, matched)).await;
+            for answer in &mut outcome.results {
+                settle(shape, entity_id, answer);
+            }
+            Ok(outcome)
         }
         .await;
         timer.finish_result(&result);

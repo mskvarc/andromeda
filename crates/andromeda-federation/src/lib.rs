@@ -177,6 +177,8 @@ pub mod remote_answer;
 pub mod request;
 /// The distinct entities and source rows one forwarded query may gather.
 pub mod result_budget;
+/// What a source answers a forwarded Retrieve Entity with.
+mod retrieval_answer;
 /// A query's entity selectors with their type expressions expanded.
 mod selector_expansion;
 /// Clause 6.3.17 single-source failure classification.
@@ -428,6 +430,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-expansion",

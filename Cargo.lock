@@ -433,6 +433,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-json-literal",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-expansion",

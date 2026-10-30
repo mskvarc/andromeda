@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_entity::operation::expiry_removal::InstanceExpiry;
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedState};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    received::{ContextualEntity, ReceivedElement, ReceivedEntities},
+    received::{ContextualEntity, ReceivedDocumentError, ReceivedElement, ReceivedEntities},
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use chrono::{DateTime, Utc};
@@ -37,13 +37,32 @@ pub(crate) struct ReceivedAnswer {
     pub(crate) linked_map: Option<Identifier>,
 }
 
+/// What the document a source answers with may be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnswerDocument {
+    /// Entities: an array of them, or one object.
+    Entities,
+    /// One entity, as one object.
+    Entity,
+}
+
+impl AnswerDocument {
+    /// The entities of `body`, read as this document.
+    fn read(self, body: &[u8]) -> Result<ReceivedEntities, ReceivedDocumentError> {
+        match self {
+            AnswerDocument::Entities => ReceivedEntities::from_slice(body),
+            AnswerDocument::Entity => ReceivedEntities::from_entity_slice(body),
+        }
+    }
+}
+
 /// A Query Entities answer walks page by page as the entities each page
 /// carried.
 impl WalkedAnswer for ReceivedAnswer {
     type Element = ContextualEntity;
 
     fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedAnswer> {
-        received_answer(registration, outcome)
+        received_answer(registration, outcome, AnswerDocument::Entities)
     }
 
     fn elements(&mut self) -> &mut Vec<ContextualEntity> {
@@ -63,8 +82,8 @@ impl WalkedAnswer for ReceivedAnswer {
     }
 }
 
-/// A query answers with an array and a retrieval with one object, but either shape is read from either: a retrieval continuing a clause 4.5.23 flat join answers with the entity and its linked entities side by side.
-pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedAnswer> {
+/// One source's answer, its body read as `document`; a body that is not that document is a clause 6.3.17 warning.
+pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome, document: AnswerDocument) -> ReadPage<ReceivedAnswer> {
     let answer = |naming, entities, warnings, linked_map| {
         Some(ReceivedAnswer {
             registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
@@ -82,7 +101,7 @@ pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome:
             mut warnings,
             entity_map,
             ..
-        }) => match ReceivedEntities::from_slice(&body) {
+        }) => match document.read(&body) {
             Ok(ReceivedEntities(elements)) => {
                 let sent = elements.len();
                 let mut entities = Vec::with_capacity(sent);
@@ -253,7 +272,7 @@ fn unexpired(mut received: ReceivedState, source: &str, now: DateTime<Utc>) -> O
 )]
 mod tests {
     use crate::{
-        answer_reading::received_answer,
+        answer_reading::{AnswerDocument, received_answer},
         fixed_registration_store::offline_service,
         outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
         received_fixture::iri,
@@ -290,7 +309,7 @@ mod tests {
             continuation: SourceContinuation::Complete,
             partial_range: None,
         });
-        let page = received_answer(&registration, outcome);
+        let page = received_answer(&registration, outcome, AnswerDocument::Entities);
         let service = offline_service(Vec::new());
         let outcome = ForwardReadOutcome {
             results: page.answer.into_iter().collect(),
