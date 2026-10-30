@@ -76,7 +76,7 @@ impl FederationService {
                 selectors: &read.client_query.selectors(),
                 reach: SourceReach::Every,
                 csf: None,
-                scope_q: read.client_query.scope_q(),
+                scope_q: self.registration_scope_query(&read.client_query),
                 geo: read.geo,
                 serving: RegistrationServing::Operation(read.operation),
                 mode_filter: CsrModeFilter::All,

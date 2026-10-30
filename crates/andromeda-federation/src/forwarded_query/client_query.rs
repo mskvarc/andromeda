@@ -115,13 +115,25 @@ impl ClientQuery<'_> {
         }
     }
 
-    /// The scope query used to preselect registrations by their declared
-    /// coverage footprint.
+    /// The Scope query the client wrote, if the operation takes one: a
+    /// retrieval takes none (Tables 6.5.3.1-1 and 6.19.3.1-1).
     #[must_use]
     pub const fn scope_q(&self) -> Option<&ScopeQuery> {
         match self {
             ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
             ClientQuery::TemporalQuery(params) => params.scope_q.as_ref(),
+            ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
+        }
+    }
+
+    /// The `splitEntities` the client wrote on a query, `None` when it left
+    /// the deployment default in force or the operation is a retrieval, which
+    /// has no Scope query to defer.
+    #[must_use]
+    pub const fn split_entities(&self) -> Option<bool> {
+        match self {
+            ClientQuery::EntityQuery(params) => params.split_entities,
+            ClientQuery::TemporalQuery(params) => params.split_entities,
             ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
         }
     }

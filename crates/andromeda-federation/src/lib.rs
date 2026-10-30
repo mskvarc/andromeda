@@ -200,6 +200,13 @@ mod source_read_warning;
 /// Walking every page of a source's answer to a forwarded query.
 pub mod source_walk;
 pub mod split_entities;
+/// A split read reaches a source declaring no scope.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod split_scope_forwarding_tests;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
 /// Why a context source did not complete a forwarded subscription operation.

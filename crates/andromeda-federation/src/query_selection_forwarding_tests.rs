@@ -206,6 +206,22 @@ async fn a_selection_contacts_only_the_sources_whose_scope_its_scope_query_match
     }
 }
 
+/// Clauses 5.14.4.4 and 5.14.5.4: under split entities the Scope query is
+/// applied to the merged entities and clause 5.12 compares no scope, so every
+/// source matching the selectors is asked for its map, one declaring no
+/// `scope` included.
+#[tokio::test]
+async fn a_split_entity_map_contacts_every_source_whatever_its_scope() {
+    for selecting in [Selecting::EntityMap, Selecting::TemporalEntityMap] {
+        let (reached, _) = contacted(selecting, "type=Vehicle&scopeQ=%2FBarcelona&splitEntities=true", scoped().await).await;
+        pretty_assertions::assert_eq!(
+            reached,
+            vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:berlin", "urn:ngsi-ld:csr:unscoped"],
+            "{selecting:?}"
+        );
+    }
+}
+
 /// Clauses 4.3.6.1 and 5.10.2.4: a source located where no entity the
 /// geoquery matches can be is not contacted; one declaring no location may
 /// serve any area.

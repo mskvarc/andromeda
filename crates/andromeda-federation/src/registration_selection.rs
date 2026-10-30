@@ -11,6 +11,7 @@ use crate::{
     FederationService,
     entity_read::mode_admitted,
     error::FederationError,
+    forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     read_binding::{ReadIntent, read_binding_for},
     request::{CsrModeFilter, EntityMapInUse},
@@ -41,8 +42,9 @@ pub(crate) struct RegistrationSelection<'a> {
     /// The expanded context source filter, evaluated against each
     /// registration's Context Source Properties (clause 4.9).
     pub(crate) csf: Option<&'a Expr>,
-    /// The client's scope query, used to avoid contacting registrations whose
-    /// declared footprint cannot satisfy it.
+    /// The Scope query a registration's `scope` has to match for it to be
+    /// contacted (clauses 4.19 and 5.10.2.4), absent for a read whose entities
+    /// may be split.
     pub(crate) scope_q: Option<&'a ScopeQuery>,
     /// The client's geoquery, compiled: a registration whose declared geometry
     /// cannot hold a matching Entity is not contacted (clauses 4.3.6.1 and
@@ -151,6 +153,14 @@ impl FederationService {
                     })
             })
             .collect())
+    }
+
+    /// The Scope query `client_query` selects its registrations by, under the
+    /// `splitEntities` it resolves to: none for a split read (clauses 5.7.2.4
+    /// and 5.7.4.4).
+    pub(crate) const fn registration_scope_query<'q>(&self, client_query: &'q ClientQuery<'_>) -> Option<&'q ScopeQuery> {
+        self.split_entities(client_query.split_entities())
+            .registration_scope_query(client_query.scope_q())
     }
 
     /// The registrations a request that references a live `EntityMap` contacts:

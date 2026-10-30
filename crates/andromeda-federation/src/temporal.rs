@@ -89,7 +89,7 @@ impl FederationService {
                     selectors: &client.selectors(),
                     reach,
                     csf: csf_expr,
-                    scope_q: client_query.scope_q.as_ref(),
+                    scope_q: split.registration_scope_query(client_query.scope_q.as_ref()),
                     geo,
                     serving: RegistrationServing::Operation(operation),
                     mode_filter,

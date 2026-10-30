@@ -86,7 +86,8 @@ impl<'a> EntityMapQuery<'a> {
 /// Parameters for forwarding an `EntityMap` creation.
 pub struct ForwardEntityMapRequest<'a> {
     /// The query the map is created for: its entity selectors are matched by
-    /// clause 5.12 and its Scope query against each registration's `scope`.
+    /// clause 5.12 and, unless its entities may be split, its Scope query
+    /// against each registration's `scope`.
     pub query: EntityMapQuery<'a>,
     /// The query's context source filter and geoquery, expanded under
     /// `context`, which a registration has to pass to be contacted.
@@ -146,7 +147,7 @@ impl FederationService {
                     selectors: &client_query.selectors(),
                     reach: SourceReach::Every,
                     csf: filters.csf(),
-                    scope_q: client_query.scope_q(),
+                    scope_q: self.registration_scope_query(&client_query),
                     geo: filters.geo(),
                     serving: RegistrationServing::Operation(query.operation()),
                     // Clause 4.5.25: the map lists every registration that
