@@ -5,9 +5,11 @@
 //! same walk. Every cursor pointer the broker emits therefore carries, beside
 //! the cursor, a digest of the request parameters that decide which elements
 //! the walk passes, and a request continuing a cursor is refused when its own
-//! parameters digest to anything else. Paging parameters and those that only
-//! shape how each element or the total is presented are left out, so a client
-//! may follow a pointer with another `limit` or representation.
+//! parameters digest to anything else. Paging parameters, those that only
+//! shape how each element or the total is presented, and those that ask for an
+//! `EntityMap` of the same query are left out, so a client may follow a pointer
+//! with another `limit` or representation, or ask partway through for the
+//! result to be mapped.
 
 use crate::query_parameter::QueryParameter;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -35,6 +37,10 @@ enum ParameterRole {
     /// How each element, or the total, is presented, never which elements the
     /// walk passes.
     Presentation,
+    /// An `EntityMap` recorded about the same query (clauses 4.21 and 4.3.6.7):
+    /// it lists the entities the query matches and changes none of them. A
+    /// map is reused through the `NGSILD-EntityMap` header, never a parameter.
+    Artefact,
     /// Which elements the walk passes, or anything not known to be paging or
     /// presentation.
     Selection,
@@ -90,6 +96,7 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::Join
         | QueryParameter::JoinLevel
         | QueryParameter::Details => ParameterRole::Presentation,
+        QueryParameter::EntityMap | QueryParameter::EntityMapLifetime => ParameterRole::Artefact,
         QueryParameter::Id
         | QueryParameter::Type
         | QueryParameter::IdPattern
@@ -114,8 +121,6 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::ExpandValues
         | QueryParameter::JsonKeys
         | QueryParameter::ContainedBy
-        | QueryParameter::EntityMap
-        | QueryParameter::EntityMapLifetime
         | QueryParameter::SplitEntities
         | QueryParameter::Drop
         | QueryParameter::Keep
@@ -194,6 +199,17 @@ mod tests {
         assert_eq!(
             of("type=Vehicle&q=speed%3E10&options=keyValues,sysAttrs&count=true&format=simplified&lang=en&pick=speed&omit=brand&join=flat&joinLevel=2"),
             walked
+        );
+    }
+
+    /// Clauses 4.21 and 4.3.6.7: an `EntityMap` records the entities the same
+    /// query matches, so asking for one partway through a walk selects nothing
+    /// else.
+    #[test]
+    fn asking_for_an_entity_map_leaves_the_digest_unchanged() {
+        assert_eq!(
+            of("type=Vehicle&q=speed%3E10&entityMap=true&entityMapLifetime=PT1H"),
+            of("type=Vehicle&q=speed%3E10")
         );
     }
 
