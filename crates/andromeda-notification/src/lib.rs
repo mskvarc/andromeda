@@ -66,6 +66,13 @@ pub mod notification_invariant;
 mod notification_outcome;
 /// The registrations each context source subscription was notified of.
 pub mod notified_registration_store;
+/// The ports a notifier is built on, as doubles for its tests.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod notifier_test_double;
 /// Entity event notification evaluation.
 pub mod processor;
 /// The `@context` a notification is rendered under, and the failure recorded when it cannot be loaded.

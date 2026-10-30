@@ -280,3 +280,89 @@ impl IntervalNotificationOperation {
         }
     }
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{
+        interval::{IntervalNotificationDeps, IntervalNotificationOperation},
+        notifier_test_double::{ClaimRecordingStore, NoEntities, entity_query, offline_engine, transport},
+    };
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_model::subscription::Subscription;
+    use andromeda_subscription::notification_slot::{NotificationCadence, NotificationSlotGate};
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn operation(store: &Arc<ClaimRecordingStore>) -> IntervalNotificationOperation {
+        let entities = Arc::new(NoEntities);
+        IntervalNotificationOperation::new(IntervalNotificationDeps {
+            target: ContextTarget::Live,
+            sub_repo: Arc::<ClaimRecordingStore>::clone(store),
+            entity_reader: Arc::<NoEntities>::clone(&entities),
+            entity_pages: Arc::<NoEntities>::clone(&entities),
+            entity_query: entity_query(&entities),
+            engine: offline_engine(),
+            transport: transport(),
+            tenant: TenantRef::UnnamedDefault,
+        })
+    }
+
+    /// A periodic subscription on every Vehicle that expires at `expires_at`.
+    fn periodic_expiring_at(expires_at: DateTime<Utc>) -> Subscription {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:expiring",
+            "type": "Subscription",
+            "entities": [{"type": "https://example.org/Vehicle"}],
+            "timeInterval": 1,
+            "expiresAt": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription")
+    }
+
+    fn vehicle() -> EntityState {
+        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]}]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+    }
+
+    /// Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
+    /// The sweep found the subscription due at a cutoff before its expiry, but
+    /// the notification would be generated after it, so no slot is claimed and
+    /// nothing is sent.
+    #[tokio::test]
+    async fn a_tick_due_before_expires_at_and_generated_after_it_sends_nothing() {
+        let expires_at = Utc::now() - TimeDelta::seconds(1);
+        let cutoff = expires_at - TimeDelta::seconds(1);
+        let store = Arc::new(ClaimRecordingStore::default());
+
+        operation(&store).notify(&periodic_expiring_at(expires_at), vec![vehicle()], cutoff).await;
+
+        pretty_assertions::assert_eq!(store.claims(), Vec::new());
+    }
+
+    /// A tick generated before `expiresAt` claims its slot on the grid point
+    /// the sweep found it due at.
+    #[tokio::test]
+    async fn a_tick_generated_before_expires_at_claims_its_slot_at_the_cutoff() {
+        let cutoff = Utc::now() - TimeDelta::seconds(1);
+        let subscription = periodic_expiring_at(Utc::now() + TimeDelta::hours(1));
+        let store = Arc::new(ClaimRecordingStore::default());
+
+        operation(&store).notify(&subscription, vec![vehicle()], cutoff).await;
+
+        pretty_assertions::assert_eq!(
+            store.claims(),
+            vec![(subscription.id, NotificationSlotGate::at(cutoff, NotificationCadence::Periodic, None))]
+        );
+    }
+}

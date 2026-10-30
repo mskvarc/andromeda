@@ -99,6 +99,40 @@ async fn a_bad_entity_does_not_stop_the_others() {
     pretty_assertions::assert_eq!((scene.slots_claimed(), scene.deliveries_succeeded()), (1, 1));
 }
 
+/// Clause 5.8.1.4: a local subscription whose `expiresAt` has been reached
+/// sends nothing, so a copy a source still notifies is dropped before its
+/// slot is claimed.
+#[tokio::test]
+async fn a_copy_relayed_after_the_local_expires_at_sends_nothing() {
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"expiresAt": "2020-06-01T00:00:00Z"}),
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))])]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    pretty_assertions::assert_eq!(relayed(&mut scene).await, Vec::<Value>::new());
+    pretty_assertions::assert_eq!((scene.slots_claimed(), scene.deliveries_succeeded()), (0, 0));
+}
+
+/// A local subscription whose `expiresAt` lies ahead still relays the copy.
+#[tokio::test]
+async fn a_copy_relayed_before_the_local_expires_at_is_sent() {
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"expiresAt": "2999-01-01T00:00:00Z"}),
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))])]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    pretty_assertions::assert_eq!(ids(&relayed(&mut scene).await), vec!["urn:ngsi-ld:Vehicle:1"]);
+    pretty_assertions::assert_eq!((scene.slots_claimed(), scene.deliveries_succeeded()), (1, 1));
+}
+
 /// Clause 5.8.6: with `splitEntities` the part the sender notified is completed
 /// from this broker's own copy and from every other holder, never from the
 /// sender itself, which already supplied its part.

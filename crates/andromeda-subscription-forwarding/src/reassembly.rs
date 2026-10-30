@@ -287,7 +287,15 @@ impl SubscriptionForwardingService {
             context: delivery.body_context(),
         };
         let written = self.written_relay(&compiled, &subscription, &local_context, &data, shape).await?;
+        // Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
+        // Re-assembling the copy reads this broker and the other holders, so
+        // the local subscription is admitted at the instant its `notifiedAt`
+        // carries, not at the instant the copy arrived.
         let generated_at = Utc::now();
+        if !subscription.lifecycle.standing.notifies_at(generated_at) {
+            debug!(subscription = %local, "re-assembled notification dropped: the local subscription is no longer notified");
+            return Ok(());
+        }
         let request = delivery.notification(written, generated_at).map_err(ForwardingInvariant::WrittenNotification)?;
         // Clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown` gate every
         // notification the local subscription sends, and a re-assembled copy is

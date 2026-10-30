@@ -159,3 +159,124 @@ impl NotificationProcessor {
         Some(delivery)
     }
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{
+        notifier_test_double::{ClaimRecordingStore, NoEntities, entity_query, offline_engine, transport},
+        processor::{NotificationProcessor, NotificationProcessorDeps, payload::cache::NotificationCompactionCache, subscription_notification::NotifiedChange},
+    };
+    use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        notification::ChangeOrigin,
+    };
+    use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
+    use andromeda_subscription::{
+        cache::SubscriptionCache,
+        compilation::compile_subscription,
+        compiled::CompiledSubscription,
+        stored_subscription::StoredSubscription,
+    };
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn processor(store: &Arc<ClaimRecordingStore>) -> NotificationProcessor {
+        let entities = Arc::new(NoEntities);
+        NotificationProcessor::new(NotificationProcessorDeps {
+            live_target: ContextTarget::Live,
+            sub_repo: Arc::<ClaimRecordingStore>::clone(store),
+            entity_reader: Arc::<NoEntities>::clone(&entities),
+            entity_query: entity_query(&entities),
+            engine: offline_engine(),
+            transport: transport(),
+            tenant: TenantRef::UnnamedDefault,
+            subscription_cache: Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality)),
+        })
+    }
+
+    /// A change-driven subscription on every Vehicle that expires at
+    /// `expires_at`.
+    fn expiring_at(expires_at: DateTime<Utc>) -> CompiledSubscription {
+        let subscription = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:expiring",
+            "type": "Subscription",
+            "entities": [{"type": "https://example.org/Vehicle"}],
+            "expiresAt": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription");
+        compile_subscription(
+            &StoredSubscription {
+                key: SubscriptionKey::try_from(1).expect("a valid key"),
+                subscription,
+            },
+            LanguageMatching::TagEquality,
+        )
+    }
+
+    fn vehicle() -> Arc<EntityState> {
+        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]}]);
+        Arc::new(EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes"))
+    }
+
+    /// Notify `subscription` of the creation of a Vehicle evaluated at
+    /// `evaluated_at`, answering the subscriptions whose slot was asked for.
+    async fn notify(subscription: &CompiledSubscription, evaluated_at: DateTime<Utc>) -> Vec<Identifier> {
+        let store = Arc::new(ClaimRecordingStore::default());
+        let notified = vehicle();
+        let event = ChangeEvent::builder()
+            .entity_id(notified.id().clone()) // clone: the event owns the identifier it carries
+            .entity_types(notified.types().as_slice().to_vec())
+            .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
+            .occurred_at(evaluated_at)
+            .origin(ChangeOrigin::Local)
+            .build();
+        let compaction_cache = NotificationCompactionCache::default();
+        let change = NotifiedChange {
+            target: &ContextTarget::Live,
+            event: &event,
+            notified: Some(&notified),
+            now: evaluated_at,
+            sys_attrs: None,
+            compaction_cache: &compaction_cache,
+        };
+        let sent = processor(&store).notify_subscription(subscription, &change).await;
+        assert!(sent.is_none(), "the store refuses every slot, so no endpoint is addressed");
+        store.claims().into_iter().map(|(id, _gate)| id).collect()
+    }
+
+    /// Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
+    /// The change was evaluated while the subscription was in force, but the
+    /// notification would be generated after its expiry, so no slot is claimed.
+    #[tokio::test]
+    async fn a_change_evaluated_before_expires_at_and_generated_after_it_sends_nothing() {
+        let expires_at = Utc::now() - TimeDelta::seconds(1);
+
+        let claimed = notify(&expiring_at(expires_at), expires_at - TimeDelta::seconds(1)).await;
+
+        pretty_assertions::assert_eq!(claimed, Vec::<Identifier>::new());
+    }
+
+    /// A notification generated before `expiresAt` claims its slot.
+    #[tokio::test]
+    async fn a_change_generated_before_expires_at_claims_its_slot() {
+        let subscription = expiring_at(Utc::now() + TimeDelta::hours(1));
+
+        let claimed = notify(&subscription, Utc::now()).await;
+
+        pretty_assertions::assert_eq!(claimed, vec![subscription.id]);
+    }
+}
