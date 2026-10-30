@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_model::{
     registration::{
         ContextSourceRegistration,
         info::RegistrationInfo,
-        selection::{RegistrationFilters, TemporalPartition},
+        selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     },
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
 };
@@ -48,7 +48,7 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
         SubscriptionGeoFilter::Unrestricted | SubscriptionGeoFilter::Restricts(_) => sub.geo_q.restriction(),
     };
     let filters = RegistrationFilters {
-        scope_q: sub.scope_q.as_ref(),
+        scope: sub.scope_q.as_ref().map_or(ScopeFilter::Unfiltered, ScopeFilter::DeclaredScope),
         geo,
         csf: sub.compiled_csf.as_ref(),
         temporal: TemporalPartition::Applied(sub.temporal_q.as_ref()),

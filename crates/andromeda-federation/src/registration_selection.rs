@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     registration::{
         ContextSourceRegistration,
-        selection::{RegistrationFilters, TemporalPartition},
+        selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     },
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
@@ -42,9 +42,10 @@ pub(crate) struct RegistrationSelection<'a> {
     /// The expanded context source filter, evaluated against each
     /// registration's Context Source Properties (clause 4.9).
     pub(crate) csf: Option<&'a Expr>,
-    /// The Scope query a registration's `scope` has to match for it to be
-    /// contacted (clauses 4.19 and 5.10.2.4), absent for a read whose entities
-    /// may be split.
+    /// The Scope query a registration's declared `scope` has to match for it
+    /// to be contacted, absent for a read whose entities may be split. A
+    /// registration declaring no `scope` is contacted, the query travelling with
+    /// the request (clauses 4.3.6.7 and 5.12, Table 5.2.9-1).
     pub(crate) scope_q: Option<&'a ScopeQuery>,
     /// The client's geoquery, compiled: a registration whose declared geometry
     /// cannot hold a matching Entity is not contacted (clauses 4.3.6.1 and
@@ -137,7 +138,7 @@ impl FederationService {
         // A forwarded operation matches by clause 5.12, which has no temporal
         // axis.
         let filters = RegistrationFilters {
-            scope_q: selection.scope_q,
+            scope: selection.scope_q.map_or(ScopeFilter::Unfiltered, ScopeFilter::PossibleScope),
             geo: selection.geo,
             csf: selection.csf,
             temporal: TemporalPartition::NotApplied,
@@ -376,11 +377,11 @@ mod tests {
         registrations.into_iter().map(|registration| registration.id.to_string()).collect()
     }
 
-    /// Clauses 4.19 and 5.10.2.4: the Scope query is matched against the
-    /// registration's `scope`, so a registration declaring none is not
-    /// contacted for a scoped read.
+    /// Table 5.2.9-1 and clause 5.12: a registration whose declared Scopes the
+    /// Scope query matches none of is not contacted; one declaring no `scope`
+    /// may hold a matching Entity and is.
     #[tokio::test]
-    async fn a_scope_query_does_not_select_an_unscoped_registration() {
+    async fn a_scope_query_selects_the_matching_and_the_unscoped_registrations() {
         let madrid = registration_with("urn:ngsi-ld:csr:madrid", json!({"scope": ["/Madrid"]}));
         let berlin = registration_with("urn:ngsi-ld:csr:berlin", json!({"scope": ["/Berlin"]}));
         let unscoped = registration_with("urn:ngsi-ld:csr:unscoped", json!({}));
@@ -396,7 +397,7 @@ mod tests {
             )
             .await
             .expect("the selection runs");
-        pretty_assertions::assert_eq!(identifiers(selected), vec!["urn:ngsi-ld:csr:madrid"]);
+        pretty_assertions::assert_eq!(identifiers(selected), vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:unscoped"]);
     }
 
     /// Table 5.2.9-1: a registration whose `expiresAt` has passed is no

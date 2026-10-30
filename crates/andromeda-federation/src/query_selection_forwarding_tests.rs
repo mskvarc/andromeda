@@ -86,10 +86,18 @@ fn context() -> ContextSpec {
     ContextSpec::from_body(JsonLiteral::admit(&json!({"sourceGroup": "https://example.org/sourceGroup"}).to_string()).expect("an admissible literal"))
 }
 
-/// Run `selecting` with `query` against `registrations` and answer the
-/// identifiers of the sources contacted, in registration order, together with
-/// the specifications the store was asked with.
-async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source, ContextSourceRegistration)>) -> (Vec<&'static str>, Vec<Vec<String>>) {
+/// What one selection did.
+struct Contacted {
+    /// The identifiers of the sources contacted, in registration order.
+    reached: Vec<&'static str>,
+    /// For each source in `reached`, the `scopeQ` values its requests carried.
+    scope_queries: Vec<Vec<String>>,
+    /// The specifications the store was asked with.
+    asked: Vec<Vec<String>>,
+}
+
+/// Run `selecting` with `query` against `registrations`.
+async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source, ContextSourceRegistration)>) -> Contacted {
     let (sources, registrations): (Vec<Source>, Vec<ContextSourceRegistration>) = registrations.into_iter().unzip();
     let store = Arc::new(FixedRegistrationStore::new(registrations));
     let service = service(Arc::clone(&store));
@@ -126,12 +134,30 @@ async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source
         }
     }
     let mut reached = Vec::new();
+    let mut scope_queries = Vec::new();
     for source in &sources {
-        if !received(&source.source).await.is_empty() {
+        let requests = received(&source.source).await;
+        if !requests.is_empty() {
             reached.push(source.id);
+            scope_queries.push(
+                requests
+                    .iter()
+                    .flat_map(|request| {
+                        request
+                            .url
+                            .query_pairs()
+                            .filter(|(name, _)| name == "scopeQ")
+                            .map(|(_, value)| value.into_owned())
+                    })
+                    .collect(),
+            );
         }
     }
-    (reached, store.asked_specifications())
+    Contacted {
+        reached,
+        scope_queries,
+        asked: store.asked_specifications(),
+    }
 }
 
 async fn expanded(service: &FederationService, context: &ContextSpec, csf: Option<&Expr>, geo: Option<&GeoQueryInput>) -> ExpandedRegistrationFilters {
@@ -191,18 +217,22 @@ const NEAR_MADRID: &str = "georel=near%3BmaxDistance%3D%3D100000&geometry=Point&
 #[tokio::test]
 async fn a_selection_contacts_only_the_sources_its_context_source_filter_admits() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (reached, _) = contacted(selecting, "type=Vehicle&csf=sourceGroup%3D%3D%22alpha%22", grouped().await).await;
+        let Contacted { reached, .. } = contacted(selecting, "type=Vehicle&csf=sourceGroup%3D%3D%22alpha%22", grouped().await).await;
         pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:alpha"], "{selecting:?}");
     }
 }
 
-/// Clauses 4.19 and 5.10.2.4: the Scope query is matched against each
-/// registration's `scope`, so a registration declaring none is not contacted.
+/// Table 5.2.9-1 and clause 5.12: a source whose declared Scopes the Scope
+/// query matches none of is not contacted; one declaring no `scope` may hold a
+/// matching entity and is.
 #[tokio::test]
-async fn a_selection_contacts_only_the_sources_whose_scope_its_scope_query_matches() {
+async fn a_selection_contacts_the_sources_whose_scope_may_hold_a_scope_query_match() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (reached, _) = contacted(selecting, "type=Vehicle&scopeQ=%2FMadrid", scoped().await).await;
-        pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:madrid"], "{selecting:?}");
+        let Contacted { reached, scope_queries, .. } = contacted(selecting, "type=Vehicle&scopeQ=%2FMadrid", scoped().await).await;
+        pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:unscoped"], "{selecting:?}");
+        // Clause 4.3.6.7: without split entities the source applies the Scope
+        // query, so a purge removes only what it matches there.
+        pretty_assertions::assert_eq!(scope_queries, vec![vec!["/Madrid".to_owned()], vec!["/Madrid".to_owned()]], "{selecting:?}");
     }
 }
 
@@ -213,7 +243,7 @@ async fn a_selection_contacts_only_the_sources_whose_scope_its_scope_query_match
 #[tokio::test]
 async fn a_split_entity_map_contacts_every_source_whatever_its_scope() {
     for selecting in [Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (reached, _) = contacted(selecting, "type=Vehicle&scopeQ=%2FBarcelona&splitEntities=true", scoped().await).await;
+        let Contacted { reached, .. } = contacted(selecting, "type=Vehicle&scopeQ=%2FBarcelona&splitEntities=true", scoped().await).await;
         pretty_assertions::assert_eq!(
             reached,
             vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:berlin", "urn:ngsi-ld:csr:unscoped"],
@@ -228,7 +258,7 @@ async fn a_split_entity_map_contacts_every_source_whatever_its_scope() {
 #[tokio::test]
 async fn a_selection_contacts_only_the_sources_whose_location_may_hold_a_geoquery_match() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (reached, _) = contacted(selecting, &format!("type=Vehicle&{NEAR_MADRID}"), located().await).await;
+        let Contacted { reached, .. } = contacted(selecting, &format!("type=Vehicle&{NEAR_MADRID}"), located().await).await;
         pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:anywhere"], "{selecting:?}");
     }
 }
@@ -238,7 +268,7 @@ async fn a_selection_contacts_only_the_sources_whose_location_may_hold_a_geoquer
 #[tokio::test]
 async fn a_selection_asks_the_store_with_every_name_of_a_type_disjunction() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (_, asked) = contacted(selecting, "type=Vehicle,Boat", single().await).await;
+        let Contacted { asked, .. } = contacted(selecting, "type=Vehicle,Boat", single().await).await;
         pretty_assertions::assert_eq!(asked.len(), 1, "{selecting:?} asked the store {asked:?}");
         pretty_assertions::assert_eq!(asked[0].len(), 1, "{selecting:?} asked the store {asked:?}");
         let specification = &asked[0][0];
@@ -256,7 +286,7 @@ async fn a_selection_asks_the_store_with_every_name_of_a_type_disjunction() {
 #[tokio::test]
 async fn a_selection_asks_the_store_with_a_type_conjunction_whole() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
-        let (_, asked) = contacted(selecting, "type=%28Home%3BVehicle%29", single().await).await;
+        let Contacted { asked, .. } = contacted(selecting, "type=%28Home%3BVehicle%29", single().await).await;
         let specification = asked.concat().concat();
         assert!(specification.contains("And("), "{selecting:?}: {specification}");
         assert!(

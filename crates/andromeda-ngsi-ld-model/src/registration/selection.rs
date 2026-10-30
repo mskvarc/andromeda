@@ -2,7 +2,7 @@
 //! (clauses 4.9, 4.10, 4.19, 5.10.2.4 and 5.11.2.4), decided once for every
 //! reader: a forwarded read, a subscription to registrations and their tests.
 
-use crate::registration::ContextSourceRegistration;
+use crate::registration::{ContextSourceRegistration, coverage::RegistrationCoverage};
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
@@ -28,11 +28,44 @@ pub enum TemporalPartition<'a> {
     Applied(Option<&'a CompiledCsrTemporalFilter>),
 }
 
+/// How the Scope query selects registrations.
+///
+/// A registration's `scope` lists the Scopes its Context Source has Entities
+/// in (Table 5.2.9-1). Registration discovery and subscriptions to
+/// registrations match the query against that member (clauses 5.10.2.4 and
+/// 5.11.2.4). A forwarded operation matches by clause 5.12, which compares no
+/// scope, and sends the Scope query on to the source when entities are not
+/// split (clause 4.3.6.7), so the declared Scopes only rule a source out.
+#[derive(Debug, Clone, Copy)]
+pub enum ScopeFilter<'a> {
+    /// No Scope query.
+    Unfiltered,
+    /// The query must match a declared Scope. A registration declaring none
+    /// matches nothing, as an Entity without a scope matches no Scope query
+    /// (clause 4.19).
+    DeclaredScope(&'a ScopeQuery),
+    /// The query must match a declared Scope when the registration declares
+    /// any. A registration declaring none may hold an Entity in any Scope, as
+    /// one declaring no `location` may hold an Entity anywhere.
+    PossibleScope(&'a ScopeQuery),
+}
+
+impl ScopeFilter<'_> {
+    /// Whether a registration covering `coverage` passes.
+    fn admits(self, coverage: &RegistrationCoverage) -> bool {
+        match self {
+            ScopeFilter::Unfiltered => true,
+            ScopeFilter::DeclaredScope(scope_q) => coverage.admits_scope_query(scope_q),
+            ScopeFilter::PossibleScope(scope_q) => coverage.scope.is_none() || coverage.admits_scope_query(scope_q),
+        }
+    }
+}
+
 /// The filters one request places on registrations, each optional.
 #[derive(Debug, Clone, Copy)]
 pub struct RegistrationFilters<'a> {
     /// The Scope query, matched against the registration's `scope`.
-    pub scope_q: Option<&'a ScopeQuery>,
+    pub scope: ScopeFilter<'a>,
     /// The geoquery, matched against the geometry its `geoproperty` names.
     pub geo: Option<&'a GeoQuery>,
     /// The context source filter, expanded, matched against the Context Source
@@ -56,8 +89,7 @@ impl RegistrationFilters<'_> {
             TemporalPartition::NotApplied => true,
             TemporalPartition::Applied(temporal_q) => coverage.admits_temporal(temporal_q),
         };
-        if !temporal || self.scope_q.is_some_and(|scope_q| !coverage.admits_scope_query(scope_q)) || self.geo.is_some_and(|geo| !coverage.admits_geo_query(geo))
-        {
+        if !temporal || !self.scope.admits(coverage) || self.geo.is_some_and(|geo| !coverage.admits_geo_query(geo)) {
             return Ok(false);
         }
         let Some(csf) = self.csf else {
@@ -78,7 +110,7 @@ impl RegistrationFilters<'_> {
 mod tests {
     use crate::registration::{
         ContextSourceRegistration,
-        selection::{RegistrationFilters, TemporalPartition},
+        selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     };
     use andromeda_ngsi_ld_query::{filter::parser::parse, scope::query::ScopeQuery};
     use serde_json::{Value, json};
@@ -99,7 +131,7 @@ mod tests {
     }
 
     const NONE: RegistrationFilters<'static> = RegistrationFilters {
-        scope_q: None,
+        scope: ScopeFilter::Unfiltered,
         geo: None,
         csf: None,
         temporal: TemporalPartition::NotApplied,
@@ -132,10 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_query_admits_only_a_registration_whose_scope_it_matches() {
+    fn a_declared_scope_filter_admits_only_a_registration_whose_scope_it_matches() {
         let madrid = ScopeQuery::parse("/Madrid/#").expect("a valid scope query");
         let filters = RegistrationFilters {
-            scope_q: Some(&madrid),
+            scope: ScopeFilter::DeclaredScope(&madrid),
             ..NONE
         };
         assert!(
@@ -145,6 +177,25 @@ mod tests {
         );
         assert!(!filters.admits(&registration(&json!({"scope": ["/Berlin"]}))).expect("admission decides"));
         assert!(!filters.admits(&registration(&json!({}))).expect("admission decides"));
+    }
+
+    /// Table 5.2.9-1 and clause 5.12: a registration declaring no `scope` may
+    /// hold an Entity the forwarded Scope query matches; one declaring other
+    /// Scopes cannot.
+    #[test]
+    fn a_possible_scope_filter_admits_a_matching_or_an_unscoped_registration() {
+        let madrid = ScopeQuery::parse("/Madrid/#").expect("a valid scope query");
+        let filters = RegistrationFilters {
+            scope: ScopeFilter::PossibleScope(&madrid),
+            ..NONE
+        };
+        assert!(
+            filters
+                .admits(&registration(&json!({"scope": ["/Madrid/Gardens"]})))
+                .expect("admission decides")
+        );
+        assert!(!filters.admits(&registration(&json!({"scope": ["/Berlin"]}))).expect("admission decides"));
+        assert!(filters.admits(&registration(&json!({}))).expect("admission decides"));
     }
 
     /// Clause 4.9: the context source filter reads the registration's own

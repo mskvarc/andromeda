@@ -1,7 +1,9 @@
-//! Clauses 5.7.2.4 and 5.7.4.4: under split entities the Scope query is
-//! removed before forwarding and applied to the merged entities, and clause
-//! 5.12 matching compares no scope, so a read reaches a source declaring no
-//! `scope` and sends it the entity selectors alone.
+//! A read reaches a source declaring no `scope` whatever its Scope query:
+//! clause 5.12 matching compares no scope, and Table 5.2.9-1 leaves such a
+//! source free to hold an Entity in any Scope. Under split entities the filters
+//! are removed before forwarding and applied to the merged entities (clauses
+//! 5.7.2.4 and 5.7.4.4); otherwise they travel and the source applies them
+//! (clause 4.3.6.7).
 
 use crate::{
     FederationService,
@@ -30,6 +32,9 @@ const TEMPORAL_PATH: &str = "/ngsi-ld/v1/temporal/entities";
 
 /// The client filters a split read holds back from every source.
 const DEFERRED: [&str; 6] = ["scopeQ", "q", "attrs", "georel", "geometry", "coordinates"];
+
+/// The client filters of the temporal query.
+const TEMPORAL_FILTERS: [&str; 3] = ["scopeQ", "q", "attrs"];
 
 const SPLIT_QUERY: &str =
     "type=Vehicle&scopeQ=%2FBarcelona&q=speed%3E10&attrs=speed&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B2.17%2C41.38%5D";
@@ -90,6 +95,14 @@ async fn forwarded_parameters(source: &MockServer) -> Vec<Vec<String>> {
         .iter()
         .map(|request| request.url.query_pairs().map(|(name, _)| name.into_owned()).collect())
         .collect()
+}
+
+fn assert_filters_travel(forwarded: &[Vec<String>], filters: &[&str]) {
+    pretty_assertions::assert_eq!(forwarded.len(), 1, "one request reaches the source: {forwarded:?}");
+    let names = &forwarded[0];
+    for filter in filters {
+        assert!(names.iter().any(|name| name == filter), "{filter} travels: {names:?}");
+    }
 }
 
 fn assert_selectors_alone(forwarded: &[Vec<String>]) {
@@ -187,11 +200,9 @@ async fn a_split_entity_query_reaches_an_unscoped_source_with_the_selectors_alon
     assert_selectors_alone(&entity_query(SplitEntities::Split).await);
 }
 
-/// Clauses 4.19 and 5.10.2.4: without split entities each source decides the
-/// Scope query itself, so one declaring no scope has nothing it could match.
 #[tokio::test]
-async fn a_complete_entity_query_passes_over_an_unscoped_source() {
-    pretty_assertions::assert_eq!(entity_query(SplitEntities::Complete).await, Vec::<Vec<String>>::new());
+async fn a_complete_entity_query_reaches_an_unscoped_source_with_its_filters() {
+    assert_filters_travel(&entity_query(SplitEntities::Complete).await, &DEFERRED);
 }
 
 #[tokio::test]
@@ -200,6 +211,6 @@ async fn a_split_temporal_query_reaches_an_unscoped_source_with_the_selectors_al
 }
 
 #[tokio::test]
-async fn a_complete_temporal_query_passes_over_an_unscoped_source() {
-    pretty_assertions::assert_eq!(temporal_query(SplitEntities::Complete).await, Vec::<Vec<String>>::new());
+async fn a_complete_temporal_query_reaches_an_unscoped_source_with_its_filters() {
+    assert_filters_travel(&temporal_query(SplitEntities::Complete).await, &TEMPORAL_FILTERS);
 }
