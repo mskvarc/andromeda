@@ -154,6 +154,16 @@ mod tests {
         assert_eq!(instance_rows(local.attributes(), SPEED), vec![row(None, 2)]);
     }
 
+    /// Clause 4.5.5.3: only the remote instance carries `observedAt`, so it is
+    /// the one with the most recent observation.
+    #[test]
+    fn an_observed_instance_wins_over_an_unobserved_one() {
+        let mut local = entity(vec![(SPEED, instances(vec![(None, observed(1, None, Some("2021-01-01T00:00:00Z")))]))]);
+        let remote = entity(vec![(SPEED, instances(vec![(None, observed(2, Some("2020-01-01T00:00:00Z"), None))]))]);
+        local.merge_version(remote, MergePolicy::Instances);
+        assert_eq!(instance_rows(local.attributes(), SPEED), vec![row(None, 2)]);
+    }
+
     #[test]
     fn modified_at_breaks_an_observation_tie() {
         let at = Some("2020-01-01T00:00:00Z");

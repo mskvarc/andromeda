@@ -7,8 +7,10 @@
 //! current state through clause 4.5.5.3's rule for the most current instance:
 //! past-due instances are discarded, then the most recent `observedAt` stands,
 //! then the most recent `modifiedAt`. The instance being added is the newest
-//! write, so it stands whenever no `observedAt` pair says it is older, and a
-//! backfill of observations older than current state changes no attribute.
+//! write, so it stands unless an `observedAt` says it is older: an older
+//! observation than the held one, or none against a held one that carries
+//! one. A backfill of observations older than current state changes no
+//! attribute.
 //! Neither does the end of an instance current state does not hold, nor an
 //! instance restating a held one: a fold that changes nothing reports current
 //! state unchanged, so the entity keeps its `modifiedAt` (clause 4.8).
@@ -117,8 +119,8 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
     let held = state.attributes().get(name).and_then(|instances| instances.get(dataset_id));
     let candidate_recency = InstanceRecency {
         observed_at: candidate.observed_at().and_then(Slot::as_set).copied().map(NgsiLdDateTime::get),
-        // The candidate is the newest write, so only an `observedAt` pair can
-        // make it the older instance.
+        // The candidate is the newest write, so only `observedAt` can make it
+        // the older instance.
         modified_at: Some(at),
     };
     if held.is_some_and(|held| recency_of(held).order(&candidate_recency) == Ordering::Greater) {
@@ -313,6 +315,18 @@ mod tests {
         )
         .expect("foldable");
         assert!(backfill.is_none(), "an older observation leaves current state as it was");
+    }
+
+    /// Clause 4.5.5.3: the held instance carries the only `observedAt`, so it
+    /// is the most current although the unobserved instance is written later.
+    #[test]
+    fn an_unobserved_instance_leaves_an_observed_one_standing() {
+        let mut held = property(number(5));
+        held.set_observed_at(Some(date_time("2021-01-01T00:00:00Z")));
+        held.set_modified_at(Some("2021-01-01T00:00:00Z".parse::<SystemInstant>().expect("a valid instant")));
+        let current = entity(vec![(V, instances(vec![(None, held)]))]);
+        let fold = fold_into_current_state(Some(&current), &evolution_of(VEHICLE, vec![instance(7, None)]), at("2026-01-01T00:00:00Z")).expect("foldable");
+        assert!(fold.is_none(), "the observed instance stands");
     }
 
     /// Clause 4.5.5.3 orders instances, never types: a backfill naming a type

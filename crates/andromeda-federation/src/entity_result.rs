@@ -43,12 +43,23 @@ fn differentiate(held: &mut [ReceivedState], received: &mut [ForwardedEntities])
     differentiate_transient_versions(held.iter_mut().chain(remote).map(|version| &mut version.state));
 }
 
-/// Order `received` so every auxiliary answer follows the others: an
-/// auxiliary Attribute joins only where no other holder supplied one (clauses
-/// 5.7.1.4 and 5.7.2.4), which is known only once every other holder has been
-/// folded in. The sort is stable, so each group keeps its answer order.
-fn supplements_last(received: &mut [ForwardedEntities]) {
-    received.sort_by_key(|answer| matches!(policy_of(answer.mode), MergePolicy::SupplementMissing));
+/// Order `received` for folding: every auxiliary answer follows the others,
+/// because an auxiliary Attribute joins only where no other holder supplied
+/// one (clauses 5.7.1.4 and 5.7.2.4), which is known only once every other
+/// holder has been folded in. Within each group the answers follow their
+/// registration identifiers, so the instance a pair of equally recent
+/// instances keeps (clause 4.5.5.3 leaves it indeterminate) is the same
+/// whichever source answered first.
+fn merge_order(received: &mut [ForwardedEntities]) {
+    received.sort_by(|left, right| merge_rank(left).cmp(&merge_rank(right)));
+}
+
+/// Where `answer` folds in: after every answer of a lower rank.
+fn merge_rank(answer: &ForwardedEntities) -> (bool, Option<&str>) {
+    (
+        matches!(policy_of(answer.mode), MergePolicy::SupplementMissing),
+        answer.registration_id.as_ref().map(AsRef::<str>::as_ref),
+    )
 }
 
 /// Merge local and remote entity query results (clause 5.7.2.4).
@@ -64,7 +75,7 @@ pub fn merge_query_results(mut local_entities: Vec<ReceivedState>, mut remote_re
         return local_entities;
     }
     differentiate(&mut local_entities, &mut remote_results);
-    supplements_last(&mut remote_results);
+    merge_order(&mut remote_results);
     let mut merged: IndexMap<Identifier, ReceivedState> = IndexMap::with_capacity(local_entities.len());
     for entity in local_entities {
         merged.insert(entity.state.id().clone(), entity); // clone: the index and entity each own the identifier
@@ -92,7 +103,7 @@ pub fn merge_query_results(mut local_entities: Vec<ReceivedState>, mut remote_re
 pub fn merge_retrieve_results(local_entity: Option<ReceivedState>, mut remote_results: Vec<ForwardedEntities>) -> Option<ReceivedState> {
     let mut result = local_entity;
     differentiate(result.as_mut_slice(), &mut remote_results);
-    supplements_last(&mut remote_results);
+    merge_order(&mut remote_results);
     for forwarded in remote_results {
         let policy = policy_of(forwarded.mode);
         for remote_entity in forwarded.entities {

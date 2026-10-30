@@ -322,6 +322,52 @@ fn merge_query_an_auxiliary_answer_yields_to_an_inclusive_one_whatever_their_ord
     pretty_assertions::assert_eq!(instance_count(&result[0], "fuel"), 1);
 }
 
+/// A redirect answer for `urn:a` from the registration `registration`
+/// holding the one `speed` instance `instance`.
+fn speed_answer(registration: &str, instance: &Value) -> ForwardedEntities {
+    ForwardedEntities {
+        registration_id: Some(entity_uri(registration)),
+        mode: ForwardingMode::Redirect,
+        entities: vec![version("urn:a", &[("speed", json!([instance]))])],
+        warnings: Vec::new(),
+        linked_map: None,
+    }
+}
+
+/// Whether merging `first` and `second`, and the two in the other order,
+/// keeps the `speed` instance `expected` alone holds.
+fn keeps_whatever_the_order(first: impl Fn() -> ForwardedEntities, second: impl Fn() -> ForwardedEntities, expected: impl Fn() -> ForwardedEntities) -> bool {
+    let kept = merge_query_results(Vec::new(), vec![expected()]);
+    [vec![first(), second()], vec![second(), first()]].into_iter().all(|answers| {
+        let merged = merge_query_results(Vec::new(), answers);
+        merged.len() == 1 && merged[0].state.attributes().same_content(kept[0].state.attributes())
+    })
+}
+
+/// Clause 4.5.5.3: of two default instances, only one carrying `observedAt`,
+/// that one is the one with the most recent observation, whichever source
+/// answered first.
+#[test]
+fn merge_query_keeps_the_observed_instance_over_an_unobserved_one_whatever_their_order() {
+    let unobserved = || speed_answer("urn:ngsi-ld:ContextSourceRegistration:b3", &json!({"value": 3}));
+    let observed = || {
+        speed_answer(
+            "urn:ngsi-ld:ContextSourceRegistration:b4",
+            &json!({"value": 4, "observedAt": "2020-01-01T00:00:00Z"}),
+        )
+    };
+    assert!(keeps_whatever_the_order(unobserved, observed, observed));
+}
+
+/// Clause 4.5.5.3 leaves a pair nothing tells apart indeterminate; the
+/// instance kept is the same whichever source answered first.
+#[test]
+fn merge_query_keeps_one_instance_of_an_undecided_pair_whatever_their_order() {
+    let first = || speed_answer("urn:ngsi-ld:ContextSourceRegistration:a", &json!({"value": 1}));
+    let second = || speed_answer("urn:ngsi-ld:ContextSourceRegistration:b", &json!({"value": 2}));
+    assert!(keeps_whatever_the_order(first, second, first));
+}
+
 #[test]
 fn merge_query_primary_adds_new_entities() {
     let local = vec![version("urn:a", &[])];
