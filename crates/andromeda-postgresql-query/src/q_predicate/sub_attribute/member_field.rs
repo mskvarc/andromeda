@@ -26,7 +26,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     literal::false_literal,
-    pg_array::{is_any_of, is_none_of},
+    pg_array::{array_subscript, is_any_of, is_none_of},
 };
 use cefact_units::UnitCode;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -165,6 +165,20 @@ fn listed_code_where(field: &SimpleExpr, holds: impl Fn(&str) -> bool) -> Simple
     }
 }
 
+/// The text of the code `field`, the stored identity of a `unitCode`, names:
+/// `NULL` for an absent field.
+///
+/// The library numbers its codes densely from 1 in the order it lists them, so
+/// the list of their texts, bound as one array, holds each code's text at its
+/// identity. No stored row carries an identity this build does not list (a
+/// read of one fails to decode), and an identity past the end of the array
+/// reads `NULL`.
+#[must_use]
+pub fn unit_code_text(field: SimpleExpr) -> SimpleExpr {
+    let texts: Vec<String> = UnitCode::ALL.iter().map(|code| code.as_str().to_owned()).collect();
+    array_subscript(SeaExpr::val(texts), field)
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -174,12 +188,13 @@ fn listed_code_where(field: &SimpleExpr, holds: impl Fn(&str) -> bool) -> Simple
 mod tests {
     use crate::q_predicate::{
         instance_row::{ElementLevel, InstanceRow},
-        sub_attribute::member_field::MemberField,
+        sub_attribute::member_field::{MemberField, unit_code_text},
     };
     use andromeda_ngsi_ld_lexicon::unit_code_resolution::resolve_unit_code;
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_ngsi_ld_vocabulary::expanded::properties::OBSERVED_AT;
     use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
+    use cefact_units::UnitCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query, Value};
 
@@ -314,6 +329,25 @@ mod tests {
         let (sql, bound) = unit_code_condition("~=\".\"");
         assert!(sql.contains(r#""ca"."unit_code_id" IS NOT NULL"#), "{sql}");
         assert_eq!(bound, Vec::<i16>::new());
+    }
+
+    /// The bound list holds each code's text at the 1-based position its
+    /// stored identity names.
+    #[test]
+    fn a_unit_code_text_is_read_at_the_position_of_its_stored_identity() {
+        let (sql, values) = Query::select()
+            .expr(unit_code_text(MemberField::UnitCode.of_instance(InstanceRow::Current)))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT ( $1 )[ "ca"."unit_code_id" ]"#);
+        let [Value::Array(_, Some(texts))] = values.0.as_slice() else {
+            panic!("one bound text array: {values:?}");
+        };
+        for code in UnitCode::ALL {
+            let position = usize::try_from(stored_unit_code(*code)).expect("a positive identity") - 1;
+            assert_eq!(texts.get(position), Some(&Value::String(Some(code.as_str().to_owned()))), "{code}");
+        }
+        assert_eq!(texts.len(), UnitCode::ALL.len());
     }
 
     /// A stored instant keeps no written text to match.

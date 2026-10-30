@@ -19,7 +19,10 @@ use andromeda_ngsi_ld_vocabulary::{
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::q_predicate::{
     extended_filter_pattern::{CaseFolding, exact_tag_pattern, extended_filter_pattern},
-    sub_attribute::{element_path::ElementPath, member_field::MemberField},
+    sub_attribute::{
+        element_path::ElementPath,
+        member_field::{MemberField, unit_code_text},
+    },
     value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
 };
 use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
@@ -117,21 +120,36 @@ impl Holder {
     }
 
     /// A member of the holder the path ends on: an instant compares as one,
-    /// and a `unitCode` (held as the `cefact-units` identity of the code) has no
-    /// value to order by.
+    /// and a `unitCode`, a String (clause 4.5.2) held as the `cefact-units`
+    /// identity of the code, as the code's text, the text a `q` term compares.
     fn member(&self, field: MemberField) -> OrderedValue {
-        let date_time = match field {
-            MemberField::ObservedAt => self.field(CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
-            MemberField::CreatedAt => self.field(CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
-            MemberField::ModifiedAt => self.field(CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
-            MemberField::ExpiresAt => self.field(CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
-            MemberField::UnitCode => typed_null(PostgresType::Timestamptz),
+        let (date_time, text) = match field {
+            MemberField::ObservedAt => (
+                self.field(CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
+                typed_null(PostgresType::Text),
+            ),
+            MemberField::CreatedAt => (
+                self.field(CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
+                typed_null(PostgresType::Text),
+            ),
+            MemberField::ModifiedAt => (
+                self.field(CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
+                typed_null(PostgresType::Text),
+            ),
+            MemberField::ExpiresAt => (
+                self.field(CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
+                typed_null(PostgresType::Text),
+            ),
+            MemberField::UnitCode => (
+                typed_null(PostgresType::Timestamptz),
+                unit_code_text(self.field(CurrentAttributes::UnitCodeId, SubAttribute::UnitCodeId)),
+            ),
         };
         OrderedValue {
             number: typed_null(PostgresType::Numeric),
             boolean: typed_null(PostgresType::Boolean),
             date_time,
-            text: typed_null(PostgresType::Text),
+            text,
             datatype: typed_null(PostgresType::Text),
             object: typed_null(PostgresType::Jsonb),
             json_null: false_literal(),

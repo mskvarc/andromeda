@@ -302,6 +302,30 @@ mod tests {
         assert!(sql.contains(r#""ordered"."observed_at" AS "value_date_time""#), "{sql}");
     }
 
+    /// Clause 4.5.2 makes `unitCode` a String: the attribute's own orders by the
+    /// text of the code its stored identity names, which the text key collates
+    /// like any other String.
+    #[test]
+    fn an_attribute_unit_code_orders_by_the_text_of_its_code() {
+        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/unitCode\"");
+        assert!(sql.contains(r#"'] )[ "ordered"."unit_code_id" ] AS "value_text""#), "{sql}");
+        assert!(sql.contains("( ARRAY ['10',") && sql.contains("'HM',"), "the listed code texts: {sql}");
+        assert!(sql.contains(r#"NULL::timestamptz AS "value_date_time""#), "{sql}");
+    }
+
+    #[test]
+    fn a_sub_attribute_unit_code_orders_by_the_text_of_its_code() {
+        let sql = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/unitCode\"");
+        assert!(sql.contains(r#"'] )[ ("ordered"."element")."unit_code_id" ] AS "value_text""#), "{sql}");
+    }
+
+    #[test]
+    fn an_instant_member_orders_by_its_instant_and_no_text() {
+        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"");
+        assert!(sql.contains(r#"NULL::text AS "value_text""#), "{sql}");
+        assert!(!sql.contains("unit_code_id"), "{sql}");
+    }
+
     /// Clause 4.23.3 EXAMPLE 4: `orderBy=address[city]` orders by a member of
     /// the compound value, read under each spelling clause 4.9 gives it.
     #[test]

@@ -54,6 +54,15 @@ pub fn array_element(array: SimpleExpr, position: u32) -> SimpleExpr {
     Expr::cust_with_exprs(format!("($1)[{position}]"), [array])
 }
 
+/// `(array)[position]` - the element of `array` at the 1-based position an
+/// expression computes, NULL past either end and for a NULL position.
+#[must_use]
+pub fn array_subscript(array: SimpleExpr, position: SimpleExpr) -> SimpleExpr {
+    // sea-query substitutes nothing inside a bracketed span of a template, so
+    // the brackets are operands of their own, as in `array_literal`.
+    Expr::cust_with_exprs("$1 $2 $3 $4 $5", [Expr::cust("("), array, Expr::cust(")["), position, Expr::cust("]")])
+}
+
 /// `ARRAY[element, ...]` - an array built from expressions, such as the
 /// columns of the row a statement selects.
 #[must_use]
@@ -236,6 +245,7 @@ mod tests {
         array_of_subquery,
         array_position,
         array_positions,
+        array_subscript,
         cardinality,
         has_elements,
         is_any_of,
@@ -290,6 +300,19 @@ mod tests {
     fn an_element_is_read_at_its_one_based_position() {
         let sql = render_expr(array_element(Expr::col(Alias::new("events")), 1));
         assert_eq!(sql, "SELECT (\"events\")[1]");
+    }
+
+    #[test]
+    fn a_subscript_reads_the_element_at_a_computed_position_of_a_bound_array() {
+        let (sql, values) = Query::select()
+            .expr(array_subscript(
+                Expr::val(vec!["a".to_owned(), "b".to_owned()]),
+                Expr::col(Alias::new("position")),
+            ))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT ( $1 )[ \"position\" ]");
+        assert_eq!(values.0.len(), 1);
     }
 
     #[test]
