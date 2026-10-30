@@ -1,6 +1,7 @@
 //! HTTP handling for the batch upsert entity operation (clause 5.6.8).
 
 use crate::{
+    batch_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
     entity_operations::{
         AcceptFormatNoGeo,
         ApiRoot,
@@ -32,7 +33,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
     },
-    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchUpsert;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;

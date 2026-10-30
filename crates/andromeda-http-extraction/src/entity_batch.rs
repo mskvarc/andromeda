@@ -11,7 +11,7 @@ use crate::{
     addressed_uri::addressed_request_uri,
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
-    batch_item_decoding::BatchItem,
+    batch_item_decoding::{BatchItem, ItemIdentifier, written_identifier},
     batch_item_refusal::BatchItemRefusal,
     blocking_decode::{BlockingDecodePolicy, decode_payload},
     body_envelope::BodyEnvelope,
@@ -31,7 +31,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     request_context::RequestContext,
 };
-use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
+use andromeda_ngsi_ld_lexicon::identifier_length::IdentifierTooLong;
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
 use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
@@ -141,13 +141,14 @@ where
     }
 }
 
-/// What one batch item that passed the batch rules carried beside the
-/// entity it is decoded as once its context was admitted.
+/// What the batch rules decided of one item, beside the `@context` it
+/// carried.
 struct ItemAdmission {
     /// The item's own top-level `@context`, as written.
     own_context: Option<JsonLiteral>,
-    /// The first `@context` the item embedded below its own top level.
-    embedded: Option<EmbeddedContext>,
+    /// The first `@context` the item embedded below its own top level, or the
+    /// refusal the item drew.
+    outcome: Result<Option<EmbeddedContext>, BatchItemRefusal>,
 }
 
 /// A parsed batch request, its items not yet decoded.
@@ -190,61 +191,38 @@ impl<'b> BatchArrayItem<'b> {
         Ok(BatchArrayItem { text, envelope })
     }
 
-    /// The `id` the item must carry before anything can be reported against
-    /// it.
+    /// Admit the item and read the `@context` member it carried.
     ///
-    /// # Errors
-    ///
-    /// Returns the [`BatchBodyRefusal`] for an item that has no URI to stand in
-    /// a clause 5.2.17 `entityId`: a null item (clauses 5.6.7.4 to 5.6.10.4),
-    /// or an item whose `id` is absent, not a string, or not a URI (Tables
-    /// 5.2.4-1 and 5.2.17-1). A URI of any length is returned: one too long to
-    /// be stored is still one an error can be reported against.
-    fn entity_id(&self, index: usize) -> Result<Uri, BatchBodyRefusal> {
-        match &self.envelope {
-            BodyEnvelope::Null => Err(BatchBodyRefusal::NullItem { index }),
-            BodyEnvelope::Object(object) => object
-                .id()
-                .ok_or(BatchBodyRefusal::MissingId { index })?
-                .parse::<Uri>()
-                .map_err(|source| BatchBodyRefusal::MalformedId { index, source }),
-            BodyEnvelope::Array(_) | BodyEnvelope::Scalar => Err(BatchBodyRefusal::MissingId { index }),
-        }
-    }
-
-    /// Admit the item, whose `id` is `entity_id`, and read the `@context`
-    /// member it carried.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`BatchItemRefusal`] when the `id` is too long to be stored,
-    /// when the item carries a number the model cannot represent or a string
-    /// the broker cannot hold, or carries an `@context` its representation
-    /// forbids or lacks one it requires (clause 6.3.5). Clause 5.6.7.4 reports
-    /// these per entity, leaving the rest of the batch intact. Whether the item
-    /// is an entity is judged once the context it names was admitted.
-    fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<ItemAdmission, BatchItemRefusal> {
-        IdentifierTooLong::check(entity_id.as_str())?;
-        let text = self.text.get().as_bytes();
-        admit_json_text(text)?;
-        let embedded = find_embedded_context(text).map_err(JsonTextRefusal::Syntax)?;
-
+    /// The outcome is the [`BatchItemRefusal`] when the item carries a number
+    /// the model cannot represent or a string the broker cannot hold, or
+    /// carries an `@context` its representation forbids or lacks one it
+    /// requires (clause 6.3.5). Clause 5.6.7.4 reports these per entity,
+    /// leaving the rest of the batch intact. Whether the item is an entity is
+    /// judged once the context it names was admitted.
+    fn admit(self, content_kind: ContentKind) -> ItemAdmission {
         // The context is carried beside the entity, not decoded into it.
-        let context = match self.envelope {
+        let own_context = match self.envelope {
             BodyEnvelope::Object(object) => object.into_context(),
             BodyEnvelope::Array(_) | BodyEnvelope::Null | BodyEnvelope::Scalar => None,
         };
-        match (content_kind, &context) {
-            (ContentKind::Json | ContentKind::MergePatchJson, Some(_)) => return Err(BatchItemRefusal::ContextInJson),
-            (ContentKind::LdJson, None) => return Err(BatchItemRefusal::NoContextInLdJson),
-            (ContentKind::Json | ContentKind::MergePatchJson, None) | (ContentKind::LdJson, Some(_)) => {}
-        }
-
-        Ok(ItemAdmission {
-            own_context: context,
-            embedded,
-        })
+        let outcome = admitted_text(self.text.get().as_bytes()).and_then(|embedded| match (content_kind, &own_context) {
+            (ContentKind::Json | ContentKind::MergePatchJson, Some(_)) => Err(BatchItemRefusal::ContextInJson),
+            (ContentKind::LdJson, None) => Err(BatchItemRefusal::NoContextInLdJson),
+            (ContentKind::Json | ContentKind::MergePatchJson, None) | (ContentKind::LdJson, Some(_)) => Ok(embedded),
+        });
+        ItemAdmission { own_context, outcome }
     }
+}
+
+/// The first `@context` the item `text` embeds below its own top level.
+///
+/// # Errors
+///
+/// Returns the [`BatchItemRefusal`] of a number the model cannot represent or
+/// a string the broker cannot hold.
+fn admitted_text(text: &[u8]) -> Result<Option<EmbeddedContext>, BatchItemRefusal> {
+    admit_json_text(text)?;
+    Ok(find_embedded_context(text).map_err(JsonTextRefusal::Syntax)?)
 }
 
 /// Parse a batch request body with per-entity error handling.
@@ -259,7 +237,8 @@ impl<'b> BatchArrayItem<'b> {
 /// Returns a [`ProblemResponse`] when the request fails as a whole, for one of
 /// the [`BatchBodyRefusal`]s: a body holding more JSON values than the request
 /// limit admits, an unparsable body, a body that is not a non-empty JSON array,
-/// a null array item, or an item without a URI `id`; and an `InternalError`
+/// a null array item, or an item writing as `id` or `@id` a value that is not
+/// a URI; and an `InternalError`
 /// when the blocking decoding task fails. Every other failure, an `id` too long
 /// to be stored among them, is reported per entity in the returned
 /// [`BatchEntityError`] list, leaving the rest of the batch intact. The clause
@@ -305,17 +284,32 @@ fn decode_batch(
 
     for (index, item) in items.into_iter().enumerate() {
         let item = BatchArrayItem::read(item)?;
-        let entity_id = item.entity_id(index)?;
+        let written = written_identifier(&item.envelope, index)?;
         let text = body.slice_ref(item.text.get().as_bytes());
-        match item.admit(&entity_id, content_kind) {
-            Ok(ItemAdmission { own_context, embedded }) => admitted.push(BatchItem {
-                entity_id,
-                text,
-                context: contexts.context_of(own_context),
-                embedded,
-            }),
-            Err(refusal) => errors.push(refusal.against(entity_id)),
-        }
+        let ItemAdmission { own_context, outcome } = item.admit(content_kind);
+        let (identifier, embedded) = match written {
+            Some(entity_id) => match IdentifierTooLong::check(entity_id.as_str()).map_err(BatchItemRefusal::from).and(outcome) {
+                Ok(embedded) => (ItemIdentifier::Written(entity_id), embedded),
+                Err(refusal) => {
+                    errors.push(refusal.against(entity_id));
+                    continue;
+                }
+            },
+            // Clause 4.4: an `id` written under neither spelling can only be a
+            // term the item's context defines for `@id`, so the item is kept
+            // until that context was admitted, and any refusal is held for the
+            // `id` it reads as.
+            None => match outcome {
+                Ok(embedded) => (ItemIdentifier::Aliased { index, held: None }, embedded),
+                Err(refusal) => (ItemIdentifier::Aliased { index, held: Some(refusal) }, None),
+            },
+        };
+        admitted.push(BatchItem {
+            identifier,
+            text,
+            context: contexts.context_of(own_context),
+            embedded,
+        });
     }
 
     Ok(ParsedBatch {
@@ -334,7 +328,8 @@ fn decode_batch(
 )]
 mod tests {
     use crate::{
-        batch_item_decoding::{BatchItem, entity_of},
+        batch_item_decoding::{BatchItem, ItemIdentifier, entity_of},
+        batch_item_refusal::BatchItemRefusal,
         blocking_decode::BlockingDecodePolicy,
         entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
         request_json_value_limit::RequestJsonValueLimit,
@@ -342,7 +337,7 @@ mod tests {
     use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
+    use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, uri::Uri as EntityUri};
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{
@@ -370,16 +365,24 @@ mod tests {
         Uri::from_static("/ngsi-ld/v1/entityOperations/create")
     }
 
+    /// The `id` an item wrote as `id` or `@id`.
+    fn written(identifier: &ItemIdentifier) -> &EntityUri {
+        match identifier {
+            ItemIdentifier::Written(entity_id) => entity_id,
+            ItemIdentifier::Aliased { index, .. } => panic!("item {index} wrote its id under neither spelling"),
+        }
+    }
+
     /// The entities and per-entity errors a batch decodes into, read against
     /// the default context: the refusals held until an item's context is
     /// admitted follow the ones raised before it.
     async fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
         let ParsedBatch { items, mut errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
         let mut entities = Vec::new();
-        for BatchItem { entity_id, text, .. } in items {
+        for BatchItem { identifier, text, .. } in items {
             match entity_of(&text, CoreTermAliases::keyword_spellings()) {
                 Ok(entity) => entities.push(entity),
-                Err(refusal) => errors.push(refusal.against(entity_id)),
+                Err(refusal) => errors.push(refusal.against(written(&identifier).clone())), // clone: the fixture keeps the item it reports
             }
         }
         (entities, errors)
@@ -464,7 +467,12 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         let findings: Vec<(String, Option<String>)> = items
             .iter()
-            .map(|item| (item.entity_id.to_string(), item.embedded.as_ref().map(|found| found.path.to_string())))
+            .map(|item| {
+                (
+                    written(&item.identifier).to_string(),
+                    item.embedded.as_ref().map(|found| found.path.to_string()),
+                )
+            })
             .collect();
         pretty_assertions::assert_eq!(
             findings,
@@ -557,18 +565,44 @@ mod tests {
         );
     }
 
-    /// Table 5.2.4-1: `id` is mandatory and a URI, so an item without an `id`
-    /// string fails the request as `BadRequestData`.
+    /// Clause 4.4: an item writing no `id` string as `id` or `@id` may write
+    /// it under a term its context defines for `@id`, so it is kept, by its
+    /// position, until that context was admitted.
     #[tokio::test]
-    async fn an_item_without_an_id_string_fails_the_request_with_bad_request_data_naming_the_item() {
+    async fn an_item_without_an_id_string_is_kept_until_its_context_reads_its_id() {
         for body in [
             r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"},{"type":"Vehicle"}]"#,
             r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"},{"id":7,"type":"Vehicle"}]"#,
         ] {
-            let refusal = request_refusal(body).await;
-            pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData, "{body}");
-            pretty_assertions::assert_eq!(refusal.problem().detail(), "batch item 1 has no 'id' string", "{body}");
+            let ParsedBatch { items, errors, .. } = parse_batch_entities(&json_batch(body).await, &batch_uri()).await.expect("batch parses");
+            assert!(errors.is_empty(), "{body}: {errors:?}");
+            pretty_assertions::assert_eq!(written(&items[0].identifier).as_str(), "urn:ngsi-ld:Vehicle:A", "{body}");
+            assert!(
+                matches!(items[1].identifier, ItemIdentifier::Aliased { index: 1, held: None }),
+                "{body}: {:?}",
+                items[1].identifier
+            );
         }
+    }
+
+    /// Clause 5.6.7.4: a refusal an item draws before its `id` is known is
+    /// held for the `id` its context reads.
+    #[tokio::test]
+    async fn a_refusal_of_an_item_without_an_id_string_is_held_for_its_id() {
+        let body = r#"[{"id":"urn:ngsi-ld:Vehicle:A","type":"Vehicle"},{"eid":"urn:ngsi-ld:Vehicle:B","type":"Vehicle","@context":{"eid":"@id"}}]"#;
+        let ParsedBatch { items, errors, .. } = parse_batch_entities(&json_batch(body).await, &batch_uri()).await.expect("batch parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(
+            matches!(
+                items[1].identifier,
+                ItemIdentifier::Aliased {
+                    index: 1,
+                    held: Some(BatchItemRefusal::ContextInJson)
+                }
+            ),
+            "{:?}",
+            items[1].identifier
+        );
     }
 
     /// Clause 5.5.4: only a body that is not a JSON document is
@@ -717,7 +751,7 @@ mod tests {
         pretty_assertions::assert_eq!(items[0].context.id(), items[2].context.id(), "items naming one context share it");
         pretty_assertions::assert_ne!(items[0].context.id(), items[1].context.id());
         pretty_assertions::assert_eq!(context, ContextSpec::none(), "items naming several contexts leave the request the default one");
-        assert!(items.iter().all(|item| item.entity_id.as_str().starts_with("urn:ngsi-ld:Vehicle:")));
+        assert!(items.iter().all(|item| written(&item.identifier).as_str().starts_with("urn:ngsi-ld:Vehicle:")));
     }
 
     /// Items naming one and the same context make it the request's context

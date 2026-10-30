@@ -1,6 +1,7 @@
 //! HTTP handling for the batch merge entity operation (clause 5.6.20).
 
 use crate::{
+    batch_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
     entity_operations::{
         AcceptFormatNoGeo,
         BatchBody,
@@ -26,7 +27,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
     },
-    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchMerge;
 use andromeda_http_extraction::context_target;

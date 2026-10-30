@@ -9,7 +9,8 @@
 //! is never built into a JSON tree to find out whether it names a context. No
 //! JSON tree is built at all: the reader is the minimal typed scan the
 //! extractors need (an empty array, the presence, shape and value of the
-//! `@context`, and a string `id`).
+//! `@context`, and a string `id`). The `id` is found under the clause 4.4
+//! keyword spellings, or under the terms an admitted context defines for it.
 
 use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_number::json_value::value_census::MemberName;
@@ -86,8 +87,18 @@ impl BodyEnvelope {
     /// Returns the streaming reader's failure for a text that is not one JSON
     /// value, trailing content included.
     pub(crate) fn read(text: &[u8]) -> Result<BodyEnvelope, serde_json::Error> {
+        BodyEnvelope::read_under(text, CoreTermAliases::keyword_spellings())
+    }
+
+    /// Read the top level of the JSON text `text`, finding the `id` of an
+    /// object under every term `aliases` reads as `id`.
+    ///
+    /// # Errors
+    ///
+    /// As [`BodyEnvelope::read`].
+    pub(crate) fn read_under(text: &[u8], aliases: &CoreTermAliases) -> Result<BodyEnvelope, serde_json::Error> {
         let mut reader = JsonReader::from_slice(text);
-        let envelope = EnvelopeSeed.deserialize(&mut reader)?;
+        let envelope = EnvelopeSeed(aliases).deserialize(&mut reader)?;
         reader.end()?;
         Ok(envelope)
     }
@@ -152,11 +163,11 @@ impl BodyEnvelope {
     }
 }
 
-/// Reads the top level of a body.
+/// Reads the top level of a body, finding an `id` under the aliases it holds.
 #[derive(Clone, Copy, Debug)]
-struct EnvelopeSeed;
+struct EnvelopeSeed<'a>(&'a CoreTermAliases);
 
-impl<'de> DeserializeSeed<'de> for EnvelopeSeed {
+impl<'de> DeserializeSeed<'de> for EnvelopeSeed<'_> {
     type Value = BodyEnvelope;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<BodyEnvelope, D::Error> {
@@ -164,7 +175,7 @@ impl<'de> DeserializeSeed<'de> for EnvelopeSeed {
     }
 }
 
-impl<'de> Visitor<'de> for EnvelopeSeed {
+impl<'de> Visitor<'de> for EnvelopeSeed<'_> {
     type Value = BodyEnvelope;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -197,23 +208,23 @@ impl<'de> Visitor<'de> for EnvelopeSeed {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<BodyEnvelope, A::Error> {
         let mut read = Vec::new();
-        while let Some(item) = items.next_element_seed(ItemSeed)? {
+        while let Some(item) = items.next_element_seed(ItemSeed(self.0))? {
             read.push(item);
         }
         Ok(BodyEnvelope::Array(read))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, members: A) -> Result<BodyEnvelope, A::Error> {
-        Ok(read_object(members)?.map_or(BodyEnvelope::Scalar, BodyEnvelope::Object))
+        Ok(read_object(members, self.0)?.map_or(BodyEnvelope::Scalar, BodyEnvelope::Object))
     }
 }
 
 /// Reads one item of an array body: the members the rules ask about when it
 /// is an object, nothing otherwise.
 #[derive(Clone, Copy, Debug)]
-struct ItemSeed;
+struct ItemSeed<'a>(&'a CoreTermAliases);
 
-impl<'de> DeserializeSeed<'de> for ItemSeed {
+impl<'de> DeserializeSeed<'de> for ItemSeed<'_> {
     type Value = Option<ObjectEnvelope>;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Option<ObjectEnvelope>, D::Error> {
@@ -221,7 +232,7 @@ impl<'de> DeserializeSeed<'de> for ItemSeed {
     }
 }
 
-impl<'de> Visitor<'de> for ItemSeed {
+impl<'de> Visitor<'de> for ItemSeed<'_> {
     type Value = Option<ObjectEnvelope>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -258,7 +269,7 @@ impl<'de> Visitor<'de> for ItemSeed {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, members: A) -> Result<Option<ObjectEnvelope>, A::Error> {
-        read_object(members)
+        read_object(members, self.0)
     }
 }
 
@@ -323,13 +334,13 @@ impl<'de> Visitor<'de> for IdMemberVisitor {
     }
 }
 
-/// Read the members of an object the rules ask about, every other member
-/// skipped unread; a member written twice counts as written last, as a parsed
-/// tree keeps it.
+/// Read the members of an object the rules ask about, the `id` under every
+/// term `aliases` reads as `id`, every other member skipped unread; a member
+/// written twice counts as written last, as a parsed tree keeps it.
 ///
 /// An object whose first member carries the reader's private number name is
 /// the reader's spelling of a number, and no object at all.
-fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEnvelope>, A::Error> {
+fn read_object<'de, A: MapAccess<'de>>(mut members: A, aliases: &CoreTermAliases) -> Result<Option<ObjectEnvelope>, A::Error> {
     let mut envelope = ObjectEnvelope::default();
     let mut first = true;
     while let Some(name) = members.next_key::<String>()? {
@@ -338,10 +349,9 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
             return Ok(None);
         }
         first = false;
-        // Clause 4.4: an item may spell its `id` as `@id`, which no context
-        // changes; a term a context defines for `@id` is read once the context
-        // was admitted.
-        match CoreTermAliases::keyword_spellings().core_name(Cow::Borrowed(&name)).as_ref() {
+        // JSON-LD 1.1 forbids an alias of `@context`, so only the `id` member
+        // depends on the aliases.
+        match aliases.core_name(Cow::Borrowed(&name)).as_ref() {
             keyword::CONTEXT => envelope.context = Some(members.next_value()?),
             keyword::ID_ALIAS => envelope.id = members.next_value::<IdMember>()?.0,
             _other => {
@@ -361,6 +371,7 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
 mod tests {
     use crate::body_envelope::{BodyContextError, BodyEnvelope};
     use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
     use serde_json::json;
 
     fn literal(value: &serde_json::Value) -> JsonLiteral {
@@ -390,6 +401,25 @@ mod tests {
             panic!("an object");
         };
         pretty_assertions::assert_eq!(object.id(), Some("urn:ngsi-ld:T:1"));
+    }
+
+    /// Clause 4.4 and JSON-LD 1.1 section 4.1.3: a term the context defines
+    /// for `@id` names the `id`, which the keyword spellings alone do not find.
+    #[test]
+    fn an_id_written_under_a_context_alias_is_found_only_under_that_alias() {
+        let text = br#"{"eid":"urn:ngsi-ld:T:1","@context":{"eid":"@id"}}"#;
+        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+        aliases.alias("eid", "id");
+        for (read, expected) in [
+            (BodyEnvelope::read(text), None),
+            (BodyEnvelope::read_under(text, &aliases), Some("urn:ngsi-ld:T:1")),
+        ] {
+            let BodyEnvelope::Object(object) = read.expect("valid JSON") else {
+                panic!("an object");
+            };
+            pretty_assertions::assert_eq!(object.id(), expected);
+            assert!(object.context().is_some());
+        }
     }
 
     #[test]

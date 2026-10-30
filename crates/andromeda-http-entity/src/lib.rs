@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 pub mod attribute;
+mod batch_payload_admission;
 mod compact_screening;
 mod discovered_response;
 mod entity;

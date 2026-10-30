@@ -1,6 +1,7 @@
 //! HTTP handling for the batch create entity operation (clause 5.6.7).
 
 use crate::{
+    batch_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
     entity_operations::{
         AcceptFormatNoGeo,
         ApiRoot,
@@ -25,7 +26,6 @@ use crate::{
         merge_forwarded,
         multi_status_response,
     },
-    written_payload_admission::{AdmittedBatchRequest, admitted_batch_entities},
 };
 use andromeda_entity::write_kind::BatchCreate;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
