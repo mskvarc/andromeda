@@ -1546,6 +1546,94 @@ async fn a_due_wake_defers_only_when_every_runtime_is_leased() {
     assert!(manager.runtimes.contains_key(&TenantRef::Named(named("held"))), "the leased runtime is spared");
 }
 
+/// A manager like [`wake_manager`] whose woken runtimes stay resident for
+/// `woken_lifetime`.
+fn wake_manager_with_lifetime(
+    registered: &[&str],
+    max_cached: usize,
+    woken_lifetime: HumanDuration,
+) -> (Arc<TenantRuntimeManager<FakeRegistry, FakeFactory>>, Arc<AtomicUsize>) {
+    let registry = Arc::new(FakeRegistry::new(registered));
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(FakeFactory {
+        shutdowns: Arc::clone(&shutdowns),
+        built: AtomicUsize::new(0),
+    });
+    let base = config(true, max_cached);
+    let config = TenancyConfig {
+        residency: ResidencyConfig {
+            woken_lifetime,
+            ..base.residency
+        },
+        ..base
+    };
+    let manager = TenantRuntimeManager::new(
+        config,
+        registry,
+        factory,
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        Arc::new(FakeSchedule::inert()),
+    );
+    (manager, shutdowns)
+}
+
+/// A woken runtime is backdated, so a cold build making room would pick it
+/// first; within its wake residency it is spared, so the work it was woken
+/// for runs instead of the tenant being unloaded and woken again for it.
+#[tokio::test]
+async fn a_cold_build_does_not_unload_a_woken_runtime_within_its_wake_residency() {
+    let (manager, _shutdowns) = wake_manager_with_lifetime(&["fresh", "woken", "next"], 2, HumanDuration::from_secs(60));
+    let fresh = TenantRef::Named(named("fresh"));
+    drop(manager.resolve_state(&fresh, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    pretty_assertions::assert_eq!(manager.wake(&named("woken")).await, WakeOutcome::Loaded);
+
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("next")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("woken"))), "the woken runtime is spared");
+    assert!(!manager.runtimes.contains_key(&fresh), "the request-touched runtime made room instead");
+    pretty_assertions::assert_eq!(manager.runtimes.len(), 2);
+}
+
+/// Once its wake residency has passed, a woken runtime is again the first
+/// runtime unloaded to make room.
+#[tokio::test]
+async fn a_cold_build_unloads_a_woken_runtime_once_its_wake_residency_has_passed() {
+    let (manager, _shutdowns) = wake_manager_with_lifetime(&["fresh", "woken", "next"], 2, HumanDuration::from_millis(20));
+    let fresh = TenantRef::Named(named("fresh"));
+    drop(manager.resolve_state(&fresh, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    pretty_assertions::assert_eq!(manager.wake(&named("woken")).await, WakeOutcome::Loaded);
+    sleep(Duration::from_millis(40)).await;
+
+    drop(
+        manager
+            .resolve_state(&TenantRef::Named(named("next")), TenantCreationPolicy::MustExist)
+            .await
+            .expect("resolves"),
+    );
+
+    assert!(!manager.runtimes.contains_key(&TenantRef::Named(named("woken"))), "the woken runtime made room");
+    assert!(manager.runtimes.contains_key(&fresh), "the request-touched runtime is kept");
+}
+
+/// A wake making room does not take another woken runtime still within its
+/// residency: with nothing else to unload, it defers.
+#[tokio::test]
+async fn a_due_wake_does_not_displace_a_woken_runtime_within_its_wake_residency() {
+    let (manager, _shutdowns) = wake_manager_with_lifetime(&["first", "second"], 1, HumanDuration::from_secs(60));
+    pretty_assertions::assert_eq!(manager.wake(&named("first")).await, WakeOutcome::Loaded);
+
+    pretty_assertions::assert_eq!(manager.wake(&named("second")).await, WakeOutcome::Deferred);
+    assert!(
+        manager.runtimes.contains_key(&TenantRef::Named(named("first"))),
+        "the first woken runtime is spared"
+    );
+}
+
 #[tokio::test]
 async fn a_woken_runtime_is_the_first_lru_victim() {
     // A woken runtime is inserted backdated, so it sorts older than any

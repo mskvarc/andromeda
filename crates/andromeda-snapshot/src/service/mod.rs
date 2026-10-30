@@ -67,7 +67,7 @@ pub struct SnapshotService {
 
 impl SnapshotService {
     /// Create a new snapshot service backed by the given store. `preparation`
-    /// is the bounded executor [`SnapshotService::prepare_now`] kicks so a
+    /// is the bounded executor [`SnapshotService::prepare_created`] kicks so a
     /// freshly created snapshot does not wait for the next scheduled sweep.
     /// `delivery_signal` wakes the durable status-delivery drain after a
     /// create-time preparation or a metadata update enqueues notifications, so
@@ -86,13 +86,13 @@ impl SnapshotService {
         }
     }
 
-    /// Start one preparation pass in the background. The scheduled sweep
-    /// remains the guarantee that every `preparing` snapshot is executed;
-    /// this only removes the sweep cadence as the floor on how soon a new
-    /// snapshot becomes usable (clause 5.16.1.4 executes the queries on
-    /// creation). A pass racing the sweep is harmless: `update_status` only
-    /// advances a row that is still `preparing`.
-    pub fn prepare_now(&self) {
+    /// Start the preparation of the Snapshot `id` just created or cloned in the
+    /// background. The scheduled sweep remains the guarantee that every
+    /// `preparing` snapshot is executed; this only removes the sweep cadence
+    /// as the floor on how soon a new snapshot becomes usable (clause 5.16.1.4
+    /// executes the queries on creation). A pass racing the sweep is harmless:
+    /// only one worker holds a preparation's claim at a time.
+    pub fn prepare_created(&self, id: &Identifier) {
         let Some(preparation) = &self.preparation else {
             return;
         };
@@ -100,8 +100,9 @@ impl SnapshotService {
         // clone: the spawned pass owns its own handle to the delivery signal,
         // which it raises once it has enqueued this creation's notifications.
         let delivery_signal = self.delivery_signal.clone();
+        let id = id.clone(); // clone: the spawned pass outlives the request that created the Snapshot.
         tokio::spawn(async move {
-            match preparation.execute().await {
+            match preparation.execute_created(&id).await {
                 Ok(SnapshotPreparationOutcome::Idle) => {}
                 Ok(SnapshotPreparationOutcome::Prepared { count }) => {
                     info!(count, "snapshot preparation completed on create");
@@ -113,7 +114,7 @@ impl SnapshotService {
                         delivery_signal.signal();
                     }
                 }
-                Err(error) => warn!(%error, "snapshot preparation on create failed; the scheduled sweep will retry"),
+                Err(error) => warn!(snapshot_id = %id, %error, "snapshot preparation on create failed; the scheduled sweep will retry"),
             }
         });
     }

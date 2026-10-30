@@ -189,12 +189,7 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 /// Returns [`ContextStoreError::BranchVersion`] when the embedded branch set has
 /// no version, and the classified database failure of either read.
 pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTime>, ContextStoreError> {
-    let queue_due = match earliest_queue_due(pool).await {
-        // A Snapshot reaped between the branch enumeration and the read drops
-        // the schema the read names; enumerating again leaves it out.
-        Err(error) if is_reaped_branch(&error) => earliest_queue_due(pool).await?,
-        other => other?,
-    };
+    let queue_due = earliest_queue_due(pool).await?;
 
     let anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)> = interval_probe_select().to_query_as().fetch_all(pool).await?;
 
@@ -203,9 +198,30 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
 
 /// The earliest due instant across the queue and expiry sources, reading the
 /// delivery queue of every branch the delivery drain sweeps.
+///
+/// A Snapshot reaped between the branch enumeration and the read drops a
+/// schema the read names. A reap drops the schemas and deletes the control
+/// record in one transaction, so enumerating again leaves that branch out: the
+/// read is retried for as long as each failure is explained by a branch that
+/// has since gone, however many Snapshots a busy tenant reaps meanwhile, and
+/// a failure the enumeration does not explain is returned.
 async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
-    let branches = drainable_targets(pool).await?;
-    Ok(least_due_select(current_branch_version()?, &branches).to_query_scalar().fetch_one(pool).await?)
+    let current = current_branch_version()?;
+    let mut branches = drainable_targets(pool).await?;
+    loop {
+        let error = match least_due_select(current, &branches).to_query_scalar().fetch_one(pool).await {
+            Ok(due) => return Ok(due),
+            Err(error) => ContextStoreError::from(error),
+        };
+        if !is_reaped_branch(&error) {
+            return Err(error);
+        }
+        let remaining = drainable_targets(pool).await?;
+        if remaining == branches {
+            return Err(error);
+        }
+        branches = remaining;
+    }
 }
 
 /// The earliest instant any periodic subscription owes a notification.

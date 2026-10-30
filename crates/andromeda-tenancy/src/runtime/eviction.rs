@@ -172,19 +172,24 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// the last-used instant it was chosen at.
     ///
     /// Leased runtimes (those a request currently holds) are never
-    /// candidates, so the cache may transiently exceed `runtime_max_cached`
-    /// while more than that many requests are in flight at once; the next sweep
-    /// or insert-trim brings it back down as their leases drop.
+    /// candidates, nor is a runtime woken for due work within its wake
+    /// residency: its last use is backdated, so it would otherwise be the first
+    /// victim of every cold build and be unloaded before its work ran, then
+    /// woken again for the same work. The cache may therefore transiently
+    /// exceed `runtime_max_cached` while every other runtime is held; the next
+    /// sweep or insert-trim brings it back down as leases drop and residencies
+    /// end.
     pub(super) fn excess_runtimes(&self) -> Vec<(TenantRef, Instant)> {
         let over = self.runtimes.len().saturating_sub(self.config.residency.max_resident.get());
         if over == 0 {
             return Vec::new();
         }
 
+        let now = Instant::now();
         let mut candidates: Vec<(TenantRef, Instant)> = self
             .runtimes
             .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased())
+            .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now))
             .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the eviction list outlives the iteration
             .collect();
         candidates.sort_by_key(|(_, touched)| *touched);
@@ -212,17 +217,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// The least-recently-used named runtime other than `exclude` that no
-    /// request currently holds, with the last-used instant it was chosen at, or
-    /// `None` when every such runtime is leased (or the cache holds only the
+    /// request currently holds and that is past any wake residency, with the
+    /// last-used instant it was chosen at, or `None` when every such runtime is
+    /// leased or within its wake residency (or the cache holds only the
     /// never-evicted unnamed default).
     ///
     /// Used to free one slot for a tenant about to be loaded (a woken tenant
     /// whose work is due now, or a cold build) so the coldest unleased runtime
     /// yields to it. `exclude` is that tenant, which is never its own victim.
     pub(super) fn lru_unleased_named(&self, exclude: &TenantRef) -> Option<(TenantRef, Instant)> {
+        let now = Instant::now();
         self.runtimes
             .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != exclude && !entry.value().is_leased())
+            .filter(|entry| {
+                !entry.key().is_unnamed_default() && entry.key() != exclude && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now)
+            })
             .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the choice outlives the iteration
             .min_by_key(|(_, touched)| *touched)
     }

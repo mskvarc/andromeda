@@ -9,7 +9,7 @@ use crate::snapshot::{
     clone_context::{promote_context_clone, promote_staged_branch},
     creation::create_snapshot,
     metadata_change::MetadataChange,
-    preparation_claim::{next_preparing_snapshot, release_preparation, renew_preparation_lease, restart_preparation},
+    preparation_claim::{claim_created_snapshot, next_preparing_snapshot, release_preparation, renew_preparation_lease, restart_preparation},
     quota::enforce_snapshot_quotas,
     reap::{delete_expired_snapshots, delete_snapshot},
     record::{
@@ -64,6 +64,15 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn next_preparing(&self, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
         next_preparing_snapshot(self.pool(), claimed_by, lease_until).await
+    }
+
+    async fn claim_created(
+        &self,
+        id: &Identifier,
+        claimed_by: LeaseHolder,
+        lease_until: DateTime<Utc>,
+    ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+        claim_created_snapshot(self.pool(), id, claimed_by, lease_until).await
     }
 
     async fn renew_preparation_lease(&self, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {

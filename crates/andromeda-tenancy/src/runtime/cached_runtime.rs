@@ -59,6 +59,9 @@ pub(super) struct CachedRuntime<S, R> {
     /// established once and never back: an established tenant stays so until
     /// it is removed from the registry.
     established: AtomicBool,
+    /// Until when a runtime the waker loaded for due work is spared from
+    /// being unloaded to make room; `None` for a runtime a request loaded.
+    wake_residency_end: Option<Instant>,
 }
 
 impl<S, R> CachedRuntime<S, R> {
@@ -92,6 +95,7 @@ impl<S, R> CachedRuntime<S, R> {
                 last_used: AtomicU64::new(now_millis()),
                 origin,
                 established: AtomicBool::new(existence == RuntimeExistence::Established),
+                wake_residency_end: None,
             },
             leased,
         )
@@ -102,13 +106,16 @@ impl<S, R> CachedRuntime<S, R> {
     ///
     /// Unleased from the start, so a sweep may evict it once it has idled past
     /// its residency; the waker backdates its last use so it is the first idle
-    /// victim and never displaces a request-touched runtime.
-    pub(super) fn unleased(
+    /// victim and never displaces a request-touched runtime. For `residency`
+    /// it is not unloaded to make room either, so the work it was woken for
+    /// runs before anything can take it away again.
+    pub(super) fn woken(
         state: Arc<S>,
         runtime: R,
         database: TenantDatabaseName,
         existence: RuntimeExistence,
         origin: Arc<LeaseOrigin>,
+        residency: Duration,
     ) -> CachedRuntime<S, R> {
         CachedRuntime {
             state,
@@ -117,7 +124,14 @@ impl<S, R> CachedRuntime<S, R> {
             last_used: AtomicU64::new(now_millis()),
             origin,
             established: AtomicBool::new(existence == RuntimeExistence::Established),
+            wake_residency_end: Instant::now().checked_add(residency),
         }
+    }
+
+    /// Whether this runtime was loaded for due work less than its residency
+    /// ago, and so is not unloaded to make room.
+    pub(super) fn is_within_wake_residency(&self, now: Instant) -> bool {
+        self.wake_residency_end.is_some_and(|end| now < end)
     }
 
     /// Whether the tenant this runtime serves was seen to exist.
@@ -179,9 +193,12 @@ mod tests {
         },
         state_factory::RuntimeActivity,
     };
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration, Instant},
     };
     use tokio::sync::Notify;
 
@@ -196,13 +213,39 @@ mod tests {
     }
 
     fn cached_reporting_to(activity: &Arc<ActivityCount>, existence: RuntimeExistence) -> CachedRuntime<(), ()> {
-        CachedRuntime::unleased(
+        woken_for(activity, existence, Duration::from_secs(60))
+    }
+
+    fn woken_for(activity: &Arc<ActivityCount>, existence: RuntimeExistence, residency: Duration) -> CachedRuntime<(), ()> {
+        CachedRuntime::woken(
             Arc::new(()),
             (),
             TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
             existence,
             LeaseOrigin::new(Arc::new(Notify::new()), Arc::clone(activity) as Arc<dyn RuntimeActivity>),
+            residency,
         )
+    }
+
+    #[test]
+    fn a_woken_runtime_is_within_its_wake_residency_until_the_residency_ends() {
+        let cached = woken_for(&Arc::new(ActivityCount::default()), RuntimeExistence::Established, Duration::from_secs(60));
+        let now = Instant::now();
+        assert!(cached.is_within_wake_residency(now));
+        assert!(cached.is_within_wake_residency(now + Duration::from_secs(59)));
+        assert!(!cached.is_within_wake_residency(now + Duration::from_secs(61)));
+    }
+
+    #[test]
+    fn a_runtime_a_request_loaded_holds_no_wake_residency() {
+        let (cached, _lease) = CachedRuntime::newly_leased(
+            Arc::new(()),
+            (),
+            TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
+            RuntimeExistence::Established,
+            LeaseOrigin::new(Arc::new(Notify::new()), Arc::new(ActivityCount::default()) as Arc<dyn RuntimeActivity>),
+        );
+        assert!(!cached.is_within_wake_residency(Instant::now()));
     }
 
     /// Pacing background work by use needs every touch to reach the runtime,

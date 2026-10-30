@@ -15,9 +15,10 @@ use crate::{
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use futures::{StreamExt, future::BoxFuture, stream};
 use std::time::Duration;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// The worker a drain claims preparations for, and how many it runs at once.
 pub(crate) struct DrainWorker<'a> {
@@ -52,7 +53,22 @@ impl DrainWorker<'_> {
         &self,
         prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
     ) -> Result<usize, SnapshotError> {
-        let mut moved = 0;
+        self.drain_after(0, prepare).await
+    }
+
+    /// [`DrainWorker::drain`] for a pass that already moved `moved`
+    /// preparations out of `preparing` before it started claiming, returning
+    /// the total. A claim failing after that ends the drain with `moved`
+    /// rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// As [`DrainWorker::drain`], once nothing was moved.
+    async fn drain_after<'f>(
+        &self,
+        mut moved: usize,
+        prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
+    ) -> Result<usize, SnapshotError> {
         loop {
             let jobs = match self.claim_round().await {
                 Ok(jobs) => jobs,
@@ -71,6 +87,35 @@ impl DrainWorker<'_> {
                 return Ok(moved);
             }
         }
+    }
+
+    /// Claim and run the Snapshot `id` a request just created, then drain as
+    /// [`DrainWorker::drain`] does, returning the total moved out of
+    /// `preparing`.
+    ///
+    /// When the created Snapshot cannot be claimed (a worker holds it, or it
+    /// clones a Snapshot still preparing) that is logged: its holder, the pass
+    /// ending its source, or a later sweep prepares it.
+    ///
+    /// # Errors
+    ///
+    /// As [`DrainWorker::drain`], and the store's own failure when the created
+    /// Snapshot's claim does not complete.
+    pub(crate) async fn drain_created<'f>(
+        &self,
+        id: &Identifier,
+        prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
+    ) -> Result<usize, SnapshotError> {
+        let moved = if let Some(job) = self.store.claim_created(id, self.worker, lease_deadline(self.lease)?).await? {
+            usize::from(prepare(job).await.is_some_and(PreparationEnd::left_preparing))
+        } else {
+            info!(
+                snapshot_id = %id,
+                "Created Snapshot is not claimable on create: a worker holds its preparation or the Snapshot it clones is still preparing"
+            );
+            0
+        };
+        self.drain_after(moved, prepare).await
     }
 
     /// Claim up to one round of preparations.

@@ -11,6 +11,7 @@
 
 use crate::{
     csource_subscription::repo::CsourceSubscriptionRepository,
+    notification_delivery::branches::is_reaped_relation,
     store_fault::persistence_error,
     subscription::repo::SubscriptionRepository,
     subscription_store::{
@@ -43,6 +44,16 @@ use andromeda_subscription::{
 };
 use sea_query::{Expr, ExprTrait, Iden, Query};
 use sqlx::Row;
+
+/// Whether `error` is a statement against a Snapshot branch that was reaped
+/// since the work that reached for it was claimed. The live branch is never
+/// reaped, so a missing relation there stays a fault.
+fn is_reaped_snapshot_branch(target: &ContextTarget, error: &sqlx::Error) -> bool {
+    match target {
+        ContextTarget::Snapshot(_) => is_reaped_relation(error),
+        ContextTarget::Live => false,
+    }
+}
 
 /// Generates a `SubscriptionStore` implementation backed by the `subscriptions`
 /// table and its `subscription_delivery_state` row, its statements built
@@ -137,29 +148,27 @@ macro_rules! impl_subscription_store {
             ) -> Result<NotificationSlot, SubscriptionError> {
                 // The gate is the statement's own `WHERE`, so a state row it
                 // did not match is a slot the ceilings refused.
+                // A Snapshot branch reaped since the delivery was claimed takes
+                // its subscriptions with it, so its slot is refused as for a
+                // subscription deleted meanwhile.
                 match slot_claim_statement(target, id, $kind, gate) {
-                    SlotClaimStatement::Stamping(statement) => {
-                        let result = statement
-                            .to_query()
-                            .execute(&self.pool)
-                            .await
-                            .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                        Ok(if result.rows_affected() > 0 {
-                            NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly)
-                        } else {
-                            NotificationSlot::Suppressed
-                        })
-                    }
-                    SlotClaimStatement::Checking(statement) => {
-                        let claimed: Option<chrono::DateTime<chrono::Utc>> = statement
-                            .to_query_scalar()
-                            .fetch_optional(&self.pool)
-                            .await
-                            .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                        Ok(claimed.map_or(NotificationSlot::Suppressed, |notified_at| {
+                    SlotClaimStatement::Stamping(statement) => match statement.to_query().execute(&self.pool).await {
+                        Ok(result) if result.rows_affected() > 0 => Ok(NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly)),
+                        Ok(_) => Ok(NotificationSlot::Suppressed),
+                        Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(NotificationSlot::Suppressed),
+                        Err(error) => Err(persistence_error::<SubscriptionError>(error)),
+                    },
+                    SlotClaimStatement::Checking(statement) => match statement
+                        .to_query_scalar::<chrono::DateTime<chrono::Utc>>()
+                        .fetch_optional(&self.pool)
+                        .await
+                    {
+                        Ok(claimed) => Ok(claimed.map_or(NotificationSlot::Suppressed, |notified_at| {
                             NotificationSlot::Claimed(OutcomeRecord::CountingNotification { notified_at })
-                        }))
-                    }
+                        })),
+                        Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(NotificationSlot::Suppressed),
+                        Err(error) => Err(persistence_error::<SubscriptionError>(error)),
+                    },
                 }
             }
 
@@ -170,12 +179,13 @@ macro_rules! impl_subscription_store {
                 outcome: NotificationOutcome,
                 record: OutcomeRecord,
             ) -> Result<(), SubscriptionError> {
-                outcome_statement(outcome, record, target, id, $kind)
-                    .to_query()
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                Ok(())
+                // A Snapshot branch reaped since the slot was claimed leaves no
+                // subscription to record the outcome on, as a deleted one does.
+                match outcome_statement(outcome, record, target, id, $kind).to_query().execute(&self.pool).await {
+                    Ok(_) => Ok(()),
+                    Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(()),
+                    Err(error) => Err(persistence_error::<SubscriptionError>(error)),
+                }
             }
 
             async fn expire_due(&self, target: &ContextTarget, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
@@ -334,9 +344,52 @@ impl_subscription_store!(
 );
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
-    use crate::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+    use crate::{
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        subscription::repo::SubscriptionRepository,
+        subscription_store::postgresql::is_reaped_snapshot_branch,
+    };
+    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+    use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_subscription::store::SubscriptionStore;
+
+    fn snapshot_branch() -> ContextTarget {
+        ContextTarget::Snapshot(SnapshotTarget::published(
+            SnapshotKey::try_from(7_i64).expect("a positive key"),
+            "urn:ngsi-ld:Snapshot:reaped".parse().expect("a valid URI"),
+        ))
+    }
+
+    /// A Snapshot branch reaped since its delivery was claimed answers with a
+    /// missing schema or relation, which reads as its subscription being gone.
+    #[test]
+    fn a_missing_schema_or_relation_of_a_snapshot_branch_is_a_reaped_branch() {
+        for state in ["3F000", "42P01"] {
+            assert!(
+                is_reaped_snapshot_branch(&snapshot_branch(), &FakeDatabaseError::new("gone", state).into_sqlx()),
+                "{state}"
+            );
+        }
+        assert!(!is_reaped_snapshot_branch(
+            &snapshot_branch(),
+            &FakeDatabaseError::new("deadlock", "40P01").into_sqlx()
+        ));
+    }
+
+    /// The live branch is never reaped, so a missing relation there stays a
+    /// fault rather than a subscription quietly treated as gone.
+    #[test]
+    fn a_missing_relation_of_the_live_branch_is_not_a_reaped_branch() {
+        assert!(!is_reaped_snapshot_branch(
+            &ContextTarget::Live,
+            &FakeDatabaseError::new("gone", "42P01").into_sqlx()
+        ));
+    }
 
     fn assert_subscription_store<T: SubscriptionStore>() {}
 

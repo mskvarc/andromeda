@@ -43,6 +43,7 @@ use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseH
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use chrono::Utc;
@@ -151,6 +152,17 @@ pub enum SnapshotPreparationOutcome {
     },
 }
 
+impl SnapshotPreparationOutcome {
+    /// The outcome of a pass that moved `count` preparations out of
+    /// `preparing`.
+    const fn of(count: usize) -> SnapshotPreparationOutcome {
+        match count {
+            0 => SnapshotPreparationOutcome::Idle,
+            count => SnapshotPreparationOutcome::Prepared { count },
+        }
+    }
+}
+
 /// Bounded operation that executes the next persisted preparing snapshot.
 pub struct SnapshotPreparation {
     store: Arc<dyn SnapshotStore>,
@@ -223,19 +235,34 @@ impl SnapshotPreparation {
     /// when claiming a preparing snapshot does not complete before any
     /// preparation was moved on.
     pub async fn execute(&self) -> Result<SnapshotPreparationOutcome, SnapshotError> {
-        let worker = DrainWorker {
+        // Boxed: one capture drives the whole query pipeline, so its future is far
+        // too large to hold inline for every buffered job of a round.
+        let count = self.drain_worker().drain(|job| Box::pin(self.prepare(job))).await?;
+        Ok(SnapshotPreparationOutcome::of(count))
+    }
+
+    /// Prepare the Snapshot `id` a request just created, then every other
+    /// claimable preparation, as [`SnapshotPreparation::execute`] does.
+    ///
+    /// Clause 5.16.1.4 executes a Snapshot's queries on its creation, so the
+    /// created Snapshot is claimed by its identifier, waiting out a brief hold
+    /// on its row rather than passing over it.
+    ///
+    /// # Errors
+    ///
+    /// As [`SnapshotPreparation::execute`].
+    pub async fn execute_created(&self, id: &Identifier) -> Result<SnapshotPreparationOutcome, SnapshotError> {
+        let count = self.drain_worker().drain_created(id, |job| Box::pin(self.prepare(job))).await?;
+        Ok(SnapshotPreparationOutcome::of(count))
+    }
+
+    /// The worker a pass drains claimable preparations as.
+    fn drain_worker(&self) -> DrainWorker<'_> {
+        DrainWorker {
             store: self.store.as_ref(),
             worker: self.worker_id,
             lease: self.lease_duration,
             max_per_round: self.max_per_pass,
-        };
-        // Boxed: one capture drives the whole query pipeline, so its future is far
-        // too large to hold inline for every buffered job of a round.
-        let count = worker.drain(|job| Box::pin(self.prepare(job))).await?;
-        if count == 0 {
-            Ok(SnapshotPreparationOutcome::Idle)
-        } else {
-            Ok(SnapshotPreparationOutcome::Prepared { count })
         }
     }
 

@@ -48,8 +48,8 @@ fn clone_source_preparing() -> SelectStatement {
         .to_owned()
 }
 
-/// Select and row-lock the next Snapshot eligible for preparation, carrying its
-/// surrogate key so the claim can reset the staging branch.
+/// Select every Snapshot eligible for preparation, carrying its surrogate key
+/// so the claim can reset the staging branch.
 ///
 /// A quarantined Snapshot is never claimed: its staging branch is behind this
 /// binary's branch relations, so a capture into it could not be trusted. A
@@ -58,7 +58,7 @@ fn clone_source_preparing() -> SelectStatement {
 /// source's preparation ends. The pass that ends the source claims again, so
 /// the clone waits on nothing but the source. A clone whose source is gone is
 /// claimed, and its copy fails.
-fn next_preparing_statement(current: BranchSchemaVersion) -> SelectStatement {
+fn claimable_select(current: BranchSchemaVersion) -> SelectStatement {
     let mut select = snapshot_select();
     select
         .column((Snapshots::Table, Snapshots::SnapshotKey))
@@ -69,11 +69,32 @@ fn next_preparing_statement(current: BranchSchemaVersion) -> SelectStatement {
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil))
                 .is_null()
                 .or(Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil)).lte(Expr::current_timestamp())),
-        )
+        );
+    select
+}
+
+/// Select and row-lock the highest-priority, oldest eligible Snapshot, passing
+/// over a row another transaction holds so concurrent workers each take a
+/// different one.
+fn next_preparing_statement(current: BranchSchemaVersion) -> SelectStatement {
+    let mut select = claimable_select(current);
+    select
         .order_by((Snapshots::Table, Snapshots::SnapshotPriority), Order::Desc)
         .order_by((Snapshots::Table, Snapshots::CreatedAt), Order::Asc)
         .limit(1)
         .lock_with_tables_behavior(LockType::Update, [SnapshotPreparation::Table], LockBehavior::SkipLocked);
+    select
+}
+
+/// Select and row-lock the Snapshot `id` if it is eligible, waiting for a
+/// transaction that holds its row. Only a brief hold is ever waited out: a
+/// read recording the last use, a metadata update, or a claim, after which the
+/// row is no longer eligible and is not returned.
+fn created_preparation_statement(current: BranchSchemaVersion, id: &Identifier) -> SelectStatement {
+    let mut select = claimable_select(current);
+    select
+        .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
+        .lock_with_tables(LockType::Update, [SnapshotPreparation::Table]);
     select
 }
 
@@ -95,9 +116,30 @@ pub(crate) async fn next_preparing_snapshot(
     claimed_by: LeaseHolder,
     lease_until: DateTime<Utc>,
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-    let current = current_version()?;
+    claim_selected(pool, &next_preparing_statement(current_version()?), claimed_by, lease_until).await
+}
+
+/// Claim the just-created Snapshot `id` in one locked transaction when it is
+/// eligible, resetting its staging branch.
+pub(crate) async fn claim_created_snapshot(
+    pool: &PgPool,
+    id: &Identifier,
+    claimed_by: LeaseHolder,
+    lease_until: DateTime<Utc>,
+) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+    claim_selected(pool, &created_preparation_statement(current_version()?, id), claimed_by, lease_until).await
+}
+
+/// Claim the Snapshot `select` row-locks, if it finds one: stamp the claim and
+/// empty the staging branch in the same transaction.
+async fn claim_selected(
+    pool: &PgPool,
+    select: &SelectStatement,
+    claimed_by: LeaseHolder,
+    lease_until: DateTime<Utc>,
+) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-    let row = next_preparing_statement(current)
+    let row = select
         .to_query()
         .fetch_optional(&mut *transaction)
         .await
@@ -300,6 +342,7 @@ mod tests {
     use crate::snapshot::preparation_claim::{
         claim_statement,
         claimed_preparation_statement,
+        created_preparation_statement,
         next_preparing_statement,
         release_statement,
         shared_claim_statement,
@@ -326,6 +369,22 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("FOR UPDATE OF \"snapshot_preparation\" SKIP LOCKED"), "{sql}");
+    }
+
+    /// A client polling the Snapshot it just created holds its row for the
+    /// length of a last-use update, so the creation's own claim waits it out
+    /// rather than passing over the row (clause 5.16.1.4).
+    #[test]
+    fn the_created_snapshot_claim_selects_it_by_identifier_and_waits_for_its_row() {
+        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
+        let id = "urn:ngsi-ld:Snapshot:created".parse().expect("a valid identifier");
+        let sql = created_preparation_statement(current, &id).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:created'"), "{sql}");
+        assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
+        assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 21"), "{sql}");
+        assert!(sql.contains("\"lease_until\" IS NULL OR"), "a leased preparation is not claimed: {sql}");
+        assert!(sql.ends_with("FOR UPDATE OF \"snapshot_preparation\""), "{sql}");
+        assert!(!sql.contains("SKIP LOCKED"), "{sql}");
     }
 
     #[test]

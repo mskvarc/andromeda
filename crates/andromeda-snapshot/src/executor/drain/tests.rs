@@ -169,3 +169,76 @@ async fn a_clone_of_an_ended_source_is_claimed_at_once() {
         }]
     );
 }
+
+fn created_id() -> Identifier {
+    "urn:ngsi-ld:Snapshot:created".parse().expect("valid snapshot identifier")
+}
+
+/// Clause 5.16.1.4 executes a Snapshot's queries on its creation, so the
+/// creation's pass claims the Snapshot it created before any other waiting
+/// preparation, and still drains the rest.
+#[tokio::test(start_paused = true)]
+async fn the_creation_pass_claims_the_created_snapshot_before_the_other_waiting_preparations() {
+    let store = StoreDouble::new(snapshot(source_id(), SnapshotStatus::Preparing), BranchCondition::Current, ClaimHold::Held)
+        .with_capture(snapshot(created_id(), SnapshotStatus::Preparing));
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let moved = drain_worker(&store, worker)
+        .drain_created(&created_id(), prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the drain completes");
+
+    assert_eq!(moved, 2);
+    assert_eq!(claimed.lock().expect("claim log").as_slice(), [created_id(), source_id()]);
+    assert_eq!(
+        recorded(&store),
+        [(created_id(), SnapshotStatus::Success), (source_id(), SnapshotStatus::Success)]
+    );
+}
+
+/// A created Snapshot whose claim another worker holds when the creation's
+/// pass asks for it is left to that worker; once that claim lapses unfinished,
+/// the next scheduled pass prepares it.
+#[tokio::test(start_paused = true)]
+async fn a_created_snapshot_the_creation_pass_cannot_claim_is_prepared_by_the_next_scheduled_pass() {
+    let store = StoreDouble::new(snapshot(created_id(), SnapshotStatus::Preparing), BranchCondition::Current, ClaimHold::Held);
+    store.hold_elsewhere(&created_id());
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let on_create = drain_worker(&store, worker)
+        .drain_created(&created_id(), prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the creation pass completes");
+    assert_eq!(on_create, 0);
+    assert!(claimed.lock().expect("claim log").is_empty(), "a held preparation is not claimed");
+
+    store.lapse_hold(&created_id());
+    let scheduled = drain_worker(&store, worker)
+        .drain(prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the scheduled pass completes");
+
+    assert_eq!(scheduled, 1);
+    assert_eq!(recorded(&store), [(created_id(), SnapshotStatus::Success)]);
+}
+
+/// A clone created while its source prepares cannot be claimed by its own
+/// creation's pass; the pass that ends the source copies it (clause 5.16.2.4).
+#[tokio::test(start_paused = true)]
+async fn a_clone_created_while_its_source_prepares_is_left_to_the_pass_ending_the_source() {
+    let store = source_and_clone(SnapshotStatus::Preparing);
+    store.hold_elsewhere(&source_id());
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let moved = drain_worker(&store, worker)
+        .drain_created(&clone_id(), prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the creation pass completes");
+
+    assert_eq!(moved, 0);
+    assert!(claimed.lock().expect("claim log").is_empty(), "the clone waits for its source");
+    assert!(store.take_copies().is_empty(), "nothing is copied before the source ends");
+}

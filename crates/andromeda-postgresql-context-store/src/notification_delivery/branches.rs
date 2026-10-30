@@ -80,7 +80,14 @@ pub(crate) fn is_reaped_branch(error: &ContextStoreError) -> bool {
     let ContextStoreError::Database(database_error) = error else {
         return false;
     };
-    matches!(SqlState::of(database_error), Some(SqlState::InvalidSchemaName | SqlState::UndefinedTable))
+    is_reaped_relation(database_error)
+}
+
+/// Whether a statement failed because a schema or relation it names no longer
+/// exists, as it does once the Snapshot branch it read was reaped.
+#[must_use]
+pub(crate) fn is_reaped_relation(error: &sqlx::Error) -> bool {
+    matches!(SqlState::of(error), Some(SqlState::InvalidSchemaName | SqlState::UndefinedTable))
 }
 
 #[cfg(test)]

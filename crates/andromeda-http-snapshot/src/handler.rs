@@ -53,7 +53,7 @@ pub async fn create(
     let context = admit_user_context(&state.engine, context).await.with_snapshot_instance(&uri)?;
     let input = body.admitted(&context).await?;
     let snapshot = state.snapshots.create(input, context).await.with_snapshot_instance(&uri)?;
-    state.snapshots.prepare_now();
+    state.snapshots.prepare_created(&snapshot.id);
 
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Snapshots, &snapshot.id))
 }
@@ -167,7 +167,7 @@ pub async fn clone(
     // refuses an `@context` embedded below its top level all the same.
     let input = body.context_free(context).await?;
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;
-    state.snapshots.prepare_now();
+    state.snapshots.prepare_created(&cloned.id);
 
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Snapshots, &cloned.id))
 }

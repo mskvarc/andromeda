@@ -123,6 +123,24 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life0: 'async_trait,
         Self: 'async_trait;
 
+    /// Claim the preparation of the Snapshot `id` just created, if no worker
+    /// holds it and, for a clone, its source has left `preparing`.
+    ///
+    /// Unlike [`SnapshotStore::next_preparing`], which passes over a row
+    /// another transaction holds, this waits out a brief hold such as a read
+    /// recording the Snapshot's last use, so the creation's own pass is not
+    /// turned away by the client polling the Snapshot it just created.
+    fn claim_created<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+        claimed_by: LeaseHolder,
+        lease_until: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
     /// Renew a preparation lease if it is still held by `claimed_by`.
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,

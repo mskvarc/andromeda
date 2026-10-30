@@ -53,12 +53,12 @@ pub struct ResidencyConfig {
     /// The most tenant runtimes open at once.
     ///
     /// Enforced on every sweep and whenever a cold build adds a runtime. A
-    /// runtime a request currently holds is never evicted, so while more
-    /// tenants than this have requests in flight at once the cache overshoots
-    /// it by at most the number of concurrent requests, trimmed back as they
-    /// complete.
+    /// runtime a request currently holds is never evicted, nor is a runtime
+    /// woken for due work within `woken_lifetime`, so while every other runtime
+    /// is held the cache overshoots it, trimmed back as requests complete and
+    /// those lifetimes end.
     #[schemars(
-        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, so the count can exceed this by the number of concurrent requests until they complete."
+        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end."
     )]
     pub max_resident: NonZeroUsize,
     /// How often idle and orphaned runtimes are swept, in human-readable form
@@ -77,11 +77,13 @@ pub struct ResidencyConfig {
     )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in
-    /// human-readable form (`"1m"`). It is the first idle-eviction candidate
-    /// yet keeps this much idle life, so it never displaces a runtime a
-    /// request touched. Below `idle_eviction_after` to have that effect.
+    /// human-readable form (`"1m"`). For this long it is neither evicted as
+    /// idle nor unloaded to make room, so the work it was woken for runs; after
+    /// it, it is the first idle-eviction candidate, so it never displaces a
+    /// runtime a request touched. Below `idle_eviction_after` to have that
+    /// effect.
     #[schemars(
-        description = "How long a tenant loaded for its due work stays loaded. Such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
+        description = "How long a tenant loaded for its due work stays loaded. For this long it is not unloaded, not even to make room for another tenant, so its due work runs. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
     )]
     pub woken_lifetime: HumanDuration,
     /// The most dormant tenants one wake pass opens. Woken runtimes are

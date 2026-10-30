@@ -69,6 +69,13 @@ impl WakerPolicy {
         self.idle_ttl.checked_sub(self.wake_residency).unwrap_or(Duration::ZERO)
     }
 
+    /// How long a woken runtime is guaranteed to stay resident to do its work,
+    /// spared both the idle sweep and an unload to make room.
+    #[must_use]
+    pub const fn wake_residency(&self) -> Duration {
+        self.wake_residency
+    }
+
     /// When a tenant whose probe failed should be re-probed.
     ///
     /// A failed probe records a retry instant rather than `None`: leaving it

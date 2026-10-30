@@ -145,7 +145,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             Entry::Vacant(vacant) => {
                 let cached = {
                     let origin = self.new_origin(&runtime);
-                    CachedRuntime::unleased(state, runtime, database, existence, origin)
+                    CachedRuntime::woken(state, runtime, database, existence, origin, self.waker.wake_residency())
                 };
                 cached.backdate(self.waker.woken_backdate());
                 drop(vacant.insert(cached));

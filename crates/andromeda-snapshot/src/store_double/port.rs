@@ -183,6 +183,20 @@ impl SnapshotStore for StoreDouble {
         Box::pin(async move { Ok(job) })
     }
 
+    fn claim_created<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+        _claimed_by: LeaseHolder,
+        _lease_until: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+    {
+        let job = self.claim_created(id);
+        Box::pin(async move { Ok(job) })
+    }
+
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,
         _id: &'life1 Identifier,

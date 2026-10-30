@@ -114,6 +114,27 @@ impl StoreDouble {
         }
     }
 
+    /// Have another worker hold the waiting Snapshot `id`'s claim.
+    pub(crate) fn hold_elsewhere(&self, id: &Identifier) {
+        self.move_stage(id, Stage::Waiting, Stage::Claimed);
+    }
+
+    /// Let the claim another worker holds on `id` lapse unfinished, as its
+    /// lease expiring does.
+    pub(crate) fn lapse_hold(&self, id: &Identifier) {
+        self.move_stage(id, Stage::Claimed, Stage::Waiting);
+    }
+
+    /// Move the Snapshot `id` from stage `from` to stage `to`.
+    fn move_stage(&self, id: &Identifier, from: Stage, to: Stage) {
+        let mut entries = self.entries();
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.snapshot.id == *id && entry.stage == from)
+            .expect("the double holds the Snapshot in the expected stage");
+        entry.stage = to;
+    }
+
     /// How often a preparation lease renewal was asked for.
     pub(crate) fn renewals(&self) -> u32 {
         self.renewals.load(Ordering::SeqCst)
@@ -124,6 +145,12 @@ impl StoreDouble {
         if let Ok(mut entries) = self.entries.lock() {
             entries.push(Entry::new(clone, Some(source.clone()))); // clone: the stored job owns its source identifier.
         }
+        self
+    }
+
+    /// Also hold `snapshot`, a capture job.
+    pub(crate) fn with_capture(self, snapshot: Snapshot) -> StoreDouble {
+        self.entries().push(Entry::new(snapshot, None));
         self
     }
 
@@ -194,15 +221,25 @@ impl StoreDouble {
     /// Claim the first waiting Snapshot whose clone source, if any, has left
     /// `preparing` or is gone -- the store's claim predicate.
     fn claim_next(&self) -> Option<SnapshotPreparationJob> {
+        self.claim_first(|_| true)
+    }
+
+    /// Claim the created Snapshot `id` under the same predicate.
+    fn claim_created(&self, id: &Identifier) -> Option<SnapshotPreparationJob> {
+        self.claim_first(|entry| entry.snapshot.id == *id)
+    }
+
+    /// Claim the first claimable Snapshot `wanted` accepts.
+    fn claim_first(&self, wanted: impl Fn(&Entry) -> bool) -> Option<SnapshotPreparationJob> {
         let mut entries = self.entries();
         let source_preparing = |source: &Identifier, entries: &[Entry]| {
             entries
                 .iter()
                 .any(|entry| entry.snapshot.id == *source && entry.status() == SnapshotStatus::Preparing)
         };
-        let position = entries
-            .iter()
-            .position(|entry| entry.stage == Stage::Waiting && entry.clone_source.as_ref().is_none_or(|source| !source_preparing(source, &entries)))?;
+        let position = entries.iter().position(|entry| {
+            wanted(entry) && entry.stage == Stage::Waiting && entry.clone_source.as_ref().is_none_or(|source| !source_preparing(source, &entries))
+        })?;
         let entry = &mut entries[position];
         entry.stage = Stage::Claimed;
         Some(SnapshotPreparationJob {
