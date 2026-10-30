@@ -1,5 +1,11 @@
 # The default profile is nextest's own; the profiles below belong to andromeda-test-suite.
 
+# An exclusive registration conflicts with every exclusive or redirect registration of the same broker that matches its
+# entity id and any of its Attributes, whatever the entity type (ETSI GS CIM 009 v1.9.1 clauses 4.3.6.3 and 5.9.2.4), so
+# the interoperability cases cannot isolate their registrations from one another and run one at a time.
+[test-groups]
+interoperability = { max-threads = 1 }
+
 # Every test runs in a process of its own beside every other, against the stack its test target uses. A failure is
 # never retried: an intermittent failure is a defect to find, in the test's isolation or in the broker.
 [profile.suite]
@@ -12,11 +18,19 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 status-level = "fail"
 final-status-level = "fail"
 
+[[profile.suite.overrides]]
+filter = 'binary_id(andromeda-test-suite::interoperability)'
+test-group = 'interoperability'
+
 [profile.suite-verdict]
 retries = 0
 fail-fast = false
 test-threads = 64
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+[[profile.suite-verdict.overrides]]
+filter = 'binary_id(andromeda-test-suite::interoperability)'
+test-group = 'interoperability'
 
 [profile.suite-verdict.junit]
 path = "junit.xml"
