@@ -57,13 +57,22 @@ impl NotificationProcessor {
     /// Notify one subscription of `change` and record the outcome on it
     /// (clause 5.8.6).
     ///
-    /// `None` is answered when the slot was refused, so no endpoint was
-    /// addressed at all: either the subscription's clause 5.2.12 `throttling`
+    /// `None` is answered when no endpoint was addressed at all: the
+    /// subscription expired before the notification was generated, or the
+    /// slot was refused because the subscription's clause 5.2.12 `throttling`
     /// window or its endpoint's Table 5.2.15-1 `cooldown` window swallowed the
     /// notification.
     pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> Option<DeliveryResult> {
         let subscription_id = &compiled_sub.id;
-        let gate = NotificationSlotGate::at(Utc::now(), compiled_sub.cadence(), compiled_sub.endpoint_cooldown);
+        // Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
+        // The match judged the subscription in force when the change was
+        // evaluated, so the send is admitted again at the instant its
+        // `notifiedAt` carries.
+        let generated_at = Utc::now();
+        if !compiled_sub.standing.notifies_at(generated_at) {
+            return None;
+        }
+        let gate = NotificationSlotGate::at(generated_at, compiled_sub.cadence(), compiled_sub.endpoint_cooldown);
         // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
         // this notification can be rendered under. It is resolved before the
         // slot is claimed so that failure takes no throttling slot.
@@ -131,7 +140,7 @@ impl NotificationProcessor {
             debug!("Subscription {} produced no notification data for entity {}", subscription_id, event.entity_id);
             return Some(DeliveryResult::TerminalFailure);
         };
-        let request = match delivery.notification(data) {
+        let request = match delivery.notification(data, generated_at) {
             Ok(request) => request,
             Err(error) => {
                 error!("Failed to write the notification for {}: {}", subscription_id, error);

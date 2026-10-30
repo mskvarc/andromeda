@@ -287,7 +287,8 @@ impl SubscriptionForwardingService {
             context: delivery.body_context(),
         };
         let written = self.written_relay(&compiled, &subscription, &local_context, &data, shape).await?;
-        let request = delivery.notification(written).map_err(ForwardingInvariant::WrittenNotification)?;
+        let generated_at = Utc::now();
+        let request = delivery.notification(written, generated_at).map_err(ForwardingInvariant::WrittenNotification)?;
         // Clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown` gate every
         // notification the local subscription sends, and a re-assembled copy is
         // no less one of them: it goes to the subscriber's own endpoint, under
@@ -296,7 +297,7 @@ impl SubscriptionForwardingService {
         // subscription's other notifications. The slot is claimed only once
         // the copy is ready to send, so a copy that failed before it was sent
         // spends no slot and the sender's retry is delivered.
-        let gate = NotificationSlotGate::at(Utc::now(), compiled.cadence(), compiled.endpoint_cooldown);
+        let gate = NotificationSlotGate::at(generated_at, compiled.cadence(), compiled.endpoint_cooldown);
         let record = match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
             NotificationSlot::Claimed(record) => record,
             NotificationSlot::Suppressed => {

@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
     notification_media_type::NotificationMediaType,
 };
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 use url::Url;
@@ -161,24 +161,28 @@ impl<'a> NotificationDelivery<'a> {
         }
     }
 
-    /// The clause 5.3.1 Notification carrying `data`, written for this
-    /// delivery, and everything a transport reads to send it.
+    /// The clause 5.3.1 Notification carrying `data`, generated at
+    /// `notified_at`, written for this delivery, and everything a transport
+    /// reads to send it.
     ///
-    /// `data` was written for the same delivery, so it carries the body's
-    /// `@context` wherever its shape asks; the envelope carries it only as
-    /// [`envelope_context`](Self::envelope_context) says.
+    /// `notified_at` is the instant the caller admitted the notification at,
+    /// so a subscription judged in force then never carries a `notifiedAt` at
+    /// or after its `expiresAt` (clause 5.8.1.4), however long the payload
+    /// took to build. `data` was written for the same delivery, so it carries
+    /// the body's `@context` wherever its shape asks; the envelope carries it
+    /// only as [`envelope_context`](Self::envelope_context) says.
     ///
     /// # Errors
     ///
     /// Returns [`NotificationWriteError`] when the notification identifier
     /// cannot be minted or the notification cannot be written.
-    pub fn notification(&self, data: NotificationData) -> Result<DeliveryRequest, NotificationWriteError> {
+    pub fn notification(&self, data: NotificationData, notified_at: DateTime<Utc>) -> Result<DeliveryRequest, NotificationWriteError> {
         let id = Identifier::from(NotificationId::mint()?);
         let notification = Notification::builder()
             .context(self.envelope_context())
             .id(&id)
             .subscription_id(self.subscription_id)
-            .notified_at(Utc::now())
+            .notified_at(notified_at)
             .data(data)
             .build();
         Ok(self.assemble(NotificationBody::written(&notification)?))
@@ -233,6 +237,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName, time::date_time::NgsiLdDateTime};
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification::NotificationData, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use chrono::{TimeZone, Utc};
     use iri_rs::IriBuf;
     use serde_json::{json, value::RawValue};
     use std::str::FromStr;
@@ -390,7 +395,7 @@ mod tests {
             .context(&context)
             .subscription_id(&subscription)
             .build()
-            .notification(data)
+            .notification(data, Utc::now())
             .expect("the notification is written")
     }
 
@@ -511,11 +516,37 @@ mod tests {
             .context(&context)
             .subscription_id(&subscription)
             .build()
-            .notification(NotificationData::written(RawValue::from_string("[]".to_owned()).expect("written JSON")))
+            .notification(
+                NotificationData::written(RawValue::from_string("[]".to_owned()).expect("written JSON")),
+                Utc::now(),
+            )
             .expect("a written notification");
         let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("the notification is JSON");
         let notified_at = written["notifiedAt"].as_str().expect("notifiedAt is a string");
         assert!(notified_at.parse::<NgsiLdDateTime>().is_ok(), "{notified_at}");
+    }
+
+    /// Clause 5.8.1.4: the notification carries the instant it was admitted
+    /// at, so a subscription judged in force then is never notified at or
+    /// after its `expiresAt` however late the notification is written.
+    #[test]
+    fn a_notification_carries_the_instant_it_was_admitted_at() {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let context = context_of(None);
+        let admitted_at = Utc.with_ymd_and_hms(2026, 10, 30, 12, 0, 0).single().expect("valid instant");
+        let request = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .notification(
+                NotificationData::written(RawValue::from_string("[]".to_owned()).expect("written JSON")),
+                admitted_at,
+            )
+            .expect("a written notification");
+        let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("the notification is JSON");
+        assert_eq!(written["notifiedAt"], json!("2026-10-30T12:00:00Z"));
     }
 
     #[test]

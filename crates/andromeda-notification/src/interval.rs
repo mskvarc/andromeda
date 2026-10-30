@@ -149,6 +149,15 @@ impl IntervalNotificationOperation {
     /// at `cutoff`, then send it its notification and record the outcome
     /// (clause 5.8.6).
     async fn notify(&self, sub: &Subscription, entities: Vec<EntityState>, cutoff: DateTime<Utc>) {
+        // Clause 5.8.1.4: once `expiresAt` is reached no notification is sent.
+        // The sweep selected the subscription as in force at `cutoff`, but the
+        // matching read may have outlasted that, so the send is admitted
+        // again at the instant the notification is generated at, the one its
+        // `notifiedAt` carries.
+        let generated_at = Utc::now();
+        if !sub.lifecycle.standing.notifies_at(generated_at) {
+            return;
+        }
         // The slot is claimed only once a notification is certain to be sent.
         // Table 5.2.15-1: a periodic subscription carries no `throttling`
         // (Table 5.2.12-1 makes the pair mutually exclusive), but its
@@ -214,7 +223,7 @@ impl IntervalNotificationOperation {
                 return;
             }
         };
-        let request = match delivery.notification(data) {
+        let request = match delivery.notification(data, generated_at) {
             Ok(request) => request,
             Err(e) => {
                 error!("Failed to write notification for {}: {}", sub.id, e);
