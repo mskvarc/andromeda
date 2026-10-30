@@ -23,13 +23,23 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
-    jsonb::jsonb_key_exists,
-    literal::{false_literal, text_literal},
+    jsonb::{jsonb_key_exists, jsonb_path_query},
+    literal::{false_literal, int_literal, text_literal},
     operator::present_and,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
+use std::slice;
+
+/// The alias one element of a property is read under, which is also the name
+/// of its one column.
+const ELEMENT: &str = "element";
+
+/// The lax jsonpath reaching each element of an array, and a value that is not
+/// an array as itself: lax mode wraps a non-array in a one-element array before
+/// an array accessor applies.
+const EVERY_ELEMENT: &str = "$[*]";
 
 /// The registration's `context_source_properties` JSONB document, read fresh
 /// each time it opens an extraction.
@@ -209,7 +219,7 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
     let extract = csr_value_extract(path);
 
     match rhs {
-        CompareValue::Scalar(scalar) => Condition::all().add(csr_scalar_comparison(extract, scalar, membership.as_cmp_op())),
+        CompareValue::Scalar(scalar) => csr_membership_condition(extract, membership, slice::from_ref(scalar)),
         CompareValue::Range { min, max } => {
             let guard = present(extract.clone()); // clone: the bounds lift the same extraction
             let (stored, datatype) = csr_reading(extract, min);
@@ -222,20 +232,36 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
             };
             Condition::all().add(present_and(guard, value))
         }
-        CompareValue::ValueList(values) => {
-            let guard = present(extract.clone()); // clone: every arm lifts the same extraction
-            let disjunction = values.iter().fold(Condition::any(), |cond, v| {
-                let (stored, datatype) = csr_reading(extract.clone(), v); // clone: every arm reads the one extraction
-                let lifted = lift_comparison(v, stored, datatype);
-                cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
-            });
-            let value: SimpleExpr = match membership {
-                SetMembership::Within => disjunction.into(),
-                SetMembership::Outside => disjunction.not().into(),
-            };
-            Condition::all().add(present_and(guard, value))
-        }
+        CompareValue::ValueList(values) => csr_membership_condition(extract, membership, values),
     }
+}
+
+/// Compile `==` or `!=` against one operand or a value list.
+///
+/// Clause 4.9 makes an Equal term hold when the operand "is included in the
+/// target value, if the latter is an array", and an Unequal term when it "is
+/// not included", so an array property (`operations`, `scope`, `datasetId`) is
+/// compared element by element. A property that is not an array is read as the
+/// one element it is. `!=` is the complement of `==` over a present property,
+/// so a value whose data type differs from the operand's is unequal to it.
+fn csr_membership_condition(extract: SimpleExpr, membership: SetMembership, values: &[Scalar]) -> Condition {
+    let guard = present(extract.clone()); // clone: the elements are read from the same extraction
+    let element = || SimpleExpr::from(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
+    let equal_to_one = values.iter().fold(Condition::any(), |cond, value| {
+        let (stored, datatype) = csr_reading(element(), value);
+        let lifted = lift_comparison(value, stored, datatype);
+        cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
+    });
+    let mut scan = Query::select();
+    scan.expr(int_literal(1))
+        .from_function(jsonb_path_query(extract, EVERY_ELEMENT), Alias::new(ELEMENT))
+        .cond_where(equal_to_one);
+    let included = SeaExpr::exists(scan);
+    let value = match membership {
+        SetMembership::Within => included,
+        SetMembership::Outside => included.not(),
+    };
+    Condition::all().add(present_and(guard, value))
 }
 
 /// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `context_source_properties`.
@@ -375,6 +401,38 @@ mod tests {
         assert!(sql.contains("->> ('@value')"), "{sql}");
         assert!(sql.contains("->> ('@type')"), "{sql}");
         assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
+    }
+
+    /// Clause 4.9: an Equal term holds when its value "is included in the
+    /// target value, if the latter is an array", so `operations` is compared
+    /// element by element, and a scalar property as the one element it is.
+    #[test]
+    fn an_equal_term_reads_an_array_property_by_membership() {
+        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\"");
+        assert!(sql.contains("IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
+        assert!(
+            sql.contains("'$[*]') AS \"element\" WHERE (\"element\".\"element\" #>> ('{}')) = 'queryEntity'"),
+            "{sql}"
+        );
+        assert!(!sql.contains("NOT EXISTS"), "{sql}");
+    }
+
+    /// Clause 4.9: an Unequal term holds when its value "is not included in
+    /// the target value, if the latter is an array".
+    #[test]
+    fn an_unequal_term_holds_when_no_element_of_an_array_property_is_its_value() {
+        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"!=\"queryEntity\"");
+        assert!(sql.contains("IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
+    }
+
+    /// Clause 4.9: a value list holds when the array "includes any of the
+    /// Query Term values", so every value is compared within one element scan.
+    #[test]
+    fn a_value_list_reads_an_array_property_in_one_element_scan() {
+        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\",\"retrieveEntity\"");
+        assert_eq!(sql.matches("jsonb_path_query(").count(), 1, "{sql}");
+        assert!(sql.contains("= 'queryEntity' OR "), "{sql}");
+        assert!(sql.contains("= 'retrieveEntity'"), "{sql}");
     }
 
     /// The same rule for `!=` over a range and over a value list.
