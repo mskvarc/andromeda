@@ -6,8 +6,9 @@
 //! an object is an instance of the family its `type` names or its value
 //! member implies, a bare geometry a concise `GeoProperty`, anything else the
 //! value of a concise Property; an array is the instances of a multi-attribute
-//! or one value; the NGSI-LD Null in place of the whole member is that Null. A
-//! node no clause admits is refused where it stands. This is the reading every
+//! or one value; the NGSI-LD Null in place of the whole member, in any spelling
+//! that expands to it, is that Null. A node no clause admits is refused where
+//! it stands. This is the reading every
 //! compact document gets -- a request, a peer's answer, a notification, a
 //! compacted entity -- so they cannot disagree on what a member is.
 //!
@@ -70,7 +71,7 @@ impl Attribute {
 
 /// Read one attribute member on the stack the caller left.
 fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<AttributeValue, ReadError<'n, N>> {
-    if member.is_ngsi_ld_null() {
+    if member.is_member_ngsi_ld_null() {
         return Ok(AttributeValue::NgsiLdNull);
     }
     match member.shape() {

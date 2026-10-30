@@ -18,14 +18,14 @@ use crate::{
         linked_entities::{first_target_entities, list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
         negotiated_instance::NegotiatedInstance,
-        notified_member::{InstanceReport, NullValue, previous_value_of},
+        notified_member::{InstanceReport, previous_value_of},
         reified_member::Reification,
         value_body::ValueBody,
     },
     language_negotiation::negotiated_entry,
     version::fallback::InstanceMember,
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_null_encoding::NullEncoding, attribute_type::AttributeType};
 use andromeda_ngsi_ld_model::attribute::{geo_property_value::GeoPropertyValue, instance::Attribute};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde::{
@@ -62,7 +62,7 @@ impl<'a> ReifiedInstance<'a> {
     }
 
     /// The NGSI-LD Null a reported deletion writes in place of the value.
-    const fn null(&self) -> Option<NullValue> {
+    const fn null(&self) -> Option<NullEncoding> {
         self.report.null(self.written_family())
     }
 
@@ -163,22 +163,27 @@ impl<'a> ReifiedInstance<'a> {
     /// object would be read back as another family -- a Property holding a
     /// geometry would be taken for a `GeoProperty` (clause 5.2.5). Clause
     /// 4.5.2.3 lists `type` among the Optional members of the concise object
-    /// form. The NGSI-LD Null a reported deletion writes in place of the value
-    /// is the value of no family and leaves the concise form typeless.
+    /// form.
     fn declares_type(&self, generalized: Option<&GeneralizedValue>) -> bool {
         match self.reification {
             Reification::Normalized => true,
-            Reification::Concise => self.null().is_none() && self.typeless_family(generalized) != self.written_family(),
+            Reification::Concise => self.typeless_family(generalized) != self.written_family(),
         }
     }
 
     /// The family the instance's typeless object reads back as. Every family
     /// but a Property is named by its own value member; a Property's `value`
     /// names a `GeoProperty` when it holds a geometry, and so does the value a
-    /// version fallback moved under `value`.
+    /// version fallback moved under `value`. The NGSI-LD Null in place of the
+    /// value is no geometry, so a deleted `GeoProperty`'s `value` names a
+    /// Property, whether the deletion is reported or held as the Null.
     fn typeless_family(&self, generalized: Option<&GeneralizedValue>) -> AttributeType {
+        if self.null().is_some() {
+            return deletion_typeless_family(self.written_family());
+        }
         match self.attribute {
             Attribute::Property(property) => ValueBody(&property.value).typeless_family(),
+            Attribute::GeoProperty(geo_property) if geo_property.value == GeoPropertyValue::Null => deletion_typeless_family(self.written_family()),
             Attribute::VocabProperty(_) | Attribute::LanguageProperty(_) | Attribute::JsonProperty(_) | Attribute::ListProperty(_) => {
                 generalized.map_or(self.written_family(), GeneralizedValue::typeless_family)
             }
@@ -328,6 +333,23 @@ impl ReifiedInstance<'_> {
     }
 }
 
+/// The family a typeless object whose value member holds the NGSI-LD Null
+/// reads back as under clause 4.5.2.3: the one that value member implies,
+/// which is `family` itself for every family but a `GeoProperty`, whose
+/// `value` implies a Property.
+const fn deletion_typeless_family(family: AttributeType) -> AttributeType {
+    match family {
+        AttributeType::GeoProperty => AttributeType::Property,
+        AttributeType::Property
+        | AttributeType::Relationship
+        | AttributeType::VocabProperty
+        | AttributeType::LanguageProperty
+        | AttributeType::JsonProperty
+        | AttributeType::ListProperty
+        | AttributeType::ListRelationship => family,
+    }
+}
+
 /// What clause 4.5.2.3 collapses a bare instance to.
 enum BareValue<'a> {
     /// A Property's value, or the value of a family reformatted as one.
@@ -335,7 +357,7 @@ enum BareValue<'a> {
     /// A `GeoProperty`'s geometry.
     Geometry(&'a GeoPropertyValue),
     /// The Null a reported deletion puts in place of either.
-    Null(NullValue),
+    Null(NullEncoding),
 }
 
 impl Serialize for BareValue<'_> {

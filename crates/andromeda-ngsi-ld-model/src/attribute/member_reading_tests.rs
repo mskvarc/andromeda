@@ -214,6 +214,21 @@ fn a_bare_null_member_reads_as_the_ngsi_ld_null() {
     assert!(matches!(read("owner", &json!("urn:ngsi-ld:null")), Ok(AttributeValue::NgsiLdNull)));
 }
 
+/// Clause 4.5.0 with JSON-LD 1.1 expansion: the Null as the one element of
+/// an array, or as the `@id` of a node reference, expands to the same Null,
+/// so it stands for the whole member as the bare string does.
+#[test]
+fn every_spelling_of_the_null_in_place_of_the_member_reads_as_the_ngsi_ld_null() {
+    for spelling in [
+        json!(["urn:ngsi-ld:null"]),
+        json!({"@id": "urn:ngsi-ld:null"}),
+        json!({"id": "urn:ngsi-ld:null"}),
+        json!([{"@id": "urn:ngsi-ld:null"}]),
+    ] {
+        assert!(matches!(read("owner", &spelling), Ok(AttributeValue::NgsiLdNull)), "{spelling}");
+    }
+}
+
 /// A `GeoProperty` whose value is the NGSI-LD Null (clause 4.5.0).
 #[test]
 fn a_geo_property_null_value_reads_typed() {

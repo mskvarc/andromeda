@@ -23,11 +23,11 @@ use crate::{
     entity_body::{
         instance_fallback::kept_instance,
         member_walk::MemberWalk,
-        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember, NullValue},
+        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember},
         reified_instance::ReifiedInstance,
     },
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_null_encoding::NullEncoding, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::{Serialize, Serializer};
@@ -114,7 +114,9 @@ impl Serialize for ReifiedMember<'_> {
             },
             // Clause 5.8.6: the member reported deleted is written bare, as the
             // short form names no family.
-            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => NullValue::Uri.serialize(serializer),
+            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => {
+                NullEncoding::Uri.serialize(serializer)
+            }
             MemberInstances::Notified(NotifiedMember::One(instance)) => self.notified(*instance, InstanceStanding::Alone).serialize(serializer),
             MemberInstances::Notified(NotifiedMember::Many(instances)) => match self.kept(instances, |instance| instance.source.dataset_id()) {
                 Some(kept) => self.notified(*kept, InstanceStanding::Alone).serialize(serializer),

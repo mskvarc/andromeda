@@ -74,3 +74,45 @@ fn a_geometry_is_read_from_its_text() {
     let written = piece.member("value").expect("the member").read_geometry().expect("readable");
     assert!(written.is_ok(), "{written:?}");
 }
+
+/// Whether `value`, written in place of a whole attribute member, is the
+/// NGSI-LD Null.
+fn is_member_null(value: &Value) -> bool {
+    let text = raw(value);
+    andromeda_json_literal::piece::JsonPiece::new(&text).is_member_ngsi_ld_null()
+}
+
+/// Clause 4.5.0 with JSON-LD 1.1 expansion: an array of one element expands
+/// as the element, and a node reference to the Null is the Null, so every
+/// such spelling of a whole member is the Null.
+#[test]
+fn every_spelling_expanding_to_the_null_is_a_member_null() {
+    for spelling in [
+        json!("urn:ngsi-ld:null"),
+        json!(["urn:ngsi-ld:null"]),
+        json!({"@id": "urn:ngsi-ld:null"}),
+        json!({"id": "urn:ngsi-ld:null"}),
+        json!([{"@id": "urn:ngsi-ld:null"}]),
+    ] {
+        assert!(is_member_null(&spelling), "{spelling}");
+    }
+}
+
+/// The Null beside anything else, or under any other member, is no member
+/// Null: an object naming more than its `@id` is a node, and an array of two
+/// elements is two values.
+#[test]
+fn the_null_beside_other_data_is_no_member_null() {
+    for spelling in [
+        json!(["urn:ngsi-ld:null", "urn:ngsi-ld:null"]),
+        json!({"@id": "urn:ngsi-ld:null", "type": "Thing"}),
+        json!({"value": "urn:ngsi-ld:null"}),
+        json!({"object": "urn:ngsi-ld:null"}),
+        json!([["urn:ngsi-ld:null"]]),
+        json!("https://uri.etsi.org/ngsi-ld/null"),
+        json!(null),
+        json!([]),
+    ] {
+        assert!(!is_member_null(&spelling), "{spelling}");
+    }
+}

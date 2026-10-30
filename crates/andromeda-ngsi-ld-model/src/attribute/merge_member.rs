@@ -87,7 +87,7 @@ impl Serialize for MergeMember {
 
 /// Read one merge member on the stack the caller left.
 fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<MergeMember, ReadError<'n, N>> {
-    if member.is_ngsi_ld_null() {
+    if member.is_member_ngsi_ld_null() {
         return Ok(MergeMember::NgsiLdNull);
     }
     match member.shape() {

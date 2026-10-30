@@ -21,6 +21,7 @@ mod validated_name;
 
 pub mod aggr_method;
 pub mod attribute_name;
+pub mod attribute_null_encoding;
 pub mod attribute_type;
 pub mod coerced_term;
 pub mod constant_string;

@@ -30,7 +30,11 @@ fn date_time(text: &str) -> Value {
 
 /// Every written document, by what it exercises.
 pub(crate) fn written_documents() -> Vec<(&'static str, Value)> {
-    vec![("temporal-evolution", temporal_evolution()), ("merge-deletions", merge_deletions())]
+    vec![
+        ("temporal-evolution", temporal_evolution()),
+        ("merge-deletions", merge_deletions()),
+        ("value-deletions", value_deletions()),
+    ]
 }
 
 /// A Temporal Evolution of every family the temporal API renders.
@@ -120,5 +124,22 @@ fn merge_deletions() -> Value {
         }],
         (user("readings")): [{"@type": [core("ListProperty")], (core("hasValueList")): [{"@list": [{"@value": "urn:ngsi-ld:null"}]}]}],
         (user("owner")): [{"@type": [core("Relationship")], (core("hasObject")): [{"@id": "urn:ngsi-ld:null"}], (core("observedAt")): date_time("urn:ngsi-ld:null")}]
+    }])
+}
+
+/// The deletion of each family's whole value (clause 4.5.0), as a merge
+/// writes it and a relayed notification reports it.
+fn value_deletions() -> Value {
+    json!([{
+        "@id": "urn:ngsi-ld:Vehicle:deletions",
+        "@type": [user("Vehicle")],
+        (user("removed")): [{"@value": "urn:ngsi-ld:null"}],
+        (user("speed")): [{"@type": [core("Property")], (core("hasValue")): [{"@value": "urn:ngsi-ld:null"}]}],
+        (user("owner")): [{"@type": [core("Relationship")], (core("hasObject")): [{"@id": "urn:ngsi-ld:null"}]}],
+        (user("readings")): [{"@type": [core("ListProperty")], (core("hasValueList")): [{"@list": [{"@value": "urn:ngsi-ld:null"}]}]}],
+        (user("name")): [{"@type": [core("LanguageProperty")], (core("hasLanguageMap")): [{"@value": "urn:ngsi-ld:null"}]}],
+        (user("rooms")): [{"@type": [core("ListRelationship")], (core("hasObjectList")): [{"@list": [{"@value": "urn:ngsi-ld:null"}]}]}],
+        (user("category")): [{"@type": [core("VocabProperty")], (core("hasVocab")): [{"@id": "urn:ngsi-ld:null"}]}],
+        (user("config")): [{"@type": [core("JsonProperty")], (core("hasJSON")): [{"@type": "@json", "@value": "urn:ngsi-ld:null"}]}]
     }])
 }

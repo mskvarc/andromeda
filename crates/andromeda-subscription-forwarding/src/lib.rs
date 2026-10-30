@@ -69,6 +69,21 @@ pub mod receiver;
 pub mod reduced_copy;
 /// Tearing down the copies held at a removed registration's context source.
 mod registration_removal;
+/// Relaying one notified entity as the inbound side does, for the tests.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod relay_fixture;
+/// What a relayed notification makes of the deletions its source reports.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod relayed_deletion_tests;
 /// The entities of a relayed copy beside what their source reported of the
 /// change.
 mod relayed_entities;

@@ -9,6 +9,7 @@
 
 mod contexts;
 mod corpus;
+mod deletions;
 mod documents;
 mod names;
 mod oracle;

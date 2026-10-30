@@ -33,6 +33,7 @@ pub mod merge_instance;
 pub mod merge_member;
 pub mod merge_value;
 pub mod nested_null;
+pub mod null_value;
 pub mod object_list;
 pub mod one_or_many;
 pub mod patched;

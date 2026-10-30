@@ -253,6 +253,80 @@ fn a_concise_previous_object_list_holds_bare_uris() {
     );
 }
 
+/// Clause 4.5.2.3: a concise instance names its family in `type` when its
+/// typeless object would be read back as another family. The Null in a
+/// `GeoProperty`'s `value` is no geometry, so a deleted `GeoProperty` that
+/// carries more than its value keeps its `type`, where a deleted Property
+/// does not need one.
+#[test]
+fn a_concise_deleted_geo_property_carrying_more_than_its_value_keeps_its_type() {
+    let notified = entity(json!({
+        "id": "urn:ngsi-ld:A:1",
+        "type": "A",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}, "datasetId": "urn:ngsi-ld:Dataset:gps"},
+        "speed": {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:gps"}
+    }));
+    let document = rendered(&notified, entity_deletion(None), ResponseFormat::Concise);
+    assert_eq!(
+        document["location"],
+        json!({"type": "GeoProperty", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"})
+    );
+    assert_eq!(document["speed"], json!({"value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}));
+}
+
+/// Clause 5.8.6 provides the `datasetId` of a deleted attribute, and clause
+/// 4.5.4 writes one only in the `dataset` map: a deleted single instance of a
+/// non-default `datasetId` is the map holding it alone, where the default
+/// instance stays the bare Null and a held instance its bare value.
+#[test]
+fn a_simplified_deleted_single_instance_of_a_dataset_keeps_its_dataset_id() {
+    let notified = entity(json!({
+        "id": "urn:ngsi-ld:A:1",
+        "type": "A",
+        "speed": {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:gps"},
+        "name": {"type": "LanguageProperty", "languageMap": {"en": "bus"}, "datasetId": "urn:ngsi-ld:Dataset:gps"},
+        "rooms": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Room:1"}], "datasetId": "urn:ngsi-ld:Dataset:gps"},
+        "colour": {"type": "Property", "value": "red"}
+    }));
+    let deleted = rendered(&notified, entity_deletion(None), ResponseFormat::Simplified);
+    assert_eq!(deleted["speed"], json!({"dataset": {"urn:ngsi-ld:Dataset:gps": "urn:ngsi-ld:null"}}));
+    assert_eq!(
+        deleted["name"],
+        json!({"dataset": {"urn:ngsi-ld:Dataset:gps": {"languageMap": {"@none": "urn:ngsi-ld:null"}}}})
+    );
+    assert_eq!(deleted["rooms"], json!({"dataset": {"urn:ngsi-ld:Dataset:gps": ["urn:ngsi-ld:null"]}}));
+    assert_eq!(deleted["colour"], json!("urn:ngsi-ld:null"));
+    let stamped = StampedInstants::default();
+    let held = NotificationEntity::new(&notified, &stamped, ResponseFormat::Simplified);
+    assert_eq!(serde_json::to_value(held).expect("the walk writes it")["speed"], json!(1));
+}
+
+/// A relayed deletion holds its family's Null as its value: written in the
+/// simplified representation it names its `datasetId` as a reported deletion
+/// does, and in the concise one a `GeoProperty` keeps its `type`.
+#[test]
+fn a_held_deletion_of_a_dataset_is_written_as_a_reported_one() {
+    let relayed = entity(json!({
+        "id": "urn:ngsi-ld:A:1",
+        "type": "A",
+        "speed": {"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"},
+        "location": {"type": "GeoProperty", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}
+    }));
+    let projection = Projection::default();
+    let written = |format| {
+        serde_json::to_value(NotificationEntity::relayed(&relayed, format, StructuralProjection::from(&projection), None)).expect("the walk writes it")
+    };
+    let simplified = written(ResponseFormat::Simplified);
+    assert_eq!(simplified["speed"], json!({"dataset": {"urn:ngsi-ld:Dataset:gps": "urn:ngsi-ld:null"}}));
+    assert_eq!(simplified["location"], json!({"dataset": {"urn:ngsi-ld:Dataset:gps": "urn:ngsi-ld:null"}}));
+    let concise = written(ResponseFormat::Concise);
+    assert_eq!(
+        concise["location"],
+        json!({"type": "GeoProperty", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"})
+    );
+    assert_eq!(concise["speed"], json!({"value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}));
+}
+
 /// A member written concisely is the family it abbreviates, and is reported
 /// deleted in that family's value member, in the representation asked for.
 #[test]

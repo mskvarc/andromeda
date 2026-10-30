@@ -23,7 +23,7 @@ use crate::{
         instance_fallback::kept_instance,
         linked_entities::{list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
-        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember, NullValue},
+        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember},
         object_list_body::ObjectListBody,
         reified_member::Reification,
         value_body::{ValueBody, ValueListBody},
@@ -31,6 +31,7 @@ use crate::{
     language_negotiation::negotiated_entry,
 };
 use andromeda_ngsi_ld_lexicon::{
+    attribute_null_encoding::NullEncoding,
     attribute_type::{AttributeType, SimplifiedValueEncoding},
     identifier::Identifier,
 };
@@ -38,6 +39,7 @@ use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Serialize, Serializer, ser::SerializeMap};
+use std::slice;
 
 /// One attribute member in the simplified representation.
 #[derive(Debug, Clone, Copy)]
@@ -78,6 +80,12 @@ impl Serialize for SimplifiedMember<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let held = InstanceReport::default();
         match self.value {
+            MemberInstances::Held(AttributeValue::Single(attribute)) if names_its_dataset(attribute, &held) => {
+                dataset_map(serializer, DatasetInstances::Held(slice::from_ref(attribute)), self)
+            }
+            MemberInstances::Notified(NotifiedMember::One(instance)) if names_its_dataset(instance.source, &instance.report) => {
+                dataset_map(serializer, DatasetInstances::Notified(slice::from_ref(instance)), self)
+            }
             MemberInstances::Held(AttributeValue::Single(attribute)) => self.instance(attribute, held).serialize(serializer),
             MemberInstances::Held(AttributeValue::Multiple(instances)) => match self.kept(instances, Attribute::dataset_id) {
                 Some(kept) => self.instance(kept, held).serialize(serializer),
@@ -85,7 +93,9 @@ impl Serialize for SimplifiedMember<'_> {
             },
             // Clause 4.5.4 keeps the bare NGSI-LD Null a member is reported
             // deleted by.
-            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => NullValue::Uri.serialize(serializer),
+            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => {
+                NullEncoding::Uri.serialize(serializer)
+            }
             MemberInstances::Notified(NotifiedMember::One(instance)) => self.instance(instance.source, instance.report).serialize(serializer),
             MemberInstances::Notified(NotifiedMember::Many(instances)) => match self.kept(instances, |instance| instance.source.dataset_id()) {
                 Some(kept) => self.instance(kept.source, kept.report).serialize(serializer),
@@ -94,6 +104,15 @@ impl Serialize for SimplifiedMember<'_> {
             MemberInstances::Evolution(instances) => serializer.collect_seq(instances.iter().map(|attribute| self.instance(attribute, held))),
         }
     }
+}
+
+/// Whether a member's one instance is written as the `dataset` map holding it
+/// alone: a deletion of an instance other than the default one. Clause 5.8.6
+/// reports a deleted attribute with the `datasetId` it had, and the map is the
+/// one place clause 4.5.4 writes a `datasetId` in; written bare, the Null would
+/// report the whole attribute deleted.
+fn names_its_dataset(source: &Attribute, report: &InstanceReport<'_>) -> bool {
+    source.dataset_id().is_some() && report.deletes(source)
 }
 
 /// The instances of a multi-attribute.
@@ -187,7 +206,7 @@ impl Serialize for SimplifiedInstance<'_> {
 /// The simplified value of a deleted instance of `family`: the Null its value
 /// member takes, in the one member clause 4.5.4 keeps for the families that
 /// keep one.
-fn simplified_null<S: Serializer>(serializer: S, family: AttributeType, null: NullValue) -> Result<S::Ok, S::Error> {
+fn simplified_null<S: Serializer>(serializer: S, family: AttributeType, null: NullEncoding) -> Result<S::Ok, S::Error> {
     match family.simplified_value_encoding() {
         SimplifiedValueEncoding::Wrapped => wrapped(serializer, family, &null),
         SimplifiedValueEncoding::Bare => null.serialize(serializer),

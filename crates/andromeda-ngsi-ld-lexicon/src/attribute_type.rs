@@ -1,5 +1,6 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
+use crate::attribute_null_encoding::NullEncoding;
 use andromeda_ngsi_ld_vocabulary::{
     compact::properties as compact_properties,
     expanded::{classes as expanded_classes, properties as expanded_properties},
@@ -217,6 +218,17 @@ impl AttributeType {
         match self {
             Self::LanguageProperty | Self::JsonProperty | Self::VocabProperty => SimplifiedValueEncoding::Wrapped,
             Self::Property | Self::GeoProperty | Self::Relationship | Self::ListProperty | Self::ListRelationship => SimplifiedValueEncoding::Bare,
+        }
+    }
+
+    /// Returns the spelling of the NGSI-LD Null that deletes this attribute
+    /// type's value (clause 4.5.0).
+    #[must_use]
+    pub const fn null_encoding(self) -> NullEncoding {
+        match self {
+            Self::ListProperty | Self::ListRelationship => NullEncoding::List,
+            Self::LanguageProperty => NullEncoding::LanguageMap,
+            Self::Property | Self::GeoProperty | Self::Relationship | Self::VocabProperty | Self::JsonProperty => NullEncoding::Uri,
         }
     }
 

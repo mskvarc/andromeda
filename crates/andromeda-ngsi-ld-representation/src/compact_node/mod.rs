@@ -20,7 +20,7 @@ pub mod produced_node;
 
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, written_geometry::WrittenGeometry};
-use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
+use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::is_ngsi_ld_null};
 use serde::de::{DeserializeOwned, value::BorrowedStrDeserializer};
 use std::{borrow::Cow, error::Error, vec::IntoIter};
 
@@ -78,6 +78,20 @@ pub trait CompactNode<'n>: Copy + 'n {
     /// 4.5.0).
     fn is_ngsi_ld_null(self) -> bool {
         self.text().is_some_and(|text| is_ngsi_ld_null(&text))
+    }
+
+    /// Whether the node, written in place of a whole attribute member, is the
+    /// NGSI-LD Null in a spelling JSON-LD expands to the same Null (clause
+    /// 4.5.0): the string itself, an array holding it alone (an array of one
+    /// element expands as that element), or a node reference whose `@id` is
+    /// it, alone or as the one element of an array.
+    fn is_member_ngsi_ld_null(self) -> bool {
+        match self.shape() {
+            NodeShape::Array(items) => matches!(items.as_slice(), [only] if only.is_ngsi_ld_null() || is_null_reference(*only)),
+            NodeShape::Object(_) => is_null_reference(self),
+            NodeShape::String(text) => is_ngsi_ld_null(&text),
+            NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Geometry(_) => false,
+        }
     }
 }
 
@@ -148,6 +162,20 @@ impl<'n, N> IntoIterator for NodeMembers<'n, N> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+/// Whether `node` is an object whose one member is an `@id`, or the `id` the
+/// core context aliases it to, naming the NGSI-LD Null.
+fn is_null_reference<'n, N: CompactNode<'n>>(node: N) -> bool {
+    match node.shape() {
+        NodeShape::Object(members) => {
+            members.len() == 1
+                && [keyword::ID, keyword::ID_ALIAS]
+                    .into_iter()
+                    .any(|name| members.get(name).is_some_and(CompactNode::is_ngsi_ld_null))
+        }
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_) => false,
     }
 }
 

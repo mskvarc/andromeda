@@ -6,11 +6,14 @@
 //! writes on each entity -- so the entity is expanded once under that context
 //! into the written document the local filters read and the local
 //! subscription's compaction writes. A written document, unlike an entity
-//! state, holds the `urn:ngsi-ld:null` a source notifies a deleted attribute
-//! with: "only the name of the attribute as key and the URI "urn:ngsi-ld:null"
-//! as value" report a deleted attribute of any family, so a first-level Null
-//! stays the deletion of the member, and is relayed as the bare Null it arrived
-//! as.
+//! state, holds the deletions a source notifies. Clause 5.8.6 reports a
+//! deleted attribute with "only the name of the attribute as key and the URI
+//! "urn:ngsi-ld:null" as value" unless a `datasetId`, the system attributes or
+//! a previous value must be reported with it, and then as an object whose
+//! value member holds its family's deletion encoding (clause 4.5.0). The first
+//! names no family and stays the deletion of the whole member, relayed as the
+//! bare Null it arrived as; the second is the deletion of the instance of its
+//! `datasetId`, relayed in the object form.
 //!
 //! Completing a split entity merges on the model: the deletions the sender
 //! notified, of whole attributes and of single instances, are set aside, the
@@ -89,7 +92,8 @@ pub(crate) async fn read_notified(
 /// One deletion a sender notified (clause 5.8.6).
 #[derive(Debug)]
 pub(crate) enum NotifiedDeletion {
-    /// The whole attribute, notified as the bare NGSI-LD Null.
+    /// The whole attribute, notified as the NGSI-LD Null in place of the
+    /// member.
     Member(AttributeName),
     /// One instance, notified as an object whose value member is its family's
     /// deletion encoding: the form a deletion takes when a `datasetId`, the
@@ -208,69 +212,23 @@ impl NotifiedPart {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::received_entity::{NotifiedDeletion, NotifiedPart, read_notified};
+    use crate::{
+        received_entity::read_notified,
+        relay_fixture::{offline_engine, received, relayed, relayed_under, relayed_with_changes},
+    };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
-    use andromeda_ngsi_ld_entity::document::attribute_member::AttributeMember;
-    use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedDocument};
+    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_render::{
         notification_entity::NotificationEntity,
         notification_language::NotificationLanguage,
-        notified_changes::{HeldAttributes, NotifiedChanges},
         structural_projection::StructuralProjection,
     };
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-    use serde_json::{Value, json};
-
-    /// An engine that resolves only what is embedded, never the network.
-    fn offline_engine() -> JsonLdEngine {
-        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
-    }
-
-    /// `entity` read as a source notified it and written for a local
-    /// subscriber in `format`, both under the core context alone.
-    async fn relayed(entity: &Value, format: ResponseFormat) -> Value {
-        relayed_under(entity, format, None).await
-    }
-
-    /// `entity` relayed in `format` for a subscription naming `language`.
-    async fn relayed_under(entity: &Value, format: ResponseFormat, language: Option<&NotificationLanguage>) -> Value {
-        relay_outcome(entity, &ContextSpec::core_only(), format, language)
-            .await
-            .expect("the notified entity is relayed")
-    }
-
-    /// `entity`, notified under `inbound`, relayed in `format` for a
-    /// subscription naming `language` under the core context, or the refusal
-    /// of it.
-    async fn relay_outcome(entity: &Value, inbound: &ContextSpec, format: ResponseFormat, language: Option<&NotificationLanguage>) -> Result<Value, String> {
-        let engine = offline_engine();
-        let expansion = EntityExpansion::prepare(&engine, inbound).await.expect("the inbound context processes");
-        let elements = ReceivedEntities::from_slice(entity.to_string().as_bytes()).expect("an entity");
-        let contextual = match elements.0.as_slice() {
-            [ReceivedElement::Read(contextual)] => contextual,
-            [ReceivedElement::Refused(refusal)] => return Err(refusal.to_string()),
-            other => panic!("one element was notified: {other:?}"),
-        };
-        let received = read_notified(&engine, &expansion, contextual).await.map_err(|refusal| refusal.to_string())?;
-        let context = ContextSpec::core_only();
-        let context_compactor = engine.compactor(&context);
-        let respelled = EntityCompactor::new(&context_compactor)
-            .document_entity(&received.document)
-            .await
-            .map_err(|error| error.to_string())?;
-        let projection = Projection::default();
-        serde_json::to_value(NotificationEntity::relayed(
-            &respelled,
-            format,
-            StructuralProjection::from(&projection),
-            language,
-        ))
-        .map_err(|error| error.to_string())
-    }
+    use serde_json::json;
 
     /// Table 5.2.12-1 `lang` and clause 4.15: a relayed `LanguageProperty` is
     /// reduced to the subscription's language, in every representation that
@@ -289,61 +247,6 @@ mod tests {
         pretty_assertions::assert_eq!(simplified["name"], json!("Tower"), "{simplified}");
         let untouched = relayed(&notified, ResponseFormat::Normalized).await;
         pretty_assertions::assert_eq!(untouched["name"]["type"], json!("LanguageProperty"), "{untouched}");
-    }
-
-    /// Clause 5.8.6: a source reports a deleted attribute of any family as
-    /// "only the name of the attribute as key and the URI "urn:ngsi-ld:null"
-    /// as value", and the relayed copy reports it the same way in every
-    /// representation, never as a Property whose value is the Null.
-    #[tokio::test]
-    async fn a_notified_deletion_is_relayed_as_the_bare_null() {
-        let notified = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "owner": "urn:ngsi-ld:null",
-            "speed": {"type": "Property", "value": 5}
-        });
-        for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
-            let relayed = relayed(&notified, format).await;
-            pretty_assertions::assert_eq!(relayed["owner"], json!("urn:ngsi-ld:null"), "{format:?}: {relayed}");
-        }
-        let normalized = relayed(&notified, ResponseFormat::Normalized).await;
-        pretty_assertions::assert_eq!(normalized["speed"], json!({"type": "Property", "value": 5}));
-    }
-
-    /// `notified` read as a source notified it under the core context.
-    async fn received(engine: &JsonLdEngine, notified: &Value) -> ReceivedDocument {
-        let inbound = EntityExpansion::prepare(engine, &ContextSpec::core_only())
-            .await
-            .expect("the core context processes");
-        let elements = ReceivedEntities::from_slice(notified.to_string().as_bytes()).expect("an entity");
-        let [ReceivedElement::Read(contextual)] = elements.0.as_slice() else {
-            panic!("the notified entity reads");
-        };
-        read_notified(engine, &inbound, contextual).await.expect("the notified entity expands")
-    }
-
-    /// `received` written for a local subscriber asking for `showChanges`,
-    /// under the core context.
-    async fn relayed_with_changes(engine: &JsonLdEngine, received: &ReceivedDocument) -> Value {
-        let context = ContextSpec::core_only();
-        let context_compactor = engine.compactor(&context);
-        let compactor = EntityCompactor::new(&context_compactor);
-        let entity = compactor.document_entity(&received.document).await.expect("the entity compacts");
-        let previous = compactor
-            .document_entity(received.previous.as_ref().expect("previous values were reported"))
-            .await
-            .expect("the previous values compact");
-        let projection = Projection::default();
-        let changes = NotifiedChanges {
-            held: HeldAttributes::Current,
-            deleted: None,
-            previous: Some(&previous),
-        };
-        serde_json::to_value(
-            NotificationEntity::relayed(&entity, ResponseFormat::Normalized, StructuralProjection::from(&projection), None).with_changes(changes),
-        )
-        .expect("the entity writes")
     }
 
     /// Table 5.2.14-1 `showChanges`: the previous members a source reports are
@@ -366,7 +269,7 @@ mod tests {
         let without_changes = relayed(&notified, ResponseFormat::Normalized).await;
         assert!(without_changes["owner"].get("previousObject").is_none(), "{without_changes}");
 
-        let written = relayed_with_changes(&engine, &received).await;
+        let written = relayed_with_changes(&engine, &received, ResponseFormat::Normalized).await;
         pretty_assertions::assert_eq!(
             written["speed"],
             json!([
@@ -380,36 +283,6 @@ mod tests {
             json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:b", "previousObject": "urn:ngsi-ld:Person:a"})
         );
         pretty_assertions::assert_eq!(written["colour"], json!({"type": "Property", "value": "red"}));
-    }
-
-    /// Clause 5.8.6: under `showChanges` a source notifies a deleted attribute
-    /// as an object whose value member is the NGSI-LD Null, beside the previous
-    /// value. A split part sets that instance deletion apart, so the part is
-    /// still an entity the holders' versions merge onto, and puts it back on
-    /// the completed entity with its previous value.
-    #[tokio::test]
-    async fn an_instance_deletion_and_its_previous_value_survive_the_completion() {
-        let engine = offline_engine();
-        let notified = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {"type": "Property", "value": 5},
-            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Person:a"}
-        });
-        let part = NotifiedPart::of(received(&engine, &notified).await).expect("the part is a version of the entity");
-        assert!(
-            matches!(part.deletions.as_slice(), [NotifiedDeletion::Instance(name, _)] if name.as_str().ends_with("owner")),
-            "{:?}",
-            part.deletions
-        );
-        let completed = NotifiedPart::completed(part.version, part.deletions, part.previous);
-        let written = relayed_with_changes(&engine, &completed).await;
-        pretty_assertions::assert_eq!(
-            written["owner"],
-            json!({"type": "Relationship", "object": "urn:ngsi-ld:null", "previousObject": "urn:ngsi-ld:Person:a"}),
-            "{written}"
-        );
-        pretty_assertions::assert_eq!(written["speed"], json!({"type": "Property", "value": 5}));
     }
 
     /// JSON-LD 1.1 with clause 5.8.6: an entity that carries its own `@context`
@@ -456,39 +329,11 @@ mod tests {
         assert!(written.get("spd").is_none(), "{written}");
     }
 
-    /// A split part sets its notified deletions apart and puts them back on
-    /// the completed entity, where no holder's version overrides them.
-    #[tokio::test]
-    async fn notified_deletions_survive_the_completion() {
-        let engine = offline_engine();
-        let context = ContextSpec::core_only();
-        let inbound = EntityExpansion::prepare(&engine, &context).await.expect("the core context processes");
-        let elements = ReceivedEntities::from_slice(
-            json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "owner": "urn:ngsi-ld:null", "speed": {"type": "Property", "value": 5}})
-                .to_string()
-                .as_bytes(),
-        )
-        .expect("an entity");
-        let [ReceivedElement::Read(contextual)] = elements.0.as_slice() else {
-            panic!("the notified entity reads");
-        };
-        let part = NotifiedPart::of(read_notified(&engine, &inbound, contextual).await.expect("expands")).expect("a version");
-        pretty_assertions::assert_eq!(part.deletions.len(), 1);
-        let completed = NotifiedPart::completed(part.version, part.deletions, part.previous);
-        let owner = completed
-            .document
-            .attributes()
-            .iter()
-            .find(|(name, _)| name.as_str().ends_with("owner"))
-            .map(|(_, member)| member);
-        pretty_assertions::assert_eq!(owner, Some(&AttributeMember::Remove));
-    }
-
     /// What a relayed notification makes of every attribute member shape
     /// (clause 5.8.6): a member read typed is written in every representation
     /// a local subscription may ask for, and a refused one refuses its entity.
     mod shapes {
-        use crate::received_entity::tests::relay_outcome;
+        use crate::relay_fixture::relay_outcome;
         use andromeda_json_literal::JsonLiteral;
         use andromeda_jsonld::context_spec::ContextSpec;
         use andromeda_ngsi_ld_representation::response_format::ResponseFormat;

@@ -134,6 +134,59 @@ async fn a_first_level_null_removes_the_member_of_a_merge_only() {
     );
 }
 
+/// Clause 4.5.0 with JSON-LD 1.1 expansion: the Null as the one element of
+/// an array, or as the `@id` of a node reference, is the same Null as the
+/// bare string, so a merge removes the whole member by each, a notification
+/// reports it deleted by each, and any other write reads each as a concise
+/// Property deleting its value.
+#[tokio::test]
+async fn every_spelling_of_a_first_level_null_is_read_as_the_bare_null() {
+    let engine = engine();
+    for spelling in [json!([NULL]), json!({"@id": NULL}), json!({"id": NULL}), json!([{"@id": NULL}])] {
+        let merged = patch(&engine, json!({"owner": spelling}), Normalization::MemberDeletions)
+            .await
+            .expect("expands")
+            .agreed();
+        pretty_assertions::assert_eq!(merged.attributes()[term("owner").as_str()], AttributeMember::Remove, "{spelling}");
+        let updated = patch(&engine, json!({"owner": spelling}), Normalization::Entity)
+            .await
+            .expect("expands")
+            .agreed();
+        pretty_assertions::assert_eq!(
+            updated.attributes()[term("owner").as_str()].instances()[0].value(),
+            &ValueSlot::Remove(ValueCarrier::Value),
+            "{spelling}"
+        );
+    }
+}
+
+/// Table 6.5.3.4-1 lets a merge write a `languageMap` as untagged strings, so
+/// one written as the bare Null beside a `datasetId` deletes that instance's
+/// language map, as the clause 4.5.18.2 encoding does, and the default
+/// instance is left alone (clause 4.5.5).
+#[tokio::test]
+async fn a_merged_language_map_written_as_the_bare_null_deletes_the_instance_of_its_dataset_id() {
+    let engine = engine();
+    for language_map in [json!(NULL), json!({"@none": NULL})] {
+        let merged = patch(
+            &engine,
+            json!({"name": {"type": "LanguageProperty", "languageMap": language_map, "datasetId": "urn:ngsi-ld:Dataset:a"}}),
+            Normalization::MemberDeletions,
+        )
+        .await
+        .expect("expands")
+        .agreed();
+        let instances = merged.attributes()[term("name").as_str()].instances();
+        pretty_assertions::assert_eq!(instances.len(), 1, "{language_map}");
+        pretty_assertions::assert_eq!(instances[0].value(), &ValueSlot::Remove(ValueCarrier::LanguageMap), "{language_map}");
+        pretty_assertions::assert_eq!(
+            instances[0].dataset_id().map(ToString::to_string).as_deref(),
+            Some("urn:ngsi-ld:Dataset:a"),
+            "{language_map}"
+        );
+    }
+}
+
 /// Clauses 4.18, 5.5.8: the entity's scope, which clause 4.18 deletes by the
 /// URN spelling alone, and an instance's observation time and unit, deleted by
 /// the Null.

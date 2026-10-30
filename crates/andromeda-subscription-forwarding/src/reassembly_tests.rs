@@ -129,12 +129,81 @@ async fn split_entities_merge_local_and_other_holders() {
     pretty_assertions::assert_eq!(sender.requests().await, 0, "the sender is not asked for what it just sent");
 }
 
+/// The entity a split part deleting `owner` as `deleted` is relayed as, in
+/// `format`, once completed from this broker's copy, which still holds `owner`
+/// as its default instance.
+async fn completed_deletion(deleted: Value, format: &str) -> Value {
+    let id = identifier("urn:ngsi-ld:Vehicle:1");
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"splitEntities": true, "notification": {"format": format}}),
+        held: vec![held_vehicle(id.as_str(), &[("owner", json!("Ada")), ("name", json!("Roadster"))])],
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([compact_vehicle(id.as_str(), &[("owner", deleted), ("speed", property(&json!(40)))])]);
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+    let entities = relayed(&mut scene).await;
+    let [entity] = entities.as_slice() else {
+        panic!("one entity is relayed, got {entities:?}");
+    };
+    entity.clone() // clone: the scene owns the delivered notification
+}
+
+/// Clause 5.8.6 with clause 4.5.0: an instance of a `datasetId` the split
+/// part reports deleted in the object form is relayed beside the default
+/// instance this broker holds, which the deletion leaves alone (clause
+/// 4.5.5).
+#[tokio::test]
+async fn an_instance_deletion_of_a_split_part_is_relayed_beside_the_instance_this_broker_holds() {
+    let deleted = json!({"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"});
+    let normalized = completed_deletion(deleted.clone(), "normalized").await; // clone: the deletion is relayed twice
+    pretty_assertions::assert_eq!(
+        normalized["owner"],
+        json!([{"type": "Property", "value": "Ada"}, {"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}]),
+        "{normalized}"
+    );
+    let simplified = completed_deletion(deleted, "simplified").await;
+    pretty_assertions::assert_eq!(
+        simplified["owner"],
+        json!({"dataset": {"@none": "Ada", "urn:ngsi-ld:Dataset:gps": "urn:ngsi-ld:null"}}),
+        "{simplified}"
+    );
+}
+
+/// Clause 5.8.6: the object form without a `datasetId` reports the default
+/// instance deleted, which takes the place of the default instance this broker
+/// holds.
+#[tokio::test]
+async fn a_default_instance_deletion_of_a_split_part_replaces_the_instance_this_broker_holds() {
+    let normalized = completed_deletion(
+        json!({"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2026-10-06T12:00:00Z"}),
+        "normalized",
+    )
+    .await;
+    pretty_assertions::assert_eq!(
+        normalized["owner"],
+        json!({"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2026-10-06T12:00:00Z"}),
+        "{normalized}"
+    );
+}
+
+/// Clause 4.5.0 with JSON-LD 1.1 expansion: a split part reporting `owner`
+/// deleted by a node reference to the Null reports the whole attribute
+/// deleted, as the bare Null does, in every representation.
+#[tokio::test]
+async fn a_null_reference_deletion_of_a_split_part_is_relayed_as_the_bare_null() {
+    for format in ["normalized", "concise", "simplified"] {
+        let entity = completed_deletion(json!({"@id": "urn:ngsi-ld:null"}), format).await;
+        pretty_assertions::assert_eq!(entity["owner"], json!("urn:ngsi-ld:null"), "{format}: {entity}");
+    }
+}
+
 /// Clause 5.8.6: a source reports a deleted attribute as "only the name of the
 /// attribute as key and the URI "urn:ngsi-ld:null" as value", and a split part
 /// completed from this broker's copy relays the deletion although this broker
 /// still holds the attribute.
 #[tokio::test]
-async fn a_relayed_null_survives_split_reassembly() {
+async fn a_bare_null_deletion_of_a_split_part_is_relayed_bare_although_this_broker_holds_the_attribute() {
     let id = identifier("urn:ngsi-ld:Vehicle:1");
     let mut scene = ReassemblyScene::start(SceneSpec {
         subscription_members: json!({"splitEntities": true}),

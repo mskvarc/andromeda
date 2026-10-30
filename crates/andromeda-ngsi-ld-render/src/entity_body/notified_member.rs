@@ -8,12 +8,10 @@
 //! deleted by the bare NGSI-LD Null (clause 5.8.6) is written as that Null.
 
 use crate::notified_changes::{HeldAttributes, NotifiedChanges};
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_null_encoding::NullEncoding, attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
-use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use std::{collections::HashMap, iter::once};
+use std::collections::HashMap;
 
 /// One attribute member as the walk writes it.
 #[derive(Debug, Clone, Copy)]
@@ -70,58 +68,28 @@ pub(crate) struct InstanceReport<'a> {
     pub(crate) previous: Option<&'a Attribute>,
 }
 
-/// The spelling of the NGSI-LD Null a family is deleted by (clause 4.5.0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NullValue {
-    /// The bare Null.
-    Uri,
-    /// An array of the one Null, the list families' encoding (clauses
-    /// 4.5.21.2 and 4.5.22.2).
-    List,
-    /// A language map holding the Null under `@none` (clause 4.5.18).
-    LanguageMap,
-}
-
 impl InstanceReport<'_> {
+    /// Whether `source`, reported so, is a deletion: reported deleted, or
+    /// holding its family's NGSI-LD Null as a relayed deletion does.
+    pub(crate) fn deletes(&self, source: &Attribute) -> bool {
+        match self.value {
+            ReportedValue::Deleted => true,
+            ReportedValue::Held => source.holds_ngsi_ld_null(),
+        }
+    }
+
     /// The NGSI-LD Null the value member of an instance written as `family`
     /// takes, when the instance is reported deleted. The spelling is the
     /// written family's, so a family a version fallback reformats is deleted
-    /// as the family it is written as.
-    pub(crate) const fn null(&self, family: AttributeType) -> Option<NullValue> {
-        match self.value {
-            ReportedValue::Held => None,
-            ReportedValue::Deleted => Some(NullValue::of(family)),
-        }
-    }
-}
-
-impl NullValue {
-    /// The Null `family` is deleted by. A deleted `LanguageProperty` keeps the
+    /// as the family it is written as. A deleted `LanguageProperty` keeps the
     /// language map holding the Null however it came to be deleted: clause
     /// 4.5.18.2 uses "the same representation" "to indicate a deletion in
     /// notifications", and clause 5.8.6 sets "the languageMap" to it whenever
     /// a deleted attribute is notified as an object.
-    const fn of(family: AttributeType) -> NullValue {
-        match family {
-            AttributeType::ListProperty | AttributeType::ListRelationship => NullValue::List,
-            AttributeType::LanguageProperty => NullValue::LanguageMap,
-            AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::VocabProperty | AttributeType::JsonProperty => {
-                NullValue::Uri
-            }
-        }
-    }
-}
-
-impl Serialize for NullValue {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            NullValue::Uri => serializer.serialize_str(NULL_URI.as_str()),
-            NullValue::List => serializer.collect_seq(once(NULL_URI.as_str())),
-            NullValue::LanguageMap => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry(keyword::NONE, NULL_URI.as_str())?;
-                map.end()
-            }
+    pub(crate) const fn null(&self, family: AttributeType) -> Option<NullEncoding> {
+        match self.value {
+            ReportedValue::Held => None,
+            ReportedValue::Deleted => Some(family.null_encoding()),
         }
     }
 }
