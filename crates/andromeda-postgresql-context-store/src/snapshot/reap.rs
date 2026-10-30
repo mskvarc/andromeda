@@ -15,7 +15,7 @@
 //! one whose record is still uncommitted.
 
 use crate::{
-    snapshot::{branch_lock::branch_lock_key, branch_schema::drop_branch_schema},
+    snapshot::{branch_lock::branch_lock_key, branch_schema::drop_branch_schema, clone_copy_session::end_copy_sessions},
     store_fault::{persistence_error, undecodable},
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -65,9 +65,12 @@ pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u6
 }
 
 /// Delete one Snapshot's control record and branch schema in a single
-/// transaction, returning the number of control rows removed.
+/// transaction, returning the number of control rows removed. A clone copying
+/// into or out of the Snapshot holds its control record for the length of the
+/// copy, so the copy's session is ended before the record is locked.
 async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
+    end_copy_sessions(&mut transaction, id).await?;
     let statement = Query::select()
         .column(Snapshots::SnapshotKey)
         .from(Snapshots::Table)

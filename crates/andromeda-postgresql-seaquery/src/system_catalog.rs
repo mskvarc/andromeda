@@ -116,4 +116,9 @@ pub enum PgStatActivity {
     ApplicationName,
     /// The database the session is connected to.
     Datname,
+    /// The process id of the session's backend.
+    Pid,
+    /// The start of the session's current transaction, NULL while it is in
+    /// none.
+    XactStart,
 }

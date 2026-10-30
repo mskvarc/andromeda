@@ -17,6 +17,7 @@ use crate::{
         branch_schema::{analyze_branch_schema, promote_staging_schema, publish_empty_branch},
         branch_version::{condition_of, current_version},
         clone::clone_branch,
+        clone_copy_session::{forget_copy_session, own_copy_session, record_copy_session},
         json_value::optional_json,
         preparation_claim::{lock_claimed_preparation, share_claimed_preparation},
         record::status_is_preparing,
@@ -69,6 +70,7 @@ pub(crate) async fn promote_staged_branch(
             .map_err(|error| persistence_error::<SnapshotError>(error))?;
     }
     finalize_preparation(&mut transaction, snapshot_key, claimed_by, status, queries_details, temporal_queries_details).await?;
+    forget_copy_session(&mut transaction, snapshot_key).await?;
     enqueue_terminal_notification(&mut transaction, id).await?;
     transaction.commit().await.map_err(|error| persistence_error::<SnapshotError>(error))
 }
@@ -96,8 +98,10 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 /// moment a concurrently written source is copied at unspecified; it is the
 /// start of the copy. The two control records are held only `FOR KEY SHARE`,
 /// which keeps the target's claim and both Snapshots in place without blocking
-/// renewals, touches or metadata changes. A failure after the commit leaves
-/// only staged rows, which the next restart or claim of the target discards.
+/// renewals, touches or metadata changes. The copy's session is recorded
+/// before either is fenced, so a deletion of either Snapshot can end the copy
+/// rather than wait for it. A failure after the commit leaves only staged
+/// rows, which the next restart or claim of the target discards.
 async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
     let mut transaction = TransactionStart::at(Isolation::RepeatableRead)
         .begin_in(pool)
@@ -112,6 +116,8 @@ async fn copy_clone_source(pool: &PgPool, source_id: &Identifier, target_id: &Id
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
+    let session = own_copy_session(&mut transaction).await?;
+    record_copy_session(pool, target_id, session).await?;
     let target_key = share_claimed_preparation(&mut transaction, target_id, claimed_by)
         .await?
         .ok_or_else(|| claim_lost(target_id))?;

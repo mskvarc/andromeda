@@ -12,6 +12,8 @@ pub(crate) mod branch_version;
 /// Cross-schema copying of a Snapshot branch into another (clone preparation).
 mod clone;
 mod clone_context;
+/// The session a clone's copy runs in, which a deletion ends.
+mod clone_copy_session;
 /// Creating a Snapshot's control record, preparation row and branch schemas.
 mod creation;
 /// Encoding a typed value as the `json` a statement writes.

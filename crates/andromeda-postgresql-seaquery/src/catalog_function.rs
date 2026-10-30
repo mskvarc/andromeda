@@ -28,6 +28,8 @@ enum CatalogFunction {
     NumNonnulls,
     /// `octet_length`.
     OctetLength,
+    /// `pg_backend_pid`.
+    PgBackendPid,
     /// `pg_cancel_backend`.
     PgCancelBackend,
     /// `pg_column_size`.
@@ -125,6 +127,12 @@ pub fn octet_length(value: SimpleExpr) -> SimpleExpr {
     call(CatalogFunction::OctetLength, [value])
 }
 
+/// `pg_backend_pid()`: the process id of the session's own backend.
+#[must_use]
+pub fn backend_pid() -> SimpleExpr {
+    call(CatalogFunction::PgBackendPid, [])
+}
+
 /// `pg_cancel_backend(pid)`: cancel the statement the backend `pid` runs.
 #[must_use]
 pub fn cancel_backend(pid: SimpleExpr) -> SimpleExpr {
@@ -188,6 +196,7 @@ pub fn transaction_tuples_hot_updated(relation: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::catalog_function::{
+        backend_pid,
         bool_and,
         cancel_backend,
         chr,
@@ -246,6 +255,7 @@ mod tests {
             rendered(terminate_backend(Expr::col(Alias::new("pid")))),
             r#"SELECT pg_terminate_backend("pid")"#
         );
+        assert_eq!(rendered(backend_pid()), "SELECT pg_backend_pid()");
         assert_eq!(rendered(pg_sleep(Expr::val(20))), "SELECT pg_sleep(20)");
         assert_eq!(rendered(client_host()), "SELECT host(inet_client_addr())");
         assert_eq!(rendered(chr(Expr::val(65))), "SELECT chr(65)");

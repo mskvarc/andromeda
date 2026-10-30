@@ -22,12 +22,12 @@
 -- ============================================================================
 create table subscription_notified_registrations (
     subscription_key bigint not null,
-    -- References no registration: the row outlives the registration's
-    -- deletion until the `noLongerMatching` notification it owes is claimed.
-    registration_id text compression lz4 collate "C" not null,
     -- The latest registration change revision that claimed an `updated`
     -- notification for this pair; NULL until one does.
     reported_revision bigint,
+    -- References no registration: the row outlives the registration's
+    -- deletion until the `noLongerMatching` notification it owes is claimed.
+    registration_id text compression lz4 collate "C" not null,
     constraint pk_subscription_notified_registrations primary key (subscription_key, registration_id),
     constraint fk_subscription_notified_registrations_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
     constraint chk_subscription_notified_registrations_registration_id_length check (octet_length(registration_id) <= 1024)
