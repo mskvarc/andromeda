@@ -173,7 +173,7 @@ mod tests {
     use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
@@ -186,7 +186,7 @@ mod tests {
         stored_subscription::StoredSubscription,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+    use chrono::{DateTime, TimeDelta, Utc};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -211,7 +211,7 @@ mod tests {
             "id": "urn:ngsi-ld:Subscription:expiring",
             "type": "Subscription",
             "entities": [{"type": "https://example.org/Vehicle"}],
-            "expiresAt": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "expiresAt": instant_text(expires_at),
             "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
             "status": "active",
             "createdAt": "2024-01-01T00:00:00Z",
