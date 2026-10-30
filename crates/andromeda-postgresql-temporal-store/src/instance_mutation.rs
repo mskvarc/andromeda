@@ -91,8 +91,8 @@ impl TemporalRepository {
         if deleted == 0 {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
-        // A broker-minted identifier never claims a row in the first place
-        // (`duplicate_instance_claim`), so only a verbatim one has a claim to
+        // A broker-minted identifier never claims a row in the first place,
+        // so only a verbatim one has a claim to
         // release. Releasing it here is what lets a client reuse the
         // `instanceId` of an instance it has just deleted.
         if let InstanceIdentity::Verbatim(identifier) = instance {

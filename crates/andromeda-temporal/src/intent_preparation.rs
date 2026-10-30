@@ -9,7 +9,12 @@ use crate::{
     scope_observation::ScopeObservation,
     written_instance::{DeletedInstance, WrittenInstance},
 };
-use andromeda_context_commit::{history_record::HistoryRecord, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_commit::{
+    history_record::HistoryRecord,
+    submission_refusal::{RepeatedInstanceId, SubmissionRefusal},
+    write_ordinal::WriteOrdinal,
+    write_record::WriteRecord,
+};
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
     refusal::EntityRefusal,
@@ -18,6 +23,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
+use std::collections::HashSet;
 
 /// Prepare one typed intent from the history consequences of an atomic write.
 ///
@@ -71,6 +77,7 @@ pub(crate) fn prepare(
             HistoryRecord::ScopeRemoval => entries.push(scope_entry(ScopeObservation::Deleted, ScopeEntryKind::Event, recorded_at)),
         }
     }
+    refuse_repeated_instance_ids(&entries)?;
     Ok(Some(TemporalAppendIntent {
         record,
         base_ordinal,
@@ -186,6 +193,41 @@ fn deletion_entry(attribute_name: &AttributeName, deleted: DeletedInstance, reco
             metadata: None,
             stream_extent: StreamExtent::Whole,
         },
+    }
+}
+
+/// Refuse entries giving one `instanceId` to two instances of one attribute.
+///
+/// Clause 4.5.7 makes an `instanceId` name one instance of an attribute, across
+/// its `datasetId`s. Only a Temporal API write keeps the identifier a client
+/// gave (a Core API write ignores it, clause 5.2.5), so only its entries can
+/// repeat one. Refusing the repeat here names the write it came from, which
+/// the instance claims the history store stakes cannot: they meet it inside a
+/// statement every write of the commit shares.
+///
+/// # Errors
+///
+/// Returns [`SubmissionRefusal::RepeatedInstanceId`] for the first identifier
+/// an attribute's instances repeat.
+fn refuse_repeated_instance_ids(entries: &[TemporalAppendEntry]) -> Result<(), TemporalError> {
+    let mut seen = HashSet::new();
+    let repeated = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            TemporalAppendEntry::Observation { row } => match &row.instance {
+                EvolutionInstance::Attribute(instance) => Some((&row.attribute_name, instance)),
+                EvolutionInstance::Scope => None,
+            },
+            TemporalAppendEntry::Tombstone { .. } | TemporalAppendEntry::Scope { .. } => None,
+        })
+        .find(|named| !seen.insert(*named));
+    match repeated {
+        Some((attribute, instance)) => Err(SubmissionRefusal::RepeatedInstanceId(Box::new(RepeatedInstanceId {
+            attribute: attribute.clone(), // clone: the refusal outlives the entries it names.
+            instance: instance.clone(),   // clone: the refusal outlives the entries it names.
+        }))
+        .into()),
+        None => Ok(()),
     }
 }
 

@@ -3,9 +3,9 @@
 use crate::{
     columnstore_conversion::ColumnstoreHorizonOutOfRange,
     columnstore_enablement::StoredColumnstore,
-    duplicate_instance_claim::DuplicateInstanceClaimError,
     history_members::HistoryMembersError,
     hypertable_policy::HypertableName,
+    instance_claim_race::InstanceClaimRace,
     retention_sweep::TemporalRetentionHorizonInvalid,
     stored_aggregation_error::StoredAggregationError,
     stored_catalog_error::StoredCatalogError,
@@ -98,10 +98,9 @@ pub enum TemporalStoreError {
     /// The requested aggregate would have spanned inputs that do not share a meaning.
     #[error("temporal store aggregation: {0}")]
     MixedAggregationGroup(#[from] MixedAggregationGroup),
-    /// A client-supplied `instanceId` claimed more than one attribute instance
-    /// of the same attribute at once.
+    /// A concurrent transaction claimed an `instanceId` this one was staking.
     #[error("temporal store instance claim: {0}")]
-    DuplicateInstanceClaim(#[from] DuplicateInstanceClaimError),
+    InstanceClaimRace(#[from] InstanceClaimRace),
     /// An append intent carries a write record other than the one its commit
     /// persists, so its history rows would be stamped with an instant the
     /// write record does not hold.
@@ -174,11 +173,11 @@ impl TemporalStoreError {
                 Some(PersistenceFailure::ContractBroken)
             }
             TemporalStoreError::ColumnstoreSettingsDrift { .. } => Some(PersistenceFailure::SchemaMismatch),
+            TemporalStoreError::InstanceClaimRace(_) => Some(PersistenceFailure::RolledBack),
             TemporalStoreError::NotFound(_)
             | TemporalStoreError::Refused(_)
             | TemporalStoreError::TimestampPrecision(_)
             | TemporalStoreError::MixedAggregationGroup(_)
-            | TemporalStoreError::DuplicateInstanceClaim(_)
             | TemporalStoreError::Collation(CollationProvisioningError::NotAnIcuCollation { .. }) => None,
         }
     }
@@ -199,12 +198,10 @@ impl From<TemporalStoreError> for TemporalError {
         match error {
             TemporalStoreError::EntityIntent { source, .. } => TemporalError::from(*source),
             TemporalStoreError::NotFound(reason) => TemporalError::NotFound(reason),
+            TemporalStoreError::InstanceClaimRace(_) => TemporalError::TransactionContended,
             TemporalStoreError::Refused(refusal) => TemporalError::from(refusal),
-            // A timestamp at a resolution the store cannot hold is client input,
-            // and two instances claiming the same instanceId is a conflict inside
-            // the submitted write (clause 4.5.7).
+            // A timestamp at a resolution the store cannot hold is client input.
             TemporalStoreError::TimestampPrecision(source) => TemporalError::from(SubmissionRefusal::TimestampPrecision(source)),
-            TemporalStoreError::DuplicateInstanceClaim(_) => TemporalError::from(SubmissionRefusal::DuplicateInstanceClaim),
             // Which units, families and value shapes the selected instances
             // carry is a property of the request, so an aggregate spanning
             // several of them is refused as client input.

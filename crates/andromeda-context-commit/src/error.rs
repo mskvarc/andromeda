@@ -123,11 +123,8 @@ mod tests {
     /// operator cannot confuse it with a broker fault in a log line.
     #[test]
     fn refused_submissions_read_as_a_fault_of_the_request() {
-        let error = CommitError::from(SubmissionRefusal::UntypedEntityUnidentified);
-        pretty_assertions::assert_eq!(
-            error.to_string(),
-            "atomic context commit refused the submission: an entity write carried no type, but at least one is required"
-        );
+        let error = CommitError::from(SubmissionRefusal::PropertyMissingValue);
+        pretty_assertions::assert_eq!(error.to_string(), "atomic context commit refused the submission: Property missing value");
     }
 
     /// A store that cannot be reached is retryable, answered 503 rather than

@@ -564,6 +564,46 @@ mod tests {
         );
     }
 
+    /// Clause 4.6.3 allows at most six fractional-second digits, and clause
+    /// 5.6.7.4 reports a failed entity on its own: an item whose `observedAt`
+    /// goes past microseconds is refused as `BadRequestData` against its own
+    /// entity, and the items beside it are admitted.
+    #[tokio::test]
+    async fn only_the_entity_observed_past_microseconds_is_refused() {
+        let observed = json!({
+            "id": "urn:ngsi-ld:Building:b",
+            "type": "Building",
+            "speed": {"type": "Property", "value": 1, "observedAt": "2026-07-25T12:00:00.1234567Z"}
+        });
+        let batch = items(&[
+            ("urn:ngsi-ld:Building:a", ADMITTED),
+            ("urn:ngsi-ld:Building:b", ADMITTED),
+            ("urn:ngsi-ld:Building:c", ADMITTED),
+        ])
+        .into_iter()
+        .map(|item| BatchItem {
+            text: if item.entity_id.as_str() == "urn:ngsi-ld:Building:b" {
+                Bytes::from(observed.to_string())
+            } else {
+                item.text
+            },
+            ..item
+        })
+        .collect();
+        let mut refused = Vec::new();
+
+        let rendered = screened_batch_entities::<AttributeValue>(async |context: &BatchContext| admission_of(context).await, None, batch, None, &mut refused)
+            .await
+            .expect("an entity observed past microseconds does not fail the operation");
+
+        let admitted: Vec<String> = rendered.iter().map(|item| item.entity.id.to_string()).collect();
+        pretty_assertions::assert_eq!(admitted, vec!["urn:ngsi-ld:Building:a", "urn:ngsi-ld:Building:c"]);
+        pretty_assertions::assert_eq!(
+            refused_types(&refused),
+            vec![("urn:ngsi-ld:Building:b".to_owned(), "BadRequestData".to_owned())]
+        );
+    }
+
     /// The admission the fake decides for `context`: the two failures named
     /// by URL, and otherwise the admission an offline engine gives.
     async fn admission_of(context: &BatchContext) -> Result<EntityContextAdmission, EntityError> {

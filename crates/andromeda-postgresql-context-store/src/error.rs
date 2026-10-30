@@ -179,7 +179,7 @@ impl ContextStoreError {
         match self {
             ContextStoreError::Database(error) | ContextStoreError::InvalidRegex(error) => classify(error),
             ContextStoreError::NameLookup(error) => error.failure_class(),
-            ContextStoreError::UniqueViolation(_) | ContextStoreError::EntityTypes(_) => PersistenceFailure::ConstraintViolated,
+            ContextStoreError::UniqueViolation(_) | ContextStoreError::EntityTypes(EntityTypesMissing::Rejected(_)) => PersistenceFailure::ConstraintViolated,
             ContextStoreError::Collation(_) => PersistenceFailure::StatementRejected,
             ContextStoreError::Encoding(_)
             | ContextStoreError::CopyField(_)
@@ -200,7 +200,9 @@ impl ContextStoreError {
             | ContextStoreError::StoredEntityMap(_)
             | ContextStoreError::StoredTenantStatus(_)
             | ContextStoreError::CatalogueIdentityGeneration(_) => PersistenceFailure::Undecodable,
-            ContextStoreError::Invariant(_) | ContextStoreError::DatabaseUrlUnnamed => PersistenceFailure::ContractBroken,
+            ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated)
+            | ContextStoreError::Invariant(_)
+            | ContextStoreError::DatabaseUrlUnnamed => PersistenceFailure::ContractBroken,
         }
     }
 
@@ -291,9 +293,11 @@ impl ContextStoreError {
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity::types_present::EntityTypesMissing,
         error::ContextStoreError,
         schema_contract::{error::SchemaContractError, migrations_digest::MigrationsDigest},
     };
+    use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
     use andromeda_postgresql_pool::{fake_database_error::FakeDatabaseError, persistence_classification::classify};
@@ -305,6 +309,20 @@ mod tests {
         let error = ContextStoreError::from(FakeDatabaseError::new("duplicate key", "23505").into_sqlx());
         assert!(matches!(error, ContextStoreError::UniqueViolation(_)));
         pretty_assertions::assert_eq!(error.failure_class(), PersistenceFailure::ConstraintViolated);
+    }
+
+    /// The write path names every typeless entity before a statement runs,
+    /// so the check constraint refusing an anonymous row is a broken contract,
+    /// while a named refusal stays the constraint violation it is.
+    #[test]
+    fn an_anonymous_entity_types_violation_is_a_broken_contract() -> Result<(), IdentifierParseError> {
+        pretty_assertions::assert_eq!(
+            ContextStoreError::from(EntityTypesMissing::ConstraintViolated).failure_class(),
+            PersistenceFailure::ContractBroken
+        );
+        let named = EntityTypesMissing::Rejected("urn:ngsi-ld:Building:1".parse()?);
+        pretty_assertions::assert_eq!(ContextStoreError::from(named).failure_class(), PersistenceFailure::ConstraintViolated);
+        Ok(())
     }
 
     /// Clause 4.9 of ETSI GS CIM 009 v1.9.1: a `RegExp` the database cannot

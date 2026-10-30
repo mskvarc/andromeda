@@ -12,8 +12,13 @@ pub(super) const fn classify_sweep_failure(error: TemporalStoreError) -> TaskFai
     let class = match &error {
         // A collation object is created on demand by a read that orders under
         // it (clause 4.23.1); the statement fails for the same reasons any
-        // other one does, so a retry is worth taking.
-        TemporalStoreError::Database(_) | TemporalStoreError::NameLookup(_) | TemporalStoreError::Collation(_) => FailureClass::Transient,
+        // other one does, so a retry is worth taking. A sweep never claims an
+        // instanceId, so a claim race cannot reach this classifier; it is
+        // contention, which a later run clears.
+        TemporalStoreError::Database(_)
+        | TemporalStoreError::NameLookup(_)
+        | TemporalStoreError::Collation(_)
+        | TemporalStoreError::InstanceClaimRace(_) => FailureClass::Transient,
         TemporalStoreError::WriteOrdinal(_)
         | TemporalStoreError::StatementBuild(_)
         | TemporalStoreError::RetentionHorizon(_)
@@ -36,11 +41,7 @@ pub(super) const fn classify_sweep_failure(error: TemporalStoreError) -> TaskFai
         | TemporalStoreError::EntityIntent { .. } => FailureClass::InvariantViolation,
         TemporalStoreError::Refused(_)
         | TemporalStoreError::NotFound(_)
-        | TemporalStoreError::TimestampPrecision(_)
-        // A sweep never claims an instanceId, so this variant cannot reach
-        // this classifier; it is grouped with the other client-input refusals
-        // because that is what it would mean if it did.
-        | TemporalStoreError::DuplicateInstanceClaim(_) => FailureClass::Permanent,
+        | TemporalStoreError::TimestampPrecision(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }

@@ -11,6 +11,7 @@ use crate::{
 };
 use andromeda_context_commit::{
     history_record::{HistoryRecord, tombstone},
+    submission_refusal::SubmissionRefusal,
     write_id::WriteId,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
@@ -487,4 +488,55 @@ fn a_reified_scope_carrying_a_dataset_id_is_refused() {
         ),
         "{error:?}"
     );
+}
+
+/// A written `Property` instance of `dataset`, or the default instance,
+/// named `instance_id`.
+fn named_instance(dataset: Option<&str>, instance_id: &str) -> Value {
+    let mut instance = json!({
+        "@type": [PROPERTY],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+        "https://uri.etsi.org/ngsi-ld/instanceId": [{"@id": instance_id}]
+    });
+    if let (Some(dataset), Some(members)) = (dataset, instance.as_object_mut()) {
+        members.insert(expanded_properties::DATASET_ID.as_str().to_owned(), json!([{"@id": dataset}]));
+    }
+    instance
+}
+
+/// Clause 4.5.7: one `instanceId` names one instance of an attribute across
+/// its `datasetId`s, so a written evolution giving it to two is refused
+/// before any history row is built.
+#[test]
+fn an_instance_id_given_to_two_instances_of_one_attribute_is_refused() {
+    let history = [written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://example.com/speed": [
+            named_instance(Some("urn:ngsi-ld:Dataset:a"), "urn:ngsi-ld:Instance:x"),
+            named_instance(Some("urn:ngsi-ld:Dataset:b"), "urn:ngsi-ld:Instance:x")
+        ]
+    }]))];
+
+    let error = prepare(&entity_id(), &[], &history, record(recorded_at()), WriteOrdinal::at(0)).expect_err("the instanceId repeats");
+
+    assert!(
+        matches!(&error, TemporalError::Validation(TemporalValidationReason::Refused(SubmissionRefusal::RepeatedInstanceId(repeated)))
+            if repeated.attribute.as_str() == "https://example.com/speed" && repeated.instance.rendered().to_string() == "urn:ngsi-ld:Instance:x"),
+        "{error:?}"
+    );
+}
+
+/// The uniqueness of clause 4.5.7 is per attribute: one `instanceId` on two
+/// attributes names two instances, and each is recorded under it.
+#[test]
+fn one_instance_id_on_two_attributes_is_recorded_for_each() {
+    let entries = prepared(&[written(&json!([{
+        "@id": entity_id(),
+        "@type": [VEHICLE],
+        "https://example.com/speed": [named_instance(None, "urn:ngsi-ld:Instance:x")],
+        "https://example.com/heading": [named_instance(None, "urn:ngsi-ld:Instance:x")]
+    }]))]);
+
+    pretty_assertions::assert_eq!(rows(&entries).len(), 2);
 }

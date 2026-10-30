@@ -40,15 +40,17 @@ pub(crate) fn database(error: &sqlx::Error) -> CommitError {
 
 /// Classify a current-state store failure.
 ///
-/// Only the missing-type refusal names the submission: clause 4.5.1 requires at
-/// least one Entity type, and an Entity that carries none is a body the client
-/// wrote, not a fault of the store that refused it.
+/// Only the missing-type refusal naming its entity names the submission:
+/// clause 4.5.1 requires at least one Entity type, and an Entity that carries
+/// none is a body the client wrote. The write path names every such entity
+/// before a statement runs, so the check constraint refusing an anonymous row
+/// is the store breaking its own contract, a fault rather than a refusal.
 #[track_caller]
 pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
     match error {
         ContextStoreError::EntityTypes(EntityTypesMissing::Rejected(entity)) => CommitError::Submission(SubmissionRefusal::UntypedEntity(entity)),
-        ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated) => CommitError::Submission(SubmissionRefusal::UntypedEntityUnidentified),
-        other @ (ContextStoreError::Database(_)
+        other @ (ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated)
+        | ContextStoreError::Database(_)
         | ContextStoreError::Saturated
         | ContextStoreError::Encoding(_)
         | ContextStoreError::Collation(_)
@@ -187,7 +189,7 @@ pub(crate) fn history(error: TemporalStoreError) -> AttemptFailure {
         | TemporalStoreError::ScopeHasNoAttributeRow
         | TemporalStoreError::TimestampPrecision(_)
         | TemporalStoreError::MixedAggregationGroup(_)
-        | TemporalStoreError::DuplicateInstanceClaim(_)
+        | TemporalStoreError::InstanceClaimRace(_)
         | TemporalStoreError::WriteRecordMismatch { .. }
         | TemporalStoreError::ColumnstoreSettingsDrift { .. }) => AttemptFailure::Failed(temporal_store(other)),
     }
@@ -219,7 +221,7 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_postgresql_context_store::{entity::types_present::EntityTypesMissing, error::ContextStoreError};
     use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
-    use andromeda_postgresql_temporal_store::{duplicate_instance_claim::DuplicateInstanceClaimError, error::TemporalStoreError};
+    use andromeda_postgresql_temporal_store::{error::TemporalStoreError, instance_claim_race::InstanceClaimRace};
     use andromeda_temporal::error::TemporalError;
 
     fn entity_id() -> Identifier {
@@ -232,8 +234,20 @@ mod tests {
     fn a_typeless_entity_is_reported_as_a_refused_submission() {
         let named = context_store(ContextStoreError::EntityTypes(EntityTypesMissing::Rejected(entity_id())));
         assert!(matches!(named, CommitError::Submission(_)), "{named}");
+    }
+
+    /// The write path names every typeless entity before a statement runs, so
+    /// the check constraint refusing an anonymous row is a broken contract
+    /// (a 500), never a refusal that would fail every write of the chunk.
+    #[test]
+    fn an_anonymous_type_constraint_violation_is_a_broken_store_contract() {
         let anonymous = context_store(ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated));
-        assert!(matches!(anonymous, CommitError::Submission(_)), "{anonymous}");
+        assert!(matches!(anonymous, CommitError::Persistence(PersistenceFailure::ContractBroken)), "{anonymous}");
+        let statement = entity_statement(ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated));
+        assert!(
+            matches!(statement, AttemptFailure::Failed(CommitError::Persistence(PersistenceFailure::ContractBroken))),
+            "{statement:?}"
+        );
     }
 
     #[test]
@@ -328,8 +342,6 @@ mod tests {
             matches!(&failure, AttemptFailure::Refused(refused) if refused.entity_id == entity_id() && matches!(refused.refusal, SubmissionRefusal::UntypedEntity(_))),
             "{failure:?}"
         );
-        let anonymous = entity_statement(ContextStoreError::EntityTypes(EntityTypesMissing::ConstraintViolated));
-        assert!(matches!(anonymous, AttemptFailure::Failed(CommitError::Submission(_))), "{anonymous:?}");
     }
 
     #[test]
@@ -353,7 +365,14 @@ mod tests {
         );
         let fault = history(entity_intent(TemporalStoreError::ScopeHasNoAttributeRow));
         assert!(matches!(fault, AttemptFailure::Failed(CommitError::Persistence(_))), "{fault:?}");
-        let unattributed = history(TemporalStoreError::DuplicateInstanceClaim(DuplicateInstanceClaimError));
-        assert!(matches!(unattributed, AttemptFailure::Failed(CommitError::Submission(_))), "{unattributed:?}");
+    }
+
+    /// Clause 4.5.7: a claim a concurrent writer took first is contention, so
+    /// the committer reruns the chunk and the rerun replaces that writer's
+    /// instance; no write of the chunk is refused for it.
+    #[test]
+    fn an_instance_claim_race_is_contention_the_committer_reruns() {
+        let race = history(TemporalStoreError::InstanceClaimRace(InstanceClaimRace));
+        assert!(matches!(race, AttemptFailure::Failed(CommitError::TransactionContended)), "{race:?}");
     }
 }

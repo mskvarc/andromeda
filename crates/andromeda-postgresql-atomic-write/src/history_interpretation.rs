@@ -86,15 +86,17 @@ pub(crate) fn history_recording(write: &AtomicWrite, core_write_history: CoreWri
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::history_interpretation::interpret;
+    use crate::{attempt_failure::AttemptFailure, history_interpretation::interpret};
     use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
         history_record::{HistoryRecord, tombstone},
+        submission_refusal::SubmissionRefusal,
         write_id::WriteId,
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
@@ -102,7 +104,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
     use chrono::{TimeZone, Utc};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::sync::Arc;
 
     /// The stored expanded document of a Vehicle whose `speed` is 1.
@@ -231,5 +233,82 @@ mod tests {
         pretty_assertions::assert_eq!(intents.len(), 1);
         pretty_assertions::assert_eq!(intents[0].entries.len(), 2, "{:?}", intents[0].entries);
         pretty_assertions::assert_eq!(next, WriteOrdinal::at(2));
+    }
+
+    /// A `speed` instance of `dataset`, or the default instance, holding
+    /// `value` and named `instance_id`.
+    fn named_speed(dataset: Option<&str>, value: u32, instance_id: &str) -> Value {
+        let mut instance = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}],
+            "https://uri.etsi.org/ngsi-ld/instanceId": [{"@id": instance_id}]
+        });
+        if let (Some(dataset), Some(members)) = (dataset, instance.as_object_mut()) {
+            members.insert("https://uri.etsi.org/ngsi-ld/datasetId".to_owned(), json!([{"@id": dataset}]));
+        }
+        instance
+    }
+
+    /// A Temporal API write of the `speed` instances `instances`.
+    fn speed_evolution_write(entity_id: &str, instances: &[Value]) -> AtomicWrite {
+        let uri = entity_id.parse::<Identifier>().expect("valid entity URI");
+        let document = serde_json::to_vec(&json!([{
+            "@id": entity_id,
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/speed": instances
+        }]))
+        .expect("the fixture serialises");
+        AtomicWrite::builder()
+            .entity_id(Arc::new(uri))
+            .entity(EntityMutation::None)
+            .history(vec![HistoryRecord::EvolutionInstances(Arc::new(
+                EntityDocument::from_slice(&document).expect("the fixture is an entity document"),
+            ))])
+            .build()
+    }
+
+    /// Clause 4.5.7: one `instanceId` names one instance of an attribute,
+    /// across its `datasetId`s. A Temporal API write repeating one is refused
+    /// while its history is interpreted, against its own entity, so the
+    /// committer sets it aside and commits the writes beside it (clause
+    /// 5.6.7.4 reports each entity of a batch on its own).
+    #[test]
+    fn a_temporal_write_repeating_an_instance_id_is_refused_against_its_own_entity() {
+        let before = evolution_write("urn:ngsi-ld:A");
+        let repeated = speed_evolution_write(
+            "urn:ngsi-ld:B",
+            &[
+                named_speed(Some("urn:ngsi-ld:Dataset:a"), 1, "urn:ngsi-ld:Instance:x"),
+                named_speed(Some("urn:ngsi-ld:Dataset:b"), 2, "urn:ngsi-ld:Instance:x"),
+            ],
+        );
+        let after = evolution_write("urn:ngsi-ld:C");
+
+        let failure = interpret(&[&before, &repeated, &after], &record(), WriteOrdinal::at(0), CoreWriteHistory::Recorded)
+            .expect_err("the repeated instanceId is refused");
+
+        let AttemptFailure::Refused(refused) = failure else {
+            panic!("the refusal is attributed to one write: {failure:?}");
+        };
+        pretty_assertions::assert_eq!(refused.entity_id.as_str(), "urn:ngsi-ld:B");
+        assert!(
+            matches!(&refused.refusal, SubmissionRefusal::RepeatedInstanceId(repeated)
+                if repeated.attribute.as_str() == "https://example.com/speed" && repeated.instance.rendered().to_string() == "urn:ngsi-ld:Instance:x"),
+            "{:?}",
+            refused.refusal
+        );
+    }
+
+    /// One `instanceId` on two different entities names two instances of two
+    /// different attributes, which clause 4.5.7 allows.
+    #[test]
+    fn one_instance_id_on_two_entities_is_not_a_repeat() {
+        let first = speed_evolution_write("urn:ngsi-ld:A", &[named_speed(None, 1, "urn:ngsi-ld:Instance:x")]);
+        let second = speed_evolution_write("urn:ngsi-ld:B", &[named_speed(None, 1, "urn:ngsi-ld:Instance:x")]);
+
+        let (intents, _) =
+            interpret(&[&first, &second], &record(), WriteOrdinal::at(0), CoreWriteHistory::Recorded).expect("each entity names its instance once");
+
+        pretty_assertions::assert_eq!(intents.len(), 2);
     }
 }

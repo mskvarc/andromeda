@@ -511,4 +511,29 @@ mod tests {
             vec!["urn:ngsi-ld:Vehicle:2"]
         );
     }
+
+    /// Clause 4.6.3 allows at most six fractional-second digits, and clause
+    /// 5.6.7.4 reports a failed entity on its own: a `DateTime` value past
+    /// microseconds is refused against its own entity at admission, before any
+    /// write of the batch is committed, and its neighbours are admitted.
+    #[tokio::test]
+    async fn the_batch_admission_refuses_only_the_entity_valued_past_microseconds() {
+        let (service, _recorded) = recording_service().await;
+        let valued = entity(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "servicedAt": {"type": "Property", "value": {"@type": "DateTime", "@value": "2026-07-25T12:00:00.1234567Z"}}
+        }));
+        let entities = vec![vehicle("urn:ngsi-ld:Vehicle:2"), valued, vehicle("urn:ngsi-ld:Vehicle:3")];
+
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
+
+        pretty_assertions::assert_eq!(refused.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:1"]);
+        pretty_assertions::assert_eq!(
+            admitted.forwardable().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:3"]
+        );
+    }
 }

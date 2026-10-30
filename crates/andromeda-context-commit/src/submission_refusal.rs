@@ -9,10 +9,13 @@
 //! lowercase client prose; spec attribute-type names keep their fixed casing.
 
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     identifier::Identifier,
+    instance_identity::InstanceIdentity,
     time::{date_time::NgsiLdDateTimeError, value::TimeValueError},
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
+use derive_more::Display;
 use thiserror::Error;
 
 /// Why the submitted content cannot be stored as written.
@@ -21,9 +24,6 @@ pub enum SubmissionRefusal {
     /// An Entity carried no type; clause 4.5.1 requires at least one.
     #[error("entity {0} carries no type, but at least one is required")]
     UntypedEntity(Identifier),
-    /// An Entity carried no type, and the store that refused it names no row.
-    #[error("an entity write carried no type, but at least one is required")]
-    UntypedEntityUnidentified,
     /// A time-value property was not a clause 4.6.3 time value.
     #[error("invalid time value property: {0}")]
     TimeValueProperty(#[source] TimeValueError),
@@ -57,10 +57,21 @@ pub enum SubmissionRefusal {
     /// A `ListRelationship` instance omitted its `objectList`.
     #[error("ListRelationship missing objectList")]
     ListRelationshipMissingObjectList,
-    /// A client-supplied `instanceId` claimed more than one instance of the same
-    /// attribute at once (clause 4.5.7).
-    #[error("instanceId is already claimed by another instance of the same attribute, and must be unique to one")]
-    DuplicateInstanceClaim,
+    /// A Temporal API write gave one `instanceId` to more than one instance of
+    /// one attribute, across its `datasetId`s (clause 4.5.7). Boxed because a
+    /// refusal travels inside every temporal error.
+    #[error("{0}")]
+    RepeatedInstanceId(Box<RepeatedInstanceId>),
+}
+
+/// One `instanceId` a write gave to more than one instance of one attribute.
+#[derive(Debug, Display)]
+#[display("instanceId {} names more than one instance of attribute {attribute}, but must name one", instance.rendered())]
+pub struct RepeatedInstanceId {
+    /// The attribute whose instances share the identifier.
+    pub attribute: AttributeName,
+    /// The identifier given more than once.
+    pub instance: InstanceIdentity,
 }
 
 #[cfg(test)]
@@ -69,8 +80,21 @@ pub enum SubmissionRefusal {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::submission_refusal::SubmissionRefusal;
+    use crate::submission_refusal::{RepeatedInstanceId, SubmissionRefusal};
+    use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_repeated_instance_id_names_the_identifier_and_its_attribute() {
+        let refusal = SubmissionRefusal::RepeatedInstanceId(Box::new(RepeatedInstanceId {
+            attribute: "https://example.com/speed".parse().expect("a valid attribute name"),
+            instance: InstanceIdentity::Verbatim("urn:ngsi-ld:Instance:x".parse().expect("a valid identifier")),
+        }));
+        assert_eq!(
+            refusal.to_string(),
+            "instanceId urn:ngsi-ld:Instance:x names more than one instance of attribute https://example.com/speed, but must name one"
+        );
+    }
 
     #[test]
     fn an_untyped_entity_names_the_entity_the_client_wrote() {

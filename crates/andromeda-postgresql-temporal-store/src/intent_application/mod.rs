@@ -34,8 +34,8 @@ mod replaced_rows;
 mod scope_judgement;
 
 use crate::{
-    duplicate_instance_claim::claim_write_failure,
     error::TemporalStoreError,
+    instance_claim_race::claim_write_failure,
     intent_application::{
         catalog_statements::{evolutions_and_streams_statement, untyped_observations_statement, untyped_streams_statement},
         history_statements::{
@@ -111,7 +111,7 @@ enum StepRole {
     Evolve,
     /// Run it and refuse the application when it returns a row.
     RefuseUntyped,
-    /// Run it and refuse a duplicate `instanceId` claim as the client's own.
+    /// Run it and report a claim a concurrent writer took first as contention.
     Claim,
     /// Read the attribute history rows the entries replace, then remove
     /// exactly those rows and prune their streams' shapes.
@@ -244,8 +244,8 @@ fn application_steps() -> Vec<Step> {
 /// # Errors
 ///
 /// Returns [`TemporalStoreError::NotFound`] naming the Entity of the first such
-/// intent, [`TemporalStoreError::DuplicateInstanceClaim`] when two instances of
-/// one attribute claim one `instanceId`, [`TemporalStoreError::StatementBuild`]
+/// intent, [`TemporalStoreError::InstanceClaimRace`] when a concurrent writer
+/// claimed an `instanceId` the source stakes, [`TemporalStoreError::StatementBuild`]
 /// when a statement cannot be built, and [`TemporalStoreError::Database`] when
 /// one fails.
 pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentSource<'_>, target: &ContextTarget) -> Result<(), TemporalStoreError> {

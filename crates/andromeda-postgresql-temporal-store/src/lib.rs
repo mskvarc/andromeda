@@ -34,9 +34,6 @@ pub mod columnstore_conversion;
 pub mod columnstore_enablement;
 /// Letting a transaction decompress what its own confined statements must.
 pub(crate) mod decompression_allowance;
-/// The invariant that one client-supplied `instanceId` names one attribute
-/// instance across every sibling `datasetId` stream of an attribute.
-pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
@@ -59,6 +56,10 @@ pub mod hypertable_policy;
 /// Reading the instances a split query's filters read in effect when its
 /// window opens.
 pub(crate) mod in_effect_instance_read;
+/// The invariant that one client-supplied `instanceId` names one attribute
+/// instance across every sibling `datasetId` stream of an attribute, and the
+/// race a statement meeting it lost.
+pub mod instance_claim_race;
 mod instance_mutation;
 /// The statements addressing one temporal attribute instance by its `instanceId`.
 mod instance_statements;

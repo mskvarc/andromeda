@@ -5,8 +5,10 @@
 //! twice is deliberate: the constraint is what makes a typeless row
 //! unrepresentable no matter which statement wrote it, and the check below is
 //! what lets the write path name the offending entity instead of aborting the
-//! whole transaction on an anonymous constraint failure. Both report the same
-//! typed error, so a caller never has to tell the two apart.
+//! whole transaction on an anonymous constraint failure. The check runs before
+//! every statement the constraint guards, so the constraint refusing a row
+//! means the check let a typeless entity through: a broken store contract, not
+//! a refusal of the client's write.
 
 use crate::{entity::params::PreparedEntityColumns, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -22,9 +24,10 @@ pub enum EntityTypesMissing {
     /// it belongs to is known (ETSI GS CIM 009 clause 4.5.1).
     #[error("entity {0} carries no type, but at least one is required")]
     Rejected(Identifier),
-    /// The database check constraint refused the row. The statement is set-based
-    /// and the constraint names no row, so no identifier is available (ETSI GS CIM 009 clause 4.5.1).
-    #[error("an entity write carried no type, but at least one is required")]
+    /// The database check constraint refused a row [`types_present`] let
+    /// through. The statement is set-based and the constraint names no row, so
+    /// no identifier is available, and the store broke its own contract.
+    #[error("the entity types check constraint refused a row the write path admitted")]
     ConstraintViolated,
 }
 

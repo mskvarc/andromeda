@@ -47,9 +47,9 @@ impl TemporalRecorder {
     /// cannot be stored, [`TemporalStoreError::NotFound`] when an intent
     /// records an observation against a Temporal Evolution that does not exist
     /// and declares no entity type to create it with,
-    /// [`TemporalStoreError::DuplicateInstanceClaim`] when two instances of one
-    /// attribute claim one `instanceId`, and [`TemporalStoreError::Database`]
-    /// when a statement fails.
+    /// [`TemporalStoreError::InstanceClaimRace`] when a concurrent writer
+    /// claimed an `instanceId` an intent stakes, and
+    /// [`TemporalStoreError::Database`] when a statement fails.
     pub async fn record_intents_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
