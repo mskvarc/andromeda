@@ -6,12 +6,15 @@
 //! JSONB document directly.
 
 use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
-use andromeda_ngsi_ld_query::filter::{
-    expression::Expr,
-    path::{AttrPath, QueryPath},
-    predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
-    scalar::{CompareValue, Scalar},
-    trailing_path::TrailingPath,
+use andromeda_ngsi_ld_query::{
+    filter::{
+        expression::Expr,
+        path::{AttrPath, QueryPath},
+        predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
+        scalar::{CompareValue, Scalar},
+        trailing_path::TrailingPath,
+    },
+    pattern::Pattern,
 };
 use andromeda_ngsi_ld_vocabulary::{
     compact::classes::{DATE, DATE_TIME, TIME},
@@ -19,7 +22,7 @@ use andromeda_ngsi_ld_vocabulary::{
 };
 use andromeda_postgresql_query::{
     jsonb::lift_comparison,
-    operator::{compare, pattern as pattern_predicate},
+    operator::{PatternIndexes, compare, pattern as pattern_predicate},
 };
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
@@ -79,8 +82,8 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
         Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(context_source_properties(), SeaExpr::val(path.attr.as_str()))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
         Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
-        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.portable().as_str(), PatternPolarity::Match),
-        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern.portable().as_str(), PatternPolarity::NotMatch),
+        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, PatternPolarity::Match),
+        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, PatternPolarity::NotMatch),
     }
 }
 
@@ -111,13 +114,13 @@ fn present(extract: SimpleExpr) -> SimpleExpr {
 ///
 /// Both polarities require the property to be present (clause 4.9), so both
 /// build through [`present_and`].
-fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolarity) -> Condition {
+fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
     let extract = csr_value_extract(path);
     // `#>> '{}'` unwraps the jsonb value to its text form without the surrounding
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
     // `Alpha` (clause 4.9). Every comparison arm in this file extracts the same
     // way; the pattern arm must agree.
-    let value = pattern_predicate(stored_text(extract.clone()), polarity, SeaExpr::val(pattern)); // clone: the presence guard reads the same extraction
+    let value = pattern_predicate(stored_text(extract.clone()), polarity, pattern, PatternIndexes::None); // clone: the presence guard reads the same extraction
     Condition::all().add(present_and(present(extract), value))
 }
 

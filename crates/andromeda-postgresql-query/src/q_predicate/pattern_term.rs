@@ -8,7 +8,7 @@
 //! the attribute.
 
 use crate::{
-    operator::pattern as pattern_predicate,
+    operator::{PatternIndexes, pattern as pattern_predicate},
     q_predicate::{
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     filter::predicate::{PatternPolarity, Predicate},
     pattern::Pattern,
 };
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::{Condition, SimpleExpr};
 
 /// Where an instance's own value holds a String a pattern is tested against.
 ///
@@ -58,8 +58,23 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
 #[must_use]
 pub fn pattern_on(target: PatternTarget, pred: &Predicate, pattern: &Pattern, polarity: PatternPolarity, row: InstanceRow) -> SimpleExpr {
     match target {
-        PatternTarget::Column(column) => pattern_predicate(row.value(column), polarity, SeaExpr::val(pattern.portable().as_str())),
+        PatternTarget::Column(column) => pattern_predicate(row.value(column), polarity, pattern, column_indexes(row, column)),
         PatternTarget::LanguageMap => language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage),
+    }
+}
+
+/// The indexes over one String field of `row`: a `current_attributes` row
+/// keys `value_string` in a B-tree and both String columns in a trigram index,
+/// and nothing else indexes a String a pattern reads.
+const fn column_indexes(row: InstanceRow, column: ValueColumn) -> PatternIndexes {
+    match (row, column) {
+        (InstanceRow::Current, ValueColumn::String) => PatternIndexes::TrigramsAndByteOrder,
+        (InstanceRow::Current, ValueColumn::LongText) => PatternIndexes::Trigrams,
+        (
+            InstanceRow::Current,
+            ValueColumn::Number | ValueColumn::Boolean | ValueColumn::DateTime | ValueColumn::Uri | ValueColumn::LongUri | ValueColumn::Object,
+        ) => PatternIndexes::None,
+        (InstanceRow::History | InstanceRow::Element(_), _unindexed) => PatternIndexes::None,
     }
 }
 
@@ -130,7 +145,7 @@ mod tests {
     fn a_pattern_on_a_current_row_disjoins_every_target() {
         let sql = render("\"https://example.com/name\"~=\"^D\"", PatternPolarity::Match, InstanceRow::Current);
         assert!(sql.contains(r#""ca"."value_string" ~ '^D'"#), "{sql}");
-        assert!(sql.contains(r#""ca"."value_long_text" ~ '^D'"#), "{sql}");
+        assert!(sql.contains(r#"(("ca"."value_long_text") COLLATE "default") ~ '^D'"#), "{sql}");
         assert!(sql.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5))"#), "{sql}");
         assert_eq!(sql.matches(" OR ").count(), 2, "{sql}");
     }

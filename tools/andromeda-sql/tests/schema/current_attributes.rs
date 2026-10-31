@@ -220,7 +220,7 @@ fn the_string_trigram_index_is_on_a_bounded_pending_list() -> Result<(), PinErro
     let schema = schema()?;
     assert_eq!(
         index_definition(&schema, "idx_ca_value_string_trgm")?,
-        "on current_attributes using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64) where value_string is not null"
+        "on current_attributes using gin (attribute_name_key int4_ops, value_string collate \"default\" gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64) where value_string is not null"
     );
     Ok(())
 }

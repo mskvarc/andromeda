@@ -355,7 +355,7 @@ mod tests {
         ]);
         let (sql, _) = built(&compiled, &vehicle_is_known());
         assert!(sql.contains(r#""entity_type_members""#), "{sql}");
-        assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
+        assert!(sql.contains(r#"("e"."id") COLLATE "default") ~ "#), "{sql}");
         assert!(!sql.contains(r#""e"."evolution_type_name_keys""#), "{sql}");
     }
 
@@ -542,7 +542,7 @@ mod tests {
             sql.contains(r#"WHERE "hs"."attribute_name_key" = (7) ORDER BY "hi"."id" ASC) AS "hr""#),
             "{sql}"
         );
-        assert!(sql.contains(r#""e"."id" ~ "#), "{sql}");
+        assert!(sql.contains(r#"("e"."id") COLLATE "default") ~ "#), "{sql}");
     }
 
     /// A type has its own walk, and identifiers their own index, so neither

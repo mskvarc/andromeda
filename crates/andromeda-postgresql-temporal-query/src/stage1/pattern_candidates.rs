@@ -4,25 +4,25 @@
 //! Clause 5.7.4.4 keeps an Entity whose identifier matches the pattern, a test
 //! on the identifier alone, and the index rechecks each match against the
 //! pattern, so the candidates are exactly the Evolutions the pattern keeps and
-//! the narrowed walk does not test it again. The filter is written on the
-//! bare `id` column, the expression `idx_entities_id_trgm` holds, and keeps
-//! the identity rows holding a Temporal Evolution.
+//! the narrowed walk does not test it again. The filter tests the `id` column
+//! under the collation `idx_entities_id_trgm` declares, and keeps the identity
+//! rows holding a Temporal Evolution.
 
 use crate::stage1::queued_candidates::queued_candidates;
-use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_ngsi_ld_query::{filter::predicate::PatternPolarity, pattern::Pattern};
 use andromeda_postgresql_query::{
     entity_sides::holds_evolution,
     history_source::{HistoryBranch, PendingEntries},
+    operator::{PatternIndexes, pattern as pattern_predicate},
 };
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents};
-use andromeda_postgresql_seaquery::{branch::qualified, operator::regex_match};
+use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{Expr, Query, SelectStatement, UnionType};
 
 /// The Evolutions of `branch` whose identifier `pattern` matches: their
 /// surrogate keys over recorded rows alone; where the branch reads its queue,
 /// their identifiers beside those of the queued Entities the pattern matches.
 pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> SelectStatement {
-    let matched = || Expr::val(pattern.portable().as_str());
     let column = match branch.pending() {
         PendingEntries::Absent => Entities::EntityKey,
         PendingEntries::Unioned => Entities::Id,
@@ -31,13 +31,23 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
     recorded
         .column((Entities::Table, column))
         .from(qualified(branch.schema(), Entities::Table))
-        .and_where(regex_match(Expr::col((Entities::Table, Entities::Id)), matched()))
+        .and_where(pattern_predicate(
+            Expr::col((Entities::Table, Entities::Id)),
+            PatternPolarity::Match,
+            pattern,
+            PatternIndexes::TrigramsAndByteOrder,
+        ))
         .and_where(holds_evolution(Entities::Table));
     match branch.pending() {
         PendingEntries::Absent => {}
         PendingEntries::Unioned => {
             let mut queued = queued_candidates(branch);
-            queued.and_where(regex_match(Expr::col(TemporalAppendIntents::EntityId), matched()));
+            queued.and_where(pattern_predicate(
+                Expr::col(TemporalAppendIntents::EntityId),
+                PatternPolarity::Match,
+                pattern,
+                PatternIndexes::None,
+            ));
             recorded.union(UnionType::All, queued);
         }
     }
@@ -79,7 +89,7 @@ mod tests {
         assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#""candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $"#),
+            sql.contains(r#""candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $"#),
             "{sql}"
         );
         for bound in [5_000, 1_001, 1_000] {
@@ -93,7 +103,7 @@ mod tests {
         let candidates = PageBranches::of(&sql).candidates;
         assert_eq!(
             candidates,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL"#
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL"#
         );
         assert!(!candidates.contains("lower(") && !candidates.contains("::"), "{candidates}");
     }
@@ -156,8 +166,11 @@ mod tests {
         });
         let sql = recorded_stage1(&paired).select.to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
-        assert!(!branches.candidates.contains(r#""entities"."id" ~"#), "{sql}");
-        assert!(branches.indexed.contains(r#""e"."id" ~ '.*:9.*'"#), "{sql}");
+        assert!(
+            !branches.candidates.contains(r#""entities"."id")"#) && !branches.candidates.contains(r#""entities"."id" ~"#),
+            "{sql}"
+        );
+        assert!(branches.indexed.contains(r#"("e"."id") COLLATE "default") ~ '.*:9.*'"#), "{sql}");
         let stage1 = recorded_stage1(&ordered);
         let sql = stage1.select.to_string(PostgresQueryBuilder);
         assert!(!sql.contains("candidates"), "{sql}");
@@ -172,7 +185,7 @@ mod tests {
         let branches = PageBranches::of(&sql);
         assert!(
             branches.candidates.starts_with(
-                r#"SELECT "entities"."id" FROM "entities" WHERE ("entities"."id" ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL UNION ALL "#
+                r#"SELECT "entities"."id" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL UNION ALL "#
             ),
             "{}",
             branches.candidates
@@ -220,11 +233,16 @@ mod tests {
         );
         assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
         assert!(
-            parts.filtered.contains(r#""e"."id" ~ $"#),
+            parts.filtered.contains(r#"("e"."id") COLLATE "default") ~ $"#),
             "the pattern is tested once, on every looked-up Evolution: {}",
             parts.filtered
         );
-        assert!(!parts.indexed.contains(r#""e"."id" ~"#) && !parts.walked.contains(r#""e"."id" ~"#), "{sql}");
+        assert!(
+            [&parts.indexed, &parts.walked]
+                .iter()
+                .all(|part| !part.contains(r#""e"."id" ~"#) && !part.contains(r#""e"."id") COLLATE"#)),
+            "{sql}"
+        );
         assert!(!sql.contains("CASE WHEN"), "{sql}");
     }
 }

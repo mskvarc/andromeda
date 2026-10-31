@@ -9,7 +9,7 @@
 //! answer every operand alike.
 
 use crate::{
-    operator::{compare, pattern as pattern_predicate},
+    operator::{PatternIndexes, compare, pattern as pattern_predicate},
     q_predicate::{
         language_map::{LanguageMap, LanguageSelection},
         string_ordering::string_ordering_collation,
@@ -116,7 +116,7 @@ fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr
 
 /// Whether one string is in the language of a pattern.
 fn string_pattern(text: SimpleExpr, pattern: &Pattern) -> SimpleExpr {
-    pattern_predicate(text, PatternPolarity::Match, SeaExpr::val(pattern.portable().as_str()))
+    pattern_predicate(text, PatternPolarity::Match, pattern, PatternIndexes::None)
 }
 
 #[cfg(test)]

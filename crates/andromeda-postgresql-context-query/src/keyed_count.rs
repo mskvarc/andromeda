@@ -180,7 +180,10 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(dense.starts_with("SELECT COUNT(*) FROM "), "{dense}");
         assert!(!dense.contains("candidates") && !dense.starts_with("WITH"), "{dense}");
-        assert!(dense.contains(r#""ca"."value_string" ~ "#), "the walk probes the whole q: {dense}");
+        assert!(
+            dense.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
+            "the walk probes the whole q: {dense}"
+        );
     }
 
     /// Past a cursor the page carries no total, so the count is its own
@@ -250,7 +253,10 @@ mod tests {
             indexed.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{indexed}"
         );
-        assert!(!indexed.contains(r#""ca"."value_string" ~ "#), "the candidates answer the pattern: {indexed}");
+        assert!(
+            !indexed.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
+            "the candidates answer the pattern: {indexed}"
+        );
         assert!(
             indexed.contains(r#"NOT COALESCE(("ca"."value_string" = $"#),
             "the rest of q still filters: {indexed}"
@@ -262,7 +268,10 @@ mod tests {
         let (sql, _) = count_of("\"https://example.com/temperature\"~=\"text-71.*\"");
         let (_, walked) = arms(&sql);
         assert!(!walked.contains("candidates"), "{walked}");
-        assert!(walked.contains(r#""ca"."value_string" ~ "#), "the walk probes the whole q: {walked}");
+        assert!(
+            walked.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
+            "the walk probes the whole q: {walked}"
+        );
     }
 
     #[test]

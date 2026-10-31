@@ -244,7 +244,12 @@ mod tests {
         compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
         let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
-        assert!(branches.candidates.contains(r#"FROM "entities" WHERE ("entities"."id" ~"#), "{sql}");
+        assert!(
+            branches
+                .candidates
+                .contains(r#"FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~"#),
+            "{sql}"
+        );
         assert!(!branches.candidates.contains("scope_history"), "{sql}");
         assert!(branches.indexed.contains(r#"FROM "scope_history" AS "rsh""#), "{sql}");
     }

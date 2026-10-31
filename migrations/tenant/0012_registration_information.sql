@@ -85,4 +85,9 @@ where
 
 -- A queried `idPattern` against the registered `id` (clause 5.12): the
 -- portable pattern is unanchored, so the B-tree cannot serve it.
-create index idx_registration_information_entity_id_trgm on registration_information using gin (entity_id gin_trgm_ops);
+-- The trigram column is collated under the database's default, the
+-- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- trigrams of a pattern are taken under the collation the pattern is tested
+-- under, and under `"C"` they leave out every letter outside ASCII the
+-- default classifies, so the index would drop strings the pattern matches.
+create index idx_registration_information_entity_id_trgm on registration_information using gin (entity_id collate "default" gin_trgm_ops);

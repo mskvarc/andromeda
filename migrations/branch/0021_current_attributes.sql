@@ -194,7 +194,12 @@ where
 -- directly queue on the same pages; a pending list takes the inserts instead,
 -- and its 64 kB bound keeps the flush a writer pays, and the list a read
 -- scans, small.
-create index idx_ca_value_string_trgm on current_attributes using gin (attribute_name_key int4_ops, value_string gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64)
+-- The trigram column is collated under the database's default, the
+-- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- trigrams of a pattern are taken under the collation the pattern is tested
+-- under, and under `"C"` they leave out every letter outside ASCII the
+-- default classifies, so the index would drop strings the pattern matches.
+create index idx_ca_value_string_trgm on current_attributes using gin (attribute_name_key int4_ops, value_string collate "default" gin_trgm_ops) with (fastupdate = on, gin_pending_list_limit = 64)
 where
     value_string is not null;
 
@@ -218,11 +223,11 @@ create index idx_ca_value_long_text on current_attributes (attribute_name_key)
 where
     value_long_text is not null;
 
--- Patterns over long Strings, and their equality, which `gin_trgm_ops` also
--- serves. A maintenance target measured by its density: each long value
--- yields on the order of a thousand trigram keys, and vacuum removes dead
--- entries without merging entry-tree pages.
-create index idx_ca_value_long_text_trgm on current_attributes using gin (attribute_name_key int4_ops, value_long_text gin_trgm_ops) with (fastupdate = off)
+-- Patterns over long Strings, collated as `idx_ca_value_string_trgm` is. A
+-- maintenance target measured by its density: each long value yields on the
+-- order of a thousand trigram keys, and vacuum removes dead entries without
+-- merging entry-tree pages.
+create index idx_ca_value_long_text_trgm on current_attributes using gin (attribute_name_key int4_ops, value_long_text collate "default" gin_trgm_ops) with (fastupdate = off)
 where
     value_long_text is not null;
 

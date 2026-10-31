@@ -82,7 +82,13 @@ create index idx_entities_min_attribute_expires_at on entities (min_attribute_ex
 where
     min_attribute_expires_at is not null;
 
-create index idx_entities_id_trgm on entities using gin (id gin_trgm_ops);
+-- An `idPattern` that leaves the identifier's start open (clause 5.7.2).
+-- The trigram column is collated under the database's default, the
+-- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- trigrams of a pattern are taken under the collation the pattern is tested
+-- under, and under `"C"` they leave out every letter outside ASCII the
+-- default classifies, so the index would drop strings the pattern matches.
+create index idx_entities_id_trgm on entities using gin (id collate "default" gin_trgm_ops);
 
 -- The query axes: types (clause 4.17), the names of the attributes the
 -- Entity carries (clause 5.2.23 `attrs`), scopes (clause 4.18) and the

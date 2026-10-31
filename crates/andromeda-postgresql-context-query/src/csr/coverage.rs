@@ -204,7 +204,7 @@ mod tests {
             ..ExpandedEntitySpecification::default()
         });
         assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Vehicle:1.*')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Vehicle:1.*')"),
             "{sql}"
         );
         assert!(sql.contains("\"entity_types\""), "{sql}");

@@ -6,6 +6,7 @@ use crate::{projected_members::projected_member_condition, stage1::evolution_wal
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelector},
+    filter::predicate::PatternPolarity,
     identifier_axis::IdentifierAxis,
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -13,10 +14,11 @@ use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     error::RenderError,
     history_source::HistoryBranch,
+    operator::{PatternIndexes, pattern as pattern_predicate},
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
-use andromeda_postgresql_seaquery::{literal::false_literal, operator::regex_match, pg_array::is_any_of};
+use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
 use sea_query::{Condition, Expr as SeaExpr};
 
 /// Whether the selectors' identifier patterns are tested on the Evolutions.
@@ -100,7 +102,12 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
             condition = condition.add(is_any_of(SeaExpr::col((E, Entities::Id)), ids.iter().map(Identifier::to_string)));
         }
         (IdentifierAxis::Pattern(pattern), PatternTest::Tested) => {
-            condition = condition.add(regex_match(SeaExpr::col((E, Entities::Id)), SeaExpr::val(pattern.portable().as_str())));
+            condition = condition.add(pattern_predicate(
+                SeaExpr::col((E, Entities::Id)),
+                PatternPolarity::Match,
+                pattern,
+                PatternIndexes::TrigramsAndByteOrder,
+            ));
         }
         (IdentifierAxis::Pattern(_), PatternTest::Answered) | (IdentifierAxis::Any, PatternTest::Tested | PatternTest::Answered) => {}
     }

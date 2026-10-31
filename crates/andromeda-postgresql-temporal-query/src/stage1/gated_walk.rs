@@ -224,7 +224,7 @@ mod tests {
         let indexed = PageBranches::of(&sql).indexed;
         assert!(indexed.contains(r#""e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{indexed}");
         assert!(indexed.contains("EXISTS(SELECT 1 FROM"), "{indexed}");
-        assert!(!indexed.contains(r#""e"."id" ~"#), "{indexed}");
+        assert!(!indexed.contains(r#""e"."id" ~"#) && !indexed.contains(r#""e"."id") COLLATE"#), "{indexed}");
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
     fn the_full_walk_keeps_the_pattern_past_the_bound() {
         let sql = catalogue_page();
         let walk = PageBranches::of(&sql).walk;
-        assert!(walk.contains(r#""e"."id" ~ '.*:0123.*'"#), "{walk}");
+        assert!(walk.contains(r#"("e"."id") COLLATE "default") ~ '.*:0123.*'"#), "{walk}");
         assert!(walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 1000"#), "{walk}");
     }
 
@@ -256,7 +256,7 @@ mod tests {
             short.contains(r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" ORDER BY "e"."id" ASC LIMIT 5000 OFFSET 0) AS "e" WHERE"#),
             "{short}"
         );
-        assert!(short.contains(r#""e"."id" ~ '.*:0123.*'"#), "{short}");
+        assert!(short.contains(r#"("e"."id") COLLATE "default") ~ '.*:0123.*'"#), "{short}");
     }
 
     /// 21 matches behind a 200-Evolution short walk fill within a

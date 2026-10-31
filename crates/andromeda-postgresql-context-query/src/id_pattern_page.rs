@@ -25,6 +25,7 @@ use crate::{
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
+    filter::predicate::PatternPolarity,
     pattern::Pattern,
     projection::projected_members::ProjectedMembers,
     read_order::ReadOrder,
@@ -35,16 +36,16 @@ use andromeda_postgresql_query::{
     error::RenderError,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::CandidateBound,
+    operator::{PatternIndexes, pattern as pattern_predicate},
 };
 use andromeda_postgresql_schema::current::Entities;
-use andromeda_postgresql_seaquery::operator::regex_match;
 use sea_query::{Condition, DynIden, Expr, Query, SelectStatement};
 
 /// An `idPattern` and the Entities of any type whose identifier it matches.
 pub(crate) struct PatternMatches<'q> {
     /// The selector's pattern.
     pub(crate) pattern: &'q Pattern,
-    /// `SELECT "entity_key" FROM "entities" WHERE "id" ~ <pattern> AND
+    /// `SELECT "entity_key" FROM "entities" WHERE ("id") COLLATE "default" ~ <pattern> AND
     /// "created_at" IS NOT NULL`.
     pub(crate) select: SelectStatement,
 }
@@ -80,7 +81,12 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
     matches
         .expr(rows.entity_key_column())
         .from(rows.table(Entities::Table))
-        .and_where(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())))
+        .and_where(pattern_predicate(
+            rows.identity_column(Entities::Id),
+            PatternPolarity::Match,
+            pattern,
+            PatternIndexes::TrigramsAndByteOrder,
+        ))
         .and_where(holds_current_state(Entities::Table));
     Some(PatternMatches {
         pattern,
@@ -102,7 +108,12 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
     let short = ShortWalk {
         source: *source,
         walked: Condition::all(),
-        probe: Condition::all().add(regex_match(walked_identifier, Expr::val(matches.pattern.portable().as_str()))),
+        probe: Condition::all().add(pattern_predicate(
+            walked_identifier,
+            PatternPolarity::Match,
+            matches.pattern,
+            PatternIndexes::None,
+        )),
         length: ID_PATTERN_SHORT_WALK,
     };
     let rest = IndexOrWalk {
@@ -195,7 +206,7 @@ mod tests {
             .unwrap_or_else(|| panic!("the index path: {sql}"));
         assert_eq!(
             candidates,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $5) AND "entities"."created_at" IS NOT NULL"#
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $5) AND "entities"."created_at" IS NOT NULL"#
         );
         assert!(
             values.0.contains(&Value::BigUnsigned(Some(5_000))),
@@ -224,8 +235,8 @@ mod tests {
             indexed.contains(r#""selected"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{indexed}"
         );
-        assert!(!indexed.contains(r#""selected"."id" ~"#), "the matches answer the pattern: {indexed}");
-        assert!(walk.contains(r#""selected"."id" ~ $"#), "{walk}");
+        assert!(!indexed.contains(r#"("selected"."id") COLLATE"#), "the matches answer the pattern: {indexed}");
+        assert!(walk.contains(r#"("selected"."id") COLLATE "default") ~ $"#), "{walk}");
     }
 
     #[test]
@@ -289,12 +300,12 @@ mod tests {
             .select
             .to_string(PostgresQueryBuilder);
         assert!(
-            walked_at_once.contains(r#""selected"."id" ~ "#) && !walked_at_once.contains("candidates"),
+            walked_at_once.contains(r#"("selected"."id") COLLATE "default") ~ "#) && !walked_at_once.contains("candidates"),
             "{walked_at_once}"
         );
         let (sql, values) = uncounted.count.build(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ("entities"."id" ~ $1) AND "entities"."created_at" IS NOT NULL LIMIT $2)"#),
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $1) AND "entities"."created_at" IS NOT NULL LIMIT $2)"#),
             "{sql}"
         );
         let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
@@ -303,8 +314,8 @@ mod tests {
             indexed.contains(r#""selected"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
             "{indexed}"
         );
-        assert!(!indexed.contains(r#""selected"."id" ~"#), "{indexed}");
-        assert!(walked.contains(r#""selected"."id" ~ $"#), "{walked}");
+        assert!(!indexed.contains(r#"("selected"."id") COLLATE"#), "{indexed}");
+        assert!(walked.contains(r#"("selected"."id") COLLATE "default") ~ $"#), "{walked}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert_eq!(built.total_planning, StatementPlanning::BoundValues);
     }

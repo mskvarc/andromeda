@@ -205,7 +205,7 @@ mod tests {
             "\"https://example.com/count\">1;\"https://example.com/name\"~=\"text-71.*\";\"https://example.com/name\".\"https://example.com/source\"==\"s\"",
         )
         .expect("keyed");
-        assert!(sql.contains(r#""ca"."value_string" ~ "#), "{sql}");
+        assert!(sql.contains(r#"("ca"."value_string") COLLATE "default") ~ "#), "{sql}");
         assert!(!sql.contains("sub_eq_keys"), "{sql}");
     }
 

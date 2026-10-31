@@ -9,7 +9,7 @@
 
 use crate::{
     jsonb::lift_comparison,
-    operator::{compare, pattern as pattern_predicate},
+    operator::{PatternIndexes, compare, pattern as pattern_predicate},
     q_predicate::string_ordering::ordered_string,
 };
 use andromeda_ngsi_ld_query::{
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
 };
 use andromeda_postgresql_seaquery::{cast::cast_compound, literal::text_literal, operator::present_and, pg_operator::PgBinaryOperator, pg_type::PostgresType};
-use sea_query::{Condition, Expr as SeaExpr, Func, SimpleExpr};
+use sea_query::{Condition, Func, SimpleExpr};
 
 /// One JSON target value: a Property's value, and a Relationship's object
 /// where the reading can hold one.
@@ -132,7 +132,7 @@ pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -
 /// equality and inequality.
 pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
     let text = cast_compound(whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
-    let value = pattern_predicate(text, polarity, SeaExpr::val(pattern.portable().as_str()));
+    let value = pattern_predicate(text, polarity, pattern, PatternIndexes::None);
     Condition::all().add(present_and(target.presence.clone(), value)) // clone: as above
 }
 

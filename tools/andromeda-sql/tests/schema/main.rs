@@ -16,3 +16,4 @@ mod storage_bound;
 mod storage_parameter;
 mod temporal_catalog;
 mod temporal_intent_needs;
+mod trigram_collation;

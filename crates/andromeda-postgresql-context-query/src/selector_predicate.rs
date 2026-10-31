@@ -15,11 +15,13 @@ use crate::entity_relations::RowSource;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{EntitySelection, EntitySelector},
+    filter::predicate::PatternPolarity,
     identifier_axis::IdentifierAxis,
 };
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
+    operator::{PatternIndexes, pattern as pattern_predicate},
     type_membership::{Memberships, membership},
     type_predicate::condition as type_condition,
 };
@@ -27,8 +29,8 @@ use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
     type_membership::MembershipSide,
 };
-use andromeda_postgresql_seaquery::{operator::regex_match, pg_array::is_any_of};
-use sea_query::{Condition, Expr};
+use andromeda_postgresql_seaquery::pg_array::is_any_of;
+use sea_query::Condition;
 
 /// How a selector's type is tested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +83,12 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
             condition = condition.add(is_any_of(rows.identity_column(Entities::Id), ids.iter().map(Identifier::to_string)));
         }
         IdentifierAxis::Pattern(pattern) => {
-            condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));
+            condition = condition.add(pattern_predicate(
+                rows.identity_column(Entities::Id),
+                PatternPolarity::Match,
+                pattern,
+                PatternIndexes::TrigramsAndByteOrder,
+            ));
         }
         IdentifierAxis::Any => {}
     }
@@ -180,7 +187,7 @@ mod tests {
             &walked(),
         )
         .expect("constrains");
-        assert!(sql.contains(r#""selected"."id" ~ "#), "{sql}");
+        assert!(sql.contains(r#"("selected"."id") COLLATE "default") ~ "#), "{sql}");
         assert!(!sql.contains("entity_type"), "{sql}");
     }
 

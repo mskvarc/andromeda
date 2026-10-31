@@ -378,16 +378,19 @@ mod tests {
         // defined over String targets. `value_uri` holds Relationship objects and
         // nothing else, so a pattern must not probe it.
         let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
-        assert!(sql.contains("\"ca\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"ca\".\"value_long_text\" ~"), "a pattern reads both string columns: {sql}");
+        assert!(sql.contains("(\"ca\".\"value_string\") COLLATE \"default\") ~"), "{sql}");
+        assert!(
+            sql.contains("(\"ca\".\"value_long_text\") COLLATE \"default\") ~"),
+            "a pattern reads both string columns: {sql}"
+        );
         assert!(!sql.contains("value_uri"), "a pattern must not test relationship objects: {sql}");
     }
 
     #[test]
     fn a_negated_pattern_does_not_reach_relationship_objects_either() {
         let (sql, _) = render("\"https://example.com/brandName\"!~=\"Merc.*\"");
-        assert!(sql.contains("\"ca\".\"value_string\" !~"), "{sql}");
-        assert!(sql.contains("\"ca\".\"value_long_text\" !~"), "{sql}");
+        assert!(sql.contains("(\"ca\".\"value_string\") COLLATE \"default\") !~"), "{sql}");
+        assert!(sql.contains("(\"ca\".\"value_long_text\") COLLATE \"default\") !~"), "{sql}");
         assert!(!sql.contains("value_uri"), "{sql}");
     }
 
@@ -695,15 +698,15 @@ mod tests {
     #[test]
     fn pattern_match_uses_posix_regex_on_the_string_column() {
         let (sql, _) = render("\"https://example.com/name\"~=\"^A.*\"");
-        assert!(sql.contains("\"ca\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"ca\".\"value_long_text\" ~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" ~"), "a fixed start keeps the byte order: {sql}");
+        assert!(sql.contains("(\"ca\".\"value_long_text\") COLLATE \"default\") ~"), "{sql}");
     }
 
     #[test]
     fn negated_pattern_sits_inside_the_probe_so_missing_attributes_do_not_match() {
         let (sql, _) = render("\"https://example.com/name\"!~=\"^A.*\"");
-        assert!(sql.contains("\"ca\".\"value_string\" !~"), "{sql}");
-        assert!(sql.contains("\"ca\".\"value_long_text\" !~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" !~"), "a fixed start keeps the byte order: {sql}");
+        assert!(sql.contains("(\"ca\".\"value_long_text\") COLLATE \"default\") !~"), "{sql}");
         assert!(
             !sql.contains("NOT (EXISTS(SELECT 1 FROM \"current_attributes\"") && !sql.contains("NOT EXISTS(SELECT 1 FROM \"current_attributes\""),
             "clause 4.9 requires the target element to be present: {sql}"

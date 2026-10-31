@@ -395,8 +395,8 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split(r#") AS "matches""#).next())
             .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(candidates.contains(r#""ca"."value_string" ~ $"#), "{candidates}");
-        assert!(candidates.contains(r#""ca"."value_long_text" ~ $"#), "{candidates}");
+        assert!(candidates.contains(r#"("ca"."value_string") COLLATE "default") ~ $"#), "{candidates}");
+        assert!(candidates.contains(r#"("ca"."value_long_text") COLLATE "default") ~ $"#), "{candidates}");
         assert_eq!(candidates.matches("UNION ALL").count(), 2, "{candidates}");
         assert!(sql.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
         assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{sql}");
@@ -434,7 +434,7 @@ mod tests {
         let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
         let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
         assert!(!indexed.contains("value_string"), "{indexed}");
-        assert!(walk.contains(r#""ca"."value_string" ~ $"#), "{walk}");
+        assert!(walk.contains(r#"("ca"."value_string") COLLATE "default") ~ $"#), "{walk}");
     }
 
     /// A pattern on a sub-attribute has no key, so the page is the plain walk.

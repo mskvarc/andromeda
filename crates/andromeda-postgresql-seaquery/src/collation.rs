@@ -31,6 +31,14 @@ impl PostgresCollation {
         PostgresCollation::new("C")
     }
 
+    /// The database's default collation, `"default"`, whose character
+    /// classification `pg_trgm` extracts the trigrams of an indexed string by,
+    /// whatever collation the indexed column declares.
+    #[must_use]
+    pub fn database_default() -> PostgresCollation {
+        PostgresCollation::new("default")
+    }
+
     /// The collation's name as a quoted identifier.
     fn quoted(&self) -> String {
         quoted_name(&Alias::new(self.0.as_str()))
@@ -107,6 +115,14 @@ mod tests {
     fn a_collation_is_applied_as_a_quoted_postfix() {
         let sql = render(collate(Expr::col(Alias::new("id")), &PostgresCollation::new("und-u-ks-identic")));
         assert!(sql.contains(r#"COLLATE "und-u-ks-identic""#), "{sql}");
+    }
+
+    /// `default` is a keyword as well as a collation name, so only the quoted
+    /// spelling names the collation.
+    #[test]
+    fn the_database_default_is_named_by_its_quoted_identifier() {
+        let sql = render(collate(Expr::col(Alias::new("id")), &PostgresCollation::database_default()));
+        assert!(sql.contains(r#"("id") COLLATE "default""#), "{sql}");
     }
 
     /// `COLLATE` binds tighter than any infix operator, so the operand keeps

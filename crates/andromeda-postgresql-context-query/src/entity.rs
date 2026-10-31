@@ -701,7 +701,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"id\" ~"));
+        assert!(built.sql.contains("\"id\") COLLATE \"default\") ~"), "{}", built.sql);
     }
 
     /// Clauses 4.17 and 5.5.9: a page of one type walks that type's membership

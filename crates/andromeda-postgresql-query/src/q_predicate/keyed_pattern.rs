@@ -112,8 +112,8 @@ mod tests {
         );
         assert_eq!(sql.matches(r#""ca"."attribute_name_key" = 27"#).count(), 3, "one branch per target: {sql}");
         assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
-        assert!(sql.contains(r#""ca"."value_string" ~ 'text-71.*'"#), "{sql}");
-        assert!(sql.contains(r#""ca"."value_long_text" ~ 'text-71.*'"#), "{sql}");
+        assert!(sql.contains(r#"(("ca"."value_string") COLLATE "default") ~ 'text-71.*'"#), "{sql}");
+        assert!(sql.contains(r#"(("ca"."value_long_text") COLLATE "default") ~ 'text-71.*'"#), "{sql}");
         assert!(sql.ends_with(r#") AS "matches""#), "{sql}");
     }
 

@@ -326,7 +326,7 @@ mod tests {
             id_pattern: Some(&pattern),
         });
         assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')"),
+            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')"),
             "{sql}"
         );
         assert!(!sql.contains("UNNEST"), "{sql}");
@@ -347,7 +347,7 @@ mod tests {
         let sql = Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder);
         assert!(
             sql.ends_with(
-                "WHERE (COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')) AND \"ri\".\"property_name_keys\" IS NOT NULL"
+                "WHERE (COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')) AND \"ri\".\"property_name_keys\" IS NOT NULL"
             ),
             "{sql}"
         );

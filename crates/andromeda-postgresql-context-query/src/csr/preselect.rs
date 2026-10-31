@@ -29,11 +29,11 @@
 
 use crate::csr::information_row::ri_col;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_ngsi_ld_query::{filter::predicate::PatternPolarity, pattern::Pattern};
+use andromeda_postgresql_query::operator::{PatternIndexes, pattern as pattern_predicate};
 use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary::AttributeNames};
 use andromeda_postgresql_seaquery::{
     literal::text_literal,
-    operator::regex_match,
     pg_array::{array_of_subquery, is_any_of, text_array},
     pg_operator::PgBinaryOperator,
 };
@@ -95,9 +95,11 @@ pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
 /// can drive the whole disjunction.
 #[must_use]
 pub fn entity_id_pattern_candidate(pattern: &Pattern) -> SimpleExpr {
-    entity_id_or_none().eq(text_literal(ANY_IDENTIFIER)).or(regex_match(
+    entity_id_or_none().eq(text_literal(ANY_IDENTIFIER)).or(pattern_predicate(
         ri_col(RegistrationInformation::EntityId),
-        SeaExpr::val(pattern.portable().as_str()),
+        PatternPolarity::Match,
+        pattern,
+        PatternIndexes::Trigrams,
     ))
 }
 
@@ -141,7 +143,10 @@ pub fn attribute_name_candidate<N: fmt::Display>(attribute_names: &[N]) -> Simpl
 )]
 mod tests {
     use super::*;
-    use andromeda_postgresql_seaquery::literal::int_literal;
+    use andromeda_postgresql_seaquery::{
+        collation::{PostgresCollation, collate},
+        literal::int_literal,
+    };
     use sea_query::{PostgresQueryBuilder, Query};
 
     /// The migration that declares the indexes the tests here must hit.
@@ -210,8 +215,13 @@ mod tests {
         pretty_assertions::assert_eq!(comparable(indexed), "registration_id");
         pretty_assertions::assert_eq!(comparable(predicate), comparable(&render(declares_no_name().into())));
         let trigram_index = index_definition("idx_registration_information_entity_id_trgm");
-        let (indexed, opclass) = trigram_index.trim().split_once(' ').expect("the trigram index names its opclass");
-        pretty_assertions::assert_eq!(comparable(indexed), comparable(&render(ri_col(RegistrationInformation::EntityId))));
+        let (indexed, opclass) = trigram_index.trim().rsplit_once(' ').expect("the trigram index names its opclass");
+        let tested = collate(ri_col(RegistrationInformation::EntityId), &PostgresCollation::database_default());
+        pretty_assertions::assert_eq!(
+            comparable(indexed),
+            comparable(&render(tested)),
+            "the column under the collation a pattern test reads"
+        );
         pretty_assertions::assert_eq!(comparable(opclass), "gin_trgm_ops");
     }
 
@@ -224,7 +234,7 @@ mod tests {
         let sql = render(entity_id_pattern_candidate(&pattern));
         pretty_assertions::assert_eq!(
             sql,
-            "COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')"
+            "COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')"
         );
     }
 

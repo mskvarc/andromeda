@@ -383,7 +383,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:.*')"),
+                .contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:.*')"),
             "{}",
             built.sql
         );
@@ -402,7 +402,7 @@ mod tests {
         for statement in [&built.sql, &built.count_sql] {
             assert!(
                 statement.contains(
-                    "(COALESCE(\"ri\".\"entity_id\", '') = ('') OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:Fleet.*')) AND ((\"ri\".\"property_name_keys\" && "
+                    "(COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')) AND ((\"ri\".\"property_name_keys\" && "
                 ),
                 "{statement}"
             );
