@@ -16,6 +16,10 @@ use ngsi_ld::{
     query::q,
     subscription::{Endpoint, NotificationParams, Subscription},
 };
+use std::time::Duration;
+
+/// How long the endpoint is watched for a notification beyond the one owed.
+const QUIET_WINDOW: Duration = Duration::from_secs(3);
 
 /// Pins: A Subscription whose q equals a percent-encoded Relationship object is not notified of a Room whose object
 /// is the decoded spelling, and is notified, with the object exactly as written, once the Room's object becomes the
@@ -54,10 +58,10 @@ async fn n_ntf_trg_9028_a_subscription_q_on_a_percent_encoded_object_is_notified
         .relationship("locatedIn", format!("urn:ngsi-ld%3ABuilding%3A{namespace}-1").parse::<EntityId>()?)
         .build()?;
     broker.entities().update_attributes(&room_id, &fragment).send().await?.done()?;
-    // The notifications of one Entity are delivered in order, so one owed for the creation would be in the journal before the one owed for the change.
     let selected = [BodyPattern::Contains(format!("urn:ngsi-ld:Room:{namespace}-1"))];
-    let notifications = sink.wait_for_at_least_where("encoded", &selected, 1).await?;
-    expect_that!(notifications, len(eq(1)));
+    sink.wait_for_at_least_where("encoded", &selected, 1).await?;
+    expect_that!(sink.count_after("encoded", QUIET_WINDOW).await?, eq(1));
+    let notifications = sink.received_where("encoded", &selected).await?;
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(
         notification.data().as_slice(),

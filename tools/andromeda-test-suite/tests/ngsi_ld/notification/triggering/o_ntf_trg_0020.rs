@@ -1,18 +1,9 @@
-//! The notifications of each entity follow the order of its updates.
+//! Each update of an entity is notified separately.
 
-use andromeda_test_suite::{
-    attribute_matcher::any_attribute,
-    body_pattern::BodyPattern,
-    broker,
-    entity_matcher::has_attribute,
-    namespace::Namespace,
-    notification_sink::NotificationSink,
-    nth::nth,
-    outcome::Done,
-};
+use andromeda_test_suite::{body_pattern::BodyPattern, broker, namespace::Namespace, notification_sink::NotificationSink, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
-    model::{Complete, Entity, EntityFragment, Input, Lossless, NgsiLdMediaType, Representation},
+    model::{Complete, Entity, EntityFragment, Input, NgsiLdMediaType, Representation},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 use std::ops::RangeInclusive;
@@ -20,24 +11,23 @@ use std::ops::RangeInclusive;
 /// The Vehicles every Batch Entity Update sets `speed` on, by number.
 const VEHICLES: RangeInclusive<i32> = 1..=8;
 
-/// The `speed` each Batch Entity Update sets, in the order the updates are sent.
+/// The `speed` each Batch Entity Update sets.
 const UPDATES: RangeInclusive<i32> = 1..=8;
 
 /// Pins: Eight Batch Entity Updates in turn, each setting speed on the same eight Entities, notify a Subscription
-/// watching speed separately of every update, and the notifications of each Entity arrive in the order its updates
-/// were committed
+/// watching speed separately of every update: each Entity is notified once with each speed
 /// Clause: 5.5.11.3, 5.8.6
 /// Recorded: 5.5.11.3 requires a separate notification for each individual update and 5.8.6 one for each change of
-/// a watched attribute, but no clause orders notifications; Andromeda delivers the notifications of one Entity in
-/// the order its changes were committed and lets those of different Entities overtake each other
+/// a watched attribute, but no clause orders notifications, so the notifications are compared without regard to the
+/// order they arrive in
 #[gtest]
 #[tokio::test]
-async fn o_ntf_trg_0020_the_notifications_of_each_entity_follow_the_order_of_its_updates() -> Result<()> {
+async fn o_ntf_trg_0020_each_update_of_an_entity_is_notified_separately() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let sink = NotificationSink::start().await?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
-    let subscription_ordered_id = namespace.subscription_id("ordered")?;
+    let subscription_every_id = namespace.subscription_id("every")?;
     let entities = VEHICLES
         .map(|n| -> Result<Entity<Input>> {
             Ok(Entity::builder()
@@ -48,17 +38,17 @@ async fn o_ntf_trg_0020_the_notifications_of_each_entity_follow_the_order_of_its
         })
         .collect::<Result<Vec<_>>>()?;
     broker.entities().batch_create(&entities).send().await?.done()?;
-    let subscription_ordered = Subscription::builder()
-        .id(subscription_ordered_id.clone())
+    let subscription_every = Subscription::builder()
+        .id(subscription_every_id.clone())
         .entities([vehicle_type.as_str()])
         .watched_attributes(["speed"])
         .notification(
-            NotificationParams::builder(Endpoint::builder(sink.endpoint("ordered")?).accept(NgsiLdMediaType::Json).build()?)
+            NotificationParams::builder(Endpoint::builder(sink.endpoint("every")?).accept(NgsiLdMediaType::Json).build()?)
                 .format(Representation::Normalized)
                 .build()?,
         )
         .build()?;
-    broker.subscriptions().create(&subscription_ordered).send().await?;
+    broker.subscriptions().create(&subscription_every).send().await?;
     for speed in UPDATES {
         let fragments = VEHICLES
             .map(|n| -> Result<EntityFragment<Complete>> {
@@ -71,15 +61,17 @@ async fn o_ntf_trg_0020_the_notifications_of_each_entity_follow_the_order_of_its
     }
     for n in VEHICLES {
         let selected = [BodyPattern::Contains(format!("\"urn:ngsi-ld:Vehicle:{namespace}-{n}\""))];
-        let notifications = sink.wait_for_at_least_where("ordered", &selected, 8).await?;
+        let notifications = sink.wait_for_at_least_where("every", &selected, 8).await?;
         expect_that!(notifications, len(eq(8)));
-        for (position, speed) in UPDATES.enumerate() {
-            let notification = notifications.get(position).or_fail()?.entities(Lossless::Normalized)?;
-            expect_that!(notification.data().as_slice(), nth(0, has_attribute("speed", any_attribute().value(speed))));
+        for speed in UPDATES {
+            let notified = [BodyPattern::Selects(
+                format!("$.data[?(@.id == 'urn:ngsi-ld:Vehicle:{namespace}-{n}' && @.speed.value == {speed})]").parse()?,
+            )];
+            expect_that!(sink.received_where("every", &notified).await?, len(eq(1)));
         }
     }
-    let every_notification = sink.received("ordered").await?;
+    let every_notification = sink.received("every").await?;
     expect_that!(every_notification, len(eq(64)));
-    broker.subscriptions().delete(&subscription_ordered_id).send().await?;
+    broker.subscriptions().delete(&subscription_every_id).send().await?;
     Ok(())
 }

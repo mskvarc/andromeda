@@ -16,13 +16,16 @@ use ngsi_ld::{
     query::q,
     subscription::{Endpoint, NotificationParams, Subscription},
 };
+use std::time::Duration;
+
+/// How long the endpoint is watched for a notification beyond the one owed.
+const QUIET_WINDOW: Duration = Duration::from_secs(3);
 
 /// Pins: Create Subscription with q=n admits it; for an Entity created with m alone, then updated in m, then given
-/// n, the first notification the Subscription receives holds n, and it is the only one
+/// n, the Subscription receives one notification, and it holds n
 /// Clause: 4.9, 5.2.12, 5.8.1.4, 5.8.6
 /// Recorded: clause 4.9 makes an attribute path alone a Query Term that holds when the Entity defines the element,
-/// and Table 5.2.12-1 types a Subscription q as that language. Notifications of one Subscription arrive in commit
-/// order, so a notification of the create or of the update in m would come before the one holding n
+/// and Table 5.2.12-1 types a Subscription q as that language
 #[gtest]
 #[tokio::test]
 async fn n_sub_cre_9030_a_subscription_q_that_is_a_bare_attribute_tests_existence() -> Result<()> {
@@ -49,14 +52,15 @@ async fn n_sub_cre_9030_a_subscription_q_that_is_a_bare_attribute_tests_existenc
     broker.entities().update_attributes(&thing_id, &fragment).send().await?.done()?;
     let fragment_2 = EntityFragment::builder().property("n", 5).build()?;
     broker.entities().append_attributes(&thing_id, &fragment_2).send().await?.done()?;
-    let received = sink.wait_for_at_least("exists", 1).await?;
+    sink.wait_for_at_least("exists", 1).await?;
+    expect_that!(sink.count_after("exists", QUIET_WINDOW).await?, eq(1));
+    let received = sink.received("exists").await?;
     let notification = received.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(
         notification.data().as_slice(),
         nth(0, all!(has_id(&thing_id), has_attribute("n", any_attribute().value(5))))
     );
-    expect_that!(sink.received("exists").await?, len(eq(1)));
     broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }
