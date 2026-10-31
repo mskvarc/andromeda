@@ -2,7 +2,13 @@
 
 use crate::{
     context_hit_flush::ContextHitFlushWorker,
-    tenant_factory::{TenantFactoryConfig, assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, spatial::initialize_spatial},
+    tenant_factory::{
+        TenantFactoryConfig,
+        assembly_invariant::AssemblyInvariant,
+        error::TenantAssemblyError,
+        snapshot_subscriptions::load_snapshot_subscriptions,
+        spatial::initialize_spatial,
+    },
 };
 use andromeda_configuration::schema::{database::name_cache::NameLoading, temporal::storage::TemporalStorageConfig};
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
@@ -298,12 +304,11 @@ pub(super) async fn initialize_storage(
     let stored_filter_matching = EnabledExtensions::from(&config.extensions).language_targeting().matching();
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone(), stored_filter_matching));
     // clone: the cache reload reads through a repository sharing the tenant's one dictionary.
-    if let Err(error) = subscription_cache
-        .reload(&live_target, &SubscriptionRepository::new(&pool, Arc::clone(&attribute_names)))
-        .await
-    {
+    let subscription_repository = SubscriptionRepository::new(&pool, Arc::clone(&attribute_names));
+    if let Err(error) = subscription_cache.reload(&live_target, &subscription_repository).await {
         tracing::error!(%error, "failed to load subscription cache");
     }
+    load_snapshot_subscriptions(&subscription_cache, snapshot_store.as_ref(), &subscription_repository).await;
     let spatial = initialize_spatial(config.entity.spatial_index.consistency, &entity_ports.spatial_snapshots, tenant).await?;
     Ok(TenantStorage {
         tenant: tenant.clone(), // clone: the storage graph names the tenant it was opened for.

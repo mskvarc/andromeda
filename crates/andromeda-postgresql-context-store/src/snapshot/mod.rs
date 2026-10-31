@@ -22,6 +22,7 @@ mod json_value;
 pub mod mapper;
 mod metadata_change;
 mod preparation_claim;
+mod published_targets;
 mod quota;
 /// Reaping Snapshots by deletion, expiry and quota eviction.
 pub(crate) mod reap;

@@ -10,6 +10,7 @@ use crate::snapshot::{
     creation::create_snapshot,
     metadata_change::MetadataChange,
     preparation_claim::{claim_created_snapshot, next_preparing_snapshot, release_preparation, renew_preparation_lease, restart_preparation},
+    published_targets::read_published_targets,
     quota::enforce_snapshot_quotas,
     reap::{delete_expired_snapshots, delete_snapshot},
     record::{
@@ -56,6 +57,10 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn target(&self, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {
         resolve_snapshot_target(self.pool(), id).await
+    }
+
+    async fn published_targets(&self) -> Result<Vec<SnapshotTarget>, SnapshotError> {
+        read_published_targets(self.pool()).await
     }
 
     async fn staging_target(&self, id: &Identifier) -> Result<Option<SnapshotTarget>, SnapshotError> {

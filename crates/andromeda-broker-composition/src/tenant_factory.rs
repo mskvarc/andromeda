@@ -60,6 +60,7 @@ mod error;
 /// Runtime ownership and ordered shutdown.
 pub mod runtime;
 mod services;
+mod snapshot_subscriptions;
 mod spatial;
 mod storage;
 mod subscription_services;

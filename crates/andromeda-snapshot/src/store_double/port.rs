@@ -160,6 +160,13 @@ impl SnapshotStore for StoreDouble {
         unused("target")
     }
 
+    fn published_targets<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<SnapshotTarget>, SnapshotError>>
+    where
+        'life0: 'async_trait,
+    {
+        unused("published_targets")
+    }
+
     fn staging_target<'life0, 'life1, 'async_trait>(
         &'life0 self,
         _id: &'life1 Identifier,

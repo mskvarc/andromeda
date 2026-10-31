@@ -103,6 +103,13 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
+    /// The published branch of every Snapshot the tenant holds, each a target
+    /// Snapshot-scoped Subscriptions may be stored under.
+    fn published_targets<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<SnapshotTarget>, SnapshotError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
+
     /// Resolve the private context branch populated during query capture.
     fn staging_target<'life0, 'life1, 'async_trait>(
         &'life0 self,
