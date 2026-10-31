@@ -17,6 +17,7 @@ mod n_bat_ups_0014;
 mod n_bat_ups_0015;
 mod n_bat_ups_0016;
 mod n_bat_ups_0017;
+mod n_bat_ups_0018;
 mod n_bat_ups_2001;
 mod n_bat_ups_2301;
 mod n_bat_ups_2701;

@@ -28,7 +28,7 @@ filter = 'binary_id(andromeda-test-suite::interoperability)'
 test-group = 'interoperability'
 
 [[profile.suite.overrides]]
-filter = 'package(andromeda-test-suite) & binary(~andromeda_) & test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012|a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_ntf_trg_9015|a_qry_typ_9003|a_snp_cln_8140|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_sub_qry_0007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)'
+filter = 'package(andromeda-test-suite) & binary(~andromeda_) & test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012|a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015|a_qry_typ_9003|a_snp_cln_8140|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_sub_qry_0007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)'
 test-group = 'andromeda-private-tenants'
 
 [profile.suite-verdict]
@@ -42,7 +42,7 @@ filter = 'binary_id(andromeda-test-suite::interoperability)'
 test-group = 'interoperability'
 
 [[profile.suite-verdict.overrides]]
-filter = 'package(andromeda-test-suite) & binary(~andromeda_) & test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012|a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_ntf_trg_9015|a_qry_typ_9003|a_snp_cln_8140|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_sub_qry_0007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)'
+filter = 'package(andromeda-test-suite) & binary(~andromeda_) & test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012|a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015|a_qry_typ_9003|a_snp_cln_8140|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_sub_qry_0007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)'
 test-group = 'andromeda-private-tenants'
 
 [profile.suite-verdict.junit]

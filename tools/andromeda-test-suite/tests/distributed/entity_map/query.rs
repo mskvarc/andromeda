@@ -35,6 +35,7 @@ mod n_map_qen_7607;
 mod n_map_qen_7608;
 mod n_map_qen_7609;
 mod n_map_qen_8000;
+mod n_map_qen_8001;
 mod n_map_qen_9312;
 mod n_map_qen_9313;
 mod n_map_qen_9314;

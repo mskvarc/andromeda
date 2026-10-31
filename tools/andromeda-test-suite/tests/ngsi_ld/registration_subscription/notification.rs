@@ -6,6 +6,8 @@ mod n_css_ntf_0003;
 mod n_css_ntf_5001;
 mod n_css_ntf_5002;
 mod n_css_ntf_5003;
+mod n_css_ntf_5004;
+mod n_css_ntf_5005;
 mod n_css_ntf_9001;
 mod n_css_ntf_9002;
 mod n_css_ntf_9003;

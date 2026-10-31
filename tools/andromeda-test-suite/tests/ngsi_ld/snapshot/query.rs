@@ -21,6 +21,7 @@ mod n_snp_qry_8119;
 mod n_snp_qry_8120;
 mod n_snp_qry_8121;
 mod n_snp_qry_8122;
+mod n_snp_qry_8124;
 mod o_snp_qry_8112;
 mod o_snp_qry_8113;
 mod o_snp_qry_8123;

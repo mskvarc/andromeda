@@ -9,3 +9,4 @@ mod a_mgt_tnt_0006;
 mod a_mgt_tnt_0007;
 mod a_mgt_tnt_0008;
 mod a_mgt_tnt_0009;
+mod a_mgt_tnt_0010;

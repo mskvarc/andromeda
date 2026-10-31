@@ -59,6 +59,7 @@ mod n_ntf_pay_9240;
 mod n_ntf_pay_9241;
 mod o_ntf_pay_0013;
 mod o_ntf_pay_0017;
+mod o_ntf_pay_0025;
 mod o_ntf_pay_4002;
 mod o_ntf_pay_9002;
 mod o_ntf_pay_9024;

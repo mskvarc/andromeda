@@ -18,4 +18,5 @@ mod n_sub_cre_7603;
 mod n_sub_cre_8000;
 mod n_sub_cre_8001;
 mod n_sub_cre_8002;
+mod n_sub_cre_8007;
 mod o_sub_cre_6400;

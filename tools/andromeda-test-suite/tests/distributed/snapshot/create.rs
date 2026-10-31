@@ -8,3 +8,5 @@ mod n_snp_cre_8152;
 mod n_snp_cre_8160;
 mod n_snp_cre_8161;
 mod n_snp_cre_8162;
+mod n_snp_cre_8163;
+mod n_snp_cre_8164;

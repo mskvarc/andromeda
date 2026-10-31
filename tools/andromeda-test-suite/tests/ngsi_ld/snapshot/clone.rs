@@ -10,5 +10,7 @@ mod n_snp_cln_8104;
 mod n_snp_cln_8105;
 mod n_snp_cln_8106;
 mod n_snp_cln_8107;
+mod n_snp_cln_8108;
+mod n_snp_cln_8109;
 mod n_snp_cln_9169;
 mod o_snp_cln_8101;
