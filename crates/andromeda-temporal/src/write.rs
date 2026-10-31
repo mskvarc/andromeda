@@ -50,7 +50,9 @@ impl TemporalService {
         payload: WrittenTemporalEntity,
         context: &ContextSpec,
     ) -> Result<CreateOrUpdateResult, TemporalError> {
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.limits.payload_budget.json_values);
         let evolution = WrittenEvolution::expand(&expansion, payload).await?;
         self.record_evolution(target, evolution).await
     }
@@ -146,7 +148,9 @@ impl TemporalService {
             return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         };
 
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.limits.payload_budget.json_values);
         let evolution = WrittenEvolution::expand(&expansion, payload).await?;
         evolution.admit_budget(self.limits.payload_budget)?;
         let evolution = evolution.addressed_to(entity_id, recorded_types);

@@ -54,7 +54,9 @@ impl TemporalService {
     /// the processor refuses the payload, and [`TemporalError::Validation`]
     /// when the payload is no Temporal Evolution the model admits.
     pub async fn forwardable_document(&self, written: &WrittenTemporalEntity, context: &ContextSpec) -> Result<ForwardableEvolution, TemporalError> {
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.limits.payload_budget.json_values);
         let (fragment, reified) = written.clone().into_fragment(); // clone: the local phase still writes the payload
         let document = expansion.entity_patch(&fragment, Normalization::Entity).await?;
         let scope_history = match reified {

@@ -182,7 +182,7 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
 /// The literal a Property's values hold as one scalar: a single literal with
 /// no direction. Any other value is held whole in `value_object`.
 #[must_use]
-pub const fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
+pub fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
     match values {
         [ExpandedValue::Literal(literal)] if literal.direction().is_none() => Some(literal),
         [ExpandedValue::Literal(_) | ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,

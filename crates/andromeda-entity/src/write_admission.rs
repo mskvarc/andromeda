@@ -233,7 +233,9 @@ impl EntityService {
         // Clause 6.3.2: a typed geometry past the budget is refused before the
         // expansion copies it into the written document.
         payload.admit_geometries(self.payload_budget.geometry_positions)?;
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.payload_budget.json_values);
         let document = payload.expand(&expansion, W::WRITE.normalization()).await?;
         admit_written_entity(self.payload_budget, &document, W::WRITE.null_sentinel_admission())?;
         Ok(AdmittedEntity::new(document))
@@ -268,7 +270,9 @@ impl EntityService {
         // Clause 6.3.2: a typed geometry past the budget is refused before the
         // expansion copies it into the written document.
         admit_compact_geometries(self.payload_budget.geometry_positions, [(attribute.as_str(), payload)])?;
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.payload_budget.json_values);
         let fragment = expansion.attribute(attribute, payload).await?;
         admit_instance_document(self.payload_budget, fragment.name(), fragment.instance())?;
         admit_instance_nesting(self.payload_budget.attribute_nesting, fragment.name(), fragment.instance())?;
@@ -289,8 +293,9 @@ mod tests {
     use crate::{
         admission_fixture::{admitted_context, admitted_written},
         batch::UpsertPolicy,
+        document_census::admit_entity_document,
         error::EntityError,
-        notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
+        notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service, value_budget},
         write_admission::{AttributeWrite, BatchWrite, EntityWrite},
         write_kind::{CreateEntity, PartialUpdateAttribute},
     };
@@ -300,7 +305,7 @@ mod tests {
         admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
         document::{EntityDocument, instance_document::InstanceDocument},
     };
-    use andromeda_ngsi_ld_expansion::normalization::Normalization;
+    use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
     use andromeda_ngsi_ld_model::{
         attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
@@ -658,6 +663,47 @@ mod tests {
             .admit_entity_write::<CreateEntity>(&located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
             .await
             .expect("five positions are within a budget of five");
+    }
+
+    /// Clause 6.3.2: the walk counts an entity's values while it expands them
+    /// and refuses at exactly the limit the census of the whole expanded
+    /// document refuses at, so counting early changes no answer.
+    #[tokio::test]
+    async fn the_admission_refuses_values_at_the_limit_the_census_of_the_document_refuses_at() {
+        let probe: Entity = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Probe:1",
+            "type": "Probe",
+            "scope": ["/a", "/b"],
+            "n": {"type": "Property", "value": [1, 2, 3, 4, 5, 6, 7, 8], "observedAt": "2024-01-01T00:00:00Z"},
+            "m": {"type": "Property", "value": {"a": [1, 2], "b": {"c": true}}, "unitCode": "KMH"},
+            "l": {"type": "ListProperty", "valueList": [1, [2, 3]]}
+        }))
+        .expect("a valid entity");
+        let (unbounded, _writes) = recording_service().await;
+        let document = EntityExpansion::prepare(&unbounded.engine, &ContextSpec::core_only())
+            .await
+            .expect("the core context processes")
+            .entity(&probe, Normalization::Entity)
+            .await
+            .expect("the probe expands");
+        let mut answers = Vec::new();
+        for values in 1..=40 {
+            let census = admit_entity_document(value_budget(values), &document);
+            let service = budgeted_recording_service(value_budget(values));
+            let admission = service
+                .admit_entity_write::<CreateEntity>(&probe, &admitted_context(&service, &ContextSpec::core_only()).await)
+                .await;
+            match (&census, &admission) {
+                (Ok(()), Ok(_))
+                | (Err(PayloadBudgetExceeded::EntityJsonValues { .. }), Err(EntityError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { .. }))) => {}
+                (census, admission) => panic!("under {values} values the census answers {census:?} and the admission {admission:?}"),
+            }
+            answers.push(census.is_ok());
+        }
+        assert!(
+            answers.contains(&false) && answers.contains(&true),
+            "the probe crosses the limits tried: {answers:?}"
+        );
     }
 
     /// Clause 4.5.2.3: a concise `GeoProperty` is its geometry alone, which

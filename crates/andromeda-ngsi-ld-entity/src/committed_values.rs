@@ -239,7 +239,7 @@ mod tests {
     }
 
     fn node(member: &str, values: Vec<ExpandedValue>) -> ExpandedValue {
-        ExpandedValue::Node(ValueNode::new(None, Vec::new(), IndexMap::from([(member_name(member), values)])))
+        ExpandedValue::Node(Box::new(ValueNode::new(None, Vec::new(), IndexMap::from([(member_name(member), values)]))))
     }
 
     /// The instance the `speed` attribute of `state` holds once committed.

@@ -43,11 +43,11 @@ pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prop
     match element.shape() {
         NodeShape::Null => Ok(Expanded::Null),
         NodeShape::Array(items) => {
-            let mut result = Vec::with_capacity(items.len());
+            let mut result = Vec::with_capacity(scope.value_capacity(items.len()));
             for item in items {
                 result.extend(expand_element(scope, active_property, item)?.into_items());
             }
-            Ok(list_or_array(scope, active_property, result))
+            list_or_array(scope, active_property, result)
         }
         NodeShape::Object(members) => expand_object(&scope.object_scope(active_property)?, active_property, members),
         // A geometry is held typed only where the typed walk expands it as
@@ -63,6 +63,7 @@ pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prop
             if scope.has_scoped_context(property) {
                 return Err(Decline::ScopedScalar);
             }
+            scope.count_value()?;
             expand_scalar(scope, property, element).map(Expanded::One)
         }
     }
@@ -70,14 +71,18 @@ pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prop
 
 /// The items of an array, wrapped in one list object when the property's
 /// container is `@list` (expansion of an array, JSON-LD 1.1 step 5).
-#[must_use]
-pub fn list_or_array(scope: &TermScope<'_>, active_property: Option<&str>, items: Vec<ExpandedItem>) -> Expanded {
+///
+/// # Errors
+///
+/// Declines a list object past the write's value limit.
+pub fn list_or_array(scope: &TermScope<'_>, active_property: Option<&str>, items: Vec<ExpandedItem>) -> Result<Expanded, Decline> {
     let is_list = active_property
         .and_then(|property| scope.definition(property))
         .is_some_and(|definition| definition.container().contains(ContainerKind::List));
     if is_list {
-        Expanded::One(ExpandedItem::List(items))
+        scope.count_value()?;
+        Ok(Expanded::One(ExpandedItem::List(items)))
     } else {
-        Expanded::Many(items)
+        Ok(Expanded::Many(items))
     }
 }

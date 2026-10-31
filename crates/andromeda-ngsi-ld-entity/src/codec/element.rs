@@ -303,7 +303,7 @@ impl ElementParts<'_> {
             .into_iter()
             .map(|(name, values)| fragment_member(values, owner).map(|member| (name, member)))
             .collect::<Result<IndexMap<_, _>, _>>()?;
-        Ok(Decoded::Value(ExpandedValue::Node(ValueNode::new(id, types, members))))
+        Ok(Decoded::Value(ExpandedValue::Node(Box::new(ValueNode::new(id, types, members)))))
     }
 }
 

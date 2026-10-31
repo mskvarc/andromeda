@@ -18,7 +18,7 @@ impl ExpandedValue {
             ExpandedValue::Literal(literal) => ExpandedValue::Literal(literal.clone()), // clone: the written value owns its literal
             ExpandedValue::Json(json) => ExpandedValue::Json(json.clone()),             // clone: the written value owns its literal
             ExpandedValue::List(items) => ExpandedValue::List(items.iter().map(ExpandedValue::to_fragment).collect()),
-            ExpandedValue::Node(node) => ExpandedValue::Node(ValueNode::new(
+            ExpandedValue::Node(node) => ExpandedValue::Node(Box::new(ValueNode::new(
                 node.id().cloned(),    // clone: the written node owns its identifier
                 node.types().to_vec(), // clone: the written node owns its types
                 node.members()
@@ -28,7 +28,7 @@ impl ExpandedValue {
                         (name.clone(), FragmentMember::Values(values.iter().map(ExpandedValue::to_fragment).collect()))
                     })
                     .collect(),
-            )),
+            ))),
         }
     }
 }
@@ -80,7 +80,7 @@ mod tests {
             name("https://ex.org/b"),
             vec![ExpandedValue::List(vec![ExpandedValue::Literal(Literal::plain(LiteralValue::Boolean(true)))])],
         );
-        let stored: ExpandedValue = ExpandedValue::Node(ValueNode::new(None, Vec::new(), members));
+        let stored: ExpandedValue = ExpandedValue::Node(Box::new(ValueNode::new(None, Vec::new(), members)));
 
         let written = stored.to_fragment();
 

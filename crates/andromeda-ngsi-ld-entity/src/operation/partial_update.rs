@@ -242,11 +242,11 @@ mod tests {
     #[test]
     fn a_value_object_is_replaced_rather_than_merged_into() {
         let node = |members: Vec<(&str, &str)>| {
-            ExpandedValue::Node(ValueNode::new(
+            ExpandedValue::Node(Box::new(ValueNode::new(
                 None,
                 Vec::new(),
                 members.into_iter().map(|(member, value)| (member_name(member), vec![text(value)])).collect(),
-            ))
+            )))
         };
         let mut target = entity(vec![(
             SPEED,
@@ -255,13 +255,13 @@ mod tests {
                 property(node(vec![("https://example.org/street", "a"), ("https://example.org/city", "b")])),
             )]),
         )]);
-        let written = ExpandedValue::Node(ValueNode::new(
+        let written = ExpandedValue::Node(Box::new(ValueNode::new(
             None,
             Vec::new(),
             [(member_name("https://example.org/street"), FragmentMember::Values(vec![text("c")]))]
                 .into_iter()
                 .collect(),
-        ));
+        )));
 
         target
             .partial_update_attribute(&name(SPEED), &property_document(written, None))

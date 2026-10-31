@@ -61,6 +61,7 @@ pub fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entrie
         if language.is_some() || direction.is_some() {
             return Err(Decline::MalformedJsonLd);
         }
+        scope.count_value()?;
         return Ok(Expanded::One(ExpandedItem::Json(json_literal(value)?)));
     }
     let shape = value.shape();
@@ -73,6 +74,7 @@ pub fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entrie
     if tagged && (datatype.is_some() || !is_string) {
         return Err(Decline::MalformedJsonLd);
     }
+    scope.count_value()?;
     Ok(Expanded::One(ExpandedItem::Value(ValueObject {
         scalar,
         datatype,

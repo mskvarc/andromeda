@@ -170,9 +170,9 @@ fn common_members(node: &mut NodeBuilder, scope: &TermScope<'_>, common: &Common
     Ok(())
 }
 
-/// A Property `value`: the JSON as written.
+/// A Property `value`: the JSON as written, every value of it counted.
 pub(crate) fn add_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: &NgsiLdValue) -> Result<(), Decline> {
-    add_json(node, scope, key, value.literal().piece())
+    add_json(node, &scope.in_value(), key, value.literal().piece())
 }
 
 /// A `GeoProperty` `value`: the geometry already read, the clause 4.7.2 string
@@ -185,15 +185,17 @@ pub(crate) fn add_geo_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: 
     }
 }
 
-/// A `ListProperty` `valueList`, item by item, as the array it serializes to.
+/// A `ListProperty` `valueList`, item by item, as the array it serializes to,
+/// every value of every item counted.
 pub(crate) fn add_value_list(node: &mut NodeBuilder, scope: &TermScope<'_>, values: &[NgsiLdValue]) -> Result<(), Decline> {
     let key = compact_properties::VALUE_LIST;
     let Some(name) = member_name(scope, key)? else {
         return Ok(());
     };
-    let mut items = Vec::with_capacity(values.len());
+    let item_scope = scope.in_value();
+    let mut items = Vec::with_capacity(item_scope.value_capacity(values.len()));
     for value in values {
-        items.extend(expand_element(scope, Some(key), value.literal().piece())?.into_items());
+        items.extend(expand_element(&item_scope, Some(key), value.literal().piece())?.into_items());
     }
     node.add_expanded(name, expanded_member(scope, key, items, Written::Array)?);
     Ok(())

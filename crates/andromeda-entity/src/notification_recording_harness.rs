@@ -47,6 +47,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_retry::retry_delay::RetryDelay;
@@ -133,6 +134,14 @@ pub(crate) async fn recording_service_counting_enqueued() -> (EntityService, Rec
 pub(crate) fn geometry_budget(positions: usize) -> EntityPayloadBudget {
     EntityPayloadBudget {
         geometry_positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("the fixture budget admits a position")),
+        ..payload_budget(&RequestLimitsConfig::default())
+    }
+}
+
+/// The default payload budget with each entity held to `values` values.
+pub(crate) fn value_budget(values: usize) -> EntityPayloadBudget {
+    EntityPayloadBudget {
+        json_values: JsonValueLimit::new(NonZeroUsize::new(values).expect("the fixture budget admits a value")),
         ..payload_budget(&RequestLimitsConfig::default())
     }
 }

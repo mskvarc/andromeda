@@ -32,7 +32,7 @@ pub(crate) fn settled_value(value: &ExpandedValue<Fragment>) -> Result<ExpandedV
         // clone: the stored value owns its copy of the borrowed fragment.
         ExpandedValue::Literal(literal) => ExpandedValue::Literal(literal.clone()),
         ExpandedValue::Json(json) => ExpandedValue::Json(json.settled()?),
-        ExpandedValue::Node(node) => ExpandedValue::Node(settled_node(node)?),
+        ExpandedValue::Node(node) => ExpandedValue::Node(Box::new(settled_node(node)?)),
         ExpandedValue::List(items) => ExpandedValue::List(settled_values(items)?),
     })
 }
@@ -232,11 +232,12 @@ mod tests {
     #[test]
     fn a_node_naming_an_identifier_is_replaced_rather_than_merged() {
         let held_members = [(member_name("https://example.org/a"), vec![number(1)])].into_iter().collect();
-        let mut held: ExpandedValue = ExpandedValue::Node(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:1")), Vec::new(), held_members));
+        let mut held: ExpandedValue = ExpandedValue::Node(Box::new(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:1")), Vec::new(), held_members)));
         let written_members: IndexMap<_, _> = [(member_name("https://example.org/b"), FragmentMember::Values(vec![number(2)]))]
             .into_iter()
             .collect();
-        let written: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:2")), Vec::new(), written_members));
+        let written: ExpandedValue<Fragment> =
+            ExpandedValue::Node(Box::new(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:2")), Vec::new(), written_members)));
 
         merge_value(&mut held, &written).expect("a merge");
 

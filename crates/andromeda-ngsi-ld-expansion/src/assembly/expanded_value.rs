@@ -92,7 +92,7 @@ pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedIt
     match item {
         ExpandedItem::Value(value) => Ok(ExpandedValue::Literal(literal(attribute, value)?)),
         ExpandedItem::Json(json) => Ok(ExpandedValue::Json(json)),
-        ExpandedItem::Node(node) => value_node(attribute, node).map(ExpandedValue::Node),
+        ExpandedItem::Node(node) => value_node(attribute, node).map(|node| ExpandedValue::Node(Box::new(node))),
         ExpandedItem::List(items) => expanded_values(attribute, items).map(ExpandedValue::List),
         ExpandedItem::Geometry(_) => Err(nested_malformed(attribute)),
     }

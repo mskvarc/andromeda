@@ -36,6 +36,7 @@ mod term_scope;
 pub mod typed_expander;
 pub mod typed_expansion;
 mod typed_walk;
+mod value_count;
 pub mod written_member;
 
 #[cfg(test)]
@@ -117,6 +118,13 @@ mod structured_value_name_tests;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod temporal_tests;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod value_limit_tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

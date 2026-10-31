@@ -241,6 +241,7 @@ impl From<ExpansionError> for EntityError {
         match error {
             ExpansionError::Context(failure) | ExpansionError::Processor(failure) => EntityError::JsonLd(failure),
             ExpansionError::Refused(refusal) => EntityError::from(refusal),
+            ExpansionError::PayloadBudget(exceeded) => EntityError::PayloadBudget(exceeded),
             ExpansionError::CompactDocument(source) => EntityError::Validation(EntityValidationReason::CompactDocument(source)),
         }
     }

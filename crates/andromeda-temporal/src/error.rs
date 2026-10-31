@@ -230,6 +230,7 @@ impl From<ExpansionError> for TemporalError {
         match error {
             ExpansionError::Context(failure) | ExpansionError::Processor(failure) => TemporalError::JsonLd(failure),
             ExpansionError::Refused(refusal) => TemporalError::from(refusal),
+            ExpansionError::PayloadBudget(exceeded) => TemporalError::PayloadBudget(exceeded),
             ExpansionError::CompactDocument(source) => TemporalError::Validation(TemporalValidationReason::CompactDocument(source)),
         }
     }

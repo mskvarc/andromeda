@@ -106,7 +106,7 @@ impl FixtureFailure {
 /// Both expansions of one request.
 pub struct BothWays<T> {
     /// The typed walk's.
-    pub typed: Result<TypedExpansion<T>, EntityRefusal>,
+    pub typed: Result<TypedExpansion<T>, ExpansionError>,
     /// The processor's.
     pub processor: Result<T, EntityRefusal>,
 }

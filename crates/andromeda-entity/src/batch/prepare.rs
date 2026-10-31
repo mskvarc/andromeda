@@ -23,7 +23,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::expansion_context::ExpansionContext};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, error::ExpansionError, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
@@ -145,7 +145,10 @@ fn walk<M: BatchMember>(entry: PendingEntity<M>, context: &ExpansionContext, scr
             result: Box::new(Err(Box::new((entity.id, EntityError::from(exceeded))))),
         };
     }
-    match TypedExpander::new(context).entity(&entity, screening.write.normalization()) {
+    match TypedExpander::new(context)
+        .bounded_by(screening.budget.json_values)
+        .entity(&entity, screening.write.normalization())
+    {
         Ok(TypedExpansion::Expanded(document)) => WalkOutcome::Done {
             idx,
             result: Box::new(screened(entity, document, screening)),
@@ -153,7 +156,7 @@ fn walk<M: BatchMember>(entry: PendingEntity<M>, context: &ExpansionContext, scr
         Ok(TypedExpansion::Declined(_)) => WalkOutcome::Declined(Box::new(PendingEntity { idx, entity })),
         Err(failure) => WalkOutcome::Done {
             idx,
-            result: Box::new(Err(Box::new((entity.id, EntityError::from(ExpansionError::from(failure)))))),
+            result: Box::new(Err(Box::new((entity.id, EntityError::from(failure))))),
         },
     }
 }
@@ -296,7 +299,7 @@ impl EntityService {
         context: Arc<ExpansionContext>,
         screening: Screening,
     ) -> Vec<(usize, PreparationOutcome<M>)> {
-        let expansion = EntityExpansion::from_context(&self.engine, context);
+        let expansion = EntityExpansion::from_context(&self.engine, context).bounded_by(screening.budget.json_values);
         let mut prepared = Vec::with_capacity(declined.len());
         for PendingEntity { idx, entity } in declined {
             let result = match expansion.entity(&entity, screening.write.normalization()).await {

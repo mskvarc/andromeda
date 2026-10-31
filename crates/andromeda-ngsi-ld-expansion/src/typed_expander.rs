@@ -4,12 +4,15 @@
 //! the walk only replaces the processor's generic document tree with the
 //! model the request is read into. What it does not model it declines, and the
 //! caller hands the request to the processor ([`crate::entity_expansion`]).
+//! An expander bounded by the entity value limit counts the values it expands
+//! and refuses the request once they pass it ([`crate::value_count`]).
 
 use crate::{
     assembly::{attribute_fragment, entity_document, temporal_document::temporal_document},
     attribute_fragment::AttributeFragment,
     compact_walk::element::Expanded,
     decline::Decline,
+    error::ExpansionError,
     expanded_tree::{ExpandedItem, ExpandedNode},
     normalization::Normalization,
     prefixed_names,
@@ -27,19 +30,34 @@ use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::temporal_document::TemporalDocument,
 };
+use andromeda_ngsi_ld_number::json_value::value_census::{JsonValueLimit, ValueTally};
+use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 
 /// Expands requests under one processed request context.
 #[derive(Clone, Copy, Debug)]
 pub struct TypedExpander<'c> {
     /// The request's processed context.
     context: &'c ExpansionContext,
+    /// The most values a document may expand to below its value carriers;
+    /// `None` counts nothing.
+    value_limit: Option<JsonValueLimit>,
 }
 
 impl<'c> TypedExpander<'c> {
-    /// An expander deciding terms against `context`.
+    /// An expander deciding terms against `context`, counting nothing.
     #[must_use]
     pub const fn new(context: &'c ExpansionContext) -> TypedExpander<'c> {
-        TypedExpander { context }
+        TypedExpander { context, value_limit: None }
+    }
+
+    /// The same expander, refusing a document whose Property values and
+    /// `valueList` items expand to more than `limit` values.
+    #[must_use]
+    pub const fn bounded_by(self, limit: JsonValueLimit) -> TypedExpander<'c> {
+        TypedExpander {
+            context: self.context,
+            value_limit: Some(limit),
+        }
     }
 
     /// Expand an entity the transport decoded into the typed compact model
@@ -50,8 +68,9 @@ impl<'c> TypedExpander<'c> {
     ///
     /// Returns the [`EntityRefusal`] of a prefixed name that breaks the clause
     /// 4.6.2 grammar after its colon, and of an expanded document that is not
-    /// a write.
-    pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+    /// a write, and [`PayloadBudgetExceeded::EntityJsonValues`] once the values
+    /// expanded pass the limit the expander is bounded by.
+    pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, ExpansionError> {
         prefixed_names::entity(self.context, entity)?;
         self.document(|scope| entity_node(scope, entity, normalization), entity_document)
     }
@@ -66,7 +85,7 @@ impl<'c> TypedExpander<'c> {
         &self,
         patch: &EntityPatch<M>,
         normalization: Normalization,
-    ) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+    ) -> Result<TypedExpansion<EntityDocument>, ExpansionError> {
         prefixed_names::patch(self.context, patch)?;
         self.document(|scope| patch_node(scope, patch, normalization), entity_document)
     }
@@ -79,8 +98,8 @@ impl<'c> TypedExpander<'c> {
     /// # Errors
     ///
     /// Returns the [`EntityRefusal`] of an expanded document that is not a
-    /// write.
-    pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, EntityRefusal> {
+    /// write, and the value refusal of [`TypedExpander::entity`].
+    pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, ExpansionError> {
         self.document(
             |scope| entity_node(scope, entity, Normalization::Entity),
             |node| temporal_document(node, system_times),
@@ -96,27 +115,41 @@ impl<'c> TypedExpander<'c> {
     ///
     /// Returns the [`EntityRefusal`] of a prefixed name that breaks the clause
     /// 4.6.2 grammar after its colon, and of a fragment that is not one
-    /// instance.
-    pub fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<TypedExpansion<AttributeFragment>, EntityRefusal> {
+    /// instance, and the value refusal of [`TypedExpander::entity`].
+    pub fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<TypedExpansion<AttributeFragment>, ExpansionError> {
         prefixed_names::attribute(self.context, attribute, member)?;
-        let walked = TermScope::root(self.context).and_then(|scope| expanded(member, &scope, attribute.as_str())?.ok_or(Decline::MalformedJsonLd));
-        match walked {
-            Ok((name, items)) => attribute_fragment(&name, items).map(TypedExpansion::Expanded),
-            Err(decline) => Ok(TypedExpansion::Declined(decline)),
-        }
+        self.walk(
+            |scope| expanded(member, scope, attribute.as_str())?.ok_or(Decline::MalformedJsonLd),
+            |(name, items)| attribute_fragment(&name, items),
+        )
     }
 
     /// Walk a document with `walk` and assemble what it expanded to with
     /// `assemble`.
     fn document<T>(
         self,
-        walk: impl FnOnce(&TermScope<'c>) -> Result<Expanded, Decline>,
+        walk: impl FnOnce(&TermScope<'_>) -> Result<Expanded, Decline>,
         assemble: impl FnOnce(Option<ExpandedNode>) -> Result<T, EntityRefusal>,
-    ) -> Result<TypedExpansion<T>, EntityRefusal> {
-        let walked = TermScope::root(self.context).and_then(|scope| walk(&scope)).and_then(entity_node_of);
-        match walked {
-            Ok(node) => assemble(node).map(TypedExpansion::Expanded),
-            Err(decline) => Ok(TypedExpansion::Declined(decline)),
+    ) -> Result<TypedExpansion<T>, ExpansionError> {
+        self.walk(|scope| walk(scope).and_then(entity_node_of), assemble)
+    }
+
+    /// Walk a request with `walk`, its values counted against the limit the
+    /// expander is bounded by, and assemble what it expanded to with
+    /// `assemble`.
+    fn walk<W, T>(
+        self,
+        walk: impl FnOnce(&TermScope<'_>) -> Result<W, Decline>,
+        assemble: impl FnOnce(W) -> Result<T, EntityRefusal>,
+    ) -> Result<TypedExpansion<T>, ExpansionError> {
+        let tally = self.value_limit.map(ValueTally::new);
+        let walked = TermScope::root(self.context).and_then(|scope| walk(&scope.counting_into(tally.as_ref())));
+        match (walked, self.value_limit) {
+            (Ok(walked), _) => Ok(TypedExpansion::Expanded(assemble(walked)?)),
+            // Clause 6.3.2: the census of the document would refuse it, so it
+            // is refused before the rest of it is expanded.
+            (Err(Decline::ValueLimit), Some(limit)) => Err(ExpansionError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { limit })),
+            (Err(decline), _) => Ok(TypedExpansion::Declined(decline)),
         }
     }
 }

@@ -49,10 +49,10 @@ pub enum Direction {
 /// Why the parts of a value object do not make one.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum LiteralError {
-    /// JSON-LD 1.1 section 9.5: a value object carries a datatype or a
-    /// language, never both.
-    #[error("a value object cannot carry both a datatype and a language")]
-    DatatypeBesideLanguage,
+    /// JSON-LD 1.1 Processing Algorithms and API section 5.1.2 step 15.1: a
+    /// value object carrying a datatype carries no language and no direction.
+    #[error("a value object cannot carry a datatype beside a language or a direction")]
+    DatatypeBesideTag,
     /// JSON-LD 1.1 section 9.5: only a string carries a language or a
     /// direction.
     #[error("only a string value can carry a language or a direction")]
@@ -60,38 +60,46 @@ pub enum LiteralError {
 }
 
 /// One expanded scalar with its optional datatype, language and direction.
+///
+/// Most scalars carry none of the three, so they are held apart from the
+/// scalar and only when written: a value array of numbers costs the scalars
+/// alone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Literal {
     /// The scalar.
     value: LiteralValue,
+    /// The datatype, or the language and direction, the value object carries.
+    annotation: Option<Box<Annotation>>,
+}
+
+/// What a value object states beside its scalar: JSON-LD 1.1 section 9.5
+/// gives it a datatype or a language and direction, never both.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Annotation {
     /// The datatype IRI of `@type`.
-    datatype: Option<NgsiLdReference>,
-    /// The language of `@language`.
-    language: Option<LangTagBuf>,
-    /// The base direction of `@direction`.
-    direction: Option<Direction>,
+    Datatype(NgsiLdReference),
+    /// The `@language` and `@direction` of a string, at least one of them.
+    Tagged {
+        /// The language of `@language`.
+        language: Option<LangTagBuf>,
+        /// The base direction of `@direction`.
+        direction: Option<Direction>,
+    },
 }
 
 impl Literal {
     /// An untyped, untagged scalar.
     #[must_use]
     pub const fn plain(value: LiteralValue) -> Literal {
-        Literal {
-            value,
-            datatype: None,
-            language: None,
-            direction: None,
-        }
+        Literal { value, annotation: None }
     }
 
     /// A scalar with a datatype.
     #[must_use]
-    pub const fn typed(value: LiteralValue, datatype: NgsiLdReference) -> Literal {
+    pub fn typed(value: LiteralValue, datatype: NgsiLdReference) -> Literal {
         Literal {
             value,
-            datatype: Some(datatype),
-            language: None,
-            direction: None,
+            annotation: Some(Box::new(Annotation::Datatype(datatype))),
         }
     }
 
@@ -107,18 +115,16 @@ impl Literal {
         language: Option<LangTagBuf>,
         direction: Option<Direction>,
     ) -> Result<Literal, LiteralError> {
-        if datatype.is_some() && language.is_some() {
-            return Err(LiteralError::DatatypeBesideLanguage);
-        }
         let tagged = language.is_some() || direction.is_some();
+        let annotation = match (datatype, tagged) {
+            (Some(_), true) => return Err(LiteralError::DatatypeBesideTag),
+            (Some(datatype), false) => Some(Box::new(Annotation::Datatype(datatype))),
+            (None, true) => Some(Box::new(Annotation::Tagged { language, direction })),
+            (None, false) => None,
+        };
         match value {
             LiteralValue::Number(_) | LiteralValue::Boolean(_) if tagged => Err(LiteralError::TaggedNonString),
-            LiteralValue::Number(_) | LiteralValue::Boolean(_) | LiteralValue::String(_) => Ok(Literal {
-                value,
-                datatype,
-                language,
-                direction,
-            }),
+            LiteralValue::Number(_) | LiteralValue::Boolean(_) | LiteralValue::String(_) => Ok(Literal { value, annotation }),
         }
     }
 
@@ -130,9 +136,7 @@ impl Literal {
             LiteralValue::String(_) => Some(Literal {
                 value: LiteralValue::String(text),
                 // clone: the respelled literal keeps the written one's annotations.
-                datatype: self.datatype.clone(),
-                language: self.language.clone(),
-                direction: self.direction,
+                annotation: self.annotation.clone(),
             }),
             LiteralValue::Number(_) | LiteralValue::Boolean(_) => None,
         }
@@ -146,20 +150,29 @@ impl Literal {
 
     /// The datatype IRI, when the value object carries one.
     #[must_use]
-    pub const fn datatype(&self) -> Option<&NgsiLdReference> {
-        self.datatype.as_ref()
+    pub fn datatype(&self) -> Option<&NgsiLdReference> {
+        match self.annotation.as_deref()? {
+            Annotation::Datatype(datatype) => Some(datatype),
+            Annotation::Tagged { .. } => None,
+        }
     }
 
     /// The language, when the value object carries one.
     #[must_use]
-    pub const fn language(&self) -> Option<&LangTagBuf> {
-        self.language.as_ref()
+    pub fn language(&self) -> Option<&LangTagBuf> {
+        match self.annotation.as_deref()? {
+            Annotation::Tagged { language, .. } => language.as_ref(),
+            Annotation::Datatype(_) => None,
+        }
     }
 
     /// The base direction, when the value object carries one.
     #[must_use]
-    pub const fn direction(&self) -> Option<Direction> {
-        self.direction
+    pub fn direction(&self) -> Option<Direction> {
+        match self.annotation.as_deref()? {
+            Annotation::Tagged { direction, .. } => *direction,
+            Annotation::Datatype(_) => None,
+        }
     }
 }
 

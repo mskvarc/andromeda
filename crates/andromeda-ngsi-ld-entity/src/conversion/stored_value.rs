@@ -27,7 +27,7 @@ impl ExpandedValue<Fragment> {
                         FragmentMember::Remove => None,
                     })
                     .collect::<Option<_>>()?;
-                Some(ExpandedValue::Node(ValueNode::new(id, types, members)))
+                Some(ExpandedValue::Node(Box::new(ValueNode::new(id, types, members))))
             }
         }
     }
@@ -83,7 +83,7 @@ mod tests {
             name("https://ex.org/a"),
             FragmentMember::Values(vec![ExpandedValue::Json(JsonLiteral::admit(&json!(1).to_string()).expect("a JSON literal"))]),
         );
-        let value: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(None, Vec::new(), members));
+        let value: ExpandedValue<Fragment> = ExpandedValue::Node(Box::new(ValueNode::new(None, Vec::new(), members)));
         assert!(value.into_stored().is_some());
     }
 
@@ -91,7 +91,7 @@ mod tests {
     fn a_member_deletion_cannot_become_state() {
         let mut members = IndexMap::new();
         members.insert(name("https://ex.org/a"), FragmentMember::Remove);
-        let value: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(None, Vec::new(), members));
+        let value: ExpandedValue<Fragment> = ExpandedValue::Node(Box::new(ValueNode::new(None, Vec::new(), members)));
         assert!(value.into_stored().is_none());
     }
 }

@@ -23,8 +23,9 @@ pub enum ExpandedValue<M: ValueMode = Stored> {
     Literal(Literal),
     /// A JSON literal (`"@type": "@json"`).
     Json(JsonLiteral),
-    /// A node object or a node reference.
-    Node(ValueNode<M>),
+    /// A node object or a node reference, held apart so the far more common
+    /// scalars do not carry its size.
+    Node(Box<ValueNode<M>>),
     /// A list object (`@list`), in order.
     List(Vec<ExpandedValue<M>>),
 }

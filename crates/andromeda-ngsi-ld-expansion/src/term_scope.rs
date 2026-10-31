@@ -4,10 +4,13 @@
 //! Every decision the typed walk makes about a term is the processor's own:
 //! keys, `@id` values, `@type` values and `@vocab`-coerced values are all
 //! expanded by `expand_iri_simple` over the processed context, exactly the call
-//! the processor's expansion algorithm makes for them.
+//! the processor's expansion algorithm makes for them. The scope also says
+//! whether the part it covers is a value the write's value count reaches
+//! ([`crate::value_count`]).
 
-use crate::decline::Decline;
+use crate::{decline::Decline, value_count::ValueCount};
 use andromeda_jsonld::engine::expansion_context::ExpansionContext;
+use andromeda_ngsi_ld_number::json_value::value_census::ValueTally;
 use iri_rs::IriBuf;
 use jsonld::{
     Context,
@@ -38,6 +41,8 @@ pub(crate) struct TermScope<'c> {
     /// property-scoped context entered on the way leaves `None`, because the
     /// next one would be processed on top of it rather than on the root.
     root: Option<&'c ExpansionContext>,
+    /// Where the values expanded in this scope are counted.
+    values: ValueCount<'c>,
 }
 
 impl<'c> TermScope<'c> {
@@ -52,7 +57,50 @@ impl<'c> TermScope<'c> {
         if active.previous_context().is_some() {
             return Err(Decline::NonPropagatedContext);
         }
-        Ok(TermScope { active, root: Some(context) })
+        Ok(TermScope {
+            active,
+            root: Some(context),
+            values: ValueCount::uncounted(),
+        })
+    }
+
+    /// The same scope, the values of the document it starts counted into
+    /// `tally`; `None` counts nothing.
+    pub(crate) const fn counting_into<'t>(self, tally: Option<&'t ValueTally>) -> TermScope<'t>
+    where
+        'c: 't,
+    {
+        TermScope {
+            active: self.active,
+            root: self.root,
+            values: ValueCount::into_tally(tally),
+        }
+    }
+
+    /// The same scope, below a Property `value` or a `valueList`, where every
+    /// value expanded is counted.
+    pub(crate) const fn in_value(&self) -> TermScope<'c> {
+        TermScope {
+            active: self.active,
+            root: self.root,
+            values: self.values.in_value(),
+        }
+    }
+
+    /// Count one value expanded in this scope, when it is a value the count
+    /// reaches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Decline::ValueLimit`] once the count passes the limit.
+    pub(crate) fn count_value(&self) -> Result<(), Decline> {
+        self.values.count_one()
+    }
+
+    /// The room to make for the items an array of `written` elements expands
+    /// to in this scope.
+    pub(crate) fn value_capacity(&self, written: usize) -> usize {
+        self.values.capacity(written)
     }
 
     /// The definition of `term` in this scope.
@@ -79,7 +127,11 @@ impl<'c> TermScope<'c> {
         if scoped.previous_context().is_some() {
             return Err(Decline::NonPropagatedContext);
         }
-        Ok(TermScope { active: scoped, root: None })
+        Ok(TermScope {
+            active: scoped,
+            root: None,
+            values: self.values,
+        })
     }
 
     /// Whether `term` declares a scoped context in this scope.

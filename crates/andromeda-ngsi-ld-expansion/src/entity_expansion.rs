@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     temporal::{temporal_document::TemporalDocument, temporal_entity::TemporalEntity},
 };
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use iri_rs::IriBuf;
 use jsonld::ExpandedDocument;
 use rdfx::BlankIdBuf;
@@ -37,6 +38,9 @@ pub struct EntityExpansion<'e> {
     engine: &'e JsonLdEngine,
     /// The request's processed context.
     context: Arc<ExpansionContext>,
+    /// The entity value limit the typed walk counts a written document's
+    /// values against; `None` counts nothing.
+    value_limit: Option<JsonValueLimit>,
 }
 
 impl<'e> EntityExpansion<'e> {
@@ -55,7 +59,33 @@ impl<'e> EntityExpansion<'e> {
     /// `@context` are expanded without processing it again.
     #[must_use]
     pub const fn from_context(engine: &'e JsonLdEngine, context: Arc<ExpansionContext>) -> EntityExpansion<'e> {
-        EntityExpansion { engine, context }
+        EntityExpansion {
+            engine,
+            context,
+            value_limit: None,
+        }
+    }
+
+    /// The same expansion, refusing a document whose Property values and
+    /// `valueList` items expand to more than `limit` values before the rest of
+    /// it is expanded (clause 6.3.2). The JSON-LD processor, which expands
+    /// what the typed walk declines, counts nothing; the payload budget of the
+    /// written document still decides what it expanded.
+    #[must_use]
+    pub fn bounded_by(self, limit: JsonValueLimit) -> EntityExpansion<'e> {
+        EntityExpansion {
+            value_limit: Some(limit),
+            ..self
+        }
+    }
+
+    /// The typed walk under this expansion's context and value limit.
+    fn expander(&self) -> TypedExpander<'_> {
+        let expander = TypedExpander::new(&self.context);
+        match self.value_limit {
+            Some(limit) => expander.bounded_by(limit),
+            None => expander,
+        }
     }
 
     /// The processed context requests are expanded under.
@@ -69,9 +99,11 @@ impl<'e> EntityExpansion<'e> {
     /// # Errors
     ///
     /// Returns [`ExpansionError::Refused`] for an expanded document that is no
-    /// write, and the processor's failure for a request it expanded.
+    /// write, [`ExpansionError::PayloadBudget`] once the typed walk's values
+    /// pass the limit the expansion is bounded by, and the processor's failure
+    /// for a request it expanded.
     pub async fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
-        match TypedExpander::new(&self.context).entity(entity, normalization)? {
+        match self.expander().entity(entity, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => self.processor_entity(&entity_text(entity, normalization)?).await,
         }
@@ -83,7 +115,7 @@ impl<'e> EntityExpansion<'e> {
     ///
     /// As [`EntityExpansion::entity`].
     pub async fn entity_patch<M: WrittenMember>(&self, patch: &EntityPatch<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
-        match TypedExpander::new(&self.context).entity_patch(patch, normalization)? {
+        match self.expander().entity_patch(patch, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => self.processor_entity(&patch_text(patch, normalization)?).await,
         }
@@ -97,7 +129,7 @@ impl<'e> EntityExpansion<'e> {
     ///
     /// As [`EntityExpansion::entity`].
     pub async fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<AttributeFragment, ExpansionError> {
-        match TypedExpander::new(&self.context).attribute(attribute, member)? {
+        match self.expander().attribute(attribute, member)? {
             TypedExpansion::Expanded(expanded) => Ok(expanded),
             TypedExpansion::Declined(_) => {
                 let text = attribute_text(attribute, member)?;
@@ -117,7 +149,7 @@ impl<'e> EntityExpansion<'e> {
         let (entity, system_times) = entity
             .into_entity()
             .map_err(|source| ExpansionError::Refused(EntityRefusal::ExpandedAttributeName(source)))?;
-        match TypedExpander::new(&self.context).temporal(&entity, system_times)? {
+        match self.expander().temporal(&entity, system_times)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => {
                 let text = entity_text(&entity, Normalization::Entity)?;

@@ -60,6 +60,7 @@ pub fn expand_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prope
         for item in force_array(list.value) {
             items.extend(expand_element(scope, active_property, item)?.into_items());
         }
+        scope.count_value()?;
         return Ok(Expanded::One(ExpandedItem::List(items)));
     }
     if let Some(set) = keyword(Keyword::Set) {
@@ -72,7 +73,11 @@ pub fn expand_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prope
     for entry in &entries {
         node.add_json(scope, entry)?;
     }
-    Ok(node.finish(active_property))
+    let finished = node.finish(active_property);
+    if let Expanded::One(_) = finished {
+        scope.count_value()?;
+    }
+    Ok(finished)
 }
 
 /// Whether one of the `@type` values names a term with a scoped context.

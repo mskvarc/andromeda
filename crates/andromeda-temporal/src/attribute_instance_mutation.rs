@@ -93,7 +93,9 @@ impl TemporalService {
         // Clause 5.6.14.4 raises ResourceNotFound for an unknown Entity,
         // Attribute or instance before the Fragment is read, so a Fragment
         // naming another Attribute is refused only once the target is known.
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
+        let expansion = EntityExpansion::prepare(&self.engine, context)
+            .await?
+            .bounded_by(self.limits.payload_budget.json_values);
         let (patch, _reified_scope) = fragment.into_fragment();
         let document = expansion.entity_patch(&patch, Normalization::Entity).await?;
         let replacement = fragment_instance(document, &attr_iri)?;

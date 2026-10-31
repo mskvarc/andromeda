@@ -2,6 +2,7 @@
 
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
+use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 use thiserror::Error;
 
 /// Why a request could not be expanded.
@@ -18,6 +19,10 @@ pub enum ExpansionError {
     /// 5.5.4).
     #[error(transparent)]
     Refused(#[from] EntityRefusal),
+    /// The values the request expands to passed the entity value limit the
+    /// expansion is bounded by (clause 6.3.2).
+    #[error(transparent)]
+    PayloadBudget(#[from] PayloadBudgetExceeded),
     /// The typed compact request did not serialize for the processor.
     #[error("the request did not serialize as JSON: {0}")]
     CompactDocument(#[source] serde_json::Error),

@@ -43,6 +43,10 @@ pub enum Decline {
     OutputOnlyMember,
     /// A typed member of the compact model did not serialize as JSON.
     CompactSerialization,
+    /// The values the write expands to passed the entity value limit: the walk
+    /// stops, and the expander refuses the payload (clause 6.3.2) rather than
+    /// handing it to the processor.
+    ValueLimit,
 }
 
 #[cfg(test)]

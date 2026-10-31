@@ -34,6 +34,7 @@ pub fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, v
     }
     // A term typed `@json` takes its value verbatim (step 13.7).
     if definition.and_then(|definition| definition.typ()) == Some(&Type::Json) {
+        scope.count_value()?;
         return Ok(Some(vec![ExpandedItem::Json(json_literal(value)?)]));
     }
     let expanded = match value.shape() {
@@ -46,7 +47,7 @@ pub fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, v
         | NodeShape::Object(_)
         | NodeShape::Geometry(_) => expand_element(scope, Some(key), value)?,
     };
-    Ok(wrap_list(has(ContainerKind::List), expanded))
+    wrap_list(scope, has(ContainerKind::List), expanded)
 }
 
 /// The values of a member whose items were expanded already, as an array
@@ -84,7 +85,7 @@ pub fn expanded_member(scope: &TermScope<'_>, key: &str, items: Vec<ExpandedItem
         (Written::Array, true) => Expanded::One(ExpandedItem::List(items)),
         (Written::Array | Written::Single, false) | (Written::Single, true) => Expanded::Many(items),
     };
-    Ok(wrap_list(has(ContainerKind::List), expanded).unwrap_or_default())
+    Ok(wrap_list(scope, has(ContainerKind::List), expanded)?.unwrap_or_default())
 }
 
 /// How a member whose items were expanded already was written.
@@ -99,12 +100,19 @@ pub enum Written {
 /// A member's expanded value, as a list object when its container is `@list`
 /// and it is not one already (step 13.13); `None` for a value that expanded to
 /// nothing.
-fn wrap_list(list_container: bool, expanded: Expanded) -> Option<Vec<ExpandedItem>> {
+///
+/// # Errors
+///
+/// Declines a list object past the write's value limit.
+fn wrap_list(scope: &TermScope<'_>, list_container: bool, expanded: Expanded) -> Result<Option<Vec<ExpandedItem>>, Decline> {
     match expanded {
-        Expanded::Null => None,
-        Expanded::One(ExpandedItem::List(items)) => Some(vec![ExpandedItem::List(items)]),
-        expanded @ (Expanded::One(_) | Expanded::Many(_)) if list_container => Some(vec![ExpandedItem::List(expanded.into_items())]),
-        expanded @ (Expanded::One(_) | Expanded::Many(_)) => Some(expanded.into_items()),
+        Expanded::Null => Ok(None),
+        Expanded::One(ExpandedItem::List(items)) => Ok(Some(vec![ExpandedItem::List(items)])),
+        expanded @ (Expanded::One(_) | Expanded::Many(_)) if list_container => {
+            scope.count_value()?;
+            Ok(Some(vec![ExpandedItem::List(expanded.into_items())]))
+        }
+        expanded @ (Expanded::One(_) | Expanded::Many(_)) => Ok(Some(expanded.into_items())),
     }
 }
 
@@ -125,12 +133,15 @@ fn language_map<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, map: N
         for text in force_array(texts) {
             match text.shape() {
                 NodeShape::Null => {}
-                NodeShape::String(text) => values.push(ExpandedItem::Value(ValueObject {
-                    scalar: Scalar::String(text.into_owned()),
-                    datatype: None,
-                    language: language.clone(), // clone: every string of the entry carries the entry's language
-                    direction: direction.map(direction_of),
-                })),
+                NodeShape::String(text) => {
+                    scope.count_value()?;
+                    values.push(ExpandedItem::Value(ValueObject {
+                        scalar: Scalar::String(text.into_owned()),
+                        datatype: None,
+                        language: language.clone(), // clone: every string of the entry carries the entry's language
+                        direction: direction.map(direction_of),
+                    }));
+                }
                 NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
                     return Err(Decline::MalformedJsonLd);
                 }
