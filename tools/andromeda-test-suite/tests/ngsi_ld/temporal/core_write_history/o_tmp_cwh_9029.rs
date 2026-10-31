@@ -66,7 +66,13 @@ async fn o_tmp_cwh_9029_a_literal_keeps_its_language_and_datatype_in_the_tempora
     expect_that!(entity, has_attribute("greeting", any_attribute().value_member(["@language"], "es")));
     expect_that!(
         entity,
-        has_attribute("size", any_attribute().value_member(["type"], "http://www.w3.org/2001/XMLSchema#integer"))
+        has_attribute(
+            "size",
+            any_attribute().value_member_as_written(
+                [],
+                Value::Typed(TypedValue::try_new(Datatype::Other("http://www.w3.org/2001/XMLSchema#integer".parse()?), "42")?)
+            )
+        )
     );
     expect_that!(
         entity,
@@ -93,9 +99,10 @@ async fn o_tmp_cwh_9029_a_literal_keeps_its_language_and_datatype_in_the_tempora
             "size",
             nth(
                 0,
-                any_attribute()
-                    .value_member(["@value"], "42")
-                    .value_member(["type"], "http://www.w3.org/2001/XMLSchema#integer")
+                any_attribute().value_member_as_written(
+                    [],
+                    Value::Typed(TypedValue::try_new(Datatype::Other("http://www.w3.org/2001/XMLSchema#integer".parse()?), "42")?)
+                )
             )
         )
     );

@@ -42,22 +42,40 @@ async fn o_ent_ret_0032_a_date_time_value_reads_back_in_its_sub_second_form() ->
     let entity = retrieved.body();
     expect_that!(
         entity,
-        has_attribute("short", any_attribute().value_member(["@value"], "2024-01-01T00:00:00.500Z"))
+        has_attribute(
+            "short",
+            any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
+        )
     );
     expect_that!(
         entity,
-        has_attribute("milli", any_attribute().value_member(["@value"], "2024-01-01T00:00:00.500Z"))
+        has_attribute(
+            "milli",
+            any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
+        )
     );
     expect_that!(
         entity,
-        has_attribute("micro", any_attribute().value_member(["@value"], "2024-01-01T00:00:00.123456Z"))
+        has_attribute(
+            "micro",
+            any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00.123456Z".parse::<DateTime>()?))
+        )
     );
-    expect_that!(entity, has_attribute("whole", any_attribute().value_member(["@value"], "2024-01-01T00:00:00Z")));
+    expect_that!(
+        entity,
+        has_attribute(
+            "whole",
+            any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00Z".parse::<DateTime>()?))
+        )
+    );
     expect_that!(
         entity,
         has_attribute(
             "opening",
-            any_attribute().sub_attribute("at", any_attribute().value_member(["@value"], "2024-01-01T00:00:00.500Z"))
+            any_attribute().sub_attribute(
+                "at",
+                any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
+            )
         )
     );
     Ok(())

@@ -6,7 +6,7 @@ use andromeda_test_suite::{
     entity_matcher::has_attribute,
     namespace::Namespace,
     outcome::Done,
-    simplified_matcher::has_value_at,
+    simplified_matcher::has_value_as_written_at,
     value::object,
 };
 use googletest::prelude::*;
@@ -48,25 +48,21 @@ async fn n_ent_ret_9037_a_typed_time_value_is_served_in_its_one_spelling_at_ever
         entity,
         has_attribute(
             "readingTime",
-            any_attribute().value_member(["type"], "Time").value_member(["@value"], "12:00:00.500Z")
+            any_attribute().value_member_as_written([], Value::from("12:00:00.500Z".parse::<Time>()?))
         )
     );
     expect_that!(
         entity,
         has_attribute(
             "readingInstant",
-            any_attribute()
-                .value_member(["type"], "DateTime")
-                .value_member(["@value"], "2024-01-01T00:00:00.500Z")
+            any_attribute().value_member_as_written([], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
         )
     );
     expect_that!(
         entity,
         has_attribute(
             "reading",
-            any_attribute()
-                .value_member(["at", "type"], "DateTime")
-                .value_member(["at", "@value"], "2024-01-01T00:00:00Z")
+            any_attribute().value_member_as_written(["at"], Value::from("2024-01-01T00:00:00Z".parse::<DateTime>()?))
         )
     );
     let retrieved_2 = broker
@@ -77,9 +73,13 @@ async fn n_ent_ret_9037_a_typed_time_value_is_served_in_its_one_spelling_at_ever
         .send()
         .await?;
     let entity_2 = retrieved_2.body();
-    expect_that!(entity_2, has_value_at("readingTime", ["type"], "Time"));
-    expect_that!(entity_2, has_value_at("readingTime", ["@value"], "12:00:00.500Z"));
-    expect_that!(entity_2, has_value_at("readingInstant", ["type"], "DateTime"));
-    expect_that!(entity_2, has_value_at("readingInstant", ["@value"], "2024-01-01T00:00:00.500Z"));
+    expect_that!(
+        entity_2,
+        has_value_as_written_at("readingTime", [], Value::from("12:00:00.500Z".parse::<Time>()?))
+    );
+    expect_that!(
+        entity_2,
+        has_value_as_written_at("readingInstant", [], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
+    );
     Ok(())
 }

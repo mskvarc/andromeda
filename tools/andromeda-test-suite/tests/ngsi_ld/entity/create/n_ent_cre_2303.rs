@@ -4,7 +4,7 @@ use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{Attribute, CoreDatatype, Entity, NgsiLdMediaType, Property, TypedValue, Value},
+    model::{Attribute, CoreDatatype, Datatype, Entity, NgsiLdMediaType, Property, TypedValue, Value},
 };
 
 /// Pins: Create Entity accepts a `DateTime` value and a Time value whose seconds fraction is separated by a comma,
@@ -44,12 +44,8 @@ async fn n_ent_cre_2303_a_date_time_and_a_time_value_with_a_comma_fraction_are_a
             .find(|(candidate, _)| candidate.as_str() == name)
             .and_then(|(_, instances)| match instances.first() {
                 Attribute::Property(property) => match property.value() {
-                    // The plain JSON representation reads the typed value back as an object with `type` and `@value`.
-                    Value::Object(members) => match (members.get("type"), members.get("@value")) {
-                        (Some(Value::Text(datatype)), Some(Value::Text(lexical))) => Some((datatype.as_str(), lexical.as_str())),
-                        _ => None,
-                    },
-                    Value::Boolean(_) | Value::Number(_) | Value::Text(_) | Value::Typed(_) | Value::Array(_) | Value::JsonNull => None,
+                    Value::Typed(typed) => Some(typed),
+                    Value::Boolean(_) | Value::Number(_) | Value::Text(_) | Value::Array(_) | Value::Object(_) | Value::JsonNull => None,
                 },
                 Attribute::GeoProperty(_)
                 | Attribute::LanguageProperty(_)
@@ -60,11 +56,11 @@ async fn n_ent_cre_2303_a_date_time_and_a_time_value_with_a_comma_fraction_are_a
                 | Attribute::ListRelationship(_) => None,
             })
     };
-    let (service_datatype, service_lexical) = typed("serviceDate").or_fail()?;
-    expect_that!(service_datatype, eq("DateTime"));
-    expect_that!(service_lexical, matches_regex(r"^2024-01-01T00:00:00[.,]50*Z$"));
-    let (opening_datatype, opening_lexical) = typed("openingTime").or_fail()?;
-    expect_that!(opening_datatype, eq("Time"));
-    expect_that!(opening_lexical, matches_regex(r"^10:00:00[.,]50*Z$"));
+    let service = typed("serviceDate").or_fail()?;
+    expect_that!(service.datatype(), eq(&Datatype::Core(CoreDatatype::DateTime)));
+    expect_that!(service.lexical(), matches_regex(r"^2024-01-01T00:00:00[.,]50*Z$"));
+    let opening = typed("openingTime").or_fail()?;
+    expect_that!(opening.datatype(), eq(&Datatype::Core(CoreDatatype::Time)));
+    expect_that!(opening.lexical(), matches_regex(r"^10:00:00[.,]50*Z$"));
     Ok(())
 }

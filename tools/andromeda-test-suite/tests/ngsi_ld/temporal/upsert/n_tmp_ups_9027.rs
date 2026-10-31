@@ -59,13 +59,10 @@ async fn n_tmp_ups_9027_a_literal_written_to_the_temporal_evolution_keeps_its_la
                 len(eq(2)),
                 contains(any_attribute().observed_at("2024-01-01T00:00:00Z".parse()?).value_member(["@language"], "es")),
                 contains(any_attribute().observed_at("2024-01-01T00:00:00Z".parse()?)).times(eq(1)),
-                contains(
-                    any_attribute()
-                        .observed_at("2024-01-02T00:00:00Z".parse()?)
-                        .value_member(["type"], "http://www.w3.org/2001/XMLSchema#integer")
-                ),
-                contains(any_attribute().observed_at("2024-01-02T00:00:00Z".parse()?)).times(eq(1)),
-                contains(any_attribute().observed_at("2024-01-02T00:00:00Z".parse()?).value_member(["@value"], "42")),
+                contains(any_attribute().observed_at("2024-01-02T00:00:00Z".parse()?).value_member_as_written(
+                    [],
+                    Value::Typed(TypedValue::try_new(Datatype::Other("http://www.w3.org/2001/XMLSchema#integer".parse()?), "42")?)
+                )),
                 contains(any_attribute().observed_at("2024-01-02T00:00:00Z".parse()?)).times(eq(1))
             )
         )

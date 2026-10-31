@@ -48,9 +48,7 @@ async fn n_tmp_ret_4002_a_typed_array_element_keeps_its_type() -> Result<()> {
         entity,
         has_attribute(
             "events",
-            any_attribute()
-                .value_member(["1", "@value"], "2024-01-01T00:00:00Z")
-                .value_member(["1", "type"], "DateTime")
+            any_attribute().value_member_as_written(["1"], Value::from("2024-01-01T00:00:00Z".parse::<DateTime>()?))
         )
     );
     let retrieved_2 = broker
@@ -69,8 +67,7 @@ async fn n_tmp_ret_4002_a_typed_array_element_keeps_its_type() -> Result<()> {
                 0,
                 any_attribute()
                     .value_member(["0"], "a")
-                    .value_member(["1", "@value"], "2024-01-01T00:00:00Z")
-                    .value_member(["1", "type"], "DateTime")
+                    .value_member_as_written(["1"], Value::from("2024-01-01T00:00:00Z".parse::<DateTime>()?))
             )
         )
     );

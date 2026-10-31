@@ -38,14 +38,14 @@ async fn n_tmp_ret_4005_a_typed_time_or_date_reads_back_typed_and_an_untyped_str
         evolution,
         has_evolution(
             "readingTime",
-            nth(0, any_attribute().value_member(["type"], "Time").value_member(["@value"], "12:00:00.500Z"))
+            nth(0, any_attribute().value_member_as_written([], Value::from("12:00:00.500Z".parse::<Time>()?)))
         )
     );
     expect_that!(
         evolution,
         has_evolution(
             "readingDate",
-            nth(0, any_attribute().value_member(["type"], "Date").value_member(["@value"], "2024-06-15"))
+            nth(0, any_attribute().value_member_as_written([], Value::from("2024-06-15".parse::<Date>()?)))
         )
     );
     expect_that!(

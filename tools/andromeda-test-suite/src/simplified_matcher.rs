@@ -2,9 +2,10 @@
 //! the typed model: the value each attribute reduces to, a member inside it, and the attributes an entity lacks.
 //!
 //! A `GeoProperty` reduces to its geometry, which is read as the `GeoJSON` object it is written as, so its members are
-//! reached by path like those of an object value. Values are compared by [`Equivalent`].
+//! reached by path like those of an object value. Values are compared by [`Equivalent`](crate::equivalence::Equivalent), or as written where a test
+//! pins the spelling of a typed value.
 
-use crate::{attribute_reading::member_at, equivalence::Equivalent, geometry::geometry_value, value::object};
+use crate::{attribute_reading::member_at, equivalence::Comparison, geometry::geometry_value, value::object};
 use googletest::{
     description::Description,
     matcher::{Matcher, MatcherBase, MatcherResult},
@@ -48,6 +49,8 @@ pub struct HasValue {
     path: Vec<String>,
     /// The value required there.
     expected: Value,
+    /// How the value found there is compared with `expected`.
+    comparison: Comparison,
 }
 
 /// A simplified entity whose attribute `name` reduces to `expected`.
@@ -57,6 +60,7 @@ pub fn has_value(name: &str, expected: impl Into<Value>) -> HasValue {
         name: name.to_owned(),
         path: Vec::new(),
         expected: expected.into(),
+        comparison: Comparison::Equivalent,
     }
 }
 
@@ -67,13 +71,26 @@ pub fn has_value_at<const N: usize>(name: &str, path: [&str; N], expected: impl 
         name: name.to_owned(),
         path: path.iter().map(|segment| (*segment).to_owned()).collect(),
         expected: expected.into(),
+        comparison: Comparison::Equivalent,
+    }
+}
+
+/// A simplified entity whose attribute `name` reduces to a value holding `expected` at `path` as written: a typed
+/// value must carry the same datatype and lexical form, so the spelling of a `DateTime`, `Date` or `Time` is pinned.
+#[must_use]
+pub fn has_value_as_written_at<const N: usize>(name: &str, path: [&str; N], expected: impl Into<Value>) -> HasValue {
+    HasValue {
+        name: name.to_owned(),
+        path: path.iter().map(|segment| (*segment).to_owned()).collect(),
+        expected: expected.into(),
+        comparison: Comparison::AsWritten,
     }
 }
 
 impl Matcher<&SimplifiedEntity> for HasValue {
     fn matches(&self, actual: &SimplifiedEntity) -> MatcherResult {
         reduced(actual, &self.name)
-            .is_some_and(|value| member_at(&value, &self.path).is_some_and(|found| found.equivalent(&self.expected)))
+            .is_some_and(|value| member_at(&value, &self.path).is_some_and(|found| self.comparison.holds(found, &self.expected)))
             .into()
     }
 
@@ -163,9 +180,9 @@ pub fn simplified_member_count(entity: &SimplifiedEntity) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::simplified_matcher::{has_length_at, has_value, has_value_at, lacks_value, simplified_member_count};
+    use crate::simplified_matcher::{has_length_at, has_value, has_value_as_written_at, has_value_at, lacks_value, simplified_member_count};
     use googletest::prelude::*;
-    use ngsi_ld::model::SimplifiedEntity;
+    use ngsi_ld::model::{DateTime, SimplifiedEntity, Value};
 
     /// A Building in simplified representation, as a broker answers it.
     fn building() -> Result<SimplifiedEntity> {
@@ -206,6 +223,17 @@ mod tests {
         expect_that!(&entity, not(has_length_at("tags", [], 2)));
         expect_that!(&entity, has_length_at("location", ["coordinates"], 2));
         verify_that!(&entity, not(has_length_at("location", ["type"], 1)))
+    }
+
+    #[gtest]
+    fn a_typed_value_is_matched_as_its_instant_or_as_written() -> Result<()> {
+        let entity =
+            SimplifiedEntity::parse(r#"{"id":"urn:ngsi-ld:Building:1","type":"Building","openedAt":{"@value":"2024-01-01T00:00:00.500Z","type":"DateTime"}}"#)?;
+        let written = Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?);
+        let shorter = Value::from("2024-01-01T00:00:00.5Z".parse::<DateTime>()?);
+        expect_that!(&entity, has_value_at("openedAt", [], shorter.clone()));
+        expect_that!(&entity, has_value_as_written_at("openedAt", [], written));
+        verify_that!(&entity, not(has_value_as_written_at("openedAt", [], shorter)))
     }
 
     #[gtest]

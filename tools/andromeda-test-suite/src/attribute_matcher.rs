@@ -1,13 +1,14 @@
 //! Matchers on one attribute a broker answers, read through the typed model: its kind, its payload and its members.
 //!
 //! An attribute matcher states only what the test requires of the attribute; every member it does not name may hold
-//! anything. Payloads, instants and numbers are compared by [`Equivalent`], so a spelling the specification reads the
+//! anything. Payloads, instants and numbers are compared by [`Equivalent`](crate::equivalence::Equivalent), so a spelling the specification reads the
 //! same matches. An attribute with one instance is matched by it; a matcher naming a `datasetId` picks the instance of
 //! that dataset (clause 4.5.5).
 
 use crate::{
     attribute_check::{Check, check_mismatch},
     attribute_member::Member,
+    equivalence::Comparison,
 };
 use cefact_units::UnitCode;
 use googletest::{
@@ -126,7 +127,23 @@ impl AttributeMatcher {
     /// Requires the member at `path` inside the attribute's object value to be `value`.
     #[must_use]
     pub fn value_member<const N: usize>(self, path: [&str; N], value: impl Into<Value>) -> AttributeMatcher {
-        self.with(Check::ValueMember(path.iter().map(|segment| (*segment).to_owned()).collect(), value.into()))
+        self.with(Check::ValueMember(
+            path.iter().map(|segment| (*segment).to_owned()).collect(),
+            value.into(),
+            Comparison::Equivalent,
+        ))
+    }
+
+    /// Requires the member at `path` inside the attribute's value, the value itself for an empty path, to be `value`
+    /// as written: a typed value must carry the same datatype and lexical form, so the spelling a broker answers a
+    /// `DateTime`, `Date` or `Time` in is pinned, where [`value_member`](Self::value_member) reads an instant.
+    #[must_use]
+    pub fn value_member_as_written<const N: usize>(self, path: [&str; N], value: impl Into<Value>) -> AttributeMatcher {
+        self.with(Check::ValueMember(
+            path.iter().map(|segment| (*segment).to_owned()).collect(),
+            value.into(),
+            Comparison::AsWritten,
+        ))
     }
 
     /// Requires the array or object at `path` inside the attribute's value to hold `length` items or members.
@@ -393,7 +410,7 @@ mod tests {
     };
     use cefact_units::UnitCode;
     use googletest::prelude::*;
-    use ngsi_ld::model::{Attribute, DatasetId, Entity, EntityId, EntityTypeName, Lossless, Output, Value};
+    use ngsi_ld::model::{Attribute, DatasetId, DateTime, Entity, EntityId, EntityTypeName, Lossless, Output, Time, Value};
     use serde_json::json;
 
     /// The one Property of an entity as a broker answers it.
@@ -416,6 +433,26 @@ mod tests {
         )?;
         let (_, instances) = entity.attributes.iter().next().or_fail()?;
         Ok(instances.first().clone())
+    }
+
+    #[gtest]
+    fn a_typed_value_is_matched_as_its_instant_or_as_written() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:Building:1","type":"Building","opening":{"type":"Property",
+            "value":{"at":{"@value":"2024-01-01T00:00:00.500Z","type":"DateTime"},"daily":{"type":"Time","@value":"12:00:00.500Z"}}}}"#,
+            Lossless::Normalized,
+        )?;
+        let (_, instances) = entity.attributes.iter().next().or_fail()?;
+        let opening = instances.first();
+        let shorter = Value::from("2024-01-01T00:00:00.5Z".parse::<DateTime>()?);
+        expect_that!(opening, property().value_member(["at"], shorter.clone()));
+        expect_that!(
+            opening,
+            property()
+                .value_member_as_written(["at"], Value::from("2024-01-01T00:00:00.500Z".parse::<DateTime>()?))
+                .value_member_as_written(["daily"], Value::from("12:00:00.500Z".parse::<Time>()?))
+        );
+        verify_that!(opening, not(property().value_member_as_written(["at"], shorter)))
     }
 
     #[gtest]

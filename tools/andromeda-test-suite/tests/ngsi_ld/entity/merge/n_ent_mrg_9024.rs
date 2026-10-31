@@ -13,7 +13,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::{ContextDelivery, UncheckedDocument, headers::Accept, operation::MergeEntity},
-    model::{Context, ContextEntry, Entity, EntityFragment, InlineContext, Lossless, NgsiLdMediaType, RawJson},
+    model::{Context, ContextEntry, DateTime, Entity, EntityFragment, InlineContext, Lossless, NgsiLdMediaType, RawJson, Value},
 };
 
 /// Pins: Merge Entity with a concise `testedAt` 2018-12-04T12:00:00.000Z under a user @context coercing `testedAt`
@@ -56,9 +56,7 @@ async fn n_ent_mrg_9024_a_concise_value_under_a_term_coerced_to_date_time_is_mer
         entity,
         has_attribute(
             &format!("https://example.org/{namespace}/testedAt"),
-            any_attribute()
-                .value_member(["type"], "DateTime")
-                .value_member(["@value"], "2018-12-04T12:00:00Z")
+            any_attribute().value_member_as_written([], Value::from("2018-12-04T12:00:00Z".parse::<DateTime>()?))
         )
     );
     expect_that!(

@@ -5,7 +5,7 @@ use crate::{
     attribute_matcher::AttributeMatcher,
     attribute_member::Member,
     attribute_reading::{has_member, member_at, unit_code_of, value_of, value_type_of},
-    equivalence::Equivalent,
+    equivalence::{Comparison, Equivalent},
 };
 use cefact_units::UnitCode;
 use ngsi_ld::model::{
@@ -30,8 +30,8 @@ use std::slice;
 pub(crate) enum Check {
     /// The value of a Property, the items of a `ListProperty`.
     Value(Value),
-    /// The member at a path inside an object value.
-    ValueMember(Vec<String>, Value),
+    /// The member at a path inside the value, the value itself for an empty path, under a comparison.
+    ValueMember(Vec<String>, Value, Comparison),
     /// The number of items or members at a path inside the value.
     Length(Vec<String>, usize),
     /// The number of items of a `ListProperty`'s `valueList`, a `ListRelationship`'s `objectList` or a
@@ -108,8 +108,8 @@ pub(crate) fn check_mismatch(check: &Check, attribute: &Attribute<Output>) -> Op
     let meta = attribute.meta();
     let holds = match check {
         Check::Value(expected) => value_of(attribute).is_some_and(|actual| actual.equivalent(expected)),
-        Check::ValueMember(path, expected) => {
-            value_of(attribute).is_some_and(|actual| member_at(&actual, path).is_some_and(|member| member.equivalent(expected)))
+        Check::ValueMember(path, expected, comparison) => {
+            value_of(attribute).is_some_and(|actual| member_at(&actual, path).is_some_and(|member| comparison.holds(member, expected)))
         }
         Check::Length(path, expected) => value_of(attribute).is_some_and(|actual| {
             member_at(&actual, path).is_some_and(|member| match member {

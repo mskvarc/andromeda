@@ -35,6 +35,26 @@ use ngsi_ld::model::{
 };
 use std::{fmt::Debug, hash::Hash};
 
+/// How a matcher compares the value it reads with the value it requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Comparison {
+    /// Up to the spellings the specification reads the same, by [`Equivalent`].
+    Equivalent,
+    /// As written: a typed value keeps its datatype and its lexical form, so a `DateTime` is compared as the broker
+    /// spells it rather than as its instant.
+    AsWritten,
+}
+
+impl Comparison {
+    /// Whether `actual` meets `expected` under this comparison.
+    pub(crate) fn holds(self, actual: &Value, expected: &Value) -> bool {
+        match self {
+            Self::Equivalent => actual.equivalent(expected),
+            Self::AsWritten => actual == expected,
+        }
+    }
+}
+
 /// A value compared up to the spellings the specification reads the same.
 pub trait Equivalent {
     /// Whether `self` and `other` say the same.
