@@ -2,8 +2,8 @@
 //!
 //! The broker forwards to the source what its registration matches. A broker also forwards a discovery of types or
 //! attributes to every registration of the tenant supporting it (clauses 5.7.5 to 5.7.11), so the source receives
-//! other tests' discovery requests; every read of what the source received leaves `/ngsi-ld/v1/types` and
-//! `/ngsi-ld/v1/attributes` out and counts entity paths only.
+//! other tests' discovery requests; every read of what the source received leaves a discovery of types or
+//! attributes out, below whatever prefix the registration's endpoint names, and counts entity paths only.
 
 use crate::{
     callback_server::{CallbackError, CallbackServer},
@@ -14,8 +14,19 @@ use http::Method;
 use url::Url;
 use wiremock::{Mock, MockBuilder, Request, ResponseTemplate};
 
-/// The paths of the discovery operations a broker forwards to every source of the tenant.
-const FOREIGN_PATHS: [&str; 2] = ["/ngsi-ld/v1/types", "/ngsi-ld/v1/attributes"];
+/// The API name and version a forwarded request names after the registration's endpoint, the apiRoot with its
+/// optional prefix (clause 6.2).
+const API_ROOT: &str = "/ngsi-ld/v1/";
+
+/// The resources of the discovery operations a broker forwards to every source of the tenant (clauses 5.7.5 to
+/// 5.7.11).
+const DISCOVERY_RESOURCES: [&str; 2] = ["types", "attributes"];
+
+/// Whether `path` is a discovery of types or attributes, below whatever prefix the registration's endpoint names.
+fn is_discovery(path: &str) -> bool {
+    path.split_once(API_ROOT)
+        .is_some_and(|(_, resource)| resource.split('/').next().is_some_and(|first| DISCOVERY_RESOURCES.contains(&first)))
+}
 
 /// Why the source could not start or be read.
 #[derive(Debug, thiserror::Error)]
@@ -223,7 +234,7 @@ impl ContextSource {
             .received()
             .await?
             .into_iter()
-            .filter(|request| !FOREIGN_PATHS.iter().any(|path| request.url.path().starts_with(path)))
+            .filter(|request| !is_discovery(request.url.path()))
             .collect())
     }
 
@@ -244,5 +255,36 @@ impl ContextSource {
             }
         })
         .await?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context_source::is_discovery;
+
+    #[test]
+    fn a_discovery_is_recognised_below_any_endpoint_prefix() {
+        for path in [
+            "/ngsi-ld/v1/types",
+            "/ngsi-ld/v1/attributes",
+            "/ngsi-ld/v1/types/urn:ngsi-ld:Vehicle",
+            "/sources/abc/ngsi-ld/v1/attributes",
+            "/sources/abc/ngsi-ld/v1/attributes/speed",
+        ] {
+            assert!(is_discovery(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn an_entity_path_or_a_lookalike_resource_is_no_discovery() {
+        for path in [
+            "/sources/abc/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1",
+            "/ngsi-ld/v1/entityOperations/query",
+            "/ngsi-ld/v1/typesOfThings",
+            "/sources/attributes",
+            "/",
+        ] {
+            assert!(!is_discovery(path), "{path}");
+        }
     }
 }
