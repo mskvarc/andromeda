@@ -1,18 +1,12 @@
 use crate::{
     answer_body::AnswerBody,
     entity_result::{collect_proxied_attrs, collect_warnings, merge_query_results, merge_retrieve_results},
-    loop_detected,
     outcome::{ForwardedEntities, ForwardedWriteOutcome, ForwardedWriteResult},
     received_fixture::{instance_count, iri, version},
-    registration_loops,
 };
-use andromeda_http_headers::{
-    ngsild_warning::{NgsiLdWarning, WarnCode},
-    received_protocol::ReceivedProtocol,
-    via::Via,
-};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use serde_json::{Value, json};
 use url::Url;
 
@@ -22,34 +16,6 @@ fn attribute_name(raw: &str) -> AttributeName {
 
 fn entity_uri(raw: &str) -> Identifier {
     raw.parse().expect("valid entity URI")
-}
-
-#[test]
-fn incoming_via_with_the_local_alias_is_rejected_as_a_loop() {
-    let alias = ContextSourcePseudonym::new("broker-a");
-    let protocol = ReceivedProtocol::new("1.1");
-    assert!(alias.is_ok());
-    assert!(protocol.is_ok());
-    let (Ok(alias), Ok(protocol)) = (alias, protocol) else {
-        return;
-    };
-    let via = Via::with_entry(protocol, alias.clone()); // clone: the test needs the alias both in the chain and as the local identity.
-    assert!(loop_detected(Some(&via), &alias));
-}
-
-#[test]
-fn incoming_via_without_the_local_alias_is_not_a_loop() {
-    let local_alias = ContextSourcePseudonym::new("broker-a");
-    let remote_alias = ContextSourcePseudonym::new("broker-b");
-    let protocol = ReceivedProtocol::new("1.1");
-    assert!(local_alias.is_ok());
-    assert!(remote_alias.is_ok());
-    assert!(protocol.is_ok());
-    let (Ok(local_alias), Ok(remote_alias), Ok(protocol)) = (local_alias, remote_alias, protocol) else {
-        return;
-    };
-    let via = Via::with_entry(protocol, remote_alias);
-    assert!(!loop_detected(Some(&via), &local_alias));
 }
 
 fn write_result(mode: ForwardingMode, attributes: Vec<AttributeName>) -> ForwardedWriteResult {
@@ -380,37 +346,6 @@ fn merge_query_primary_adds_new_entities() {
     }];
     let result = merge_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 2, "Inclusive should add new entities");
-}
-
-fn aliased_registration(alias: &str) -> ContextSourceRegistration {
-    serde_json::from_value(serde_json::json!({
-        "id": "urn:ngsi-ld:csr:loop",
-        "type": "ContextSourceRegistration",
-        "endpoint": "https://peer.example.org",
-        "information": [{"entities": [{"type": "Vehicle"}]}],
-        "contextSourceAlias": alias,
-        "status": "ok",
-        "createdAt": "2024-01-01T00:00:00Z",
-        "modifiedAt": "2024-01-01T00:00:00Z"
-    }))
-    .expect("valid registration")
-}
-
-/// Clause 6.3.17: a registration whose alias is this broker's own alias is
-/// "registered to redirect back on to the Context Broker", a loop even
-/// without any `Via` chain; one whose alias is elsewhere in the chain is a
-/// loop too (clause 4.3.6.4); any other alias is not.
-#[test]
-fn a_registration_aliased_as_the_broker_itself_or_as_a_via_hop_is_a_loop() {
-    let local = ContextSourcePseudonym::new("broker-a").expect("valid alias");
-    let upstream = ContextSourcePseudonym::new("broker-b").expect("valid alias");
-    let protocol = ReceivedProtocol::new("1.1").expect("valid protocol");
-
-    assert!(registration_loops(&aliased_registration("broker-a"), None, &local));
-    let via = Via::with_entry(protocol, upstream);
-    assert!(registration_loops(&aliased_registration("broker-b"), Some(&via), &local));
-    assert!(!registration_loops(&aliased_registration("broker-c"), Some(&via), &local));
-    assert!(!registration_loops(&aliased_registration("broker-c"), None, &local));
 }
 
 /// Clause 5.7.1.4: local data is the base and remote attributes are merged on

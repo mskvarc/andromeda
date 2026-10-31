@@ -102,6 +102,8 @@ pub mod language_negotiation;
 mod large_id_list_forwarding_tests;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
+/// This broker as a Context Source, seen from the tenant a service serves.
+pub mod local_source;
 /// The registrations a read matched, read once and split by forwarding phase.
 pub mod matched_registrations;
 /// A mock Context Source answering the forwarding tests.
@@ -119,6 +121,13 @@ pub mod operation;
 pub mod ordering_admission;
 /// Typed forwarding outcomes.
 pub mod outcome;
+/// A registration naming this broker is never contacted.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod own_alias_forwarding_tests;
 /// Which registrations take part in a read.
 pub mod participating_read;
 /// The two forwarding phases of a query read the registrations once.
@@ -240,6 +249,7 @@ use crate::{
     error::FederationError,
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
+    local_source::LocalSource,
     result_budget::ResultLimits,
     source_identity::SourceIdentityCache,
     split_entities::{SplitEntities, resolve_split_entities},
@@ -247,7 +257,7 @@ use crate::{
 use andromeda_configuration::schema::federation::{FederationConfig, forwarding::SplitEntitiesDefault};
 use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
+use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_outbound_http::{
     address_policy::AddressPolicy,
@@ -256,22 +266,6 @@ use andromeda_outbound_http::{
 };
 use andromeda_registration::store::RegistrationStore;
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
-
-/// Whether an incoming `Via` chain already contains the local context-source alias.
-fn loop_detected(incoming_via: Option<&Via>, source_alias: &ContextSourcePseudonym) -> bool {
-    incoming_via.is_some_and(|via| via.contains_pseudonym(source_alias))
-}
-
-/// Whether contacting a registration would close a loop (clauses 4.3.6.4 and
-/// 6.3.17): its alias is already in the incoming `Via` chain, or it is this
-/// broker's own alias, which is the "registered to redirect back on to the
-/// Context Broker" case clause 6.3.17 names.
-fn registration_loops(registration: &ContextSourceRegistration, incoming_via: Option<&Via>, local_alias: &ContextSourcePseudonym) -> bool {
-    let Some(alias) = &registration.access.context_source_alias else {
-        return false;
-    };
-    alias == local_alias || incoming_via.is_some_and(|via| via.contains_pseudonym(alias))
-}
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct FederationService {
@@ -285,8 +279,9 @@ pub struct FederationService {
     /// the entity actually has, rather than treated as covering every type.
     local_entity_types: Arc<dyn LocalEntityTypeResolver>,
     engine: JsonLdEngine,
-    /// Context Source alias used as the `Via` pseudonym (clause 6.3.18).
-    source_alias: ContextSourcePseudonym,
+    /// This broker in the tenant the service serves: the `Via` pseudonym
+    /// (clause 6.3.18) and the loops it recognises (clause 4.3.6.4).
+    local: LocalSource,
     /// Protocol token appended with the local alias to every forwarded request.
     received_protocol: ReceivedProtocol,
     /// Maximum number of parallel CSR fan-out HTTP requests per operation.
@@ -325,7 +320,7 @@ impl FederationService {
         csr_repo: Arc<dyn RegistrationStore>,
         local_entity_types: Arc<dyn LocalEntityTypeResolver>,
         engine: JsonLdEngine,
-        source_alias: ContextSourcePseudonym,
+        local: LocalSource,
         config: &FederationConfig,
     ) -> Result<FederationService, FederationError> {
         let policy = OutboundHttpPolicy {
@@ -353,7 +348,7 @@ impl FederationService {
             csr_repo,
             local_entity_types,
             engine,
-            source_alias,
+            local,
             received_protocol,
             csr_concurrency: config.forwarding.max_concurrent.get(),
             default_timeout: config.forwarding.request_timeout(),
@@ -419,13 +414,13 @@ impl FederationService {
     /// Check whether forwarding would create a Via loop.
     #[must_use]
     pub fn is_loop_detected(&self, incoming_via: Option<&Via>) -> bool {
-        loop_detected(incoming_via, &self.source_alias)
+        self.local.already_passed(incoming_via)
     }
 
     /// Whether contacting `registration` would close a loop, through the
-    /// incoming `Via` chain or by pointing back at this broker's own alias.
+    /// incoming `Via` chain or by leading back into this tenant.
     pub(crate) fn registration_loops(&self, registration: &ContextSourceRegistration, incoming_via: Option<&Via>) -> bool {
-        registration_loops(registration, incoming_via, &self.source_alias)
+        self.local.closed_by(registration, incoming_via)
     }
 
     /// The deadline a forwarded request to `registration` gets: its
@@ -473,6 +468,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-registration",
         "andromeda-retry",
         "andromeda-telemetry",
+        "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",

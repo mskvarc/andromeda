@@ -34,7 +34,7 @@ use andromeda_entity::{
 };
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_federation::FederationService;
+use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
@@ -107,8 +107,8 @@ pub(super) fn construct_services(
         FederationService::new(
             Arc::clone(&storage.registration_store),
             Arc::new(EntityStoreTypeResolver::new(Arc::clone(&storage.entity_ports.entity_types))),
-            storage.engine.clone(), // clone: each tenant service owns its JSON-LD engine handle.
-            aliases.for_tenant(&storage.tenant),
+            storage.engine.clone(),                            // clone: each tenant service owns its JSON-LD engine handle.
+            LocalSource::new(aliases, storage.tenant.clone()), // clone: the tenant runtime keeps its own tenant reference
             &config.federation,
         )
         .map_err(|error| AssemblyInvariant::Federation(Box::new(error)))?,

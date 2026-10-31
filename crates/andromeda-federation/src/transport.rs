@@ -136,8 +136,8 @@ impl FederationService {
         // local hop to be appended. Header entries own their values, so the
         // validated service-level protocol and alias must be cloned here.
         let new_via = match triggering.via {
-            Some(existing) => existing.clone().append(self.received_protocol.clone(), self.source_alias.clone()),
-            None => Via::with_entry(self.received_protocol.clone(), self.source_alias.clone()),
+            Some(existing) => existing.clone().append(self.received_protocol.clone(), self.local.alias().clone()),
+            None => Via::with_entry(self.received_protocol.clone(), self.local.alias().clone()),
         };
         let mut via_headers = HeaderMap::new();
         via_headers.typed_insert(new_via);

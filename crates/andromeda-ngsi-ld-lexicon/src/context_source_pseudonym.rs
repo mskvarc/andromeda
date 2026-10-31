@@ -108,6 +108,19 @@ impl ContextSourcePseudonym {
     pub fn scoped_to_tenant(&self, tenant: &TenantName) -> ContextSourcePseudonym {
         ContextSourcePseudonym(format!("{}{TENANT_SEPARATOR}{}", self.0, tenant.as_str()))
     }
+
+    /// Whether this pseudonym names the context source `source` names: it is
+    /// `source` itself, or `source` scoped to one of its tenants as
+    /// [`ContextSourcePseudonym::scoped_to_tenant`] composes it.
+    #[must_use]
+    pub fn names_source(&self, source: &ContextSourcePseudonym) -> bool {
+        self == source
+            || self
+                .0
+                .strip_prefix(source.as_str())
+                .and_then(|rest| rest.strip_prefix(TENANT_SEPARATOR))
+                .is_some_and(|tenant| tenant.parse::<TenantName>().is_ok())
+    }
 }
 
 impl TryFrom<String> for ContextSourcePseudonym {
@@ -264,5 +277,24 @@ mod tests {
             );
             assert!(composed.as_str().ends_with(label), "the tenant must be recoverable from {composed}");
         }
+    }
+
+    #[test]
+    fn a_pseudonym_names_its_source_itself_and_every_tenant_of_it() {
+        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
+        assert!(broker.names_source(&broker));
+        assert!(broker.scoped_to_tenant(&tenant("alpha")).names_source(&broker));
+    }
+
+    #[test]
+    fn a_pseudonym_that_only_shares_a_prefix_with_a_source_does_not_name_it() {
+        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
+        for other in ["broker-ab", "broker-a~", "broker-a~9alpha", "broker", "broker-b~alpha"] {
+            assert!(
+                !ContextSourcePseudonym::new(other).expect("valid pseudonym").names_source(&broker),
+                "{other} names another source"
+            );
+        }
+        assert!(!broker.names_source(&broker.scoped_to_tenant(&tenant("alpha"))));
     }
 }

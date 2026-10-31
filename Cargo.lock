@@ -451,6 +451,7 @@ dependencies = [
  "andromeda-registration",
  "andromeda-retry",
  "andromeda-telemetry",
+ "andromeda-tenancy",
  "bytes",
  "chrono",
  "dashmap",

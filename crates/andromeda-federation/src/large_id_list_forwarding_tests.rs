@@ -2,6 +2,7 @@ use crate::{
     FederationService,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_query::{client_query::ClientQuery, id_chunks::FORWARDED_URL_BUDGET},
+    local_source::LocalSource,
     mock_source::{answer_in_turn, endpoint, received},
     request::{EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
     result_budget::{ResultBudget, ResultLimits},
@@ -13,6 +14,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use http::StatusCode;
 use serde_json::json;
 use std::{num::NonZeroU32, sync::Arc};
@@ -54,7 +56,10 @@ async fn three_thousand_identifiers_reach_a_query_entity_source_in_urls_within_t
         Arc::new(FixedRegistrationStore::new(vec![query_entity_source(&source)])),
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-        ContextSourcePseudonym::new("chunking-broker").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("chunking-broker").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds");

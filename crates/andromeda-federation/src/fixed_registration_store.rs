@@ -1,6 +1,6 @@
 //! A fixed in-memory registration store, local-type resolver and geoquery terms for the forwarding tests. Registration matching reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be and records the specifications it was asked with, and a read by identifier answers the fixed registration of that identifier as stored, expired or not; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
 
-use crate::{FederationService, local_entity_type::LocalEntityTypeResolver};
+use crate::{FederationService, local_entity_type::LocalEntityTypeResolver, local_source::LocalSource};
 use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -31,6 +31,7 @@ use andromeda_registration::{
         written_registration::WrittenRegistration,
     },
 };
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use std::{
@@ -49,7 +50,10 @@ pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> 
         Arc::new(FixedRegistrationStore::new(registrations)),
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
-        ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")
@@ -63,7 +67,10 @@ pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistra
         Arc::new(FixedRegistrationStore::new(registrations)),
         Arc::new(LocalEntityOf(local_types)),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
-        ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")

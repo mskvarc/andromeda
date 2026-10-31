@@ -8,6 +8,7 @@ use crate::{
     entity_map::{EntityMapQuery, ForwardEntityMapRequest},
     expanded_registration_filters::ExpandedRegistrationFilters,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities, generous_geo_admission},
+    local_source::LocalSource,
     mock_source::{endpoint, received},
     provision_purge::ForwardPurgeRequest,
     request::{EntityMapInUse, TriggeringRequest},
@@ -20,6 +21,7 @@ use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput};
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::any};
@@ -75,7 +77,10 @@ fn service(store: Arc<FixedRegistrationStore>) -> FederationService {
         store,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-        ContextSourcePseudonym::new("selecting-broker").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("selecting-broker").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")

@@ -46,6 +46,14 @@ impl ContextSourceAliases {
             TenantRef::Named(name) => self.default_tenant.scoped_to_tenant(name),
         }
     }
+
+    /// Whether `alias` names this context source, whichever of its tenants it
+    /// identifies: a peer that learned the configured alias from the default
+    /// tenant's identity writes it whatever tenant its registration targets.
+    #[must_use]
+    pub fn names_this_source(&self, alias: &ContextSourcePseudonym) -> bool {
+        alias.names_source(&self.default_tenant)
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +119,15 @@ mod tests {
     fn a_uri_shaped_configured_alias_derives_uri_shaped_tenant_aliases() {
         let aliases = ContextSourceAliases::new(ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("a valid pseudonym"));
         pretty_assertions::assert_eq!(aliases.for_tenant(&named("alpha")).as_str(), "urn:ngsi-ld:ContextSourceIdentity:broker1~alpha");
+    }
+
+    #[test]
+    fn the_alias_of_every_tenant_names_this_source_and_another_broker_s_does_not() {
+        let aliases = aliases();
+        assert!(aliases.names_this_source(&aliases.for_tenant(&TenantRef::UnnamedDefault)));
+        assert!(aliases.names_this_source(&aliases.for_tenant(&named("alpha"))));
+        let other = ContextSourceAliases::new(ContextSourcePseudonym::new("broker-b").expect("a valid pseudonym"));
+        assert!(!aliases.names_this_source(&other.for_tenant(&TenantRef::UnnamedDefault)));
+        assert!(!aliases.names_this_source(&other.for_tenant(&named("alpha"))));
     }
 }

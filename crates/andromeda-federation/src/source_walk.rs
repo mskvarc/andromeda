@@ -376,6 +376,7 @@ mod tests {
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
         instance_budget::{InstanceBudget, InstanceBudgetExceeded},
+        local_source::LocalSource,
         mock_source::{answer_in_turn, endpoint, received},
         operation::ForwardingOperation,
         outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
@@ -407,6 +408,7 @@ mod tests {
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
     };
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
+    use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
     use http::StatusCode;
     use serde_json::json;
     use std::{
@@ -466,7 +468,10 @@ mod tests {
             store,
             Arc::new(NoLocalEntities),
             JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-            ContextSourcePseudonym::new("walking-broker").expect("a valid alias"),
+            LocalSource::new(
+                ContextSourceAliases::new(ContextSourcePseudonym::new("walking-broker").expect("a valid alias")),
+                TenantRef::UnnamedDefault,
+            ),
             config,
         )
         .expect("the service builds")

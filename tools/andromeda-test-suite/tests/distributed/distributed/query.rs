@@ -45,6 +45,7 @@ mod n_fed_qry_7604;
 mod n_fed_qry_7605;
 mod n_fed_qry_7606;
 mod n_fed_qry_7607;
+mod n_fed_qry_7608;
 mod n_fed_qry_8000;
 mod n_fed_qry_8001;
 mod n_fed_qry_8002;

@@ -7,6 +7,7 @@ use crate::{
     cache::Cacheability,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_write::{ForwardWrite, WritePayload},
+    local_source::LocalSource,
     mock_source::{endpoint, received},
     multi_status_body::MultiStatusBody,
     operation::ForwardingOperation,
@@ -20,6 +21,7 @@ use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription_request::SubscriptionRequest};
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use http::StatusCode;
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
@@ -58,7 +60,10 @@ fn service(registration: &ContextSourceRegistration) -> FederationService {
         Arc::new(FixedRegistrationStore::new(vec![registration.clone()])), // clone: the store owns its registrations
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-        ContextSourcePseudonym::new("cooling-broker").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("cooling-broker").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")

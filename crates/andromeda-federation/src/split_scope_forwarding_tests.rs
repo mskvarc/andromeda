@@ -9,6 +9,7 @@ use crate::{
     FederationService,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_query::client_query::ClientQuery,
+    local_source::LocalSource,
     mock_source::{answer_in_turn, endpoint, received},
     operation::ForwardingOperation,
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, QueryDelivery, SourcePaging, TriggeringRequest},
@@ -22,6 +23,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use http::StatusCode;
 use serde_json::json;
 use std::{num::NonZeroU32, sync::Arc};
@@ -63,7 +65,10 @@ fn service(registration: ContextSourceRegistration) -> FederationService {
         Arc::new(FixedRegistrationStore::new(vec![registration])),
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-        ContextSourcePseudonym::new("splitting-broker").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("splitting-broker").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")

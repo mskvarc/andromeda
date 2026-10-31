@@ -4,6 +4,7 @@
 use crate::{
     FederationService,
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
+    local_source::LocalSource,
     mock_source::{answer_in_turn, endpoint, received},
     outcome::{ForwardedWriteOutcome, TransportFailure},
     provision_batch::{BatchEntity, BatchForwardedResult, BatchProvisionOperation, ForwardBatchRequest, registration_fixture::document},
@@ -15,6 +16,7 @@ use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, 
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::options::UpsertMode;
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use http::StatusCode;
 use serde_json::json;
 use std::sync::Arc;
@@ -55,7 +57,10 @@ fn service(registration: &ContextSourceRegistration) -> FederationService {
         Arc::new(FixedRegistrationStore::new(vec![registration.clone()])), // clone: the store owns its registrations
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
-        ContextSourcePseudonym::new("upsert-broker").expect("a valid alias"),
+        LocalSource::new(
+            ContextSourceAliases::new(ContextSourcePseudonym::new("upsert-broker").expect("a valid alias")),
+            TenantRef::UnnamedDefault,
+        ),
         &FederationConfig::default(),
     )
     .expect("the service builds")

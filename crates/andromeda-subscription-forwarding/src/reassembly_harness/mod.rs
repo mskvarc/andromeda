@@ -36,7 +36,7 @@ use andromeda_entity::{
     query::EntityQueryService,
     spatial_acceleration::SpatialAcceleration,
 };
-use andromeda_federation::{FederationService, local_entity_type::LocalEntityTypeResolver};
+use andromeda_federation::{FederationService, local_entity_type::LocalEntityTypeResolver, local_source::LocalSource};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -55,7 +55,7 @@ use andromeda_subscription::{
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook},
     lifecycle::SubscriptionService,
 };
-use andromeda_tenancy::tenant_ref::TenantRef;
+use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -213,7 +213,10 @@ impl ReassemblyScene {
             Arc::new(ScriptedRegistrations::new(registrations, registration_failures)),
             Arc::new(NoLocalTypes),
             offline_engine(),
-            ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+            LocalSource::new(
+                ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+                TenantRef::UnnamedDefault,
+            ),
             &FederationConfig::default(),
         )
         .expect("the federation service builds");
