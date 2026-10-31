@@ -72,6 +72,6 @@ async fn o_fed_dsc_0006_attribute_information_unites_the_source_types_and_adds_i
     expect_that!(information.type_names.as_deref(), some(contains(eq(&drone_type))));
     expect_that!(information.attribute_count, some(eq(5)));
     let forwarded = SourceRequest::matching(Method::GET, &format!("/a/ngsi-ld/v1/attributes/.*brandName_{namespace}"));
-    expect_that!(source.received_matching(&forwarded).await?, len(eq(1)));
+    expect_that!(source.received_discoveries_matching(&forwarded).await?, len(eq(1)));
     Ok(())
 }

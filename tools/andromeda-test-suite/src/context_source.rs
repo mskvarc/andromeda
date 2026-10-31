@@ -3,7 +3,8 @@
 //! The broker forwards to the source what its registration matches. A broker also forwards a discovery of types or
 //! attributes to every registration of the tenant supporting it (clauses 5.7.5 to 5.7.11), so the source receives
 //! other tests' discovery requests; every read of what the source received leaves a discovery of types or
-//! attributes out, below whatever prefix the registration's endpoint names, and counts entity paths only.
+//! attributes out, below whatever prefix the registration's endpoint names, and counts entity paths only, except the
+//! read of discoveries a test in a tenant of its own makes.
 
 use crate::{
     callback_server::{CallbackError, CallbackServer},
@@ -187,20 +188,34 @@ impl ContextSource {
         .await?
     }
 
-    /// Every request `request` describes that the source received, in arrival order.
+    /// Every request on an entity path that `request` describes and the source received, in arrival order.
     ///
     /// # Errors
     ///
     /// Returns [`SourceError::Server`] before the source serves, and [`SourceError::Pattern`] for a path pattern
     /// that is not a regular expression.
     pub async fn received_matching(&self, request: &SourceRequest) -> Result<Vec<Request>, SourceError> {
-        let mut matching = Vec::new();
-        for received in self.received().await? {
-            if request.holds(&received)? {
-                matching.push(received);
-            }
-        }
-        Ok(matching)
+        described(request, self.received().await?)
+    }
+
+    /// Every discovery of types or attributes that `request` describes and the source received, in arrival order.
+    ///
+    /// Only a test whose tenant is its own counts these: in a shared tenant the source also receives the discovery
+    /// requests of every other test.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError::Server`] before the source serves, and [`SourceError::Pattern`] for a path pattern
+    /// that is not a regular expression.
+    pub async fn received_discoveries_matching(&self, request: &SourceRequest) -> Result<Vec<Request>, SourceError> {
+        let discoveries = self
+            .server
+            .received()
+            .await?
+            .into_iter()
+            .filter(|received| is_discovery(received.url.path()))
+            .collect();
+        described(request, discoveries)
     }
 
     /// Every request `request` describes once the source holds at least `count` of them, waiting up to the
@@ -258,9 +273,36 @@ impl ContextSource {
     }
 }
 
+/// The requests of `received` that `request` describes, in their order.
+fn described(request: &SourceRequest, received: Vec<Request>) -> Result<Vec<Request>, SourceError> {
+    let mut matching = Vec::new();
+    for candidate in received {
+        if request.holds(&candidate)? {
+            matching.push(candidate);
+        }
+    }
+    Ok(matching)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::context_source::is_discovery;
+    use crate::{
+        context_source::{described, is_discovery},
+        source_request::SourceRequest,
+    };
+    use googletest::prelude::*;
+    use http::Method;
+    use url::Url;
+    use wiremock::Request;
+
+    fn get(url: &str) -> Result<Request> {
+        Ok(Request {
+            url: Url::parse(url)?,
+            method: Method::GET,
+            headers: http::HeaderMap::new(),
+            body: Vec::new(),
+        })
+    }
 
     #[test]
     fn a_discovery_is_recognised_below_any_endpoint_prefix() {
@@ -286,5 +328,23 @@ mod tests {
         ] {
             assert!(!is_discovery(path), "{path}");
         }
+    }
+
+    #[gtest]
+    fn only_the_described_requests_are_kept_in_arrival_order() -> Result<()> {
+        let received = vec![
+            get("http://source.test/a/ngsi-ld/v1/types")?,
+            get("http://source.test/a/ngsi-ld/v1/attributes")?,
+            get("http://source.test/a/ngsi-ld/v1/types?details=true")?,
+        ];
+        let kept = described(&SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/types"), received)?;
+        let urls: Vec<&str> = kept.iter().map(|request| request.url.as_str()).collect();
+        verify_that!(
+            urls,
+            elements_are![
+                eq(&"http://source.test/a/ngsi-ld/v1/types"),
+                eq(&"http://source.test/a/ngsi-ld/v1/types?details=true")
+            ]
+        )
     }
 }

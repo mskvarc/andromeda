@@ -87,6 +87,6 @@ async fn o_fed_dsc_0003_type_information_adds_the_source_attribute_details_and_e
     expect_that!(information.attribute_details.iter().any(|detail| detail.attribute_name == brand_name), eq(true));
     expect_that!(information.entity_count, eq(6));
     let forwarded = SourceRequest::matching(Method::GET, &format!("/a/ngsi-ld/v1/types/.*Vehicle_{namespace}"));
-    expect_that!(source.received_matching(&forwarded).await?, len(eq(1)));
+    expect_that!(source.received_discoveries_matching(&forwarded).await?, len(eq(1)));
     Ok(())
 }

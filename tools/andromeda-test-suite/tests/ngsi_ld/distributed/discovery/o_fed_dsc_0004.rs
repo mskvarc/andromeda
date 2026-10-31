@@ -92,7 +92,7 @@ async fn o_fed_dsc_0004_the_attribute_listing_merges_the_source_attributes_once_
     expect_that!(merged_list.attribute_list, contains(eq(&brand_name)));
     expect_that!(merged_list.attribute_list, contains(eq(&is_parked)));
     let attribute_requests = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/attributes");
-    expect_that!(source.received_matching(&attribute_requests).await?, len(eq(1)));
+    expect_that!(source.received_discoveries_matching(&attribute_requests).await?, len(eq(1)));
     let details = json.attributes().list_details().send().await?;
     let altitude_iri: Uri = format!("https://uri.etsi.org/ngsi-ld/default-context/altitude_{namespace}").parse()?;
     let altitude = details.iter().find(|detail| detail.id == altitude_iri).or_fail()?;

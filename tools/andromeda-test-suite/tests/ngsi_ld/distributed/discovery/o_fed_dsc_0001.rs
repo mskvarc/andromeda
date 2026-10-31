@@ -87,7 +87,7 @@ async fn o_fed_dsc_0001_the_type_listing_merges_the_source_types_once_and_a_loca
     expect_that!(merged_list.type_list, contains(eq(&vehicle_type)));
     expect_that!(merged_list.type_list, contains(eq(&drone_type)));
     let type_requests = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/types");
-    expect_that!(source.received_matching(&type_requests).await?, len(eq(1)));
+    expect_that!(source.received_discoveries_matching(&type_requests).await?, len(eq(1)));
     let details = json.entity_types().list_details().send().await?;
     let drone_iri: Uri = format!("https://uri.etsi.org/ngsi-ld/default-context/Drone_{namespace}").parse()?;
     let drone_detail = details.iter().find(|detail| detail.id == drone_iri).or_fail()?;
