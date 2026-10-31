@@ -6,9 +6,24 @@ use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime}
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
+    datetime::pg_input_is_valid,
+    literal::text_literal,
+    operator::regex_match,
     pg_type::PostgresType,
 };
-use sea_query::{Expr as SeaExpr, SimpleExpr};
+use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, SimpleExpr};
+
+/// The JSON number grammar (IETF RFC 8259 section 6), anchored: the spellings
+/// a stored text is read as a number in.
+///
+/// `numeric` input also takes surrounding blanks, a leading `+`, `NaN`,
+/// `Infinity`, digit separators and non-decimal radixes, none of which is a
+/// JSON number. The ranges are spelled out because `\d` follows the
+/// database's character classes, which can count digits of other scripts.
+const JSON_NUMBER: &str = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$";
+
+/// The two spellings a stored text is read as a boolean in.
+const JSON_BOOLEANS: [&str; 2] = ["true", "false"];
 
 /// Both sides of one document comparison, lifted into the domain the operand's
 /// kind is ordered in.
@@ -43,17 +58,23 @@ pub struct LiftedComparison {
 ///
 /// Numbers bind directly as `NUMERIC` and `DateTime` values as `timestamptz`;
 /// booleans bind as text and are cast in the statement.
+///
+/// A stored side that does not spell a value of the operand's kind (a String
+/// member against a number, an object against a boolean) lifts to `NULL`
+/// rather than raising, so the comparison is unknown for that one value:
+/// clause 4.9 makes a target of another data type unequal to the operand, and
+/// never makes the query fail over it.
 #[must_use]
 pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
     match scalar {
         Scalar::Number(number) => LiftedComparison {
-            stored: cast_compound(stored_text, PostgresType::Numeric),
+            stored: numeric_text(stored_text),
             // SeaQuery owns every AST bind, so the exact decimal must be cloned
             // from the borrowed query operand.
             operand: SeaExpr::val(number.decimal().clone()),
         },
         Scalar::Bool(_) => LiftedComparison {
-            stored: cast_compound(stored_text, PostgresType::Boolean),
+            stored: boolean_text(stored_text),
             operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Boolean),
         },
         Scalar::Str(_) | Scalar::Uri(_) => LiftedComparison {
@@ -73,6 +94,26 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr, datatype: Simpl
             operand: SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
         },
     }
+}
+
+/// A text spelling a JSON number, lifted to `numeric`; `NULL` otherwise.
+///
+/// Neither check can raise, so the `CASE` never reaches the cast with a text
+/// it would refuse. `pg_input_is_valid` (PostgreSQL 16+) catches a JSON number
+/// whose exponent lies outside what `numeric` holds.
+fn numeric_text(text: SimpleExpr) -> SimpleExpr {
+    // clone: the grammar, the range check and the cast read one text
+    let guard = regex_match(text.clone(), text_literal(JSON_NUMBER)).and(pg_input_is_valid(text.clone(), PostgresType::Numeric));
+    CaseStatement::new().case(guard, cast_compound(text, PostgresType::Numeric)).into()
+}
+
+/// A text spelling a JSON boolean, lifted to `boolean`; `NULL` otherwise.
+///
+/// `boolean` input also takes `t`, `yes`, `on`, `1` and their kin, none of
+/// which is a JSON boolean.
+fn boolean_text(text: SimpleExpr) -> SimpleExpr {
+    let guard = text.clone().is_in(JSON_BOOLEANS.map(text_literal)); // clone: the guard and the cast read one text
+    CaseStatement::new().case(guard, cast_compound(text, PostgresType::Boolean)).into()
 }
 
 #[cfg(test)]
@@ -141,6 +182,29 @@ mod tests {
         assert!(render(lifted.stored).contains("::numeric"), "the stored side casts to numeric");
         assert!(!render(lifted.operand.clone()).contains("::"), "the operand is already NUMERIC");
         assert_eq!(bound_value(lifted.operand), "9", "the operand binds NUMERIC, not a float");
+    }
+
+    /// Clause 4.9 makes a String target unequal to a number operand, so a text
+    /// that is no JSON number lifts to NULL instead of reaching the cast,
+    /// which would raise and fail the whole query.
+    #[test]
+    fn a_number_lift_casts_only_a_text_spelling_a_json_number() {
+        let sql = render(lift_comparison(&Scalar::Number(4.into()), stored(), datatype()).stored);
+        assert!(
+            sql.contains(r#"CASE WHEN (("stored" ~ ('^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$'))"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"pg_input_is_valid("stored", 'numeric')"#), "{sql}");
+        assert!(sql.contains(r#"THEN ("stored")::numeric END"#), "{sql}");
+    }
+
+    #[test]
+    fn a_boolean_lift_casts_only_the_two_json_boolean_spellings() {
+        let sql = render(lift_comparison(&Scalar::Bool(true), stored(), datatype()).stored);
+        assert!(
+            sql.contains(r#"CASE WHEN ("stored" IN ('true', 'false')) THEN ("stored")::boolean END"#),
+            "{sql}"
+        );
     }
 
     #[test]

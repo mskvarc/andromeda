@@ -126,8 +126,9 @@ impl<'a> QueriedValueNode<'a> for NoStructuredValue {
         match self {}
     }
 
-    fn first_member_value(self, _member: &AttributeName) -> Option<ValueItem<'a, NoStructuredValue>> {
-        match self {}
+    // The type has no value, so no node of it holds a member.
+    fn member_values(self, _member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
+        empty()
     }
 }
 

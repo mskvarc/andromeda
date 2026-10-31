@@ -26,6 +26,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use sea_query::{CaseStatement, ExprTrait, SimpleExpr};
+use strum::IntoEnumIterator;
 
 /// The date a bare time of day is anchored to while it is read as a
 /// `timestamptz`, carrying the `T` that joins it to the time of day.
@@ -41,6 +42,16 @@ pub(crate) const STORED_TIME_TEMPLATE: &str = "HH24:MI:SS.US";
 /// Whether `datatype` names `form`.
 fn declares(datatype: SimpleExpr, form: TimeValueForm) -> SimpleExpr {
     datatype.eq(text_literal(form.iri().as_str()))
+}
+
+/// Whether `datatype` names one of the three time value forms; `NULL` when
+/// `datatype` is `NULL`.
+///
+/// A literal declared as one is a time value rather than a String (annex C.6),
+/// so no String operator reads it.
+#[must_use]
+pub fn declares_time_value(datatype: SimpleExpr) -> SimpleExpr {
+    datatype.is_in(TimeValueForm::iter().map(|form| text_literal(form.iri().as_str())))
 }
 
 /// A text declared as a `DateTime`, lifted to `timestamptz`; `NULL` otherwise.

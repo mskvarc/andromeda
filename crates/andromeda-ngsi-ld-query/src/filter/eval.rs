@@ -629,6 +629,77 @@ mod tests {
         ));
     }
 
+    /// A structured value whose `rooms` member holds two values and whose
+    /// `floors` member holds two nodes, each with a `level`.
+    fn entity_with_several_member_values() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:2",
+            "@type": ["https://example.com/Building"],
+            "https://example.com/address": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/rooms": [{"@value": 4}, {"@value": 5}],
+                    "https://example.com/floors": [
+                        {"https://example.com/level": [{"@value": 1}]},
+                        {"https://example.com/level": [{"@value": 2}]}
+                    ],
+                    "https://example.com/wing": [{"@id": "urn:ngsi-ld:Wing:1"}]
+                }]
+            }]
+        }])
+    }
+
+    /// Whether the `q` text holds for [`entity_with_several_member_values`].
+    fn several_values_hold(q: &str) -> bool {
+        holds(&parse(q).expect("parses"), &entity_with_several_member_values())
+    }
+
+    /// Clause 4.9 `equal`: the operand "Is included in the target value, if
+    /// the latter is an array"; `unequal`: it "Is not included".
+    #[test]
+    fn a_member_holding_several_values_is_compared_by_membership() {
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==4"));
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==5"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==6"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=4"));
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=6"));
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==6,5"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=6,5"));
+    }
+
+    /// An array target matches no ordering and lies inside no range, so `!=` a
+    /// range holds for it.
+    #[test]
+    fn a_member_holding_several_values_matches_no_ordering_and_no_range() {
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]>3"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]<9"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==1..9"));
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=1..9"));
+    }
+
+    /// A member expression over an array addresses no member, so a step
+    /// through `floors`, which holds two nodes, reaches nothing.
+    #[test]
+    fn a_step_through_a_member_holding_several_values_reaches_nothing() {
+        assert!(!several_values_hold(
+            "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]==1"
+        ));
+        assert!(!several_values_hold(
+            "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]!=3"
+        ));
+        assert!(!several_values_hold(
+            "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]"
+        ));
+    }
+
+    /// A member holding only a node is the target element but carries no
+    /// literal a Query Term could compare.
+    #[test]
+    fn a_member_holding_no_literal_exists_and_compares_with_nothing() {
+        assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]==4"));
+        assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!=4"));
+    }
+
     /// An expander that prefixes every term, standing in for a request
     /// `@context` without needing a JSON-LD engine.
     struct PrefixExpander;

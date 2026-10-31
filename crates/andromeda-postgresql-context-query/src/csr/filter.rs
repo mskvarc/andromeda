@@ -28,7 +28,7 @@ use andromeda_postgresql_seaquery::{
     cast::typed_null,
     jsonb::{jsonb_key_exists, jsonb_path_query},
     literal::{false_literal, int_literal, text_literal},
-    operator::present_and,
+    operator::{negate_total, present_and},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
@@ -229,9 +229,13 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
             let lower = lift_comparison(min, stored.clone(), datatype.clone()); // clone: both bounds compare against the one lifted stored side
             let upper_operand = lift_comparison(max, stored, datatype).operand;
             let stored_side = lower.stored;
+            let within = compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand)); // clone: both bounds compare the one stored side
+            // Outside is the total negation of within over a present property: a
+            // value of another data type lifts to NULL, and clause 4.9 makes it
+            // unequal to the range.
             let value = match membership {
-                SetMembership::Within => compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand)),
-                SetMembership::Outside => compare(stored_side.clone(), CmpOp::Less, lower.operand).or(compare(stored_side, CmpOp::Greater, upper_operand)),
+                SetMembership::Within => within,
+                SetMembership::Outside => negate_total(within),
             };
             Condition::all().add(present_and(guard, value))
         }

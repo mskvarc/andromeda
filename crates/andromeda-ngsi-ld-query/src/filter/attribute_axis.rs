@@ -15,7 +15,7 @@
 
 use crate::{
     filter::{
-        family_target::{TerminalKeyword, family_target, first_family_value},
+        family_target::{TerminalKeyword, family_target, first_family_value, held_values_target},
         language_matching::LanguageMatching,
         path::{AttrPath, QueryPath},
         target_language::LanguageSelector,
@@ -268,7 +268,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
                     (None, Some(instance.sub_attribute_instances(name).map(AxisPosition::Instance)))
                 }
             }
-            AxisPosition::Value(ValueItem::Node(node)) => (node.first_member_value(name).map(AxisPosition::Value), None),
+            AxisPosition::Value(ValueItem::Node(node)) => (node.member_values(name).next().map(AxisPosition::Value), None),
             AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(..) => {
                 (None, None)
             }
@@ -341,27 +341,48 @@ fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a
     json_member(&position.terminal()?, &members.written)
 }
 
-/// Walk the members of a structured value down to a literal.
+/// Walk the members of a structured value down to the target the last member
+/// holds.
 ///
-/// Each hop is the member's first value, mirroring the jsonpath the SQL
-/// fallback emits, and the leaf is read as a literal.
+/// The member's literals are the target value as the values of a Property
+/// are: one is a scalar target, several an array (clause 4.9), and a member
+/// holding no literal holds no target value.
 fn resolve_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>, value_path: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
     Some(ResolvedTarget {
-        value: TerminalKeyword::Literal.read(walk_member_hops(start, value_path)?)?,
+        value: held_values_target(walk_member_hops(start, value_path)?.filter_map(|item| TerminalKeyword::Literal.read(item)))?,
         origin: TargetOrigin::AttributeValue,
-        // A member of a compound value is one value, whatever the attribute
-        // around it carries.
         reading: MultiValueReading::WholeArray,
     })
 }
 
-/// The value a structured value's member path leads to, one member's first
-/// value per hop, or `None` when a hop finds no member to descend into.
-fn walk_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>, value_path: &[AttributeName]) -> Option<ValueItem<'a, N>> {
-    value_path.iter().try_fold(start?, |current, member| match current {
-        ValueItem::Node(node) => node.first_member_value(member),
+/// The values of the member a structured value's member path leads to, or
+/// `None` when a step finds no member to descend into.
+///
+/// A member expression accesses a property of an object and an array has
+/// none, so every step before the last descends only into a member holding
+/// exactly one value, a node.
+fn walk_member_hops<'a, N: QueriedValueNode<'a>>(
+    start: Option<ValueItem<'a, N>>,
+    value_path: &[AttributeName],
+) -> Option<impl Iterator<Item = ValueItem<'a, N>>> {
+    let (last, steps) = value_path.split_last()?;
+    let node = steps.iter().try_fold(start?, |current, member| match current {
+        ValueItem::Node(node) => sole_value(node.member_values(member)),
         ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
-    })
+    })?;
+    match node {
+        ValueItem::Node(node) => {
+            let mut values = node.member_values(last).peekable();
+            values.peek().is_some().then_some(values)
+        }
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
+    }
+}
+
+/// The one value `values` holds, or `None` when it holds none or several.
+fn sole_value<T>(mut values: impl Iterator<Item = T>) -> Option<T> {
+    let first = values.next()?;
+    values.next().is_none().then_some(first)
 }
 
 #[cfg(test)]

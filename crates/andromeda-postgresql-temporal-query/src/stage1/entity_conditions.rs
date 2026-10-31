@@ -430,12 +430,13 @@ mod tests {
         })
     }
 
-    /// Whether every jsonpath function of `sql` reads a stored `value_object`.
+    /// Whether every jsonpath function of `sql` reads a stored `value_object`,
+    /// or the compound member a jsonpath read off one.
     fn reads_jsonpath_only_over_stored_values(sql: &str) -> bool {
         sql.split("jsonb_path_").skip(1).all(|call| {
             call.split_once('(')
                 .and_then(|(_, arguments)| arguments.split_once(','))
-                .is_some_and(|(target, _)| target.ends_with(r#"."value_object""#))
+                .is_some_and(|(target, _)| target.ends_with(r#"."value_object""#) || target == r#""member"."member""#)
         })
     }
 

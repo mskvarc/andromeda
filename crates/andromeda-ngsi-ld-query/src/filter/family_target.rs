@@ -149,21 +149,26 @@ const fn family_reading(family: AttributeType) -> FamilyReading {
 #[must_use]
 pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ResolvedTarget<'a>> {
     let reading = family_reading(instance.family());
-    let mut terminals = instance.values().filter_map(|item| reading.terminal.read(item));
+    let terminals = instance.values().filter_map(|item| reading.terminal.read(item));
     let value = match reading.carrier {
-        ValueCarrier::Nodes => {
-            let first = terminals.next()?;
-            match terminals.next() {
-                None => first,
-                Some(second) => TargetValue::Array([first, second].into_iter().chain(terminals).collect()),
-            }
-        }
+        ValueCarrier::Nodes => held_values_target(terminals)?,
         ValueCarrier::OrderedList => TargetValue::Array(terminals.collect()),
     };
     Some(ResolvedTarget {
         value,
         origin: reading.origin,
         reading: reading.reading,
+    })
+}
+
+/// The target value a member holding one value node per value the client
+/// wrote carries: a single value is a scalar target, several are an array
+/// target, and none is no target.
+pub(crate) fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValue<'a>>) -> Option<TargetValue<'a>> {
+    let first = values.next()?;
+    Some(match values.next() {
+        None => first,
+        Some(second) => TargetValue::Array([first, second].into_iter().chain(values).collect()),
     })
 }
 

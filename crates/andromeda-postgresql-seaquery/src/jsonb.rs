@@ -1,7 +1,10 @@
 //! JSONB access: key existence and the escape a jsonpath object key needs on
 //! its way into a statement.
 
-use crate::{literal::text_literal, pg_operator::PgBinaryOperator};
+use crate::{
+    literal::{text_literal, true_literal},
+    pg_operator::PgBinaryOperator,
+};
 use sea_query::{Func, FunctionCall, Iden, SimpleExpr};
 
 /// The `jsonb_array_elements_text` set-returning function.
@@ -205,6 +208,20 @@ pub fn jsonb_path_query(target: SimpleExpr, jsonpath: &str) -> FunctionCall {
     Func::cust(JsonbPathQuery).args([target, text_literal(jsonpath)])
 }
 
+/// JSONB: `jsonb_path_query(target, 'jsonpath', '{}', true)` as a table
+/// source, one row per value in `target` the `jsonpath` matches, with the
+/// structural errors of a `strict` jsonpath suppressed.
+///
+/// A `strict` jsonpath raises on a missing key or on a step applied to a value
+/// of the wrong JSON type; the `silent` flag makes each of those match nothing
+/// instead, which is the reading a `strict` path is chosen for: an accessor
+/// that does not apply addresses no value. The jsonpath is inlined for the same
+/// reason [`jsonb_path_exists`] inlines it.
+#[must_use]
+pub fn jsonb_path_query_silent(target: SimpleExpr, jsonpath: &str) -> FunctionCall {
+    Func::cust(JsonbPathQuery).args([target, text_literal(jsonpath), text_literal("{}"), true_literal()])
+}
+
 /// JSONB: `jsonb_path_query_array(target, 'jsonpath')` - every value in
 /// `target` the `jsonpath` matches, gathered into one JSONB array, which is
 /// empty when it matches nothing.
@@ -226,6 +243,16 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn a_silent_path_query_passes_empty_variables_and_the_silent_flag() {
+        let mut query = Query::select();
+        query
+            .expr(Expr::cust("1"))
+            .from_function(jsonb_path_query_silent(Expr::col(Alias::new("doc")), r#"strict $."a""#), Alias::new("m"));
+        let sql = query.to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"jsonb_path_query("doc", 'strict $."a"', '{}', TRUE)"#), "{sql}");
+    }
 
     #[test]
     fn an_object_aggregate_pairs_a_key_expression_with_a_value_expression() {

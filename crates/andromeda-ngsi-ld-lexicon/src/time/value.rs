@@ -33,6 +33,7 @@ use crate::{
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use derive_more::Display;
 use iri_rs::Iri;
+use strum::{EnumIter, IntoEnumIterator};
 use thiserror::Error;
 
 /// The width of the clause 4.6.3 `DateTime` skeleton `YYYY-MM-DDThh:mm:ss`, before its mandatory `Z`.
@@ -57,7 +58,7 @@ const fn is_time_value_char(character: char) -> bool {
 }
 
 /// One of the three clause 4.6.3 time value data types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
 pub enum TimeValueForm {
     /// `DateTime`, `YYYY-MM-DDThh:mm:ssZ`.
     DateTime,
@@ -96,9 +97,7 @@ impl TimeValueForm {
     /// The form a datatype IRI names, or `None` when it names none of the three.
     #[must_use]
     pub fn named_by(datatype: &str) -> Option<TimeValueForm> {
-        [TimeValueForm::DateTime, TimeValueForm::Date, TimeValueForm::Time]
-            .into_iter()
-            .find(|form| form.iri().as_str() == datatype)
+        TimeValueForm::iter().find(|form| form.iri().as_str() == datatype)
     }
 
     /// The datatype IRI of this form in the NGSI-LD core vocabulary.

@@ -17,7 +17,6 @@ use crate::{
         instance_row::InstanceRow,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
-        json_value_term::{JsonTarget, json_equality, json_ordering, json_pattern},
         language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
         local_target::{LocalTarget, local_target},
@@ -25,7 +24,7 @@ use crate::{
         pattern_term::pattern_value,
         sub_attribute::element_path::ElementPath,
         traversal::LinkedHop,
-        value_object_member::on_some_member,
+        value_object_member::member_term,
     },
 };
 use andromeda_ngsi_ld_query::filter::{
@@ -182,13 +181,13 @@ fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, nam
             // compound value no `@language`), so both are compiled and
             // disjoined.
             LocalTarget::TrailingMember { members, language } => {
-                let member = on_some_member(members, holder, |member| json_reading(pred, member));
+                let member = member_term(pred, members, holder);
                 match language {
                     Some(language) => Condition::any().add(language_reading(pred, language, matching, holder)).add(member),
                     None => member,
                 }
             }
-            LocalTarget::NestedMember(members) => on_some_member(members, holder, |member| json_reading(pred, member)),
+            LocalTarget::NestedMember(members) => member_term(pred, members, holder),
             LocalTarget::TargetLanguage(language) => language_reading(pred, language, matching, holder),
         }
     };
@@ -230,17 +229,6 @@ fn language_reading(pred: &Predicate, language: LanguageSelector<'_>, matching: 
         &LanguageMap::of_instance(row),
         LanguageSelection::TargetLanguage(language, matching),
     ))
-}
-
-/// A term against one member of a compound value.
-fn json_reading(pred: &Predicate, member: &JsonTarget) -> Condition {
-    match pred {
-        Predicate::Exists(_) => Condition::all().add(member.presence.clone()), // clone: the member is read by every test
-        Predicate::Equality { membership, rhs, .. } => json_equality(member, *membership, rhs),
-        Predicate::Ordering { op, rhs, .. } => json_ordering(member, *op, rhs),
-        Predicate::MatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::Match),
-        Predicate::NotMatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::NotMatch),
-    }
 }
 
 /// A predicate that no row can satisfy.

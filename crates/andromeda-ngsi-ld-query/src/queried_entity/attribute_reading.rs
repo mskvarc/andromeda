@@ -73,7 +73,7 @@ pub trait QueriedValueNode<'a>: Copy {
     /// The IRI the node is identified by, when it has one.
     fn id(self) -> Option<&'a str>;
 
-    /// The first value of the member keyed by the expanded name `member`, or
-    /// `None` when the node has no such member.
-    fn first_member_value(self, member: &AttributeName) -> Option<ValueItem<'a, Self>>;
+    /// The values of the member keyed by the expanded name `member`, in the
+    /// order they are held; none when the node has no such member.
+    fn member_values(self, member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, Self>>;
 }
