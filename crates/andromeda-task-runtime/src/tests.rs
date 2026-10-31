@@ -24,7 +24,7 @@ use std::{
         Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use thiserror::Error;
 use tokio::{
@@ -630,6 +630,48 @@ async fn every_drain_pass_reports_whether_a_wake_its_predecessor_or_the_fallback
     assert_eq!(
         causes.lock().expect("cause log").clone(),
         vec![DrainCause::Wake, DrainCause::Continuation, DrainCause::Fallback]
+    );
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+/// A pass that reported when its next work falls due is followed, once that
+/// instant comes, by a pass that knows it is due; a pass its pacer rested is
+/// followed by an ordinary fallback pass.
+#[tokio::test(start_paused = true)]
+async fn the_pass_ending_a_reported_due_sleep_is_due_and_the_one_ending_a_rest_is_a_fallback() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let causes = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&causes);
+    let task = DrainTask::new(
+        registration("due-causes", RestartPolicy::Never, Duration::from_secs(1))?,
+        DrainFallbackPolicy::new(Duration::from_secs(1), Duration::from_secs(60))?,
+        move |execution: DrainExecution| {
+            let observed = Arc::clone(&observed);
+            async move {
+                let mut causes = observed.lock().expect("cause log");
+                causes.push(execution.cause());
+                let resume = SystemTime::now() + Duration::from_millis(500);
+                Scripted::Ok(match causes.len() {
+                    1 => DrainPassOutcome::IdleUntil(resume),
+                    2 => DrainPassOutcome::RestUntil(resume),
+                    _ => DrainPassOutcome::Idle,
+                })
+            }
+        },
+    );
+    let (wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
+    settle().await;
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    // Each scripted sleep is 500 ms; the idle backoff after the third pass is
+    // the 1 s floor, so 1.5 s covers exactly three passes.
+    sleep(Duration::from_millis(1_500)).await;
+    settle().await;
+    assert_eq!(
+        causes.lock().expect("cause log").clone(),
+        vec![DrainCause::Wake, DrainCause::Due, DrainCause::Fallback]
     );
     supervisor.shutdown().await;
     Ok(())

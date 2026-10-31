@@ -29,6 +29,9 @@ pub enum DrainCause {
     /// The fallback timer: no producer asked for this pass, it recovers a
     /// missed wake or serves work that became due with time.
     Fallback,
+    /// The sleep the previous pass asked for ended: that pass reported the
+    /// instant its next work falls due, and the instant has come.
+    Due,
 }
 
 /// Context supplied to one bounded durable drain execution.

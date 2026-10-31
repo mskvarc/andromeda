@@ -1,5 +1,10 @@
-//! The queue and expiry sources of a tenant's earliest obligation, folded into
-//! one `SELECT LEAST(...)` of scalar subqueries.
+//! The queue and expiry sources of a tenant's earliest obligation: the live
+//! branch's sources folded into one `SELECT LEAST(...)` of scalar subqueries,
+//! and one statement per published Snapshot branch for its delivery queue.
+//!
+//! The live statement names no Snapshot schema, so its text is the same
+//! whatever Snapshots exist and a connection plans it once; a Snapshot created
+//! or reaped adds or drops only its own small statement.
 //!
 //! A queue is read through the index its claim uses. An expression over every
 //! row would read the whole heap on every probe, and a queue heap keeps the
@@ -53,66 +58,84 @@ enum Unleased {
 }
 
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
-/// source, a single row whose one nullable column is the soonest, or NULL when
-/// nothing is due.
-///
-/// Every branch in `branches` contributes its delivery queue: a delivery lives
-/// in the queue of the branch whose subscription matched, and the delivery
-/// drain claims from each published Snapshot branch as from the live one, so a
-/// Snapshot-branch retry is an obligation of the tenant like any other.
-pub(crate) fn least_due_select(current: BranchSchemaVersion, branches: &[ContextTarget]) -> SelectStatement {
-    let deliveries = branches.iter().map(|branch| {
+/// source of the live branch and the tenant, a single row whose one nullable
+/// column is the soonest, or NULL when nothing is due.
+pub(crate) fn least_due_select(current: BranchSchemaVersion) -> SelectStatement {
+    let sources = vec![
         claimable_min(
-            table_of(branch, NotificationDeliveries::Table),
+            NotificationDeliveries::Table,
             NotificationDeliveries::NextAttemptAt,
             NotificationDeliveries::LeaseUntil,
             unfinished_delivery(),
-        )
-    });
-    let sources: Vec<SimpleExpr> = deliveries
-        .chain([
-            claimable_min(
-                SnapshotNotificationOutbox::Table,
-                SnapshotNotificationOutbox::NextAttemptAt,
-                SnapshotNotificationOutbox::LeaseUntil,
-                unfinished_snapshot_notification(),
-            ),
-            heap_only_claimable_min(
-                PendingSideEffects::Table,
-                PendingSideEffects::NextAttemptAt,
-                PendingSideEffects::LeaseUntil,
-                Cond::all().add(unfinished_side_effect()),
-            ),
-            heap_only_claimable_min(
-                TemporalAppendIntents::Table,
-                TemporalAppendIntents::NextAttemptAt,
-                TemporalAppendIntents::LeaseUntil,
-                Cond::all(),
-            ),
-            preparing_min(current),
-            expiry_min(Entities::Table, Entities::ExpiresAt),
-            expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
-            subscription_expiry_min(),
-            expiry_min(Csr::Table, Csr::ExpiresAt),
-            earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
-            orphan_branch_due(),
-            earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
-            cached_context_expiry_min(),
-        ])
-        .collect();
+        ),
+        claimable_min(
+            SnapshotNotificationOutbox::Table,
+            SnapshotNotificationOutbox::NextAttemptAt,
+            SnapshotNotificationOutbox::LeaseUntil,
+            unfinished_snapshot_notification(),
+        ),
+        heap_only_claimable_min(
+            PendingSideEffects::Table,
+            PendingSideEffects::NextAttemptAt,
+            PendingSideEffects::LeaseUntil,
+            Cond::all().add(unfinished_side_effect()),
+        ),
+        heap_only_claimable_min(
+            TemporalAppendIntents::Table,
+            TemporalAppendIntents::NextAttemptAt,
+            TemporalAppendIntents::LeaseUntil,
+            Cond::all(),
+        ),
+        preparing_min(current),
+        expiry_min(Entities::Table, Entities::ExpiresAt),
+        expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
+        subscription_expiry_min(),
+        expiry_min(Csr::Table, Csr::ExpiresAt),
+        earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
+        orphan_branch_due(),
+        earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
+        cached_context_expiry_min(),
+    ];
     Query::select().expr_as(Func::least(sources), Alias::new("due")).to_owned()
 }
 
+/// The earliest claimable instant of the delivery queue of `branch`, a single
+/// row whose one nullable column is NULL when the queue holds nothing
+/// unfinished.
+///
+/// A delivery lives in the queue of the branch whose subscription matched, and
+/// the delivery drain claims from each published Snapshot branch as from the
+/// live one, so a Snapshot-branch retry is an obligation of the tenant like any
+/// other.
+pub(crate) fn branch_delivery_due_select(branch: &ContextTarget) -> SelectStatement {
+    claimable_min_select(
+        table_of(branch, NotificationDeliveries::Table),
+        NotificationDeliveries::NextAttemptAt,
+        NotificationDeliveries::LeaseUntil,
+        unfinished_delivery(),
+    )
+}
+
 /// A scalar subquery of the earliest claimable instant of a queue's unfinished
-/// rows, `MIN(GREATEST(next_attempt_at, COALESCE(lease_until, ...)))`, for a
-/// queue whose claim index is that expression.
+/// rows, for a queue whose claim index is that expression.
 fn claimable_min(table: impl IntoTableRef, next_attempt: impl IntoColumnRef, lease_until: impl IntoColumnRef, unfinished: SimpleExpr) -> SimpleExpr {
+    scalar(claimable_min_select(table, next_attempt, lease_until, unfinished))
+}
+
+/// The earliest claimable instant of a queue's unfinished rows,
+/// `MIN(GREATEST(next_attempt_at, COALESCE(lease_until, ...)))`.
+fn claimable_min_select(
+    table: impl IntoTableRef,
+    next_attempt: impl IntoColumnRef,
+    lease_until: impl IntoColumnRef,
+    unfinished: SimpleExpr,
+) -> SelectStatement {
     let mut select = Query::select();
     select
         .expr(Func::min(claimable_at(Expr::col(next_attempt), Expr::col(lease_until))))
         .from(table)
         .and_where(unfinished);
-    scalar(select)
+    select
 }
 
 /// The same earliest claimable instant for a queue whose claim index leads
@@ -254,32 +277,35 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::pending_work::due_sources::least_due_select;
+    use crate::pending_work::due_sources::{branch_delivery_due_select, least_due_select};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use sea_query::PostgresQueryBuilder;
 
     fn least_sql() -> String {
-        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version"), &[ContextTarget::Live]).to_string(PostgresQueryBuilder)
+        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version")).to_string(PostgresQueryBuilder)
     }
 
     /// A delivery queued on a published Snapshot branch is an obligation of the
     /// tenant: the drain claims it like a live one, so its retry must wake a
     /// dormant tenant and keep a resident one's drain from resting past it.
     #[test]
-    fn the_probe_reads_the_delivery_queue_of_every_published_snapshot_branch() {
+    fn the_probe_reads_the_delivery_queue_of_a_published_snapshot_branch() {
         let snapshot = ContextTarget::Snapshot(SnapshotTarget::published(
             SnapshotKey::try_from(7_i64).expect("a positive key"),
             "urn:ngsi-ld:Snapshot:probe".parse().expect("a valid URI"),
         ));
-        let sql = least_due_select(
-            BranchSchemaVersion::try_from(26_i64).expect("a positive version"),
-            &[ContextTarget::Live, snapshot],
-        )
-        .to_string(PostgresQueryBuilder);
-        assert!(sql.contains("FROM \"notification_deliveries\""), "{sql}");
+        let sql = branch_delivery_due_select(&snapshot).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FROM \"snap_7\".\"notification_deliveries\""), "{sql}");
+        assert!(sql.contains("GREATEST(\"next_attempt_at\", COALESCE(\"lease_until\""), "{sql}");
+    }
+
+    /// The live statement is planned once per connection only if its text
+    /// does not change as Snapshots are created and reaped.
+    #[test]
+    fn the_live_statement_names_no_snapshot_schema() {
+        assert!(!least_sql().contains("\"snap_"), "{}", least_sql());
     }
 
     #[test]

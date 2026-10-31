@@ -13,7 +13,8 @@
 //!
 //! The queue and expiry sources are one `SELECT LEAST(...)` of index-backed
 //! scalar subqueries, each served by the same partial or expression index the
-//! owning worker's claim uses. The periodic-notification source is computed from
+//! owning worker's claim uses, plus one statement per published Snapshot
+//! branch for its delivery queue. The periodic-notification source is computed from
 //! each active subscription's grid anchor, interval and last answered sweep
 //! instant with the shared [`next_interval_due`] grid, so the probe and the
 //! delivery drain agree on when a subscription is next due.
@@ -21,8 +22,8 @@
 use crate::{
     error::ContextStoreError,
     migration_set::branch::current_branch_version,
-    notification_delivery::branches::{drainable_targets, is_reaped_branch},
-    pending_work::due_sources::least_due_select,
+    notification_delivery::branches::{drainable_targets, is_reaped_relation},
+    pending_work::due_sources::{branch_delivery_due_select, least_due_select},
     store_fault::persistence_failure,
     subscription_store::{delivery_state::interval_anchor_select, periodic_due::unexpired_at, status_code::status_is},
     tenant_database::DatabaseUrl,
@@ -180,7 +181,8 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 /// `expiresAt` of any kind, or a clause-5.8.6 periodic notification -- or
 /// `None` when nothing is outstanding.
 ///
-/// One index-backed `SELECT LEAST(...)` plus the periodic-notification anchors.
+/// One index-backed `SELECT LEAST(...)`, one delivery-queue read per published
+/// Snapshot branch, and the periodic-notification anchors.
 /// It serves both the wake loop's probe of a dormant tenant, over a transient
 /// pool, and a resident tenant pacing its own sweeps, over its serving pool.
 ///
@@ -199,29 +201,24 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
 /// The earliest due instant across the queue and expiry sources, reading the
 /// delivery queue of every branch the delivery drain sweeps.
 ///
-/// A Snapshot reaped between the branch enumeration and the read drops a
-/// schema the read names. A reap drops the schemas and deletes the control
-/// record in one transaction, so enumerating again leaves that branch out: the
-/// read is retried for as long as each failure is explained by a branch that
-/// has since gone, however many Snapshots a busy tenant reaps meanwhile, and
-/// a failure the enumeration does not explain is returned.
+/// The live branch's sources are one statement whose text never changes, and
+/// each published Snapshot branch's delivery queue is a statement of its own,
+/// so a connection plans each once however the Snapshot set churns. A Snapshot
+/// reaped between the branch enumeration and its read has dropped its queue
+/// with its schema, so the missing relation means that branch owes nothing.
 async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
-    let current = current_branch_version()?;
-    let mut branches = drainable_targets(pool).await?;
-    loop {
-        let error = match least_due_select(current, &branches).to_query_scalar().fetch_one(pool).await {
-            Ok(due) => return Ok(due),
-            Err(error) => ContextStoreError::from(error),
-        };
-        if !is_reaped_branch(&error) {
-            return Err(error);
+    let mut earliest: Option<DateTime<Utc>> = least_due_select(current_branch_version()?).to_query_scalar().fetch_one(pool).await?;
+    for branch in drainable_targets(pool).await? {
+        match branch {
+            ContextTarget::Live => {}
+            ContextTarget::Snapshot(_) => match branch_delivery_due_select(&branch).to_query_scalar().fetch_one(pool).await {
+                Ok(due) => earliest = [earliest, due].into_iter().flatten().min(),
+                Err(error) if is_reaped_relation(&error) => {}
+                Err(error) => return Err(error.into()),
+            },
         }
-        let remaining = drainable_targets(pool).await?;
-        if remaining == branches {
-            return Err(error);
-        }
-        branches = remaining;
     }
+    Ok(earliest)
 }
 
 /// The earliest instant any periodic subscription owes a notification.

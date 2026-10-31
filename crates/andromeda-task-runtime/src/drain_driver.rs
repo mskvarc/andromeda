@@ -32,7 +32,10 @@ pub(crate) async fn run(
     // The first pass is deferred by the floor rather than run eagerly on start:
     // a level-triggered drain waits for a wake or the fallback so a freshly loaded
     // tenant does not fire every drain the instant it is cached.
-    let mut delay = backoff.record_idle();
+    let mut next = NextSleep {
+        delay: backoff.record_idle(),
+        expiry: DrainCause::Fallback,
+    };
     loop {
         let cause = tokio::select! {
             biased;
@@ -44,27 +47,37 @@ pub(crate) async fn run(
                 backoff.record_wake();
                 DrainCause::Wake
             }
-            () = sleep(delay) => DrainCause::Fallback,
+            () = sleep(next.delay) => next.expiry,
         };
-        delay = match drain_until_settled(&supervision, &operation, &mut backoff, cause).await {
+        next = match drain_until_settled(&supervision, &operation, &mut backoff, cause).await {
             Ok(next) => next,
             Err(terminal) => return terminal,
         };
     }
 }
 
+/// The sleep before the next cycle, and what the pass that ends it is.
+struct NextSleep {
+    /// How long the driver sleeps unless a wake comes first.
+    delay: Duration,
+    /// The cause of the pass that runs when the sleep ends.
+    expiry: DrainCause,
+}
+
 /// Run bounded passes until one settles, returning the sleep before the next cycle.
 ///
 /// Repeats immediately while a pass reports work may remain; a pass that found
 /// work resets the backoff to the floor, a bare idle pass backs off, and a pass
-/// with a known next-due time sleeps until then, at most the ceiling. The first pass
-/// carries `cause`; every repeat is a [`DrainCause::Continuation`].
+/// with a known next-due time sleeps until then, at most the ceiling. A sleep
+/// that reaches the due instant a pass reported ends in a [`DrainCause::Due`]
+/// pass; every other sleep ends in a [`DrainCause::Fallback`] pass. The first
+/// pass carries `cause`; every repeat is a [`DrainCause::Continuation`].
 async fn drain_until_settled(
     supervision: &DriverSupervision,
     operation: &Arc<DrainOperation>,
     backoff: &mut DrainBackoff,
     cause: DrainCause,
-) -> Result<Duration, DriverTerminal> {
+) -> Result<NextSleep, DriverTerminal> {
     let cancellation = &supervision.cancellation;
     let mut did_work = false;
     let mut cause = cause;
@@ -78,8 +91,30 @@ async fn drain_until_settled(
         cause = DrainCause::Continuation;
         match result {
             Ok(DrainPassOutcome::WorkMayRemain) => did_work = true,
-            Ok(DrainPassOutcome::Idle) => return Ok(if did_work { backoff.record_worked() } else { backoff.record_idle() }),
-            Ok(DrainPassOutcome::IdleUntil(due)) => return Ok(backoff.record_idle_until(due, SystemTime::now())),
+            Ok(DrainPassOutcome::Idle) => {
+                let delay = if did_work { backoff.record_worked() } else { backoff.record_idle() };
+                return Ok(NextSleep {
+                    delay,
+                    expiry: DrainCause::Fallback,
+                });
+            }
+            Ok(DrainPassOutcome::IdleUntil(due)) => {
+                let now = SystemTime::now();
+                let delay = backoff.record_idle_until(due, now);
+                // A due instant beyond the ceiling is not reached by this sleep.
+                let expiry = if now.checked_add(delay).is_some_and(|end| end >= due) {
+                    DrainCause::Due
+                } else {
+                    DrainCause::Fallback
+                };
+                return Ok(NextSleep { delay, expiry });
+            }
+            Ok(DrainPassOutcome::RestUntil(until)) => {
+                return Ok(NextSleep {
+                    delay: backoff.record_idle_until(until, SystemTime::now()),
+                    expiry: DrainCause::Fallback,
+                });
+            }
             Err(terminal) => return Err(terminal),
         }
         if cancellation.is_cancelled() {

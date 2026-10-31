@@ -13,8 +13,15 @@ pub enum DrainPassOutcome {
     /// pass runs immediately.
     WorkMayRemain,
     /// No work is due now, but the earliest is due at this instant; the driver
-    /// sleeps until then, clamped into the fallback band.
+    /// sleeps until then, at most the ceiling, and a pass that ends that sleep
+    /// at the instant carries [`Due`](crate::control::DrainCause::Due).
     IdleUntil(SystemTime),
+    /// The pass did not look for work: whoever paces the drain rested it until
+    /// this instant. The driver sleeps until then like [`DrainPassOutcome::IdleUntil`],
+    /// but the pass that ends the sleep is a
+    /// [`Fallback`](crate::control::DrainCause::Fallback) pass, since nothing
+    /// reported work due at the instant.
+    RestUntil(SystemTime),
 }
 
 /// Type-erased bounded operation invoked by drain execution mechanics.
