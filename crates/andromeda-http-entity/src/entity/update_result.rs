@@ -39,8 +39,8 @@ pub enum NotUpdatedReason {
     /// An append under `noOverwrite` found the attribute already present.
     #[strum(serialize = "Already exists")]
     AlreadyExists,
-    /// An update found the entity did not already carry the attribute, which
-    /// clause 5.6.2.4 makes the condition for leaving it untouched.
+    /// An update carried a `scope` the entity does not have, which clause
+    /// 5.6.2.4 ignores.
     #[strum(serialize = "Attribute not found")]
     AttributeNotFound,
 }
