@@ -234,9 +234,15 @@ fn tombstone() -> TemporalAppendEntry {
 #[test]
 fn the_application_reads_the_entries_from_the_queue_rows_it_holds() {
     let history = writing("attribute_history");
-    assert!(history.contains(&format!(r#"FROM {QUEUED}, UNNEST("i"."entries") AS "e""#)), "{history}");
+    assert!(
+        history.contains(&format!(r#"FROM {}, UNNEST("i"."entries") AS "e""#, reading_entries(QUEUED))),
+        "{history}"
+    );
     for (_, sql) in rendered_steps() {
-        assert!(sql.contains(QUEUED), "every statement reads the claimed rows: {sql}");
+        assert!(
+            sql.contains(QUEUED) || sql.contains(&reading_entries(QUEUED)),
+            "every statement reads the claimed rows: {sql}"
+        );
         assert!(!sql.contains("payload") && !sql.contains("::json"), "{sql}");
     }
 }
@@ -253,10 +259,29 @@ fn stating(relation: &str) -> String {
     relation.replace(r#"AS "i""#, r#"AS "si""#)
 }
 
-/// The source relation `relation` names under `i`, as the deletion judgement
-/// reads it again under `ai` for an intent stating types at or before one.
-fn anchoring(relation: &str) -> String {
-    relation.replace(r#"AS "i""#, r#"AS "ai""#)
+/// The first intent stating types for its Entity, as a queued source relation
+/// reading entries numbers it beside each intent.
+const QUEUED_FIRST_TYPED: &str =
+    r#"MIN((CASE WHEN (cardinality("entity_type_name_keys") > 0) THEN "intent_key" END)) OVER ( PARTITION BY "entity_id" ) AS "first_typed_intent""#;
+
+/// The first intent stating types for its Entity, as a bound source relation
+/// reading entries numbers it beside each intent.
+const BOUND_FIRST_TYPED: &str = concat!(
+    r#"MIN((CASE WHEN (cardinality("input"."entity_type_name_keys") > 0) THEN "input"."ordinality" END)) "#,
+    r#"OVER ( PARTITION BY "input"."entity_id" ) AS "first_typed_intent""#
+);
+
+/// The source relation `relation` names under `i`, as a statement reading
+/// the entries reads it: each intent beside the first intent of its Entity
+/// stating types, numbered once over the whole source.
+fn reading_entries(relation: &str) -> String {
+    relation
+        .replacen("(SELECT * FROM", &format!("(SELECT *, {QUEUED_FIRST_TYPED} FROM"), 1)
+        .replacen(
+            r#""input"."ordinality" AS "intent_key" FROM"#,
+            &format!(r#""input"."ordinality" AS "intent_key", {BOUND_FIRST_TYPED} FROM"#),
+            1,
+        )
 }
 
 #[test]
@@ -269,7 +294,7 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                 sql.replace(QUEUED, "<source>")
                     .replace(&earlier(QUEUED), "<source>")
                     .replace(&stating(QUEUED), "<source>")
-                    .replace(&anchoring(QUEUED), "<source>"),
+                    .replace(&reading_entries(QUEUED), "<source>"),
             )
         })
         .collect();
@@ -282,7 +307,7 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
                 sql.replace(&bound, "<source>")
                     .replace(&earlier(&bound), "<source>")
                     .replace(&stating(&bound), "<source>")
-                    .replace(&anchoring(&bound), "<source>"),
+                    .replace(&reading_entries(&bound), "<source>"),
             )
         })
         .collect();
@@ -294,13 +319,13 @@ fn the_commit_and_the_drain_render_one_statement_shape() {
 fn a_commit_binds_its_intents_as_one_typed_array() {
     let bound = bound();
     for (_, sql) in commit_steps() {
-        assert!(sql.contains(&bound), "{sql}");
+        assert!(sql.contains(&bound) || sql.contains(&reading_entries(&bound)), "{sql}");
         assert_eq!(
             sql.matches("::temporal_intent[]").count(),
             sql.matches(&bound).count()
                 + sql.matches(&earlier(&bound)).count()
                 + sql.matches(&stating(&bound)).count()
-                + sql.matches(&anchoring(&bound)).count(),
+                + sql.matches(&reading_entries(&bound)).count(),
             "{sql}"
         );
         assert!(!sql.contains("temporal_append_intents"), "{sql}");
@@ -1016,10 +1041,8 @@ fn the_evolution_statement_returns_the_evolutions_it_created_or_gave_a_type() {
 /// The judgement shared by every statement reading the attribute entries of
 /// an evolution, its created keys bound after the drain's claimed keys.
 const JUDGED: &str = concat!(
-    r#"(NOT ("e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7,9]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
-    r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
-    r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
-    r#"AND "ai"."intent_key" <= "i"."intent_key"))))"#
+    r#"(NOT ("e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7,9]::bigint[]) AND "#,
+    r#"("i"."first_typed_intent" IS NULL OR "i"."first_typed_intent" > "i"."intent_key")))"#
 );
 
 /// Applied on its own, the end of an instance finds the evolution its Entity
@@ -1048,6 +1071,33 @@ fn every_statement_reading_attribute_entries_judges_the_ends_of_an_instance_by_t
     assert!(released.contains(JUDGED), "{released}");
 }
 
+/// A search of the source for each entry costs the square of the source's
+/// size on any plan, so every statement reading attribute entries reads its
+/// source once, in the drain and in a commit alike.
+#[test]
+fn every_statement_reading_attribute_entries_reads_its_source_once() {
+    let released = |steps: Vec<(StepRole, String)>| {
+        steps
+            .into_iter()
+            .map(|(_, sql)| sql)
+            .find(|sql| sql.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#))
+            .expect("a claim release")
+    };
+    for (sql, source) in [
+        (writing("attribute_history"), "\"temporal_append_intents\""),
+        (writing("attribute_history_instance_claims"), "\"temporal_append_intents\""),
+        (shape_growth(), "\"temporal_append_intents\""),
+        (growth(), "\"temporal_append_intents\""),
+        (in_role(StepRole::Replace), "\"temporal_append_intents\""),
+        (released(rendered_steps()), "\"temporal_append_intents\""),
+        (writing_in(commit_steps(), "attribute_history"), "::temporal_intent[]"),
+        (writing_in(commit_steps(), "attribute_history_instance_claims"), "::temporal_intent[]"),
+        (released(commit_steps()), "::temporal_intent[]"),
+    ] {
+        assert_eq!(sql.matches(source).count(), 1, "{sql}");
+    }
+}
+
 /// A stream of an evolution the statement created is not given to an end of
 /// an instance coming before every intent of its Entity stating types, while
 /// one of an evolution that existed is, as the read shows it.
@@ -1056,10 +1106,12 @@ fn the_grains_of_a_created_evolution_leave_out_the_ends_of_an_instance_before_it
     let evolving = evolving();
     let grains = common_table(&evolving, "grains");
     assert!(
-        grains.contains(r#"AND (NOT ("e"."entry_kind" = 2 AND "evolved"."created" AND (NOT EXISTS(SELECT 1 FROM "#),
+        grains.contains(concat!(
+            r#"AND (NOT ("e"."entry_kind" = 2 AND "evolved"."created" AND "#,
+            r#"("i"."first_typed_intent" IS NULL OR "i"."first_typed_intent" > "i"."intent_key")))"#
+        )),
         "{grains}"
     );
-    assert!(grains.contains(r#""ai"."intent_key" <= "i"."intent_key""#), "{grains}");
 }
 
 /// A Scope entry needs an evolution but no order among the intents, as the
@@ -1067,7 +1119,7 @@ fn the_grains_of_a_created_evolution_leave_out_the_ends_of_an_instance_before_it
 #[test]
 fn a_scope_entry_is_not_judged_by_the_evolutions_created() {
     let scopes = scope_insert();
-    assert!(!scopes.contains(CREATED_ARRAY) && !scopes.contains(r#"AS "ai""#), "{scopes}");
+    assert!(!scopes.contains(CREATED_ARRAY) && !scopes.contains(r#""i"."first_typed_intent""#), "{scopes}");
 }
 
 /// Only the statements that decide the end of an instance by the evolutions the

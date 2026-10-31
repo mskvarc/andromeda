@@ -4,7 +4,9 @@
 //! one row per intent with the columns of `temporal_append_intents`: the
 //! claimed rows of the queue, or a commit's intents bound as one
 //! `temporal_intent[]` beside the commit's write identity. Each entry is
-//! unnested beside its 1-based position under `e`. A statement adds the
+//! unnested beside its 1-based position under `e`, and an intent whose
+//! entries are read carries the key of the first intent of the source
+//! stating types for its Entity, computed once for the whole source. A statement adds the
 //! catalogue relations it needs as further `FROM` items joined in its
 //! `WHERE`, because the position comes from an `UNNEST` of the intent row,
 //! and a `JOIN ... ON` after it could not name the intent. The two sources
@@ -20,13 +22,13 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     cast::cast,
     external_arguments::ExternalArguments,
-    pg_array::{any, text_array},
+    pg_array::{any, has_elements, text_array},
     pg_type::PostgresType,
     scalar_subquery::scalar_subquery,
     statement::Statement,
     unnest::{Ordinality, unnest_of},
 };
-use sea_query::{Asterisk, DynIden, Expr, ExprTrait, Iden, IntoIden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, CaseStatement, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, SelectStatement, SimpleExpr, WindowStatement};
 use sqlx::PgConnection;
 
 /// The source relation's alias, `i`.
@@ -43,6 +45,23 @@ pub(crate) struct E;
 #[derive(Iden, Clone, Copy)]
 #[iden = "ie"]
 struct IntentEntity;
+
+/// The key of the first intent of the source stating types for the Entity of
+/// an intent, `first_typed_intent`, a column of the relation
+/// [`source_entries`] reads under `i`; NULL when no intent of the source
+/// states types for it.
+#[derive(Iden, Clone, Copy)]
+#[iden = "first_typed_intent"]
+pub(crate) struct FirstTypedIntent;
+
+/// The columns the source relation carries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IntentColumns {
+    /// The columns of `temporal_append_intents` alone.
+    Stored,
+    /// Those and [`FirstTypedIntent`].
+    WithFirstTypedIntent,
+}
 
 /// The alias of one bound intent inside the bound source, `input`.
 #[derive(Iden, Clone, Copy)]
@@ -191,32 +210,53 @@ impl<'a> StagedSource<'a> {
 
     /// The source relation under `i`: the claimed rows named by their keys,
     /// or the bound intents beside the write identity and its instant, each
-    /// keyed by its position.
-    fn relation(&self) -> SelectStatement {
+    /// keyed by its position, with `columns` the columns it carries.
+    fn relation(&self, columns: IntentColumns) -> SelectStatement {
         let mut relation = Query::select();
         match &self.relation {
-            StagedRelation::Queued { keys } => relation
-                .column(Asterisk)
-                .from(TemporalAppendIntents::Table)
-                .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray)))),
-            StagedRelation::Bound { record, intents } => relation
-                .expr_as(cast(Expr::val(record.write_id().as_uuid()), PostgresType::Uuid), TemporalAppendIntents::WriteId)
-                .expr_as(
-                    cast(Expr::val(record.recorded_at()), PostgresType::Timestamptz),
-                    TemporalAppendIntents::RecordedAt,
-                )
-                .exprs(
-                    [
-                        TemporalAppendIntents::EntityId,
-                        TemporalAppendIntents::EntityTypeNameKeys,
-                        TemporalAppendIntents::BaseOrdinal,
-                        TemporalAppendIntents::Entries,
-                    ]
-                    .map(|column| Expr::col((Input, column))),
-                )
-                .expr_as(Expr::col((Input, Ordinality)), TemporalAppendIntents::IntentKey)
-                .from_function(unnest_of(cast(intents.clone(), PostgresType::TemporalIntentArray)), Input), // clone: the relation owns the expression it places
-        };
+            StagedRelation::Queued { keys } => {
+                relation
+                    .column(Asterisk)
+                    .from(TemporalAppendIntents::Table)
+                    .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray))));
+                if columns == IntentColumns::WithFirstTypedIntent {
+                    relation.expr_window_as(
+                        first_typed_intent(
+                            Expr::col(TemporalAppendIntents::EntityTypeNameKeys),
+                            Expr::col(TemporalAppendIntents::IntentKey),
+                        ),
+                        WindowStatement::partition_by(TemporalAppendIntents::EntityId),
+                        FirstTypedIntent,
+                    );
+                }
+            }
+            StagedRelation::Bound { record, intents } => {
+                relation
+                    .expr_as(cast(Expr::val(record.write_id().as_uuid()), PostgresType::Uuid), TemporalAppendIntents::WriteId)
+                    .expr_as(
+                        cast(Expr::val(record.recorded_at()), PostgresType::Timestamptz),
+                        TemporalAppendIntents::RecordedAt,
+                    )
+                    .exprs(
+                        [
+                            TemporalAppendIntents::EntityId,
+                            TemporalAppendIntents::EntityTypeNameKeys,
+                            TemporalAppendIntents::BaseOrdinal,
+                            TemporalAppendIntents::Entries,
+                        ]
+                        .map(|column| Expr::col((Input, column))),
+                    )
+                    .expr_as(Expr::col((Input, Ordinality)), TemporalAppendIntents::IntentKey)
+                    .from_function(unnest_of(cast(intents.clone(), PostgresType::TemporalIntentArray)), Input); // clone: the relation owns the expression it places
+                if columns == IntentColumns::WithFirstTypedIntent {
+                    relation.expr_window_as(
+                        first_typed_intent(Expr::col((Input, TemporalAppendIntents::EntityTypeNameKeys)), Expr::col((Input, Ordinality))),
+                        WindowStatement::partition_by((Input, TemporalAppendIntents::EntityId)),
+                        FirstTypedIntent,
+                    );
+                }
+            }
+        }
         relation
     }
 
@@ -248,14 +288,22 @@ pub(crate) fn source_intents(select: &mut SelectStatement, source: &StagedSource
 /// Read the intents of `source` in `select` under `alias`, beside the ones
 /// under `i`, for a statement that compares one intent with the others.
 pub(crate) fn source_intents_as(select: &mut SelectStatement, source: &StagedSource<'_>, alias: impl IntoIden) {
-    select.from_subquery(source.relation(), alias);
+    select.from_subquery(source.relation(IntentColumns::Stored), alias);
 }
 
 /// Read every entry of the intents of `source` in `select`: the intents
-/// under `i`, each entry under `e`.
+/// under `i`, each beside its [`FirstTypedIntent`], each entry under `e`.
 pub(crate) fn source_entries(select: &mut SelectStatement, source: &StagedSource<'_>) {
-    source_intents(select, source);
-    select.from_function(unnest_of(Expr::col((I, TemporalAppendIntents::Entries))), E);
+    select
+        .from_subquery(source.relation(IntentColumns::WithFirstTypedIntent), I)
+        .from_function(unnest_of(Expr::col((I, TemporalAppendIntents::Entries))), E);
+}
+
+/// The lowest `key` among the intents of one Entity whose `types` are not
+/// empty, as a window aggregate partitioned by the Entity: one sort of the
+/// source, where a search per intent would scan the source once for each.
+fn first_typed_intent(types: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
+    Func::min(CaseStatement::new().case(has_elements(types), key)).into()
 }
 
 /// One field of the entry under `e`.

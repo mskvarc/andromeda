@@ -15,39 +15,30 @@
 //! end of an instance by the same rule, so the history a temporal query
 //! answers with (clause 5.7.4) is the same before the drain and after it,
 //! however the drain groups the intents.
+//!
+//! The first intent stating types is read from the column the source carries
+//! beside each intent, computed once for the whole source: a search of the
+//! source for each entry costs the square of the source's size, and a
+//! generic plan, which estimates the source at a handful of rows, cannot see
+//! that cost.
 
-use crate::intent_application::intent_source::{I, StagedSource, entry, intent, source_intents_as};
+use crate::intent_application::intent_source::{FirstTypedIntent, I, StagedSource, entry, intent};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
-use andromeda_postgresql_seaquery::{
-    literal::int_literal,
-    pg_array::{any, has_elements},
-};
+use andromeda_postgresql_seaquery::pg_array::any;
 use andromeda_postgresql_temporal_query::alias::Te;
-use sea_query::{Expr, ExprTrait, Iden, Query, SimpleExpr};
-
-/// The alias of an intent of the source stating types for the Entity of the
-/// intent under `i`, `ai`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ai"]
-struct AnchoringIntent;
+use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// Whether the entry under `e`, of the intent under `i`, ends an instance of
 /// a Temporal Evolution the application created (`created` holds for it)
 /// before any intent of the source stating types for its Entity, so it
 /// records nothing.
-pub(crate) fn ended_before_evolution(source: &StagedSource<'_>, created: SimpleExpr) -> SimpleExpr {
-    let mut anchoring = Query::select();
-    anchoring.expr(int_literal(1));
-    source_intents_as(&mut anchoring, source, AnchoringIntent);
-    anchoring
-        .and_where(Expr::col((AnchoringIntent, TemporalAppendIntents::EntityId)).equals((I, TemporalAppendIntents::EntityId)))
-        .and_where(has_elements(Expr::col((AnchoringIntent, TemporalAppendIntents::EntityTypeNameKeys))))
-        .and_where(Expr::col((AnchoringIntent, TemporalAppendIntents::IntentKey)).lte(intent(TemporalAppendIntents::IntentKey)));
+pub(crate) fn ended_before_evolution(created: SimpleExpr) -> SimpleExpr {
+    let first_typed = || Expr::col((I, FirstTypedIntent));
     entry(TemporalEntry::EntryKind)
         .eq(TemporalEntryKind::Tombstone.code())
         .and(created)
-        .and(Expr::exists(anchoring).not())
+        .and(first_typed().is_null().or(first_typed().gt(intent(TemporalAppendIntents::IntentKey))))
 }
 
 /// Whether the Temporal Evolution under `te` is one the evolution upsert of
@@ -73,14 +64,15 @@ mod tests {
         let staged = StagedSource::new(source, EntryReads::Identities, created);
         Query::select()
             .column(Asterisk)
-            .and_where(ended_before_evolution(&staged, created_by_application(&staged)))
+            .and_where(ended_before_evolution(created_by_application(&staged)))
             .to_owned()
             .to_string(PostgresQueryBuilder)
     }
 
     /// Only the end of an instance waits for its evolution in key order: an
     /// observation of an evolution a later intent creates is recorded, as the
-    /// read shows it.
+    /// read shows it. The order is read from the intent's own row, never by
+    /// searching the source again.
     #[test]
     fn only_the_end_of_an_instance_before_the_first_typed_intent_of_a_created_evolution_is_dropped() {
         let sql = rendered(
@@ -92,13 +84,12 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#""e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7]::bigint[]) AND (NOT EXISTS(SELECT 1 FROM "#,
-                r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "ai" "#,
-                r#"WHERE "ai"."entity_id" = "i"."entity_id" AND cardinality("ai"."entity_type_name_keys") > 0 "#,
-                r#"AND "ai"."intent_key" <= "i"."intent_key"))"#
+                r#""e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7]::bigint[]) AND "#,
+                r#"("i"."first_typed_intent" IS NULL OR "i"."first_typed_intent" > "i"."intent_key")"#
             )),
             "{sql}"
         );
+        assert!(!sql.contains("EXISTS") && !sql.contains("temporal_append_intents"), "{sql}");
     }
 
     /// A commit's source names the created keys the way the drain's does,

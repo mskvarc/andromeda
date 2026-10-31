@@ -190,7 +190,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &StagedSource<'_>, schema
         .from(Evolved)
         .and_where(Expr::col((Evolved, Entities::Id)).equals((I, TemporalAppendIntents::EntityId)))
         .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
-        .and_where(ended_before_evolution(source, created_evolution()).not());
+        .and_where(ended_before_evolution(created_evolution()).not());
     let mut grains = Query::select();
     grains
         .columns(stream_columns.map(|column| (Ah, column)))
@@ -363,7 +363,7 @@ pub(crate) fn untyped_streams_statement(source: &StagedSource<'_>, schema: Optio
         .and_where(holds_evolution(Te))
         .and_where(has_elements(intent(TemporalAppendIntents::EntityTypeNameKeys)).not())
         .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
-        .and_where(ended_before_evolution(source, created_by_application(source)).not());
+        .and_where(ended_before_evolution(created_by_application(source)).not());
     let mut select = Query::select();
     select.columns(GRAIN_COLUMNS.map(|column| (Ah, column)));
     seeded_values(&mut select);

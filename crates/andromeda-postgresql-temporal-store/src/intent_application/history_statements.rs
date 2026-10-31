@@ -90,7 +90,7 @@ fn entries_with_evolution(source: &StagedSource<'_>, schema: Option<&DynIden>, k
 /// The attribute entries the application records, the evolution under `te`.
 fn recorded_attribute_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
     let mut select = entries_with_evolution(source, schema, attribute_entries());
-    select.and_where(ended_before_evolution(source, created_by_application(source)).not());
+    select.and_where(ended_before_evolution(created_by_application(source)).not());
     select
 }
 
