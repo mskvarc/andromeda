@@ -123,16 +123,34 @@ impl EntityChange {
     /// for a subscription that watches every attribute.
     #[must_use]
     pub fn is_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
-        let is_watched = |attribute: &AttributeName| watched.is_none_or(|names| names.contains(attribute));
-        let lifecycle_owed = self
-            .lifecycle_trigger()
-            .is_some_and(|trigger| triggers.contains(&trigger) && (watched.is_none() || self.instances.iter().any(|instance| is_watched(&instance.key.attr))));
-        lifecycle_owed
-            || self
-                .instances
-                .iter()
-                .any(|instance| triggers.contains(&attribute_trigger(instance.kind)) && is_watched(&instance.key.attr))
+        let lifecycle_owed = self.lifecycle_trigger().is_some_and(|trigger| {
+            triggers.contains(&trigger) && (watched.is_none() || self.instances.iter().any(|instance| is_watched(&instance.key.attr, watched)))
+        });
+        lifecycle_owed || self.instances.iter().any(|instance| instance_owed(instance, triggers, watched))
     }
+
+    /// Whether one of the instances the change deleted is owed to a
+    /// subscription listening to `triggers` and watching `watched`: an
+    /// `attributeDeleted` (listed, or through `entityUpdated`) on a watched
+    /// attribute.
+    #[must_use]
+    pub fn is_deletion_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
+        self.instances
+            .iter()
+            .any(|instance| instance.kind == AttributeChangeKind::Deleted && instance_owed(instance, triggers, watched))
+    }
+}
+
+/// Whether `attribute` is among `watched`; every attribute is when `watched`
+/// is absent (clause 5.8.1.4).
+fn is_watched(attribute: &AttributeName, watched: Option<&HashSet<AttributeName>>) -> bool {
+    watched.is_none_or(|names| names.contains(attribute))
+}
+
+/// Whether `instance` raises one of `triggers` on an attribute among
+/// `watched`.
+fn instance_owed(instance: &AttributeChange, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
+    triggers.contains(&attribute_trigger(instance.kind)) && is_watched(&instance.key.attr, watched)
 }
 
 #[cfg(test)]
@@ -304,5 +322,18 @@ mod tests {
         let expanded = effective_notification_triggers(Some(&[NotificationTrigger::EntityUpdated]));
         assert!(replaced().is_owed_to(&expanded, None));
         assert!(!created_abc().is_owed_to(&[NotificationTrigger::EntityDeleted], None));
+    }
+
+    /// A deletion is owed only to `attributeDeleted`, listed or through
+    /// `entityUpdated`, on a watched attribute; the default triggers of Table
+    /// 5.2.12-1 never listen to it.
+    #[test]
+    fn a_deletion_is_owed_only_through_attribute_deleted_on_a_watched_attribute() {
+        let expanded = effective_notification_triggers(Some(&[NotificationTrigger::EntityUpdated]));
+        assert!(replaced().is_deletion_owed_to(&[NotificationTrigger::AttributeDeleted], None));
+        assert!(replaced().is_deletion_owed_to(&expanded, Some(&watching(&["https://example.org/c"]))));
+        assert!(!replaced().is_deletion_owed_to(&expanded, Some(&watching(&["https://example.org/a", "https://example.org/b"]))));
+        assert!(!replaced().is_deletion_owed_to(&DEFAULT_NOTIFICATION_TRIGGERS, None));
+        assert!(!created_abc().is_deletion_owed_to(&[NotificationTrigger::AttributeDeleted], None));
     }
 }

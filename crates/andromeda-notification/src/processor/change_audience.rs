@@ -185,8 +185,9 @@ pub(crate) fn admitted_by_entity_filters(
 /// A deletion is evaluated against what the entity was, because what it is
 /// now is nothing; the state before the write is what the event carries as
 /// its previous attributes, or, failing that, the removed state. Every other
-/// change is evaluated against the entity the write left behind, and against
-/// the state before it as well when it removed instances.
+/// change is evaluated against the entity the write left behind, and, for a
+/// subscription its removed instances are owed to, against the state before it
+/// as well.
 pub(crate) fn changed_states<'a>(event: &'a ChangeEvent, notified: Option<&'a EntityState>) -> ChangedStates<'a> {
     let previous = event.previous_attributes.as_deref();
     match event.change.lifecycle {

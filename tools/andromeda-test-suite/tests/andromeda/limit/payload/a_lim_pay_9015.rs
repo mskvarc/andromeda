@@ -41,9 +41,8 @@ async fn a_lim_pay_9015_a_property_of_millions_of_numbers_over_the_entity_value_
     let refused = broker.send_unchecked(request).await;
     expect_that!(
         &refused,
-        problem(StatusCode::PAYLOAD_TOO_LARGE, request_entity_too_large()).with_detail_containing(&format!(
-            "more than the {entity_budget} JSON values this broker accepts in one entity"
-        ))
+        problem(StatusCode::PAYLOAD_TOO_LARGE, request_entity_too_large())
+            .with_detail_containing(&format!("more than the {entity_budget} JSON values this broker accepts in one entity"))
     );
     expect_that!(problem_status(&refused), some(eq(413)));
     let absent = broker

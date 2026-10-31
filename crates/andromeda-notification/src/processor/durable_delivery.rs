@@ -83,7 +83,8 @@ fn unreadable_subscription(subscription_id: &Identifier, error: SubscriptionErro
 ///
 /// The commit reads the entity filters on the states the change carries: a
 /// deletion on the state before it or the state it removed, any other change on
-/// the state it left and, when it removed instances, the state before it. A
+/// the state it left and, when it removed instances, the state before it for a
+/// subscription the removal is owed to. A
 /// queued event carrying one of those states was filtered on it; one carrying
 /// none was admitted without a state to read.
 fn commit_filters(stored: &NotificationEvent) -> CommitFilters {
