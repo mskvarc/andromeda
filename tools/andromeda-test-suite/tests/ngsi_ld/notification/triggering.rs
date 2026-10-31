@@ -34,6 +34,8 @@ mod n_ntf_trg_9018;
 mod n_ntf_trg_9019;
 mod n_ntf_trg_9020;
 mod n_ntf_trg_9028;
+mod n_ntf_trg_9029;
+mod n_ntf_trg_9030;
 mod o_ntf_trg_0020;
 mod o_ntf_trg_4001;
 mod o_ntf_trg_4004;

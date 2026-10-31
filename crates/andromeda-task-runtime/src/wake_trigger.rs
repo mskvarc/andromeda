@@ -57,9 +57,11 @@ impl DrainWakeReceiver {
 
 /// A validated doubling backoff band for a wake-triggered drain's idle sleeps.
 ///
-/// The floor is the shortest sleep between passes (and the clause-mandated
-/// minimum cadence where one applies); the ceiling is the longest. A policy
-/// whose ceiling equals its floor is a fixed cadence with no backoff.
+/// The floor is where an idle drain's backoff starts, and the sleep after a
+/// pass that found work; the ceiling is the longest sleep between passes. A
+/// pass that reports when its next work falls due sleeps until then, even
+/// when that is sooner than the floor. A policy whose ceiling equals its floor
+/// backs off at a fixed cadence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DrainFallbackPolicy(BackoffSchedule);
 
@@ -79,7 +81,8 @@ impl DrainFallbackPolicy {
         }
     }
 
-    /// Return the floor, the shortest sleep between passes.
+    /// Return the floor: the first sleep of an idle drain that knows no due
+    /// instant, and the sleep after a pass that found work.
     #[must_use]
     pub const fn floor(self) -> Duration {
         self.0.first()

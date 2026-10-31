@@ -35,9 +35,11 @@ use tokio::sync::{broadcast, broadcast::error::RecvError};
 /// Register `operation` as a wake-driven periodic sweep named `task_name`.
 ///
 /// The operation runs one sweep at `cutoff` and reports the earliest instant a
-/// subscription is next due, or `None` when none is; the drain then sleeps until
-/// then (clause 5.8.6, floor 1 s) rather than polling every second, waking early
-/// on `wake`, and never sleeping past `ceiling`.
+/// subscription is next due, or `None` when none is. The drain then sleeps
+/// exactly until that instant, however soon it falls, waking early on `wake`
+/// and never sleeping past `ceiling`: clause 5.8.6 notifies when the interval
+/// is reached, and Table 5.2.12-1 admits any `timeInterval` greater than 0, so
+/// a grid point is never rounded up to a minimum sleep.
 ///
 /// # Errors
 ///
@@ -55,8 +57,8 @@ where
     F: Fn(DateTime<Utc>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<Option<DateTime<Utc>>, NotificationError>> + Send + 'static,
 {
-    // Clause 5.8.6 fixes the shortest period at one second; the ceiling only
-    // bounds how long the drain waits when nothing is due.
+    // The floor starts the backoff of a sweep that knows no due instant; a
+    // reported grid point is slept to directly, below the floor included.
     let floor = Duration::from_secs(1);
     let fallback = DrainFallbackPolicy::new(floor, ceiling.max(floor)).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from(task_name).map_err(AssemblyInvariant::from)?;

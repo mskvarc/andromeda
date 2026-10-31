@@ -57,7 +57,7 @@ pub(crate) async fn run(
 ///
 /// Repeats immediately while a pass reports work may remain; a pass that found
 /// work resets the backoff to the floor, a bare idle pass backs off, and a pass
-/// with a known next-due time sleeps until then within the band. The first pass
+/// with a known next-due time sleeps until then, at most the ceiling. The first pass
 /// carries `cause`; every repeat is a [`DrainCause::Continuation`].
 async fn drain_until_settled(
     supervision: &DriverSupervision,

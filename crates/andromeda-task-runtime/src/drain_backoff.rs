@@ -10,9 +10,10 @@ use std::time::{Duration, SystemTime};
 /// policy floor toward its ceiling, so a tenant that keeps finding nothing costs
 /// ever fewer wake-ups. A pass that found work, or an external wake, resets the
 /// schedule to the floor so the following pass runs promptly. A pass that reports
-/// a precise next-due instant sleeps until then, clamped into the policy's
-/// `[floor, ceiling]` band. The schedule keeps no clock of its own: the caller
-/// supplies the current instant when a next-due time must become a duration.
+/// a precise next-due instant sleeps exactly until then, however close, and no
+/// longer than the ceiling: the floor paces only a drain that knows no due
+/// instant. The schedule keeps no clock of its own: the caller supplies the
+/// current instant when a next-due time must become a duration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DrainBackoff {
     /// The idle streak's position in the policy's doubling schedule.
@@ -42,15 +43,14 @@ impl DrainBackoff {
         self.idle.schedule().first()
     }
 
-    /// Record a pass whose next work is due at `due`, returning the clamped sleep until then.
+    /// Record a pass whose next work is due at `due`, returning the sleep until then.
     ///
-    /// Resets the geometric schedule so a later bare-idle pass starts from the
-    /// floor again.
+    /// The sleep is the time left until `due`, zero for an instant already
+    /// past, and at most the ceiling. Resets the geometric schedule so a later
+    /// bare-idle pass starts from the floor again.
     pub fn record_idle_until(&mut self, due: SystemTime, now: SystemTime) -> Duration {
         self.idle.reset();
-        let schedule = self.idle.schedule();
-        let remaining = due.duration_since(now).unwrap_or(Duration::ZERO);
-        remaining.clamp(schedule.first(), schedule.ceiling_bound())
+        due.duration_since(now).unwrap_or(Duration::ZERO).min(self.idle.schedule().ceiling_bound())
     }
 
     /// Reset the schedule to the floor in response to an external wake.
@@ -98,11 +98,19 @@ mod tests {
     }
 
     #[test]
-    fn idle_until_in_the_past_clamps_to_the_floor() {
+    fn idle_until_an_instant_in_the_past_sleeps_zero() {
         let mut backoff = DrainBackoff::new(policy(2, 30));
         let now = SystemTime::now();
         let due = now - Duration::from_secs(10);
-        assert_eq!(backoff.record_idle_until(due, now).as_secs(), 2);
+        assert_eq!(backoff.record_idle_until(due, now), Duration::ZERO);
+    }
+
+    #[test]
+    fn idle_until_an_instant_closer_than_the_floor_sleeps_until_it() {
+        let mut backoff = DrainBackoff::new(policy(1, 8));
+        let now = SystemTime::now();
+        let due = now + Duration::from_millis(10);
+        assert_eq!(backoff.record_idle_until(due, now), Duration::from_millis(10));
     }
 
     #[test]
@@ -110,7 +118,7 @@ mod tests {
         let mut backoff = DrainBackoff::new(policy(2, 30));
         let now = SystemTime::now();
         let due = now + Duration::from_secs(1_000);
-        assert_eq!(backoff.record_idle_until(due, now).as_secs(), 30);
+        assert_eq!(backoff.record_idle_until(due, now), Duration::from_secs(30));
     }
 
     #[test]
@@ -118,7 +126,7 @@ mod tests {
         let mut backoff = DrainBackoff::new(policy(2, 30));
         let now = SystemTime::now();
         let due = now + Duration::from_secs(9);
-        assert_eq!(backoff.record_idle_until(due, now).as_secs(), 9);
+        assert_eq!(backoff.record_idle_until(due, now), Duration::from_secs(9));
     }
 
     #[test]
@@ -127,7 +135,7 @@ mod tests {
         assert_eq!(backoff.record_idle().as_secs(), 1);
         assert_eq!(backoff.record_idle().as_secs(), 2);
         let now = SystemTime::now();
-        backoff.record_idle_until(now + Duration::from_secs(5), now);
+        assert_eq!(backoff.record_idle_until(now + Duration::from_millis(10), now), Duration::from_millis(10));
         assert_eq!(backoff.record_idle().as_secs(), 1, "a bare idle after a next-due pass starts at the floor");
     }
 }
