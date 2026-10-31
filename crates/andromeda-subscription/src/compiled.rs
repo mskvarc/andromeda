@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
+use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use std::{collections::HashSet, num::NonZeroU32};
@@ -224,6 +225,14 @@ impl CompiledSubscription {
     #[must_use]
     pub const fn cadence(&self) -> NotificationCadence {
         cadence(self.time_interval_secs, self.throttling_secs)
+    }
+
+    /// Whether, as it stands at `now`, this subscription is notified of an
+    /// entity change: it is active and unexpired (clause 5.8.6), and it has no
+    /// `timeInterval`, which notifies on its own grid instead (Table 5.2.12-1).
+    #[must_use]
+    pub fn notifies_on_change_at(&self, now: DateTime<Utc>) -> bool {
+        self.standing.notifies_at(now) && self.time_interval_secs.is_none()
     }
 }
 

@@ -12,6 +12,7 @@ use andromeda_subscription::{
     compiled::CompiledSubscription,
     notifying_since::SelectionJudged,
 };
+use chrono::Utc;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -74,6 +75,48 @@ pub(crate) enum CommitFilters {
     /// The commit had no state to evaluate them on, so it admitted the change
     /// and delivery evaluates them on the entity it reads.
     Undecided,
+}
+
+/// The subscriptions `audience` evaluates the change for, before their entity
+/// filters and the instants they notify since are read.
+///
+/// A live change is routed now through every subscription's `entities`,
+/// `notificationTrigger` and `watchedAttributes`. A queued delivery was routed
+/// by the commit that queued it, under the selection in force then (clauses
+/// 5.8.2 and 5.8.6 owe the notification from the change itself), so the one
+/// subscription it is addressed to is taken as it now stands, and only
+/// whether it is still notified of changes is read: an update that moved what
+/// it selects since does not withdraw the notification already owed, while a
+/// subscription deleted, paused, expired or turned periodic since is notified
+/// of nothing.
+pub(crate) fn addressed(
+    audience: ChangeAudience<'_>,
+    cache: &SubscriptionCache,
+    target: &ContextTarget,
+    event: &ChangeEvent,
+) -> Vec<Arc<CompiledSubscription>> {
+    match audience {
+        ChangeAudience::Live => {
+            let outcome = cache.find_matching(target, event);
+            debug!(
+                entity = %event.entity_id,
+                triggers = ?event.change.triggers(),
+                active = outcome.funnel.active,
+                routed = outcome.funnel.routed,
+                watched = outcome.funnel.watched,
+                evaluated = outcome.funnel.evaluated,
+                matched = outcome.funnel.matched,
+                "Subscription candidate funnel"
+            );
+            outcome.funnel.record();
+            outcome.matched
+        }
+        ChangeAudience::Queued { subscription, .. } => cache
+            .get(target, subscription)
+            .filter(|candidate| candidate.notifies_on_change_at(Utc::now()))
+            .into_iter()
+            .collect(),
+    }
 }
 
 /// The candidates a change committed at `committed_at` is owed to: each one

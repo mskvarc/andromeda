@@ -20,12 +20,8 @@ use tracing::debug;
 /// attributes, entity selectors, and localOnly filtering (ETSI GS CIM 009
 /// v1.9.1, clause 5.5.13).
 pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
-    if !sub.standing.notifies_at(Utc::now()) {
-        debug!("Subscription {} skipped: not notified as it stands ({:?})", sub.id, sub.standing);
-        return false;
-    }
-
-    if sub.time_interval_secs.is_some() {
+    if !sub.notifies_on_change_at(Utc::now()) {
+        debug!("Subscription {} skipped: not notified of changes as it stands ({:?})", sub.id, sub.standing);
         return false;
     }
 
