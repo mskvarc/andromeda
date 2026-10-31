@@ -27,7 +27,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_qry_9059_a_written_entity_is_answered_by_a_temporal_query_at_once() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let car_id = namespace.urn("Car", 1)?;
     let car_type = namespace.entity_type("Car")?;
     let car = TemporalEntity::builder()
@@ -35,8 +35,8 @@ async fn a_tmp_qry_9059_a_written_entity_is_answered_by_a_temporal_query_at_once
         .entity_type(car_type.clone())
         .property("speed", Property::builder(42).observed_at("2026-03-01T10:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&car).send().await?.created()?;
-    let page = broker_deferred
+    broker_not_recorded.temporal().create_or_update(&car).send().await?.created()?;
+    let page = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))

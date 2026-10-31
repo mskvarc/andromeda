@@ -17,7 +17,7 @@ use ngsi_ld::{
     model::{Entity, EntityFragment, NgsiLdMediaType, Property, evolution::TemporalEntity},
 };
 
-/// Pins: on the deferred broker, the seeded v instances land in the Temporal Evolution, and a Batch Entity Upsert and
+/// Pins: on the not-recorded broker, the seeded v instances land in the Temporal Evolution, and a Batch Entity Upsert and
 /// an Update Attributes of v answer 204 and change current state but land no instance
 /// Clause: 4.3.1, 5.6.2, 5.6.8, 5.6.11, 5.7.3
 /// Recorded: Andromeda configuration, not v1.9.1: clause 4.3.1 leaves it to the broker whether a Core API write
@@ -27,7 +27,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_evolution = TemporalEntity::builder()
@@ -36,9 +36,9 @@ async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not
         .property("v", Property::builder(1).observed_at("2026-07-01T00:00:00Z".parse()?))
         .property("v", Property::builder(2).observed_at("2026-07-01T00:01:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&sensor_evolution).send().await?.created()?;
+    broker_not_recorded.temporal().create_or_update(&sensor_evolution).send().await?.created()?;
     retried(async || {
-        let retrieved = broker_deferred
+        let retrieved = broker_not_recorded
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .temporal()
             .retrieve(&sensor_id)
@@ -54,7 +54,7 @@ async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not
         .entity_type(sensor_type.clone())
         .property("v", Property::builder(2).observed_at("2026-07-01T00:01:00Z".parse()?))
         .build()?];
-    broker_deferred
+    broker_not_recorded
         .entities()
         .batch_upsert(&entities)
         .mode(UpsertMode::Update)
@@ -64,18 +64,18 @@ async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not
     let fragment = EntityFragment::builder()
         .property("v", Property::builder(5).observed_at("2026-07-01T00:02:00Z".parse()?))
         .build()?;
-    broker_deferred.entities().update_attributes(&sensor_id, &fragment).send().await?.done()?;
+    broker_not_recorded.entities().update_attributes(&sensor_id, &fragment).send().await?.done()?;
     let marker = TemporalEntity::builder()
         .id(sensor_id.clone())
         .entity_type(sensor_type.clone())
         .property("marker", Property::builder(1).observed_at("2026-07-01T00:59:00Z".parse()?))
         .build()?
         .attributes;
-    broker_deferred.temporal().add_attributes(&sensor_id, &marker).send().await?;
+    broker_not_recorded.temporal().add_attributes(&sensor_id, &marker).send().await?;
     // The drain lands queued history in order, so once the marker written after the Core writes has landed, anything
     // those writes had queued would have landed too.
     retried(async || {
-        let retrieved = broker_deferred
+        let retrieved = broker_not_recorded
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .temporal()
             .retrieve(&sensor_id)
@@ -89,7 +89,7 @@ async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not
         Ok(())
     })
     .await?;
-    let retrieved = broker_deferred
+    let retrieved = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .retrieve(&sensor_id)
@@ -117,7 +117,7 @@ async fn a_tmp_cwh_0030_deferred_temporal_api_writes_land_and_core_writes_do_not
             )
         )
     );
-    let retrieved_2 = broker_deferred
+    let retrieved_2 = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .entities()
         .retrieve(&sensor_id)

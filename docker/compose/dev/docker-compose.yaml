@@ -1,5 +1,6 @@
 services:
   postgres:
+    image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-postgresql:local}
     build:
       context: ../../images/postgresql
     environment:

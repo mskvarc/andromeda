@@ -11,9 +11,9 @@ use ngsi_ld::{http::headers::Accept, model::NgsiLdMediaType};
 #[gtest]
 #[tokio::test]
 async fn a_ext_adv_9001_temporal_linked_retrieval_is_not_advertised_by_default() -> Result<()> {
-    let broker_recorded = broker::client(BrokerRole::Recorded)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     // This broker leaves every extension flag at its default.
-    let received = broker_recorded
+    let received = broker_not_recorded
         .with_responses()
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .source_identity()

@@ -26,7 +26,7 @@ use ngsi_ld::model::{Entity, LanguageMap, LanguageProperty};
 #[tokio::test]
 async fn a_ext_lrf_0006_a_regional_variant_matches_a_wildcard_selector_in_either_case() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;

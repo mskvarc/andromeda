@@ -11,16 +11,16 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{http::headers::Accept, model::ErrorType, registration::RegistrationMode};
 
-/// Pins: Query Entities on broker-bounded, whose limit is 5 distinct entities, over inclusive registrations at broker B holding Entities 1 to 5 and broker D holding Entities 1 to 6, 11 rows naming 6 distinct Entities, answers 403 `TooManyResults` whose detail names `federation.forwarding.max_query_entities`
+/// Pins: Query Entities on broker-f, whose limit is 5 distinct entities, over inclusive registrations at broker B holding Entities 1 to 5 and broker D holding Entities 1 to 6, 11 rows naming 6 distinct Entities, answers 403 `TooManyResults` whose detail names `federation.forwarding.max_query_entities`
 /// Clause: 4.12, 5.7.2.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-bounded gathers at most 5 distinct entities and 15 source rows
+/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_7420_sources_answering_more_distinct_entities_than_the_limit_are_too_many_results_naming_it() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker_b = broker::client(BrokerRole::B)?;
     let broker_d = broker::client(BrokerRole::D)?;
-    let bounded = broker::client(BrokerRole::Bounded)?;
+    let bounded = broker::client(BrokerRole::F)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     hold_vehicles(&broker_b, &namespace, &[1, 2, 3, 4, 5]).await?;
     hold_vehicles(&broker_d, &namespace, &[1, 2, 3, 4, 5, 6]).await?;

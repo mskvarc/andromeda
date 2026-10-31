@@ -19,7 +19,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_ext_ltg_0001_a_region_tag_selector_matches_a_map_key_in_either_case() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_language_tags = broker::client(BrokerRole::LanguageTags)?;
+    let broker_language_tags = broker::client(BrokerRole::Prefixed)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;

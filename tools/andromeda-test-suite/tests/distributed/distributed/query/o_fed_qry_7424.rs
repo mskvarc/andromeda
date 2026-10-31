@@ -10,9 +10,9 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::{http::headers::Accept, registration::RegistrationMode};
 
-/// Pins: Query Entities on broker-bounded, whose limits are 5 distinct entities and 15 source rows, over inclusive registrations at brokers B and C each holding Entities 1 to 5 and an auxiliary registration at broker D holding Entities 1 to 3, 13 rows and 5 distinct identifiers, answers 200 with Entities 1 to 5
+/// Pins: Query Entities on broker-f, whose limits are 5 distinct entities and 15 source rows, over inclusive registrations at brokers B and C each holding Entities 1 to 5 and an auxiliary registration at broker D holding Entities 1 to 3, 13 rows and 5 distinct identifiers, answers 200 with Entities 1 to 5
 /// Clause: 4.12, 5.7.2.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-bounded gathers at most 5 distinct entities and 15 source rows; an identifier an auxiliary source shares with another source is one entity of the merged result
+/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows; an identifier an auxiliary source shares with another source is one entity of the merged result
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_7424_an_entity_an_auxiliary_source_shares_with_another_source_counts_once() -> Result<()> {
@@ -20,7 +20,7 @@ async fn o_fed_qry_7424_an_entity_an_auxiliary_source_shares_with_another_source
     let broker_b = broker::client(BrokerRole::B)?;
     let broker_c = broker::client(BrokerRole::C)?;
     let broker_d = broker::client(BrokerRole::D)?;
-    let bounded = broker::client(BrokerRole::Bounded)?;
+    let bounded = broker::client(BrokerRole::F)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     hold_vehicles(&broker_b, &namespace, &[1, 2, 3, 4, 5]).await?;
     hold_vehicles(&broker_c, &namespace, &[1, 2, 3, 4, 5]).await?;

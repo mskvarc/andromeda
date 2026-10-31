@@ -19,7 +19,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_ext_lrf_0003_ordering_by_a_range_is_bad_request_data_and_ordering_by_a_tag_is_accepted() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;

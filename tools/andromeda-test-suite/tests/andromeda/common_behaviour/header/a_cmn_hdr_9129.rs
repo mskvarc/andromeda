@@ -18,16 +18,16 @@ use googletest::prelude::*;
 #[tokio::test]
 async fn a_cmn_hdr_9129_forwarded_fields_from_a_peer_outside_the_listed_proxies_are_ignored() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_edge_unlisted = broker::client(BrokerRole::EdgeUnlisted)?;
-    let own_origin = SuiteConfig::get()?.broker(BrokerRole::EdgeUnlisted)?.clone();
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
+    let own_origin = SuiteConfig::get()?.broker(BrokerRole::NotRecorded)?.clone();
     let requests = vec![
         vec![("X-Forwarded-Host", "attacker.example"), ("X-Forwarded-Proto", "https")],
         vec![("Forwarded", "proto=https;host=attacker.example")],
     ];
     for headers in requests {
-        let minted = mint(&broker_edge_unlisted, &namespace, "forwardedHost", &headers).await?;
+        let minted = mint(&broker_not_recorded, &namespace, "forwardedHost", &headers).await?;
         verify_that!(&minted.url, eq(&minted.on(&own_origin)?)).and_log_failure_with_message(|| format!("under {headers:?}"));
-        remove(&broker_edge_unlisted, &minted).await?;
+        remove(&broker_not_recorded, &minted).await?;
     }
     Ok(())
 }

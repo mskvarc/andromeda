@@ -35,47 +35,36 @@ pub enum BrokerRole {
     C,
     /// Broker D of the multi-broker stacks.
     D,
-    /// Broker E of the multi-broker stacks, running temporal Linked Entity retrieval.
+    /// Broker E of the multi-broker stacks; on the multi stack it runs temporal Linked Entity retrieval and reads `q`
+    /// target languages as extended ranges.
     E,
-    /// Broker F of the multi-broker stacks, reading `q` target languages as extended ranges.
+    /// Broker F of the multi stack, reading `q` target languages as extended ranges and gathering at most 5 distinct
+    /// entities and 15 source rows for one forwarded query.
     F,
-    /// Broker G of the multi-broker stacks, reading `q` target languages as extended ranges.
-    G,
-    /// The broker of the multi stack that gathers at most 5 distinct entities and 15 source rows for one forwarded query.
-    Bounded,
     /// The andromeda stack broker in conformance mode.
     Conformance,
-    /// The andromeda stack broker that leaves Core writes out of the Temporal Evolution.
+    /// The andromeda stack broker that leaves Core writes out of the Temporal Evolution, keeps every other setting at
+    /// its default (the extension flags and the geometry position budget included), advertises no URL of its own and
+    /// believes forwarded fields only from a proxy range the runner is outside of.
     NotRecorded,
-    /// The andromeda stack broker that leaves Core writes out of the Temporal Evolution and lands the Temporal API's
-    /// history after the write answers.
-    Deferred,
-    /// The andromeda stack broker that records Core writes and runs no expiry sweep.
-    Recorded,
     /// The andromeda stack broker that terminates TLS itself.
     Tls,
     /// The management listener of the TLS broker.
     TlsManagement,
-    /// The andromeda stack broker holding at most three Snapshots per Tenant.
-    Snapshot,
-    /// The andromeda stack broker with multi-tenancy disabled.
+    /// The andromeda stack broker with multi-tenancy disabled, delivering notifications durably with a 1 KiB HTTP
+    /// notification body limit and four attempts.
     SingleTenant,
-    /// The andromeda stack broker delivering notifications in durable mode.
+    /// The andromeda stack broker delivering notifications in durable mode and holding at most three Snapshots per
+    /// Tenant.
     Durable,
-    /// The andromeda stack broker believing the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields.
+    /// The andromeda stack broker believing the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields and
+    /// reading `q` target languages as RFC 4647 extended ranges.
     Edge,
     /// The edge broker's authority under `https`.
     EdgeHttps,
-    /// The andromeda stack broker believing forwarded fields only from a proxy range the runner is outside of.
-    EdgeUnlisted,
-    /// The andromeda stack broker configured with a path-prefixed apiRoot.
+    /// The andromeda stack broker configured with a path-prefixed apiRoot and admitting every RFC 5646 tag as a `q`
+    /// target language.
     Prefixed,
-    /// The andromeda stack broker reading `q` target languages as RFC 4647 extended ranges.
-    LanguageRange,
-    /// The andromeda stack broker admitting every RFC 5646 tag as a `q` target language.
-    LanguageTags,
-    /// The andromeda stack broker delivering durably with a 1 KiB HTTP notification body limit and four attempts.
-    NotificationLimits,
 }
 
 /// A broker as another broker of the stack reaches it: what a registration `endpoint` names.
@@ -93,12 +82,8 @@ pub enum PeerRole {
     D,
     /// Broker E of the multi-broker stacks.
     E,
-    /// Broker F of the multi-broker stacks.
+    /// Broker F of the multi stack.
     F,
-    /// Broker G of the multi-broker stacks.
-    G,
-    /// The andromeda stack broker in conformance mode.
-    Conformance,
 }
 
 /// A limit the stack configures its brokers with, which a test reaches or crosses on purpose.
@@ -110,9 +95,9 @@ pub enum Budget {
     RequestValue,
     /// The bytes of attribute values one entity may hold.
     EntityValue,
-    /// The positions one geometry may hold on every broker but the recorded one.
+    /// The positions one geometry may hold on the front broker.
     Position,
-    /// The positions one geometry may hold on the recorded broker.
+    /// The positions one geometry may hold on the not-recorded broker, the broker default.
     LargePosition,
     /// The bytes of the largest request body a broker reads.
     MaxRequestBody,

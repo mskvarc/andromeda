@@ -17,12 +17,12 @@ use ngsi_ld::{
 
 /// Pins: Under durable delivery, a notification larger than the HTTP body limit is never sent and fails on its first attempt without a retry, while the notification of the same change to an unreachable endpoint is retried until its attempts run out
 /// Clause: 5.8.6, 5.2.14
-/// Recorded: Andromeda extension, not v1.9.1: `notifications.delivery.max_http_body` (1 KiB on broker-notification-limits) under durable delivery with four attempts 100 ms apart
+/// Recorded: Andromeda extension, not v1.9.1: `notifications.delivery.max_http_body` (1 KiB on broker-single-tenant) under durable delivery with four attempts 100 ms apart
 #[gtest]
 #[tokio::test]
 async fn a_ntf_dlv_9006_a_notification_over_the_http_body_limit_fails_once_without_a_retry() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_notification_limits = broker::client(BrokerRole::NotificationLimits)?;
+    let broker_notification_limits = broker::client(BrokerRole::SingleTenant)?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
     let sink = NotificationSink::start().await?;

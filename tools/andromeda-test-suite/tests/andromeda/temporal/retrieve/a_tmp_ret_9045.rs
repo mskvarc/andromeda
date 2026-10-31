@@ -26,7 +26,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_ret_9045_a_deleted_evolution_records_no_later_deletion() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let car_id = namespace.urn("Car", 1)?;
     let car_type = namespace.entity_type("Car")?;
     let car = TemporalEntity::builder()
@@ -34,10 +34,10 @@ async fn a_tmp_ret_9045_a_deleted_evolution_records_no_later_deletion() -> Resul
         .entity_type(car_type.clone())
         .property("speed", Property::builder(42).observed_at("2026-03-01T10:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&car).send().await?.created()?;
-    broker_deferred.temporal().delete(&car_id).send().await?;
-    broker_deferred.entities().delete(&car_id).send().await?.done()?;
-    let absent = broker_deferred
+    broker_not_recorded.temporal().create_or_update(&car).send().await?.created()?;
+    broker_not_recorded.temporal().delete(&car_id).send().await?;
+    broker_not_recorded.entities().delete(&car_id).send().await?.done()?;
+    let absent = broker_not_recorded
         .with_responses()
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
@@ -45,7 +45,7 @@ async fn a_tmp_ret_9045_a_deleted_evolution_records_no_later_deletion() -> Resul
         .send()
         .await;
     expect_that!(&absent, problem(StatusCode::NOT_FOUND, ErrorType::ResourceNotFound));
-    let page = broker_deferred
+    let page = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))

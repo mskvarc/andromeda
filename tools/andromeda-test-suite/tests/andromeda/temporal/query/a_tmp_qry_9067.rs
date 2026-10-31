@@ -30,7 +30,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_qry_9067_a_backfill_under_a_new_type_is_answered_under_both_types_at_once() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let shape_id = namespace.urn("Shape", 1)?;
     let type_a = namespace.entity_type("A")?;
     let type_b = namespace.entity_type("B")?;
@@ -39,15 +39,15 @@ async fn a_tmp_qry_9067_a_backfill_under_a_new_type_is_answered_under_both_types
         .entity_type(type_a.clone())
         .property("level", Property::builder(1).observed_at("2026-03-01T11:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&shape).send().await?.created()?;
+    broker_not_recorded.temporal().create_or_update(&shape).send().await?.created()?;
     let backfill = TemporalEntity::builder()
         .id(shape_id.clone())
         .entity_type(type_b.clone())
         .property("level", Property::builder(2).observed_at("2026-03-01T10:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&backfill).send().await?.updated()?;
+    broker_not_recorded.temporal().create_or_update(&backfill).send().await?.updated()?;
     for queried in [&type_a, &type_b] {
-        let page = broker_deferred
+        let page = broker_not_recorded
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .temporal()
             .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))
@@ -58,7 +58,7 @@ async fn a_tmp_qry_9067_a_backfill_under_a_new_type_is_answered_under_both_types
         expect_that!(page.items(), nth(0, all!(lists_type(&type_a), lists_type(&type_b))));
     }
     retried(async || {
-        let retrieved = broker_deferred
+        let retrieved = broker_not_recorded
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .temporal()
             .retrieve(&shape_id)
@@ -69,7 +69,7 @@ async fn a_tmp_qry_9067_a_backfill_under_a_new_type_is_answered_under_both_types
         Ok(())
     })
     .await?;
-    let page_2 = broker_deferred
+    let page_2 = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))

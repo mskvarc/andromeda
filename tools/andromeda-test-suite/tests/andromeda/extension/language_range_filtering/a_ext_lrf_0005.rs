@@ -18,7 +18,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_ext_lrf_0005_a_temporal_query_with_a_bare_language_range_matches_a_regional_variant() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;

@@ -18,7 +18,7 @@ use ngsi_ld::{http::headers::Accept, model::NgsiLdMediaType};
 #[gtest]
 #[tokio::test]
 async fn a_ext_adv_0008_the_language_ranges_level_advertises_language_tags_and_language_range_filtering() -> Result<()> {
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let identity = broker_language_range
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .source_identity()

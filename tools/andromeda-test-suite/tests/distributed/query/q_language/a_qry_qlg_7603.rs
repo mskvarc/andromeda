@@ -31,17 +31,17 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_qry_qlg_7603_language_range_filtering_applies_across_brokers_that_all_advertise_it() -> Result<()> {
     let namespace = Namespace::fresh();
+    let broker_e = broker::client(BrokerRole::E)?;
     let broker_f = broker::client(BrokerRole::F)?;
-    let broker_g = broker::client(BrokerRole::G)?;
     let place_type = namespace.entity_type("Place")?;
     let place_1_id = namespace.urn("Place", 1)?;
     let place_3_id = namespace.urn("Place", 3)?;
     let place_4_id = namespace.urn("Place", 4)?;
     for (holder, suffix, tag) in [
-        (&broker_f, 1, "en-GB"),
-        (&broker_f, 2, "de-Deva"),
-        (&broker_g, 3, "en-US"),
-        (&broker_g, 4, "de-Latn-DE"),
+        (&broker_e, 1, "en-GB"),
+        (&broker_e, 2, "de-Deva"),
+        (&broker_f, 3, "en-US"),
+        (&broker_f, 4, "de-Latn-DE"),
     ] {
         let place = Entity::builder()
             .id(namespace.urn("Place", suffix)?)
@@ -50,7 +50,7 @@ async fn a_qry_qlg_7603_language_range_filtering_applies_across_brokers_that_all
             .build()?;
         holder.entities().create(&place).send().await?.done()?;
     }
-    let registration = CSourceRegistration::builder(broker::peer(PeerRole::G)?)
+    let registration = CSourceRegistration::builder(broker::peer(PeerRole::F)?)
         .id(namespace.registration_id(1)?)
         .information([RegistrationInfo::builder()
             .entities([EntityInfo::new(place_type.clone()).with_id_pattern(namespace.id_pattern_ending("Place", "[34]")?)])
@@ -58,8 +58,8 @@ async fn a_qry_qlg_7603_language_range_filtering_applies_across_brokers_that_all
         .mode(RegistrationMode::Inclusive)
         .operations([DistributedOperation::QueryEntity])
         .build()?;
-    broker_f.registrations().register(&registration).send().await?;
-    let json = broker_f.with_accept(Accept::new(NgsiLdMediaType::Json));
+    broker_e.registrations().register(&registration).send().await?;
+    let json = broker_e.with_accept(Accept::new(NgsiLdMediaType::Json));
     let selector = SelectorTypeBuilder::from(&place_type).build()?;
     let english = "name[en]==\"Lift\"".parse::<Query>()?;
     let request = json.unchecked(&QueryEntities::builder().entity_type(&selector).q(&english).format(Lossless::Normalized).build())?;

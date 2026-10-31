@@ -1,0 +1,68 @@
+# The services every stack extends; not a stack of its own. Relative paths resolve from this directory.
+#
+# Each broker of a stack is an identity over a PostgreSQL server of its own: replicas are not supported, so no two
+# brokers share a server, a database or a tenant database.
+#
+# The images are tagged :local and built from the working tree when missing; `up --build` rebuilds them first.
+# ANDROMEDA_IMAGE and ANDROMEDA_POSTGRES_IMAGE name another image, such as a pulled release.
+
+services:
+  postgres:
+    image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-postgresql:local}
+    build:
+      context: ../../../../docker/images/postgresql
+    command: ["postgres", "-c", "max_connections=200"]
+    # Docker's default 64 MB /dev/shm holds Postgres's dynamic shared memory: the cumulative statistics hash grows
+    # with the relations of every tenant database, and a few hundred private tenants fill it.
+    shm_size: 1gb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  # Only the settings that differ from the broker's defaults, all timings and pool sizes: every behaviour a test reads
+  # is the broker's default unless the stack says otherwise.
+  broker:
+    image: ${ANDROMEDA_IMAGE:-andromeda:local}
+    build:
+      context: ../../../..
+      dockerfile: docker/images/andromeda/Dockerfile
+    restart: unless-stopped
+    environment:
+      ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
+      ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
+      # Resident runtimes times their pools stays under max_connections with the default platform pool of 32:
+      # 16 * 4 + 32 = 96 of 200, leaving room for in-flight overshoot as private tenants accumulate on a kept stack.
+      ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "16"
+    healthcheck:
+      # localhost resolves to ::1 first.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+  # The repository is mounted read-only; builds go to the target volume, and the registry volume keeps dependencies
+  # between runs. Every stack shares both volumes, so a target compiled for one stack serves the others.
+  runner:
+    image: andromeda-test-suite-runner:local
+    build:
+      context: ../runner
+    profiles: ["runner"]
+    working_dir: /andromeda/tools/andromeda-test-suite
+    volumes:
+      - ../../../..:/andromeda:ro
+      - target:/andromeda/target
+      - registry:/usr/local/cargo/registry
+
+volumes:
+  target:
+    name: test-suite-target
+  registry:
+    name: test-suite-cargo-registry

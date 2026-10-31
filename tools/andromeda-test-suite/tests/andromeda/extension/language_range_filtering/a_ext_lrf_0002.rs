@@ -29,7 +29,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_ext_lrf_0002_a_wildcard_subtag_range_matches_by_extended_filtering() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let mut sensor_ids = Vec::new();
     for (index, tag) in ["de-DE", "de-Latn-DE", "de-Deva", "en-GB", "de-Latn-GB", "en-US"].into_iter().enumerate() {

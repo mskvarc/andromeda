@@ -19,7 +19,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_qry_9061_a_temporal_q_on_a_sub_attribute_is_answered_at_once() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let car_id = namespace.urn("Car", 1)?;
     let car_type = namespace.entity_type("Car")?;
     let car = TemporalEntity::builder()
@@ -32,8 +32,8 @@ async fn a_tmp_qry_9061_a_temporal_q_on_a_sub_attribute_is_answered_at_once() ->
                 .property("accuracy", Value::Number("0.9".parse()?)),
         )
         .build()?;
-    broker_deferred.temporal().create_or_update(&car).send().await?.created()?;
-    let page = broker_deferred
+    broker_not_recorded.temporal().create_or_update(&car).send().await?.created()?;
+    let page = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))
@@ -43,7 +43,7 @@ async fn a_tmp_qry_9061_a_temporal_q_on_a_sub_attribute_is_answered_at_once() ->
         .await?;
     expect_that!(page.items(), len(eq(1)));
     expect_that!(page.items(), nth(0, has_id(&car_id)));
-    let page_2 = broker_deferred
+    let page_2 = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))

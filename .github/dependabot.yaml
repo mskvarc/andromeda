@@ -19,6 +19,7 @@ updates:
   - package-ecosystem: docker
     directories:
       - /docker/images/*
+      - /tools/andromeda-test-suite/stacks/runner
     schedule:
       interval: weekly
       day: monday
@@ -35,7 +36,11 @@ updates:
   - package-ecosystem: docker-compose
     directories:
       - /docker/compose/dev
-      - /docker/compose/test/*
+      - /tools/andromeda-test-suite/stacks/andromeda
+      - /tools/andromeda-test-suite/stacks/base
+      - /tools/andromeda-test-suite/stacks/interoperability
+      - /tools/andromeda-test-suite/stacks/multi
+      - /tools/andromeda-test-suite/stacks/templates
     schedule:
       interval: weekly
       day: monday

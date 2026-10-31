@@ -27,7 +27,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_qry_9060_a_type_change_is_answered_under_the_new_type_at_once() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let shape_id = namespace.urn("Shape", 1)?;
     let type_a = namespace.entity_type("A")?;
     let type_b = namespace.entity_type("B")?;
@@ -36,14 +36,14 @@ async fn a_tmp_qry_9060_a_type_change_is_answered_under_the_new_type_at_once() -
         .entity_type(type_a.clone())
         .property("level", Property::builder(1).observed_at("2026-03-01T10:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&shape).send().await?.created()?;
+    broker_not_recorded.temporal().create_or_update(&shape).send().await?.created()?;
     let shape_retyped = TemporalEntity::builder()
         .id(shape_id.clone())
         .entity_type(type_b.clone())
         .property("level", Property::builder(2).observed_at("2026-03-01T11:00:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&shape_retyped).send().await?.updated()?;
-    let page = broker_deferred
+    broker_not_recorded.temporal().create_or_update(&shape_retyped).send().await?.updated()?;
+    let page = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after("2026-01-01T00:00:00Z".parse()?))

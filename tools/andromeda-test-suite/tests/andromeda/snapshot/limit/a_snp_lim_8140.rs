@@ -25,7 +25,7 @@ use ngsi_ld::{
 async fn a_snp_lim_8140_a_tenant_over_its_snapshot_quota_loses_its_lowest_priority_snapshot_first() -> Result<()> {
     let namespace = Namespace::fresh();
     let config = SuiteConfig::get()?;
-    let broker_snapshot = broker::client(BrokerRole::Snapshot)?;
+    let broker_snapshot = broker::client(BrokerRole::Durable)?;
     let broker_snapshot_tenant = broker_snapshot.with_tenant(namespace.tenant()?);
     let registration_provision_id = namespace.registration_id("provision")?;
     let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;

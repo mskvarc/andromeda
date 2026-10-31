@@ -31,7 +31,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_qry_qlg_7601_a_source_not_advertising_language_range_filtering_makes_the_query_fall_back_to_tag_equality_with_warning_199() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_f = broker::client(BrokerRole::F)?;
+    let broker_e = broker::client(BrokerRole::E)?;
     let broker_b = broker::client(BrokerRole::B)?;
     let place_type = namespace.entity_type("Place")?;
     let place_3_id = namespace.urn("Place", 3)?;
@@ -41,7 +41,7 @@ async fn a_qry_qlg_7601_a_source_not_advertising_language_range_filtering_makes_
         .entity_type(place_type.clone())
         .language_property("name", LanguageProperty::builder(LanguageMap::try_from_pairs([("en-GB", "Lift")])?))
         .build()?;
-    broker_f.entities().create(&place).send().await?.done()?;
+    broker_e.entities().create(&place).send().await?.done()?;
     let place_3 = Entity::builder()
         .id(place_3_id.clone())
         .entity_type(place_type.clone())
@@ -56,15 +56,15 @@ async fn a_qry_qlg_7601_a_source_not_advertising_language_range_filtering_makes_
         .mode(RegistrationMode::Inclusive)
         .operations([DistributedOperation::QueryEntity])
         .build()?;
-    broker_f.registrations().register(&registration).send().await?;
+    broker_e.registrations().register(&registration).send().await?;
     // The model refuses this q, so the query is sent as written.
     let request = request_to(
-        &broker_f.with_accept(Accept::new(NgsiLdMediaType::Json)),
+        &broker_e.with_accept(Accept::new(NgsiLdMediaType::Json)),
         Method::GET,
         &format!("entities?type=Place_{namespace}&q=name%5Ben%5D%3D%3D%22Lift%22"),
     )?
     .append_header(ACCEPT, HeaderValue::from_static("application/json"));
-    let answer = broker_f.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request).await;
+    let answer = broker_e.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request).await;
     expect_that!(
         &answer,
         answered(StatusCode::OK).with_header_containing(

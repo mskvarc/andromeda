@@ -32,7 +32,7 @@ async fn a_snp_qry_8140_an_operation_under_a_snapshot_preparing_past_the_wait_is
     let namespace = Namespace::fresh();
     let source = ContextSource::start().await?;
     let config = SuiteConfig::get()?;
-    let broker_snapshot = broker::client(BrokerRole::Snapshot)?;
+    let broker_snapshot = broker::client(BrokerRole::Durable)?;
     let broker_snapshot_tenant = broker_snapshot.with_tenant(namespace.tenant()?);
     let registration_provision_id = namespace.registration_id("provision")?;
     let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;

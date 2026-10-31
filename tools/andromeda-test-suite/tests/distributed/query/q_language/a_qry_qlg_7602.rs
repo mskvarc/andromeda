@@ -28,7 +28,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_qry_qlg_7602_a_wildcard_range_is_bad_request_data_when_a_reached_source_does_not_advertise_language_range_filtering() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_f = broker::client(BrokerRole::F)?;
+    let broker_e = broker::client(BrokerRole::E)?;
     let place_id = namespace.urn("Place", 1)?;
     let place_type = namespace.entity_type("Place")?;
     let broker_b = broker::client(BrokerRole::B)?;
@@ -39,7 +39,7 @@ async fn a_qry_qlg_7602_a_wildcard_range_is_bad_request_data_when_a_reached_sour
         .entity_type(place_type.clone())
         .language_property("name", LanguageProperty::builder(LanguageMap::try_from_pairs([("de-Latn-DE", "Lift")])?))
         .build()?;
-    broker_f.entities().create(&place).send().await?.done()?;
+    broker_e.entities().create(&place).send().await?.done()?;
     let place_3 = Entity::builder()
         .id(place_3_id)
         .entity_type(place_type.clone())
@@ -54,18 +54,18 @@ async fn a_qry_qlg_7602_a_wildcard_range_is_bad_request_data_when_a_reached_sour
         .mode(RegistrationMode::Inclusive)
         .operations([DistributedOperation::QueryEntity])
         .build()?;
-    broker_f.registrations().register(&registration).send().await?;
+    broker_e.registrations().register(&registration).send().await?;
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_cleanup = Cleanup::of(&broker_f).registration(&registration_id);
+    let _registration_cleanup = Cleanup::of(&broker_e).registration(&registration_id);
     // The model refuses this q, so the query is sent as written.
     let request = request_to(
-        &broker_f.with_accept(Accept::new(NgsiLdMediaType::Json)),
+        &broker_e.with_accept(Accept::new(NgsiLdMediaType::Json)),
         Method::GET,
         &format!("entities?type=Place_{namespace}&q=name%5Bde-%2A-DE%5D%3D%3D%22Lift%22"),
     )?
     .append_header(ACCEPT, HeaderValue::from_static("application/json"));
-    let answer = broker_f.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request).await;
+    let answer = broker_e.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request).await;
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)

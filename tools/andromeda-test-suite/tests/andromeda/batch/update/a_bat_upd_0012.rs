@@ -24,12 +24,12 @@ use ngsi_ld::{
 /// Polygon and no request answers 500
 /// Clause: 5.6.9.4
 /// Recorded: Andromeda extension, not v1.9.1: Prefer: respond-async on batch operations (IETF RFC 7240 section
-/// 4.1), and the position budget of broker-recorded, raised to 1,000,000 positions a geometry
+/// 4.1), and the default position budget of 1,000,000 positions a geometry, which broker-not-recorded keeps
 #[gtest]
 #[tokio::test]
 async fn a_bat_upd_0012_a_respond_async_update_of_a_million_position_entity_under_live_delivery_is_applied() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_recorded = broker::client(BrokerRole::Recorded)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let config = SuiteConfig::get()?;
     let large_budget = config.budget(Budget::LargePosition)?;
     let big_area_id = format!("urn:ngsi-ld:BigArea:{namespace}").parse::<EntityId>()?;
@@ -42,27 +42,27 @@ async fn a_bat_upd_0012_a_respond_async_update_of_a_million_position_entity_unde
             polygon(positions)?
         ))
     };
-    let create = request_to(&broker_recorded, Method::POST, "entities")?
+    let create = request_to(&broker_not_recorded, Method::POST, "entities")?
         .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
         .body(Bytes::from(format!("{{{}}}", location(large_budget)?)));
-    expect_that!(&broker_recorded.send_unchecked(create).await, answered(StatusCode::CREATED));
+    expect_that!(&broker_not_recorded.send_unchecked(create).await, answered(StatusCode::CREATED));
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([big_area_type.as_str()])
         .notification(NotificationParams::builder(Endpoint::builder(config.unreachable_origin().join("notify")?).build()?).build()?)
         .build()?;
-    broker_recorded.subscriptions().create(&subscription).send().await?;
+    broker_not_recorded.subscriptions().create(&subscription).send().await?;
     // Every ring of a generated payload is drawn around one point and starts at the same vertex, so the replacement is
     // told apart by its position count.
     let update = respond_async(
-        request_to(&broker_recorded, Method::POST, "entityOperations/update")?
+        request_to(&broker_not_recorded, Method::POST, "entityOperations/update")?
             .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
             .body(Bytes::from(format!("[{{{}}}]", location(large_budget - 1)?))),
     );
-    expect_that!(&broker_recorded.send_unchecked(update).await, async_applied(StatusCode::NO_CONTENT));
+    expect_that!(&broker_not_recorded.send_unchecked(update).await, async_applied(StatusCode::NO_CONTENT));
     retried(async || {
-        let answer = broker_recorded
-            .send_unchecked(request_to(&broker_recorded, Method::GET, &format!("entities/{big_area_id}"))?)
+        let answer = broker_not_recorded
+            .send_unchecked(request_to(&broker_not_recorded, Method::GET, &format!("entities/{big_area_id}"))?)
             .await;
         verify_that!(&answer, answered(StatusCode::OK))?;
         let response = answer?;
@@ -76,6 +76,6 @@ async fn a_bat_upd_0012_a_respond_async_update_of_a_million_position_entity_unde
         Ok(())
     })
     .await?;
-    broker_recorded.subscriptions().delete(&subscription_id).send().await?;
+    broker_not_recorded.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

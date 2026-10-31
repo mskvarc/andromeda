@@ -21,7 +21,7 @@ use ngsi_ld::{
     query::q,
 };
 
-/// Pins: on the deferred broker, Create Entity answers 201 and q=v==7 selects the Entity at once, while it has no
+/// Pins: on the not-recorded broker, Create Entity answers 201 and q=v==7 selects the Entity at once, while it has no
 /// Temporal Evolution after a later Temporal API write has landed
 /// Clause: 4.3.1, 5.6.1, 5.7.2, 5.7.3
 /// Recorded: Andromeda configuration, not v1.9.1: clause 4.3.1 leaves it to the broker whether a Core API write
@@ -31,7 +31,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_cwh_0031_a_deferred_core_created_entity_gains_no_temporal_evolution() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker_deferred = broker::client(BrokerRole::Deferred)?;
+    let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;
@@ -41,14 +41,14 @@ async fn a_tmp_cwh_0031_a_deferred_core_created_entity_gains_no_temporal_evoluti
         .property("v", Property::builder(1).observed_at("2026-07-01T00:00:00Z".parse()?))
         .property("v", Property::builder(2).observed_at("2026-07-01T00:01:00Z".parse()?))
         .build()?;
-    broker_deferred.temporal().create_or_update(&sensor_evolution).send().await?.created()?;
+    broker_not_recorded.temporal().create_or_update(&sensor_evolution).send().await?.created()?;
     let sensor_2 = Entity::builder()
         .id(sensor_2_id.clone())
         .entity_type(sensor_type.clone())
         .property("v", Property::builder(7).observed_at("2026-07-01T00:00:00Z".parse()?))
         .build()?;
-    broker_deferred.entities().create(&sensor_2).send().await?.done()?;
-    let page = broker_deferred
+    broker_not_recorded.entities().create(&sensor_2).send().await?.done()?;
+    let page = broker_not_recorded
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .entities()
         .query()
@@ -66,11 +66,11 @@ async fn a_tmp_cwh_0031_a_deferred_core_created_entity_gains_no_temporal_evoluti
         .property("marker", Property::builder(1).observed_at("2026-07-01T00:59:00Z".parse()?))
         .build()?
         .attributes;
-    broker_deferred.temporal().add_attributes(&sensor_id, &marker).send().await?;
+    broker_not_recorded.temporal().add_attributes(&sensor_id, &marker).send().await?;
     // The drain lands queued history in order, so once the marker written after the Core writes has landed, anything
     // those writes had queued would have landed too.
     retried(async || {
-        let retrieved = broker_deferred
+        let retrieved = broker_not_recorded
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .temporal()
             .retrieve(&sensor_id)
@@ -84,7 +84,7 @@ async fn a_tmp_cwh_0031_a_deferred_core_created_entity_gains_no_temporal_evoluti
         Ok(())
     })
     .await?;
-    let answer = broker_deferred
+    let answer = broker_not_recorded
         .with_responses()
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()

@@ -16,7 +16,7 @@ use ngsi_ld::{http::headers::Accept, model::NgsiLdMediaType};
 #[gtest]
 #[tokio::test]
 async fn a_ext_adv_0009_the_language_tags_level_advertises_language_tags_alone() -> Result<()> {
-    let broker_language_tags = broker::client(BrokerRole::LanguageTags)?;
+    let broker_language_tags = broker::client(BrokerRole::Prefixed)?;
     let received = broker_language_tags
         .with_responses()
         .with_accept(Accept::new(NgsiLdMediaType::Json))

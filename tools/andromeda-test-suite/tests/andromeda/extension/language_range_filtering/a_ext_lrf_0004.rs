@@ -20,7 +20,7 @@ use ngsi_ld::{
 async fn a_ext_lrf_0004_a_subscription_with_a_bare_language_range_notifies_on_a_regional_variant() -> Result<()> {
     let namespace = Namespace::fresh();
     let sink = NotificationSink::start().await?;
-    let broker_language_range = broker::client(BrokerRole::LanguageRange)?;
+    let broker_language_range = broker::client(BrokerRole::Edge)?;
     let subscription_id = namespace.subscription_id(1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_id = namespace.urn("Sensor", 1)?;

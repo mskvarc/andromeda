@@ -1,127 +1,113 @@
 name: test-suite-interoperability
 
-# Five brokers, each over a database server of its own (a tenant is a database, so no two identities share a server),
-# for the interoperability test target. The brokers reach one another by their service names and the runner reaches
-# each the same way, so a registration endpoint and a hosted @context resolve identically for both. No service
-# publishes a host port.
+# Five broker identities, each over a database server of its own, for the interoperability test target: the ETSI
+# interoperability cases name five brokers, so none can be merged. The brokers reach one another by their service
+# names and the runner reaches each the same way, so a registration endpoint and a hosted @context resolve identically
+# for both. No service publishes a host port.
 
-x-postgres: &postgres
-  image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-test-suite-postgres:latest}
-  command: ["postgres", "-c", "max_connections=200"]
-  shm_size: 1gb
-  environment:
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_DB: postgres
-  healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U postgres"]
-    interval: 2s
-    timeout: 3s
-    retries: 40
-
-x-broker: &broker
-  image: ${ANDROMEDA_IMAGE:-andromeda-test-suite:latest}
-  restart: unless-stopped
-  healthcheck:
-    # localhost resolves to ::1 first.
-    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
-    interval: 2s
-    timeout: 3s
-    retries: 60
-    start_period: 5s
-
-x-broker-environment: &broker-environment
-  ANDROMEDA__SERVER__HOST: "0.0.0.0"
-  ANDROMEDA__SERVER__PORT: "1056"
-  ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
-  ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
-  ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "recorded"
-  ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
-  ANDROMEDA__DATABASE__MAX_CONNECTIONS: "24"
-  ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
-  ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "12"
+x-template: &template
+  file: ../templates/docker-compose.yaml
 
 services:
   postgres-1:
-    <<: *postgres
+    extends:
+      <<: *template
+      service: postgres
 
   broker-1:
-    <<: *broker
+    extends:
+      <<: *template
+      service: broker
     depends_on:
       postgres-1:
         condition: service_healthy
     environment:
-      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-1:5432/postgres"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-1"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-1"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-1:1056"
 
   postgres-2:
-    <<: *postgres
+    extends:
+      <<: *template
+      service: postgres
 
   broker-2:
-    <<: *broker
+    extends:
+      <<: *template
+      service: broker
     depends_on:
       postgres-2:
         condition: service_healthy
     environment:
-      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-2:5432/postgres"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-2"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-2"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-2:1056"
 
   postgres-3:
-    <<: *postgres
+    extends:
+      <<: *template
+      service: postgres
 
   broker-3:
-    <<: *broker
+    extends:
+      <<: *template
+      service: broker
     depends_on:
       postgres-3:
         condition: service_healthy
     environment:
-      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-3:5432/postgres"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-3"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-3"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-3:1056"
 
   postgres-4:
-    <<: *postgres
+    extends:
+      <<: *template
+      service: postgres
 
   broker-4:
-    <<: *broker
+    extends:
+      <<: *template
+      service: broker
     depends_on:
       postgres-4:
         condition: service_healthy
     environment:
-      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-4:5432/postgres"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-4"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-4"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-4:1056"
 
   postgres-5:
-    <<: *postgres
+    extends:
+      <<: *template
+      service: postgres
 
   broker-5:
-    <<: *broker
+    extends:
+      <<: *template
+      service: broker
     depends_on:
       postgres-5:
         condition: service_healthy
     environment:
-      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-5:5432/postgres"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-5"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-5"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-5:1056"
 
   runner:
-    image: andromeda-test-suite-runner:latest
-    build:
-      context: ../runner
-    profiles: ["runner"]
+    extends:
+      <<: *template
+      service: runner
     depends_on:
       broker-1:
         condition: service_healthy
@@ -134,11 +120,6 @@ services:
       broker-5:
         condition: service_healthy
     env_file: runner.env
-    working_dir: /andromeda/tools/andromeda-test-suite
-    volumes:
-      - ../../../..:/andromeda:ro
-      - target:/andromeda/target
-      - registry:/usr/local/cargo/registry
 
 volumes:
   target:

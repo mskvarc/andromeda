@@ -16,7 +16,7 @@ use ngsi_ld::{
     registration::RegistrationMode,
 };
 
-/// Pins: Query Entities on broker-bounded, whose limit is 5 distinct entities, over three inclusive registrations at brokers B, C and D that each hold the same 5 Entities, answers 200 with the 5 Entities once each, and a query with entityMap true answers 201 with a map whose pages of 2 cover the 5
+/// Pins: Query Entities on broker-f, whose limit is 5 distinct entities, over three inclusive registrations at brokers B, C and D that each hold the same 5 Entities, answers 200 with the 5 Entities once each, and a query with entityMap true answers 201 with a map whose pages of 2 cover the 5
 /// Clause: 5.7.2.4, 4.3.6.7, 4.12, 5.5.14
 #[gtest]
 #[tokio::test]
@@ -25,7 +25,7 @@ async fn n_fed_qry_7418_three_sources_holding_the_same_entities_answer_each_once
     let broker_b = broker::client(BrokerRole::B)?;
     let broker_c = broker::client(BrokerRole::C)?;
     let broker_d = broker::client(BrokerRole::D)?;
-    let bounded = broker::client(BrokerRole::Bounded)?;
+    let bounded = broker::client(BrokerRole::F)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let numbers = [1, 2, 3, 4, 5];
     for holder in [&broker_b, &broker_c, &broker_d] {

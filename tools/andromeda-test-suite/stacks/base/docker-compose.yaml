@@ -4,90 +4,56 @@ name: test-suite-base
 # the runner service on the same network and receive notifications and forwarded requests in servers of their own
 # process, so no service publishes a host port.
 
-x-mosquitto-healthcheck: &mosquitto-healthcheck
-  # Any $SYS message on the observer listener proves the broker accepts clients.
-  test: ["CMD", "mosquitto_sub", "-p", "1880", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
-  interval: 10s
-  timeout: 5s
-  retries: 3
-  start_period: 30s
-  start_interval: 1s
+x-mosquitto: &mosquitto
+  image: eclipse-mosquitto:2.1.2-alpine
+  volumes:
+    - ../mosquitto:/mosquitto/config:ro
+  healthcheck:
+    # Any $SYS message on the observer listener proves the broker accepts clients.
+    test: ["CMD", "mosquitto_sub", "-p", "1880", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+    start_interval: 1s
 
 services:
   postgres:
-    image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-test-suite-postgres:latest}
-    command: ["postgres", "-c", "max_connections=200"]
-    # Docker's default 64 MB /dev/shm holds Postgres's dynamic shared memory: the cumulative statistics hash grows
-    # with the relations of every tenant database, and a few hundred private tenants fill it.
-    shm_size: 1gb
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 2s
-      timeout: 3s
-      retries: 40
+    extends:
+      file: ../templates/docker-compose.yaml
+      service: postgres
 
   mosquitto:
-    image: eclipse-mosquitto:2.1.2-alpine
+    <<: *mosquitto
     command: ["mosquitto", "-c", "/mosquitto/config/anonymous.conf"]
-    volumes:
-      - ../mosquitto:/mosquitto/config:ro
-    healthcheck: *mosquitto-healthcheck
 
   mosquitto-auth:
-    image: eclipse-mosquitto:2.1.2-alpine
+    <<: *mosquitto
     command: ["mosquitto", "-c", "/mosquitto/config/password.conf"]
-    volumes:
-      - ../mosquitto:/mosquitto/config:ro
-    healthcheck: *mosquitto-healthcheck
 
   mosquitto-large:
-    image: eclipse-mosquitto:2.1.2-alpine
+    <<: *mosquitto
     command: ["mosquitto", "-c", "/mosquitto/config/large.conf"]
-    volumes:
-      - ../mosquitto:/mosquitto/config:ro
-    healthcheck: *mosquitto-healthcheck
 
   broker:
-    image: ${ANDROMEDA_IMAGE:-andromeda-test-suite:latest}
-    restart: unless-stopped
+    extends:
+      file: ../templates/docker-compose.yaml
+      service: broker
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      ANDROMEDA__SERVER__HOST: "0.0.0.0"
       ANDROMEDA__SERVER__PORT: "1056"
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
-      ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
       # Small enough to reach the 206 cut of a temporal query.
       ANDROMEDA__TEMPORAL__QUERY__DEFAULT_LAST_N: "19"
       ANDROMEDA__TEMPORAL__QUERY__MAX_LAST_N: "19"
-      ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
-      # The broker default, stated because tests read Core writes back from /temporal.
-      ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "recorded"
-      ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
-      ANDROMEDA__DATABASE__MAX_CONNECTIONS: "32"
-      # Resident runtimes times their pools stays under max_connections with the platform pool: 16 * 4 + 32 = 96 of
-      # 200, leaving room for in-flight overshoot as private tenants accumulate on a kept stack.
-      ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
-      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "16"
       ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
-    healthcheck:
-      # localhost resolves to ::1 first.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
-      interval: 2s
-      timeout: 3s
-      retries: 60
-      start_period: 5s
 
   runner:
-    image: andromeda-test-suite-runner:latest
-    build:
-      context: ../runner
-    profiles: ["runner"]
+    extends:
+      file: ../templates/docker-compose.yaml
+      service: runner
     depends_on:
       broker:
         condition: service_healthy
@@ -98,11 +64,6 @@ services:
       mosquitto-large:
         condition: service_healthy
     env_file: runner.env
-    working_dir: /andromeda/tools/andromeda-test-suite
-    volumes:
-      - ../../../..:/andromeda:ro
-      - target:/andromeda/target
-      - registry:/usr/local/cargo/registry
 
 volumes:
   target:

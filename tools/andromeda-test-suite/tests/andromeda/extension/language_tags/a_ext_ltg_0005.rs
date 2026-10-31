@@ -20,7 +20,7 @@ use ngsi_ld::{
 async fn a_ext_ltg_0005_a_subscription_with_a_full_tag_notifies_on_that_tag_alone() -> Result<()> {
     let namespace = Namespace::fresh();
     let sink = NotificationSink::start().await?;
-    let broker_language_tags = broker::client(BrokerRole::LanguageTags)?;
+    let broker_language_tags = broker::client(BrokerRole::Prefixed)?;
     let subscription_id = namespace.subscription_id(1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_id = namespace.urn("Sensor", 1)?;

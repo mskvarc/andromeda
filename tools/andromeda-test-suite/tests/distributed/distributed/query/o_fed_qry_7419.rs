@@ -11,9 +11,9 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{http::headers::Accept, model::ErrorType, registration::RegistrationMode};
 
-/// Pins: Query Entities on broker-bounded, whose source row ceiling is 15, over four inclusive registrations at brokers B, C, D and E that each hold the same 5 Entities, 20 rows in all, answers 403 `TooManyResults` whose detail names `federation.forwarding.max_query_source_rows`
+/// Pins: Query Entities on broker-f, whose source row ceiling is 15, over four inclusive registrations at brokers B, C, D and E that each hold the same 5 Entities, 20 rows in all, answers 403 `TooManyResults` whose detail names `federation.forwarding.max_query_source_rows`
 /// Clause: 4.12, 5.7.2.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-bounded gathers at most 5 distinct entities and 15 source rows
+/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_7419_sources_sending_more_than_the_source_row_ceiling_are_too_many_results_naming_it() -> Result<()> {
@@ -22,7 +22,7 @@ async fn o_fed_qry_7419_sources_sending_more_than_the_source_row_ceiling_are_too
     let broker_c = broker::client(BrokerRole::C)?;
     let broker_d = broker::client(BrokerRole::D)?;
     let broker_e = broker::client(BrokerRole::E)?;
-    let bounded = broker::client(BrokerRole::Bounded)?;
+    let bounded = broker::client(BrokerRole::F)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     for holder in [&broker_b, &broker_c, &broker_d, &broker_e] {
         hold_vehicles(holder, &namespace, &[1, 2, 3, 4, 5]).await?;
