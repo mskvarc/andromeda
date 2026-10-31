@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
     csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
-    database_defaults::{DefaultsReconciliation, reconcile_database_defaults},
+    database_defaults::{DatabaseDefaults, DefaultsReconciliation, reconcile_database_defaults},
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
@@ -118,13 +118,13 @@ pub(super) struct EntityStoragePorts {
 /// tenant was migrated by a replica that has not upgraded them, or an earlier
 /// upgrade quarantined one. One `EXISTS` probe over the serving pool decides
 /// whether the direct connection is opened at all.
-async fn bring_schema_current(pool: &PgPool, migration_url: &Url, acquire_timeout: Duration) -> Result<(), TenantAssemblyError> {
+async fn bring_schema_current(pool: &PgPool, migration_url: &Url, defaults: &DatabaseDefaults, acquire_timeout: Duration) -> Result<(), TenantAssemblyError> {
     match tenant_schema_state(pool).await? {
         TenantSchemaState::Current => match snapshot_branch_state(pool).await? {
             SnapshotBranchState::Current => {}
             SnapshotBranchState::Behind => upgrade_single_tenant_snapshot_branches(migration_url, acquire_timeout).await?,
         },
-        TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, acquire_timeout).await?,
+        TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, defaults, acquire_timeout).await?,
     }
     Ok(())
 }
@@ -132,10 +132,15 @@ async fn bring_schema_current(pool: &PgPool, migration_url: &Url, acquire_timeou
 /// Open the tenant's serving pool with its database's session defaults in
 /// force.
 ///
-/// The defaults are reconciled over the pool itself, which works through a
-/// pooler as well; when they had to be written, the pool's own sessions
-/// started under the values they replaced, so the pool is closed and opened
-/// again before it serves anything.
+/// A tenant database receives its defaults over a direct connection when it
+/// is provisioned or migrated, before any pooled session reaches it. They are
+/// reconciled here too, over the pool itself, which works through a pooler as
+/// well, so a configuration change reaches a database whose schema is already
+/// current. When they had to be written, the pool's own sessions started under
+/// the values they replaced, so the pool is closed and opened again before it
+/// serves anything. Behind a transaction pooler that reopening reaches only
+/// new server sessions: the pooler's existing ones keep the old values until
+/// it replaces them.
 async fn open_serving_pool(config: &TenantFactoryConfig, serving_url: &Url, max_connections: u32) -> Result<PgPool, TenantAssemblyError> {
     let options = configure_pool_options(max_connections, config.database.acquire_timeout());
     let pool = options.clone().connect(serving_url.as_str()).await?; // clone: the options are needed again when the pool is reopened.
@@ -204,7 +209,7 @@ pub(super) async fn initialize_storage(
     // advisory lock, which a transaction-pooling proxy would break; the pooler
     // is left to serve every warm reopen.
     let pool = open_serving_pool(config, serving_url, max_connections).await?;
-    bring_schema_current(&pool, migration_url, config.database.acquire_timeout()).await?;
+    bring_schema_current(&pool, migration_url, &config.database_defaults, config.database.acquire_timeout()).await?;
     bring_pattern_forms_current(&pool).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));

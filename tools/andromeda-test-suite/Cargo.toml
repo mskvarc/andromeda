@@ -341,5 +341,9 @@ name = "annex_c"
 path = "tests/annex_c/main.rs"
 
 [[test]]
+name = "pgbouncer_tenancy"
+path = "tests/pgbouncer/tenancy/main.rs"
+
+[[test]]
 name = "interoperability"
 path = "tests/interoperability/main.rs"

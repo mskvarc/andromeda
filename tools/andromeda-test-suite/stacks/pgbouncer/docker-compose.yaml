@@ -1,0 +1,66 @@
+name: test-suite-pgbouncer
+
+# One broker serving every request through a transaction-pooling PgBouncer in front of its PostgreSQL server, the
+# deployment `[database.pooler]` configures, for the pgbouncer tree. Provisioning, migration and maintenance reach the
+# server directly. The tests run in the runner service on the same network; no service publishes a host port.
+
+x-template: &template
+  file: ../templates/docker-compose.yaml
+
+services:
+  postgres:
+    extends:
+      <<: *template
+      service: postgres
+
+  # One route for every database and one shared login, so each tenant database gets a pool of its own on first use.
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.25.2-20260911.206
+    entrypoint: ["/opt/pgbouncer/pgbouncer"]
+    command: ["/etc/pgbouncer/pgbouncer.ini"]
+    volumes:
+      - ./pgbouncer:/etc/pgbouncer:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # localhost resolves to ::1 first.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  broker:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1081"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "4"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-pgbouncer"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-pgbouncer"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker:1081"
+      # Every tenant of a burst of first writes stays resident while the burst runs.
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  runner:
+    extends:
+      <<: *template
+      service: runner
+    depends_on:
+      broker:
+        condition: service_healthy
+    env_file: runner.env
+
+volumes:
+  target:
+    name: test-suite-target
+  registry:
+    name: test-suite-cargo-registry

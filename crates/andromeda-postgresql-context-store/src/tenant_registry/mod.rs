@@ -80,6 +80,9 @@ pub struct PostgresTenantRegistry {
     /// How long a checkout waits for a connection before the migration and
     /// provisioning pools give up, matching the request path's acquire deadline.
     acquire_timeout: Duration,
+    /// The session defaults a provisioned tenant database receives before any
+    /// request reaches it.
+    defaults: DatabaseDefaults,
 }
 
 impl PostgresTenantRegistry {
@@ -127,6 +130,7 @@ impl PostgresTenantRegistry {
             default_database,
             databases,
             acquire_timeout,
+            defaults: *defaults,
         };
         registry.register_default_tenant().await?;
         Ok(registry)
@@ -358,7 +362,7 @@ impl PostgresTenantRegistry {
 
         create_database_if_missing(&self.direct_url, &database_name).await?;
         let tenant_url = self.direct_url.with_database_name(&database_name);
-        migrate_single_tenant_db(&tenant_url, self.acquire_timeout).await?;
+        migrate_single_tenant_db(&tenant_url, &self.defaults, self.acquire_timeout).await?;
 
         Ok(database_name)
     }

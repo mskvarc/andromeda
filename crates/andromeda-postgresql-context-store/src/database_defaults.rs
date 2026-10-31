@@ -28,7 +28,10 @@
 //! stored defaults are read back and only a missing or different one is
 //! written. Sessions opened before a write keep the values they started with,
 //! which is why a caller that sees [`DefaultsReconciliation::Adjusted`] opens
-//! its pool again.
+//! its pool again, and why a new tenant database receives its defaults over a
+//! direct connection before its first pooled session exists: a
+//! transaction-pooling proxy keeps the server sessions it holds, and a session
+//! it opened before the write would serve without them.
 
 use crate::error::ContextStoreError;
 use andromeda_configuration::schema::database::SynchronousCommit;

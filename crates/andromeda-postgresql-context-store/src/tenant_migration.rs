@@ -13,6 +13,7 @@
 //! again a bounded number of times.
 
 use crate::{
+    database_defaults::{DatabaseDefaults, DefaultsReconciliation, reconcile_database_defaults},
     error::ContextStoreError,
     extension_update::{begin_without_timescaledb, pending_extension_updates, update_extensions},
     migration_set::{branch::BranchMigrationSet, platform::platform_migrator, tenant::tenant_migrator},
@@ -154,7 +155,8 @@ fn report_branch_upgrade(report: BranchUpgradeReport) {
 }
 
 /// Update a single tenant database's extensions, then connect to it over a
-/// one-connection pool, migrate it, and close the pool.
+/// one-connection pool, install its session defaults, migrate it, and close
+/// the pool.
 ///
 /// `database_url` must reach PostgreSQL directly, never a transaction-pooling
 /// proxy: the migrator holds a session advisory lock across the run, which a
@@ -163,15 +165,30 @@ fn report_branch_upgrade(report: BranchUpgradeReport) {
 /// the pool opens, so the migrations and the floor check run against the
 /// versions the server ships.
 ///
+/// The defaults are installed here, over the direct connection, because a new
+/// tenant database is migrated before any request reaches it: every session a
+/// transaction-pooling proxy opens to it afterwards inherits them. A pooler
+/// keeps the server sessions it already holds, so defaults first written over
+/// the serving pool would be missing from those sessions until the pooler
+/// replaced them. When the defaults had to be written, the migration session
+/// started under the values they replaced and is opened again.
+///
 /// # Errors
 ///
 /// Returns the errors [`update_extensions`] returns,
-/// [`ContextStoreError::Database`] when the pool cannot connect, and the errors
-/// [`migrate_tenant_db`] returns when the migration or the schema contract
-/// check fails.
-pub async fn migrate_single_tenant_db(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
+/// [`ContextStoreError::Database`] when the pool cannot connect or the defaults
+/// cannot be installed, and the errors [`migrate_tenant_db`] returns when the
+/// migration or the schema contract check fails.
+pub async fn migrate_single_tenant_db(database_url: &Url, defaults: &DatabaseDefaults, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
     update_extensions(database_url).await?;
     let pool = open_schema_change_pool(database_url, acquire_timeout).await?;
+    let pool = match reconcile_database_defaults(&pool, defaults).await? {
+        DefaultsReconciliation::Unchanged => pool,
+        DefaultsReconciliation::Adjusted => {
+            pool.close().await;
+            open_schema_change_pool(database_url, acquire_timeout).await?
+        }
+    };
     migrate_tenant_db(&pool).await?;
     pool.close().await;
     Ok(())
