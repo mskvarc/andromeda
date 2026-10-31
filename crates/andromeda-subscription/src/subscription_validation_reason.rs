@@ -74,12 +74,6 @@ pub enum SubscriptionValidationReason {
     /// `timeInterval` was given without `entities` on a non-local subscription.
     #[error("'entities' is required when 'timeInterval' is present, unless the request is limited to local scope")]
     EntitiesRequiredForTimeInterval,
-    /// A `q` filter for a subscription named no comparison operator.
-    ///
-    /// A subscription's `q` is matched against one notified entity, so a filter
-    /// with no comparison selects nothing meaningful.
-    #[error("q expression must contain at least one comparison operator")]
-    QExpressionNoComparison,
     /// `notification.showChanges` was true under a `keyValues` format, which
     /// cannot represent the previous value.
     #[error("notification.showChanges cannot be true when notification.format is keyValues")]

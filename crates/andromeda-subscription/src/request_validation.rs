@@ -19,18 +19,8 @@ use andromeda_ngsi_ld_model::{
     subscription::standing::SubscriptionStanding,
     subscription_request::SubscriptionRequest,
 };
-use andromeda_ngsi_ld_query::{
-    filter::{expression::Expr, predicate::Predicate},
-    temporal::window::TimeInterval,
-};
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use chrono::Utc;
-
-fn q_has_comparison(expr: &Expr) -> bool {
-    match expr {
-        Expr::Pred(pred) => !matches!(pred, Predicate::Exists(_)),
-        Expr::And(terms) | Expr::Or(terms) => terms.iter().any(q_has_comparison),
-    }
-}
 
 /// Validate a subscription create body, admitting its filters under
 /// `admission`.
@@ -145,12 +135,6 @@ pub fn validate_common_members(request: &SubscriptionRequest, admission: Subscri
 
     if request.time_interval.as_set().is_some_and(|time_interval| *time_interval <= 0.0) {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive));
-    }
-
-    if let Some(q) = request.q.as_set()
-        && !q_has_comparison(q)
-    {
-        return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
     }
 
     if let Some(q) = request.q.as_set() {
@@ -425,18 +409,16 @@ mod tests {
         assert!(SubscriptionRequest::from_request_text(br#"{"q": "speed>"}"#, CoreTermAliases::keyword_spellings()).is_err());
     }
 
-    /// A `q` naming no comparison selects nothing meaningful for one notified
-    /// entity.
+    /// Clause 4.9 makes an attribute path alone a Query Term testing that the
+    /// entity defines the element, and Table 5.2.12-1 types a Subscription `q`
+    /// as that same language, so existence terms are admitted on their own and
+    /// beside comparisons.
     #[test]
-    fn a_q_without_a_comparison_is_refused() {
-        let result = validate_common_members(&request(&json!({"q": "speed"})), admission(LanguageTargeting::Specification));
-        assert!(
-            matches!(
-                &result,
-                Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison))
-            ),
-            "got {result:?}"
-        );
+    fn a_q_of_existence_terms_alone_is_accepted() {
+        for q in ["speed", "speed;brandName", "speed|isParkedIn{category}", "speed.accuracy"] {
+            let result = validate_common_members(&request(&json!({"q": q})), admission(LanguageTargeting::Specification));
+            assert!(result.is_ok(), "{q}: {result:?}");
+        }
     }
 
     #[test]

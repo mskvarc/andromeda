@@ -397,6 +397,33 @@ mod tests {
         );
     }
 
+    /// Clause 4.9: an attribute path alone holds when the entity defines it,
+    /// so a `q` of `speed` admits the Vehicle that has a speed and not the one
+    /// without.
+    #[test]
+    fn an_existence_q_admits_only_an_entity_defining_the_attribute() {
+        let defaults = || DEFAULT_NOTIFICATION_TRIGGERS.to_vec();
+        let update = || vec![instance("https://example.com/isParkedIn", AttributeChangeKind::Updated)];
+        pretty_assertions::assert_eq!(
+            admitted_through(
+                vec![listening(1, "\"https://example.com/speed\"", defaults())],
+                &vehicle(),
+                &vehicle(),
+                update()
+            ),
+            vec!["urn:ngsi-ld:Subscription:1".to_owned()]
+        );
+        pretty_assertions::assert_eq!(
+            admitted_through(
+                vec![listening(1, "\"https://example.com/speed\"", defaults())],
+                &vehicle_without_speed(),
+                &vehicle_without_speed(),
+                update()
+            ),
+            Vec::<String>::new()
+        );
+    }
+
     /// A filter without a hop is decided wherever the change is filtered.
     #[test]
     fn a_subscription_without_a_hop_is_decided_either_way() {
