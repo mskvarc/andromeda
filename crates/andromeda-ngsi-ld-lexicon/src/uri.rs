@@ -161,21 +161,27 @@ impl From<Urn> for Uri {
 }
 
 // A WHATWG URL is not always a URI: an opaque path such as the one of
-// `urn:a b` keeps its literal space. Its serialisation is held to the grammar
-// like any other spelling.
+// `urn:a b` keeps its literal space. Its serialisation is parsed like any other
+// spelling, so a `urn:` URL is held as the URN it is: the derived equality
+// compares the form first, and one string held in two forms would name two
+// resources.
 impl TryFrom<Url> for Uri {
     type Error = UriParseError;
 
     fn try_from(url: Url) -> Result<Uri, UriParseError> {
-        well_formed(url.as_str())?;
-        Ok(Uri(UriForm::Url(url)))
+        url.as_str().parse()
     }
 }
 
-// An IRI is always a URI (clause 4.6.2 NOTE 2).
+// An IRI is always a URI (clause 4.6.2 NOTE 2). It is held in the form its
+// spelling parses into, for the same reason as a URL; only a spelling the
+// parser refuses, which no other construction can produce, stays an IRI.
 impl From<IriBuf> for Uri {
     fn from(iri: IriBuf) -> Uri {
-        Uri(UriForm::Iri(iri))
+        match iri.as_str().parse() {
+            Ok(uri) => uri,
+            Err(UriParseError) => Uri(UriForm::Iri(iri)),
+        }
     }
 }
 
@@ -206,6 +212,7 @@ impl From<Uri> for String {
 mod tests {
     use crate::uri::{Uri, UriParseError, UriView};
     use iri_rs::IriBuf;
+    use std::hash::{DefaultHasher, Hash, Hasher};
     use url::Url;
     use urn_rs::Urn;
 
@@ -252,6 +259,35 @@ mod tests {
         let uri = Uri::try_from(url).unwrap();
         assert!(matches!(uri.view(), UriView::Url(_)));
         assert!(uri.as_url().is_some());
+    }
+
+    fn hash_of(uri: &Uri) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        uri.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn a_urn_spelling_is_one_uri_whether_it_arrives_as_a_string_a_url_or_an_iri() {
+        let raw = "urn:ngsi-ld:FedTrip:001";
+        let parsed: Uri = raw.parse().expect("a URN");
+        let from_url = Uri::try_from(Url::parse(raw).expect("a URL")).expect("a URI");
+        let from_iri = Uri::from(IriBuf::new(raw.to_owned()).expect("an IRI"));
+        for other in [&from_url, &from_iri] {
+            assert!(matches!(other.view(), UriView::Urn(_)), "{other:?}");
+            pretty_assertions::assert_eq!(other, &parsed);
+            pretty_assertions::assert_eq!(hash_of(other), hash_of(&parsed));
+        }
+    }
+
+    #[test]
+    fn an_ascii_iri_is_held_as_the_url_its_spelling_parses_into() {
+        let raw = "https://example.com/entity/1";
+        let parsed: Uri = raw.parse().expect("a URL");
+        let from_iri = Uri::from(IriBuf::new(raw.to_owned()).expect("an IRI"));
+        assert!(matches!(from_iri.view(), UriView::Url(_)), "{from_iri:?}");
+        pretty_assertions::assert_eq!(from_iri, parsed);
+        pretty_assertions::assert_eq!(hash_of(&from_iri), hash_of(&parsed));
     }
 
     #[test]
