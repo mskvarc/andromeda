@@ -36,9 +36,12 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
         FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
         FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
-        // A `q` the reached sources cannot read as asked is request data the
-        // operation cannot meet (clause 5.5.2).
-        FederationError::TargetLanguageUnadvertised { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        // A `q` the reached sources cannot read as asked, or an identifier list
+        // no split carries within this broker's forwarded URL budget, is
+        // request data the operation cannot meet (clause 5.5.2).
+        FederationError::TargetLanguageUnadvertised { .. } | FederationError::ForwardedUrlOverBudget { .. } => {
+            ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
+        }
         FederationError::Registration(source) => registration_store_failure(source),
         FederationError::JsonLd(_)
         | FederationError::Query(_)
@@ -67,6 +70,7 @@ pub fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::RemoteNotFound { .. }
         | FederationError::BadGateway { .. }
         | FederationError::TargetLanguageUnadvertised { .. }
+        | FederationError::ForwardedUrlOverBudget { .. }
         | FederationError::Registration(_)
         | FederationError::Compaction(_)
         | FederationError::Representation(_)
@@ -132,6 +136,7 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
         | FederationError::RemoteNotFound { .. }
         | FederationError::BadGateway { .. }
         | FederationError::TargetLanguageUnadvertised { .. }
+        | FederationError::ForwardedUrlOverBudget { .. }
         | FederationError::JsonLd(_)
         | FederationError::Query(_)
         | FederationError::Compaction(_)
@@ -267,10 +272,18 @@ mod tests {
             ),
             (
                 FederationError::BadGateway {
-                    registration,
+                    registration: registration.clone(), // clone: same
                     cause: Box::new(GatewayFailure::Answered(RemoteAnswer { status: 403, problem: None })),
                 },
                 ProblemClassification::BadGateway,
+            ),
+            (
+                FederationError::ForwardedUrlOverBudget {
+                    registration,
+                    budget: 8192,
+                    smallest: 9000,
+                },
+                ProblemClassification::Category(NgsiLdErrorType::BadRequestData),
             ),
             (
                 FederationError::from(FederationInvariant::ForwardingProtocol(
