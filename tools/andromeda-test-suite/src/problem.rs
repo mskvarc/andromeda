@@ -18,6 +18,10 @@ use std::{fmt::Debug, result::Result as StdResult};
 /// The problem type of a request refused for its size (clause 6.3.2), which `ErrorType` names by no variant of its own.
 const REQUEST_ENTITY_TOO_LARGE: Iri<&str> = iri!("https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
 
+/// The problem type of a request refused for a condition expected to clear shortly, which `ErrorType` names by no
+/// variant of its own: clause 6.3.2 admits the 503 of the HTTP binding, and Table 6.3.2-1 binds `InternalError` to 500.
+const SERVICE_UNAVAILABLE: Iri<&str> = iri!("https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable");
+
 /// What a matcher requires of the `title` of a problem (clause 5.5.3), and of its `detail` beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TitleCheck {
@@ -266,6 +270,12 @@ impl<A: AnsweredStatus + Debug> Matcher<&A> for AnsweredMatcher {
 #[must_use]
 pub fn request_entity_too_large() -> ErrorType {
     ErrorType::from(IriRefBuf::from(IriBuf::from(REQUEST_ENTITY_TOO_LARGE)))
+}
+
+/// The problem type of a request refused for a condition expected to clear shortly (clause 6.3.2).
+#[must_use]
+pub fn service_unavailable() -> ErrorType {
+    ErrorType::from(IriRefBuf::from(IriBuf::from(SERVICE_UNAVAILABLE)))
 }
 
 /// The `status` member of the problem a refused call reports, which the HTTP status repeats (clause 6.3.3).

@@ -1,13 +1,14 @@
 //! An operation under a snapshot preparing past the wait is refused with retry after.
 
 use andromeda_test_suite::{
+    answered_status::AnsweredStatus,
     broker,
     cleanup::Cleanup,
     config::{BrokerRole, SuiteConfig},
     context_source::ContextSource,
     eventually::retried,
     namespace::Namespace,
-    problem::answered,
+    problem::{problem, service_unavailable},
     source_answer,
     source_request::SourceRequest,
 };
@@ -22,9 +23,11 @@ use ngsi_ld::{
 use std::time::Duration;
 
 /// Pins: On a broker that holds an operation scoped to a preparing Snapshot for two seconds, Query Entities under a
-/// Snapshot whose capture waits four seconds for its context source answers 503 with Retry-After 1, and the
-/// Snapshot then ends empty once the source has answered
-/// Clause: 5.5.15, 5.16.1.4
+/// Snapshot whose capture waits four seconds for its context source answers 503 `ServiceUnavailable`, titled "Service
+/// unavailable", with Retry-After 1, and the Snapshot then ends empty once the source has answered
+/// Clause: 5.5.15, 5.16.1.4, 6.3.2
+/// Recorded: Table 6.3.2-1 binds `InternalError` to 500, a failure a client does not retry, so a retryable 503 carries
+/// a type of its own
 /// Tenant: private (the quota of the broker counts every Snapshot of the Tenant)
 #[gtest]
 #[tokio::test]
@@ -81,7 +84,11 @@ async fn a_snp_qry_8140_an_operation_under_a_snapshot_preparing_past_the_wait_is
         .await;
     expect_that!(
         &answer,
-        answered(StatusCode::SERVICE_UNAVAILABLE).with_header(HeaderName::from_static("retry-after"), "1")
+        problem(StatusCode::SERVICE_UNAVAILABLE, service_unavailable()).with_header(HeaderName::from_static("retry-after"), "1")
+    );
+    expect_that!(
+        answer.answered_problem().and_then(|details| details.title.as_deref()),
+        some(eq("Service unavailable"))
     );
     retried(async || {
         let snapshot_2 = broker_snapshot_tenant

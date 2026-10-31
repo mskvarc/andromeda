@@ -5,7 +5,7 @@ use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLd
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 
 /// A failure while validating, applying, compiling, or persisting a subscription.
@@ -55,14 +55,14 @@ pub enum SubscriptionError {
     /// Backpressure, not a fault: no backend became free within the acquire
     /// deadline, so the well-formed request is shed and can be retried. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     StoreSaturated,
     /// The datastore could not be reached, or the connection to it was lost.
     ///
     /// Not a fault of the request: nothing of it is known to have persisted, so
     /// the identical request can be sent again once the store is back. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore is temporarily unavailable; retry shortly")]
+    #[error("{}", RetryCause::Unreachable)]
     StoreUnavailable,
     /// An internal subscription invariant could not be satisfied.
     #[error("subscription invariant failed: {0}")]

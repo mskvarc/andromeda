@@ -170,12 +170,11 @@ mod tests {
         pretty_assertions::assert_eq!(report.detail(), "entity is missing an id");
     }
 
-    /// Clause 5.5.6: a temporal write every retry lost to a concurrent
-    /// transaction, a saturated pool and a store that cannot be reached are
-    /// `InternalError` failures; only the 503 binding status and `Retry-After`
-    /// say the request can be repeated, and how soon.
+    /// A temporal write every retry lost to a concurrent transaction, a
+    /// saturated pool and a store that cannot be reached carry the retryable
+    /// 503 type, and `Retry-After` says how soon the request can be repeated.
     #[test]
-    fn a_load_shed_temporal_answer_is_a_503_internal_error_with_retry_after() {
+    fn a_load_shed_temporal_answer_is_a_retryable_503_with_retry_after() {
         for (error, retry_after) in [
             (TemporalError::StoreSaturated, Duration::from_secs(1)),
             (TemporalError::TransactionContended, Duration::from_secs(1)),
@@ -186,7 +185,7 @@ mod tests {
             pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable, "{error}");
             pretty_assertions::assert_eq!(
                 classification.type_iri().as_str(),
-                NgsiLdErrorType::InternalError.type_iri().as_str(),
+                "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
                 "{error}"
             );
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{error}");
@@ -195,16 +194,16 @@ mod tests {
     }
 
     /// A mutation whose entity's queued history another owner still held when
-    /// the barrier's wait ran out is a 503 `InternalError` asking the client
+    /// the barrier's wait ran out is a retryable 503 asking the client
     /// to come back once that owner's lease lapses.
     #[test]
-    fn an_unsettled_history_is_a_503_internal_error_retried_after_the_remaining_lease() {
+    fn an_unsettled_history_is_a_retryable_503_retried_after_the_remaining_lease() {
         let unsettled = UnsettledHistory::after(Duration::from_millis(2300));
         let report = classify_temporal_error(&TemporalError::HistoryUnsettled(unsettled));
         let classification = report.classification();
         pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable);
         pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE);
-        pretty_assertions::assert_eq!(classification.type_iri().as_str(), NgsiLdErrorType::InternalError.type_iri().as_str());
+        pretty_assertions::assert_eq!(classification.type_iri().as_str(), "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable");
         pretty_assertions::assert_eq!(report.retry_after(), Some(unsettled.retry_after()));
         pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(3)));
     }

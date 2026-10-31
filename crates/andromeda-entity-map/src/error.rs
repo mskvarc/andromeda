@@ -2,7 +2,7 @@
 
 use crate::entity_map_invariant::EntityMapInvariant;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 
 /// A semantic Entity Map failure or an implementation-neutral storage failure.
@@ -29,14 +29,14 @@ pub enum EntityMapError {
     /// Backpressure, not a fault: no backend became free within the acquire
     /// deadline, so the well-formed request is shed and can be retried. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     StoreSaturated,
     /// The datastore could not be reached, or the connection to it was lost.
     ///
     /// Not a fault of the request: nothing of it is known to have persisted, so
     /// the identical request can be sent again once the store is back. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore is temporarily unavailable; retry shortly")]
+    #[error("{}", RetryCause::Unreachable)]
     StoreUnavailable,
     /// Policy generated a value that violated a domain invariant.
     #[error("entity map invariant failed: {0}")]

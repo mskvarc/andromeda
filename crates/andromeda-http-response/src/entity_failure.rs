@@ -167,13 +167,11 @@ mod tests {
     }
 
     #[test]
-    fn a_load_shed_answer_is_a_503_internal_error_with_retry_after() {
-        // Clause 5.5.6: a failure the client did not cause -- a saturated pool,
-        // a transaction every retry lost to a concurrent one, a store that
-        // cannot be reached -- is an
-        // InternalError, and clause 5.5.3 allows no `type` outside clause
-        // 5.5.2. Only the binding status says the identical request can be
-        // sent again shortly, and `Retry-After` how soon.
+    fn a_load_shed_answer_is_a_retryable_503_with_retry_after() {
+        // Table 6.3.2-1 binds InternalError to 500, so a saturated pool, a
+        // transaction every retry lost to a concurrent one and a store that
+        // cannot be reached carry the retryable 503 type, and `Retry-After`
+        // says how soon the identical request can be sent again.
         for (source, retry_after) in [
             (EntityError::StoreSaturated, Duration::from_secs(1)),
             (EntityError::TransactionContended, Duration::from_secs(1)),
@@ -184,10 +182,10 @@ mod tests {
             pretty_assertions::assert_eq!(classification, ProblemClassification::ServiceUnavailable, "{source}");
             pretty_assertions::assert_eq!(
                 classification.type_iri().as_str(),
-                NgsiLdErrorType::InternalError.type_iri().as_str(),
+                "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
                 "{source}"
             );
-            pretty_assertions::assert_eq!(classification.title(), NgsiLdErrorType::InternalError.title(), "{source}");
+            pretty_assertions::assert_eq!(classification.title(), "Service unavailable", "{source}");
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{source}");
             pretty_assertions::assert_eq!(report.retry_after(), Some(retry_after), "{source}");
         }

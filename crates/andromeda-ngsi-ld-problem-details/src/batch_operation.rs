@@ -215,17 +215,17 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
 
         let type_uri = type_uri.ok_or_else(|| de::Error::missing_field("type"))?;
         let detail = detail_or_title(detail, title);
-        // A recognised category keeps its typed convenience, with the clause
-        // 6.3.17 statuses read back as the distributed classifications they
-        // name; any other URI is accepted verbatim, since RFC 7807 clause 3
-        // permits arbitrary type URIs.
-        let error_type = if let Some(distributed) = ProblemClassification::from_distributed_type_iri(&type_uri) {
+        // A recognised category or dedicated type keeps its typed convenience,
+        // with the clause 6.3.17 statuses and the retryable 503 read back as the
+        // classifications they name; any other URI is accepted verbatim, since
+        // RFC 7807 clause 3 permits arbitrary type URIs.
+        let error_type = if let Some(dedicated) = ProblemClassification::from_dedicated_type_iri(&type_uri) {
             if let Some(status) = status
-                && status != distributed.status_code().as_u16()
+                && status != dedicated.status_code().as_u16()
             {
-                return Err(de::Error::custom(ProblemDocumentError::DistributedStatusMismatch));
+                return Err(de::Error::custom(ProblemDocumentError::DedicatedStatusMismatch));
             }
-            BatchErrorKind::Known(distributed)
+            BatchErrorKind::Known(dedicated)
         } else {
             match NgsiLdErrorType::from_type_iri(&type_uri) {
                 Some(category) => BatchErrorKind::Known(WireProblemClassification { category, status }.classification().map_err(de::Error::custom)?),
@@ -460,14 +460,15 @@ mod tests {
     }
 
     #[test]
-    fn the_clause_6_3_17_statuses_serialise_and_read_back_as_their_distributed_classification() {
+    fn the_dedicated_statuses_serialise_and_read_back_as_their_classification() {
         // A distributed 404 is wire-identical to the ResourceNotFound category
-        // and reads back as it; the gateway statuses have no category of their
-        // own and read back as the distributed classification.
+        // and reads back as it; the gateway statuses and the retryable 503 have
+        // no category of their own and read back as their classification.
         for (classification, status, expected) in [
             (ProblemClassification::LoopDetected, 508, ProblemClassification::LoopDetected),
             (ProblemClassification::GatewayTimeout, 504, ProblemClassification::GatewayTimeout),
             (ProblemClassification::BadGateway, 502, ProblemClassification::BadGateway),
+            (ProblemClassification::ServiceUnavailable, 503, ProblemClassification::ServiceUnavailable),
             (
                 ProblemClassification::DistributedResourceNotFound,
                 404,

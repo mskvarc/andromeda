@@ -2,7 +2,7 @@
 
 use crate::{commit_invariant::CommitInvariant, side_effect_job_id::SideEffectJobId, submission_refusal::SubmissionRefusal};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -34,14 +34,14 @@ pub enum CommitError {
     /// Backpressure, not a fault: no backend became free within the acquire
     /// deadline. The write is well-formed and can be retried, so it is answered
     /// 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     StoreSaturated,
     /// The datastore could not be reached, or the connection to it was lost.
     ///
     /// Not a fault of the request: nothing of it is known to have persisted, so
     /// the identical request can be sent again once the store is back. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore is temporarily unavailable; retry shortly")]
+    #[error("{}", RetryCause::Unreachable)]
     StoreUnavailable,
     /// The datastore rolled the commit transaction back to break a deadlock or
     /// a serialization conflict with a concurrent transaction.
@@ -51,7 +51,7 @@ pub enum CommitError {
     /// small budget of its own; a write that loses every attempt surfaces here
     /// and is answered 503 with `Retry-After`, never the 500 a broker
     /// malfunction earns.
-    #[error("the commit was rolled back by a concurrent transaction; retry shortly")]
+    #[error("{}", RetryCause::Contended)]
     TransactionContended,
     /// A replayed commit found the side-effect job it settles no longer leased
     /// to the replaying worker, and committed nothing.

@@ -68,9 +68,7 @@ impl ClassifiedReport {
     /// momentarily at capacity — a saturated connection pool is the canonical
     /// case. The request is well-formed and can be retried unchanged, so it is
     /// answered 503, never the 500 an internal fault earns, and its detail is
-    /// disclosed rather than masked to a coarse operation summary. Clause 6.3.2 defines
-    /// no `ProblemDetails` type for 503, so the existing `ServiceUnavailable`
-    /// classification handling applies.
+    /// disclosed rather than masked to a coarse operation summary.
     pub fn store_saturated(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(STORE_SATURATED_RETRY_AFTER)
     }
@@ -81,9 +79,7 @@ impl ClassifiedReport {
     /// For a write that lost a deadlock or serialization conflict to concurrent
     /// transactions each time the broker ran it. Nothing of it persisted and the
     /// request is well-formed, so it can be sent again unchanged: answered 503,
-    /// never the 500 an internal fault earns, with its detail disclosed. Clause
-    /// 6.3.2 defines no `ProblemDetails` type for 503, so the existing
-    /// `ServiceUnavailable` classification handling applies.
+    /// never the 500 an internal fault earns, with its detail disclosed.
     pub fn transaction_contended(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(TRANSACTION_CONTENDED_RETRY_AFTER)
     }
@@ -96,9 +92,7 @@ impl ClassifiedReport {
     /// is known to have persisted, and every write the broker offers is
     /// idempotent in the store or answers a repeat with `AlreadyExists`, so it
     /// can be sent again once the store is back: answered 503 with its fixed
-    /// detail disclosed. The problem type stays `InternalError` (clause 5.5.6
-    /// names database timeouts among its cases); clause 6.3.2 admits the HTTP
-    /// binding's own 503.
+    /// detail disclosed.
     pub fn store_unavailable(detail: impl Into<String>) -> ClassifiedReport {
         ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, detail).with_retry_after(STORE_UNAVAILABLE_RETRY_AFTER)
     }
@@ -247,7 +241,10 @@ mod tests {
         let report = ClassifiedReport::store_unavailable("the datastore is temporarily unavailable; retry shortly");
         pretty_assertions::assert_eq!(report.classification(), ProblemClassification::ServiceUnavailable);
         pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::SERVICE_UNAVAILABLE);
-        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(
+            report.classification().type_iri().as_str(),
+            "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable"
+        );
         pretty_assertions::assert_eq!(report.retry_after(), Some(Duration::from_secs(5)));
         pretty_assertions::assert_eq!(report.detail(), "the datastore is temporarily unavailable; retry shortly");
     }

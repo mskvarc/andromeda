@@ -24,14 +24,16 @@ pub enum ProblemClassification {
     /// The one registered source holding the data cannot serve the requested
     /// representation and returns 501 (Table 6.4.3.2-3, clause 6.3.7).
     NotImplemented,
-    /// A local operation cannot complete before its bounded policy deadline and returns 503.
+    /// A local operation cannot run now but the identical request can succeed
+    /// shortly, and returns 503 with `Retry-After`: a saturated connection
+    /// pool, an unreachable datastore, a transaction rolled back on every
+    /// attempt, a Snapshot still preparing.
     ///
-    /// Clause 5.5.6 makes a failure the client did not cause, "database
-    /// timeouts" included, an `InternalError`, and clause 5.5.2 defines no
-    /// other type for it, so the document carries the `InternalError` type and
-    /// title. Only the HTTP binding status differs: 503 with `Retry-After`
-    /// tells the client the identical request can succeed shortly, which the
-    /// open list of clause 6.3.2 binding statuses admits.
+    /// Clause 6.3.2 admits the HTTP binding's own 503 beside Table 6.3.2-1, but
+    /// Table 6.3.2-1 binds `InternalError` to 500, an unexpected failure a
+    /// client does not retry. The document therefore carries a dedicated type
+    /// under the ETSI errors namespace, as the clause 6.3.17 gateway failures
+    /// do, so the type and the status agree that the request is retryable.
     ServiceUnavailable,
 }
 
@@ -66,22 +68,22 @@ impl ProblemClassification {
 
     /// The problem `type` IRI this classification serialises with.
     ///
-    /// Clause 6.3.17 names no IRI for the 508/504/502 distributed failures, so
-    /// the broker publishes dedicated IRIs under the ETSI errors namespace
-    /// rather than collapsing all three onto `InternalError`, which would leave
-    /// the `type` disagreeing with the status. The remaining classifications,
-    /// load-shedding 503 among them, carry their clause 5.5.2 category's
-    /// canonical IRI.
+    /// Clause 6.3.17 names no IRI for the 508/504/502 distributed failures, and
+    /// clause 5.5.2 none for a retryable 503, so the broker publishes dedicated
+    /// IRIs under the ETSI errors namespace rather than collapsing all four
+    /// onto `InternalError`, which Table 6.3.2-1 binds to 500 and which would
+    /// leave the `type` disagreeing with the status. The remaining
+    /// classifications carry their clause 5.5.2 category's canonical IRI.
     #[must_use]
     pub const fn type_iri(self) -> Iri<&'static str> {
         match self {
             ProblemClassification::LoopDetected => iri!("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
             ProblemClassification::GatewayTimeout => iri!("https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout"),
             ProblemClassification::BadGateway => iri!("https://uri.etsi.org/ngsi-ld/errors/BadGateway"),
-            ProblemClassification::Category(_)
-            | ProblemClassification::DistributedResourceNotFound
-            | ProblemClassification::NotImplemented
-            | ProblemClassification::ServiceUnavailable => self.error_type().type_iri(),
+            ProblemClassification::ServiceUnavailable => iri!("https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable"),
+            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
+                self.error_type().type_iri()
+            }
         }
     }
 
@@ -93,24 +95,26 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected => "Loop detected",
             ProblemClassification::GatewayTimeout => "Gateway timeout",
             ProblemClassification::BadGateway => "Bad gateway",
-            ProblemClassification::Category(_)
-            | ProblemClassification::DistributedResourceNotFound
-            | ProblemClassification::NotImplemented
-            | ProblemClassification::ServiceUnavailable => self.error_type().title(),
+            ProblemClassification::ServiceUnavailable => "Service unavailable",
+            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
+                self.error_type().title()
+            }
         }
     }
 
-    /// The dedicated distributed classification a `type` IRI names, if any.
+    /// The classification a dedicated `type` IRI names, if any.
     ///
-    /// Recognises the three IRIs [`type_iri`](Self::type_iri) publishes for the
-    /// clause 6.3.17 gateway failures, so a peer broker's document round-trips
-    /// back into its classification.
+    /// Recognises the four IRIs [`type_iri`](Self::type_iri) publishes beyond
+    /// the clause 5.5.2 categories, the clause 6.3.17 gateway failures and the
+    /// retryable 503, so a peer broker's document round-trips back into its
+    /// classification.
     #[must_use]
-    pub fn from_distributed_type_iri(iri: &IriRefBuf) -> Option<ProblemClassification> {
+    pub fn from_dedicated_type_iri(iri: &IriRefBuf) -> Option<ProblemClassification> {
         [
             ProblemClassification::LoopDetected,
             ProblemClassification::GatewayTimeout,
             ProblemClassification::BadGateway,
+            ProblemClassification::ServiceUnavailable,
         ]
         .into_iter()
         .find(|classification| classification.type_iri().as_str() == iri.as_str())
@@ -278,21 +282,21 @@ struct WireProblemDetail {
 impl<'de> Deserialize<'de> for ProblemDetail {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ProblemDetail, D::Error> {
         let wire = WireProblemDetail::deserialize(deserializer)?;
-        // A dedicated distributed IRI is recognised before the category scan so
-        // a peer broker's 508/504/502 document round-trips into its own
+        // A dedicated IRI is recognised before the category scan so a peer
+        // broker's 508/504/502/503 document round-trips into its own
         // classification rather than the InternalError category.
         // `expected_title` is the title of the type IRI actually named on the
-        // wire, not of the resolved classification: an older peer stamps a
-        // distributed failure as `InternalError` plus the clause 6.3.17 status,
-        // and its "Internal error" title must still be accepted even though the
-        // pair resolves to a distinct distributed classification.
-        let (classification, expected_title) = if let Some(distributed) = ProblemClassification::from_distributed_type_iri(&wire.type_iri) {
+        // wire, not of the resolved classification: a peer may stamp such a
+        // failure as `InternalError` plus its status, and its "Internal error"
+        // title must still be accepted even though the pair resolves to a
+        // distinct classification.
+        let (classification, expected_title) = if let Some(dedicated) = ProblemClassification::from_dedicated_type_iri(&wire.type_iri) {
             if let Some(status) = wire.status
-                && status != distributed.status_code().as_u16()
+                && status != dedicated.status_code().as_u16()
             {
-                return Err(de::Error::custom(ProblemDocumentError::DistributedStatusMismatch));
+                return Err(de::Error::custom(ProblemDocumentError::DedicatedStatusMismatch));
             }
-            (distributed, distributed.title())
+            (dedicated, dedicated.title())
         } else {
             let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom(ProblemDocumentError::UnknownType))?;
             let classification = WireProblemClassification {
@@ -386,13 +390,10 @@ mod tests {
                 "Operation not supported",
                 StatusCode::NOT_IMPLEMENTED,
             ),
-            // Clause 5.5.6: a failure the client did not cause is an
-            // InternalError whatever its binding status, so load shedding
-            // keeps the spec's type and title and differs only in its 503.
             (
                 ProblemClassification::ServiceUnavailable,
-                "https://uri.etsi.org/ngsi-ld/errors/InternalError",
-                "Internal error",
+                "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
+                "Service unavailable",
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
         ] {
@@ -407,11 +408,12 @@ mod tests {
     }
 
     #[test]
-    fn dedicated_distributed_types_round_trip_through_their_own_iris() -> Result<(), serde_json::Error> {
+    fn dedicated_types_round_trip_through_their_own_iris() -> Result<(), serde_json::Error> {
         for classification in [
             ProblemClassification::LoopDetected,
             ProblemClassification::GatewayTimeout,
             ProblemClassification::BadGateway,
+            ProblemClassification::ServiceUnavailable,
         ] {
             let rendered = serde_json::to_string(&ProblemDetail::from_classification(classification, "distributed failure"))?;
             let parsed = serde_json::from_str::<ProblemDetail>(&rendered)?;
@@ -421,13 +423,14 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_internal_error_with_a_distributed_status_is_still_tolerated_inbound() -> Result<(), serde_json::Error> {
-        // Older peers stamp the gateway failures as InternalError plus the
-        // clause 6.3.17 status; the broker keeps reading that pairing.
+    fn an_internal_error_with_a_dedicated_status_is_read_inbound() -> Result<(), serde_json::Error> {
+        // A peer may stamp these failures as InternalError plus the status
+        // that names them; the broker reads that pairing as the classification.
         for (status, expected) in [
             (508, ProblemClassification::LoopDetected),
             (504, ProblemClassification::GatewayTimeout),
             (502, ProblemClassification::BadGateway),
+            (503, ProblemClassification::ServiceUnavailable),
         ] {
             let value = json!({
                 "type": "https://uri.etsi.org/ngsi-ld/errors/InternalError",
@@ -442,13 +445,35 @@ mod tests {
     }
 
     #[test]
-    fn a_dedicated_distributed_type_with_a_disagreeing_status_is_rejected() {
-        let value = json!({
-            "type": "https://uri.etsi.org/ngsi-ld/errors/LoopDetected",
-            "status": 500,
-            "detail": "x"
-        });
-        assert!(serde_json::from_value::<ProblemDetail>(value).is_err());
+    fn a_dedicated_type_with_a_disagreeing_status_is_rejected() {
+        for type_iri in [
+            "https://uri.etsi.org/ngsi-ld/errors/LoopDetected",
+            "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
+        ] {
+            let value = json!({ "type": type_iri, "status": 500, "detail": "x" });
+            assert!(serde_json::from_value::<ProblemDetail>(value).is_err(), "{type_iri}");
+        }
+    }
+
+    /// Table 6.3.2-1 binds `InternalError` to 500, so a document of any other
+    /// status names another type.
+    #[test]
+    fn only_a_500_carries_the_internal_error_type() -> Result<(), serde_json::Error> {
+        let classifications = NgsiLdErrorType::iter().map(ProblemClassification::Category).chain([
+            ProblemClassification::LoopDetected,
+            ProblemClassification::GatewayTimeout,
+            ProblemClassification::DistributedResourceNotFound,
+            ProblemClassification::BadGateway,
+            ProblemClassification::NotImplemented,
+            ProblemClassification::ServiceUnavailable,
+        ]);
+        for classification in classifications {
+            let value = serde_json::to_value(ProblemDetail::from_classification(classification, "detail"))?;
+            if value["type"] == NgsiLdErrorType::InternalError.type_iri().as_str() {
+                pretty_assertions::assert_eq!(value["status"], 500, "{classification:?}");
+            }
+        }
+        Ok(())
     }
 
     #[test]

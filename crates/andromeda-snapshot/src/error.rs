@@ -5,7 +5,7 @@ use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_request::error::ParameterError;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use andromeda_temporal::error::TemporalError;
 use thiserror::Error;
 
@@ -68,14 +68,14 @@ pub enum SnapshotError {
     /// Backpressure, not a fault: no backend became free within the acquire
     /// deadline, so the well-formed request is shed and can be retried. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     StoreSaturated,
     /// The datastore could not be reached, or the connection to it was lost.
     ///
     /// Not a fault of the request: nothing of it is known to have persisted, so
     /// the identical request can be sent again once the store is back. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore is temporarily unavailable; retry shortly")]
+    #[error("{}", RetryCause::Unreachable)]
     StoreUnavailable,
     /// A transaction lost a deadlock or serialization race and was rolled back.
     ///
@@ -85,7 +85,7 @@ pub enum SnapshotError {
     /// takes locks that can deadlock against the notification delivery worker
     /// draining that branch, which this classifies so the store can retry it and,
     /// if the budget is exhausted, the client is shed a 503 rather than a 500.
-    #[error("the snapshot store transaction was rolled back by contention; retry shortly")]
+    #[error("{}", RetryCause::Contended)]
     Contended,
     /// Policy produced an invalid internal value or transition.
     #[error("snapshot invariant failed: {0}")]

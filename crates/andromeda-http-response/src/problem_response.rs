@@ -105,7 +105,8 @@ impl IntoResponse for ProblemResponse {
 }
 #[cfg(test)]
 mod tests {
-    use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+    use crate::{classified_report::ClassifiedReport, entity_failure::classify_entity_error, problem_response::ProblemResponse};
+    use andromeda_entity::error::EntityError;
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
@@ -224,6 +225,11 @@ mod tests {
                 StatusCode::BAD_GATEWAY,
                 "https://uri.etsi.org/ngsi-ld/errors/BadGateway",
             ),
+            (
+                ProblemClassification::ServiceUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
+            ),
         ] {
             let response = ClassifiedReport::public_binding(classification, "forwarding failed").with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"));
             let (response, value) = body(response).await?;
@@ -231,6 +237,19 @@ mod tests {
             pretty_assertions::assert_eq!(value["status"], expected_status.as_u16());
             pretty_assertions::assert_eq!(value["type"], expected_type_iri);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_for_pool_saturation_is_a_retryable_503() -> Result<(), serde_json::Error> {
+        let response = classify_entity_error(&EntityError::StoreSaturated).with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let (response, value) = body(response).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        pretty_assertions::assert_eq!(response.headers().get("retry-after").and_then(|value| value.to_str().ok()), Some("1"));
+        pretty_assertions::assert_eq!(value["type"], "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable");
+        pretty_assertions::assert_eq!(value["title"], "Service unavailable");
+        pretty_assertions::assert_eq!(value["status"], 503);
+        pretty_assertions::assert_eq!(value["detail"], "the datastore connection pool is saturated; retry shortly");
         Ok(())
     }
 }

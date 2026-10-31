@@ -9,9 +9,10 @@ use thiserror::Error;
 /// so each disagreement is reported as its own typed reason.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProblemDocumentError {
-    /// The status is not the one the clause 6.3.17 distributed type fixes.
-    #[error("problem status disagrees with its distributed NGSI-LD type")]
-    DistributedStatusMismatch,
+    /// The status is not the one a dedicated type fixes: a clause 6.3.17
+    /// gateway failure or the retryable 503.
+    #[error("problem status disagrees with its dedicated NGSI-LD type")]
+    DedicatedStatusMismatch,
     /// The type IRI names none of the clause 5.5.2 error types.
     #[error("unknown NGSI-LD problem type")]
     UnknownType,
@@ -27,8 +28,8 @@ mod tests {
     #[test]
     fn each_disagreement_reads_as_its_own_lowercase_reason() {
         pretty_assertions::assert_eq!(
-            ProblemDocumentError::DistributedStatusMismatch.to_string(),
-            "problem status disagrees with its distributed NGSI-LD type"
+            ProblemDocumentError::DedicatedStatusMismatch.to_string(),
+            "problem status disagrees with its dedicated NGSI-LD type"
         );
         pretty_assertions::assert_eq!(ProblemDocumentError::UnknownType.to_string(), "unknown NGSI-LD problem type");
         pretty_assertions::assert_eq!(ProblemDocumentError::TitleMismatch.to_string(), "problem title disagrees with its NGSI-LD type");

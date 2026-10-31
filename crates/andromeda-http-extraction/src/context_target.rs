@@ -11,7 +11,7 @@ use andromeda_http_response::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
     extract::FromRequestParts,
@@ -46,7 +46,7 @@ pub enum ContextTargetResolutionError {
     },
     /// A connection pool was saturated before the Snapshot target could be
     /// resolved. Backpressure, not a fault: shed as 503 with `Retry-After`.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     Saturated,
     /// The store holding the Snapshot's control record could not be read.
     #[error("the Snapshot target could not be read: {0}")]

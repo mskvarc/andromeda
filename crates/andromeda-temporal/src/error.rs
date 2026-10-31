@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 
 /// A failure while compiling, reading, rendering, or mutating temporal history.
@@ -83,14 +83,14 @@ pub enum TemporalError {
     /// Backpressure, not a fault: no backend became free within the acquire
     /// deadline, so the well-formed request is shed and can be retried. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore connection pool is saturated; retry shortly")]
+    #[error("{}", RetryCause::Saturated)]
     StoreSaturated,
     /// The datastore could not be reached, or the connection to it was lost.
     ///
     /// Not a fault of the request: nothing of it is known to have persisted, so
     /// the identical request can be sent again once the store is back. It is
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the datastore is temporarily unavailable; retry shortly")]
+    #[error("{}", RetryCause::Unreachable)]
     StoreUnavailable,
     /// The datastore rolled the transaction back to break a deadlock or a
     /// serialization conflict with a concurrent transaction.
@@ -98,7 +98,7 @@ pub enum TemporalError {
     /// Not a fault: the whole transaction was undone, so the well-formed
     /// request can be retried unchanged. It is answered 503 with
     /// `Retry-After`, never the 500 a broker malfunction earns.
-    #[error("the operation was rolled back by a concurrent transaction; retry shortly")]
+    #[error("{}", RetryCause::Contended)]
     TransactionContended,
     /// Another delivery owner still held the entity's queued history when the
     /// mutation barrier's wait ran out.
