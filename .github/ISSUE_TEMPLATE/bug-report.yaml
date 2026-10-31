@@ -1,0 +1,63 @@
+name: Bug report
+description: Broken on its own terms, with no spec clause at stake.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form to report a security vulnerability. Report it privately, as `SECURITY.md` describes: open the repository's **Security** tab and choose **Report a vulnerability**.
+
+        Fill in what you know now. Every field becomes a heading, so the body is edited in place as understanding grows. Triage adds one `area:` label and a milestone.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed
+      description: What happened (crash, OOM kill, data loss, race, wrong answer), with the log lines or exit status that show it. Say whether the host was shared with other runs.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Stack, configuration, commit, and the steps or workload. Say how often it reproduces.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: "What should have happened and what says so: the broker's documentation or an invariant. If a spec clause decides it, use the Conformance report form instead."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: "One checkbox per observable check: the input or situation, and the result that must hold. A reviewer can verify each one without reading the code. Tick a box once the check is verified."
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: Proof
+      description: "How the acceptance is shown: suite tests, a load run, repeated or live runs. Anything long-running keeps the issue in Validating until it passes."
+      placeholder: Suite tests only.
+    validations:
+      required: true
+  - type: textarea
+    id: leads
+    attributes:
+      label: Leads
+      description: Suspected cause or where to look. A hypothesis, not a plan.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is not a security vulnerability. Vulnerabilities are reported privately, as `SECURITY.md` describes.
+          required: true
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true

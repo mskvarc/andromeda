@@ -1,0 +1,45 @@
+name: Research question
+description: "Something to find out: a measurement to take, a cause to attribute, an option to investigate."
+labels: [research]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form to report a security vulnerability. Report it privately, as `SECURITY.md` describes: open the repository's **Security** tab and choose **Report a vulnerability**.
+
+        Fill in what you know now. Every field becomes a heading, so the body is edited in place as understanding grows. Triage adds one `area:` label and a milestone.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What we need to know, in one sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: What depends on the answer.
+    validations:
+      required: true
+  - type: textarea
+    id: findings
+    attributes:
+      label: Findings
+      description: The current state of knowledge, edited in place as results come in. Raw runs go in dated comments.
+    validations:
+      required: false
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: "Filled in at close: the answer, and the issues it produced (fix, decision or none)."
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
