@@ -54,9 +54,10 @@ pub enum TransportFailure {
     /// and the address belongs to the broker's network.
     #[error("the forwarded request was refused before it was sent")]
     Refused(#[source] EndpointRefusal),
-    /// The source answered, but names in its answer do not expand against the
-    /// context the request was written in, so the answer cannot be read in
-    /// Fully Qualified Names (clauses 4.3.6.6 and 6.3.6).
+    /// The source answered, but its 207 body is not the `UpdateResult` the
+    /// operation defines, or names in it do not expand against the context the
+    /// request was written in, so the answer cannot be read in Fully Qualified
+    /// Names (clauses 4.3.6.6 and 6.3.6).
     #[error("the context source's answer could not be read: {0}")]
     Unreadable(Arc<FederationError>),
 }

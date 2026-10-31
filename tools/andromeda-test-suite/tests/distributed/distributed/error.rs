@@ -4,6 +4,8 @@ mod n_fed_err_6400;
 mod n_fed_err_6401;
 mod n_fed_err_6402;
 mod n_fed_err_6403;
+mod n_fed_err_6404;
+mod n_fed_err_6405;
 mod n_fed_err_7200;
 mod n_fed_err_7201;
 mod n_fed_err_7202;

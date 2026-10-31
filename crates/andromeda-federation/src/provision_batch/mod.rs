@@ -41,6 +41,7 @@ use crate::{
     forwarded_payload::{ItemBody, ItemReading},
     forwarded_write::{ForwardWrite, WritePayload},
     forwarding_url::forwarding_url,
+    multi_status_body::MultiStatusBody,
     operation::ForwardingOperation,
     outcome::ForwardedWriteOutcome,
     provision::{is_proxied, proxied_mode},
@@ -61,7 +62,6 @@ use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
 use std::collections::HashMap;
-use tracing::debug;
 
 /// The batch provision operation being forwarded, with the option that
 /// decides its single-entity fallback.
@@ -176,10 +176,9 @@ impl FederationService {
         if !target.permits_federation() {
             return Ok(Vec::new());
         }
-        if self.is_loop_detected(request.triggering.via) {
-            debug!("Loop detected in Via header chain, skipping batch provision forwarding");
-            return Ok(Vec::new());
-        }
+        // Clause 6.3.18: an incoming request whose Via already names this
+        // broker has looped back onto it, and nothing is forwarded.
+        let looped = self.is_loop_detected(request.triggering.via);
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let candidates = self
             .csr_repo
@@ -195,6 +194,9 @@ impl FederationService {
                 let narrowed = narrow_input(csr, candidates, request.entities);
                 if narrowed.is_empty() {
                     return Vec::new();
+                }
+                if looped {
+                    return looped_back(csr, narrowed);
                 }
                 self.drive_registration(csr, narrowed, request).await
             })
@@ -260,6 +262,7 @@ impl FederationService {
                         triggering: request.triggering,
                         linked_map: None,
                         acted_on: ActedOnAnswer::NoErrorAnswer,
+                        multi_status: MultiStatusBody::AsWritten,
                     })
                     .await;
                 let outcomes = batch_outcomes(&ids, &outcome).into_iter().collect::<HashMap<_, _>>();
@@ -316,6 +319,7 @@ impl FederationService {
                 triggering: request.triggering,
                 linked_map: None,
                 acted_on: write.acted_on_answer(),
+                multi_status: MultiStatusBody::of(write.operation()),
             })
             .await;
         let SingleWrite::CreateThenOnConflict(follow_up) = write else {
@@ -336,9 +340,31 @@ impl FederationService {
             triggering: request.triggering,
             linked_map: None,
             acted_on: follow_up.acted_on_answer(),
+            multi_status: MultiStatusBody::of(follow_up.operation()),
         })
         .await
     }
+}
+
+/// The results of a looped-back batch for one registration it matches: none
+/// for an inclusive registration, whose entities stay local, and Loop
+/// Detected for every entity of a proxied one, whose attributes are still
+/// never held here (clauses 4.3.6.3 and 6.3.17).
+fn looped_back(csr: &ContextSourceRegistration, narrowed: Vec<NarrowedEntity<'_>>) -> Vec<BatchForwardedResult> {
+    if !is_proxied(csr) {
+        return Vec::new();
+    }
+    let mode = proxied_mode(csr);
+    narrowed
+        .into_iter()
+        .map(|entity| BatchForwardedResult {
+            registration_id: csr.id.clone(), // clone: every result names the registration it came from
+            entity_id: entity.id,
+            mode,
+            outcome: ForwardedWriteOutcome::LoopDetected,
+            proxied_attrs: entity.proxied_attrs,
+        })
+        .collect()
 }
 
 /// What one single-entity fallback write carries: the entity's document, or
@@ -354,5 +380,72 @@ const fn entity_payload<'a>(body: Option<&'a EntityDocument>, context: &'a Conte
             context,
         },
         None => WritePayload::Empty(context),
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{
+        outcome::ForwardedWriteOutcome,
+        provision_batch::{
+            looped_back,
+            narrowing::NarrowedEntity,
+            registration_fixture::{registration, uri},
+        },
+    };
+    use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+
+    const SPEED: &str = "https://example.org/speed";
+
+    fn narrowed(context: &BatchContext) -> Vec<NarrowedEntity<'_>> {
+        vec![NarrowedEntity {
+            id: uri("urn:ngsi-ld:Vehicle:1"),
+            body: None,
+            proxied_attrs: vec![SPEED.parse::<AttributeName>().expect("a valid attribute name")],
+            context,
+        }]
+    }
+
+    /// Clauses 4.3.6.3 and 6.3.17: a looped-back batch is sent to no
+    /// registration, and a proxied one still claims the attributes it covers.
+    #[test]
+    fn a_looped_back_batch_leaves_a_proxied_registration_its_attributes() {
+        let context = BatchContext::shared(ContextSpec::none());
+        let redirect = registration(
+            "urn:ngsi-ld:csr:redirect",
+            "redirect",
+            Some("https://example.org/Vehicle"),
+            None,
+            &[],
+            &["createBatch"],
+        );
+        let results = looped_back(&redirect, narrowed(&context));
+        let [result] = results.as_slice() else {
+            panic!("exactly the one entity is reported: {}", results.len());
+        };
+        assert!(matches!(result.outcome, ForwardedWriteOutcome::LoopDetected), "{:?}", result.outcome);
+        pretty_assertions::assert_eq!(result.proxied_attrs, [SPEED.parse::<AttributeName>().expect("a valid attribute name")]);
+    }
+
+    /// An inclusive registration holds local data, so a looped-back batch
+    /// reports nothing for it and its entities are written here.
+    #[test]
+    fn a_looped_back_batch_reports_nothing_for_an_inclusive_registration() {
+        let context = BatchContext::shared(ContextSpec::none());
+        let inclusive = registration(
+            "urn:ngsi-ld:csr:inclusive",
+            "inclusive",
+            Some("https://example.org/Vehicle"),
+            None,
+            &[],
+            &["createBatch"],
+        );
+        assert!(looped_back(&inclusive, narrowed(&context)).is_empty());
     }
 }

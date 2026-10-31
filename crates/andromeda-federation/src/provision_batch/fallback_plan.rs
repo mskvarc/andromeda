@@ -53,6 +53,18 @@ impl SingleWrite {
             | SingleWrite::Merge => ActedOnAnswer::NoErrorAnswer,
         }
     }
+
+    /// The single-entity operation the write performs.
+    pub(super) const fn operation(self) -> ForwardingOperation {
+        match self {
+            SingleWrite::Create | SingleWrite::CreateThenOnConflict(_) => ForwardingOperation::CreateEntity,
+            SingleWrite::Replace => ForwardingOperation::ReplaceEntity,
+            SingleWrite::UpdateAttributes => ForwardingOperation::UpdateEntityAttributes,
+            SingleWrite::AppendAttributesNoOverwrite => ForwardingOperation::AppendEntityAttributes,
+            SingleWrite::Delete => ForwardingOperation::DeleteEntity,
+            SingleWrite::Merge => ForwardingOperation::MergeEntity,
+        }
+    }
 }
 
 /// What a batch upsert does after a source reports `AlreadyExists` on the

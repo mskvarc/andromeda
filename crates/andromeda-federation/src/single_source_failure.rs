@@ -39,7 +39,12 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
         ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(FederationError::OperationNotSupported(
             FederationOperationUnsupported::UpsertFollowUpNotAdvertised { registration },
         )),
-        ForwardedWriteOutcome::LoopDetected => Some(FederationError::LoopDetected { registration }),
+        // A source answering 508 found the request looping through the chain
+        // this broker forwarded it along; relaying the same status keeps the
+        // loop, not a bad gateway, as the operation's error.
+        ForwardedWriteOutcome::LoopDetected | ForwardedWriteOutcome::RemoteHttpFailure { status: 508, .. } => {
+            Some(FederationError::LoopDetected { registration })
+        }
         ForwardedWriteOutcome::Transport(failure) => Some(transport_failure(registration, failure)),
         ForwardedWriteOutcome::RemoteHttpFailure { status: 404, .. } => Some(FederationError::RemoteNotFound { registration }),
         ForwardedWriteOutcome::RemoteHttpFailure { status: 422, body } => Some(FederationError::OperationNotSupported(
@@ -129,6 +134,13 @@ mod tests {
     fn a_single_proxied_source_failure_becomes_the_clause_6_3_17_error() {
         let cases = [
             (ForwardedWriteOutcome::LoopDetected, "loop"),
+            (
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status: 508,
+                    body: AnswerBody::Absent,
+                },
+                "loop",
+            ),
             (
                 ForwardedWriteOutcome::Transport(TransportFailure::TimedOut {
                     after: Duration::from_millis(5000),

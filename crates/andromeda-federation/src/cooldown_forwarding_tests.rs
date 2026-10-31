@@ -8,6 +8,8 @@ use crate::{
     fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
     forwarded_write::{ForwardWrite, WritePayload},
     mock_source::{endpoint, received},
+    multi_status_body::MultiStatusBody,
+    operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardedWriteOutcome, TransportFailure},
     request::TriggeringRequest,
     source_read::SourceRead,
@@ -119,6 +121,7 @@ async fn read_then_write(source: &MockServer, registration: &ContextSourceRegist
             triggering: TriggeringRequest::default(),
             linked_map: None,
             acted_on: ActedOnAnswer::NoErrorAnswer,
+            multi_status: MultiStatusBody::of(ForwardingOperation::DeleteEntity),
         })
         .await
 }

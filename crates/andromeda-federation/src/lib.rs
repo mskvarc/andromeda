@@ -111,6 +111,8 @@ pub mod matched_registrations;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod mock_source;
+/// What a 207 answer to a forwarded single-entity write carries (clause 6.3.6).
+mod multi_status_body;
 /// NGSI-LD operation capability matching.
 pub mod operation;
 /// Whether a read's answer may be ordered (clauses 4.23.1, 5.7.2.4, 5.7.4.4).

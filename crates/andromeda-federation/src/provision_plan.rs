@@ -12,8 +12,7 @@ use crate::{
     FederationService,
     error::FederationError,
     federation_invariant::FederationInvariant,
-    outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
-    provision::{is_proxied, proxied_mode},
+    provision::is_proxied,
     request::ForwardProvisionRequest,
     term_resolver::TermResolver,
 };
@@ -54,9 +53,9 @@ pub struct ProvisionPlan {
 /// it.
 #[derive(Default)]
 pub(crate) struct RegistrationSelection {
-    /// Outcomes decided without contacting a source: a proxied registration a
-    /// looped-back request cannot be forwarded to (clause 6.3.17).
-    pub(crate) settled: Vec<ForwardedWriteResult>,
+    /// The proxied registrations a looped-back request cannot be forwarded to
+    /// (clause 6.3.17), which still own their attributes (clause 4.3.6.3).
+    pub(crate) looped: Vec<ContextSourceRegistration>,
     /// The registrations the write is sent to.
     pub(crate) receiving: Vec<ContextSourceRegistration>,
     /// The proxied registrations that do not support the operation but still
@@ -171,7 +170,7 @@ impl FederationService {
         };
 
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
-        let mut settled = Vec::new();
+        let mut looped_back = Vec::new();
         let mut receiving = Vec::new();
         let mut not_advertising = Vec::new();
         for csr in csrs {
@@ -184,17 +183,12 @@ impl FederationService {
             if looped {
                 // Clause 6.3.17: with the request looped back, a proxied source
                 // that holds all the data externally cannot be forwarded to, so
-                // a lone one is 508 Loop Detected (`single_source_failure`
-                // escalates it). An inclusive registration holds local data, so
-                // the loop only stops the forward and the local part still runs.
+                // a lone one is 508 Loop Detected. Its attributes are still never
+                // held here (clause 4.3.6.3). An inclusive registration holds
+                // local data, so the loop only stops the forward and the local
+                // part still runs.
                 if is_proxied(&csr) {
-                    let mode = proxied_mode(&csr);
-                    settled.push(ForwardedWriteResult {
-                        registration_id: csr.id,
-                        mode,
-                        outcome: ForwardedWriteOutcome::LoopDetected,
-                        attributes: Vec::new(),
-                    });
+                    looped_back.push(csr);
                 }
                 continue;
             }
@@ -205,7 +199,7 @@ impl FederationService {
             }
         }
         Ok(RegistrationSelection {
-            settled,
+            looped: looped_back,
             receiving,
             not_advertising,
             entity_types,

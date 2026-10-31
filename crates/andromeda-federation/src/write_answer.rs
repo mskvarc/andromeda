@@ -84,7 +84,7 @@ pub(crate) async fn with_full_update_result_names(engine: &JsonLdEngine, forward
     let prepared = engine.prepare_term_context(forwarding);
     let read = match serde_json::from_slice::<UpdateResult>(&text) {
         Ok(result) => full_update_result_names(engine, &prepared, result).await,
-        Err(error) => Err(FederationError::ForwardedBody(error)),
+        Err(error) => Err(FederationError::MultiStatusUnreadable(error)),
     };
     match read {
         Ok(result) => ForwardedWriteOutcome::Completed {
@@ -121,6 +121,7 @@ async fn expanded(engine: &JsonLdEngine, forwarding: &PreparedTermContext, name:
 mod tests {
     use crate::{
         answer_body::AnswerBody,
+        error::FederationError,
         outcome::{ForwardedWriteOutcome, TransportFailure},
         write_answer::with_full_update_result_names,
     };
@@ -214,11 +215,13 @@ mod tests {
     async fn a_multi_status_body_that_is_no_update_result_is_unreadable() {
         let outcome = ForwardedWriteOutcome::Completed {
             status: 207,
-            body: text(&json!({"notUpdated": 5})),
+            body: text(&json!({"success": ["urn:ngsi-ld:Vehicle:1"], "errors": []})),
         };
-        assert!(matches!(
-            with_full_update_result_names(&engine(), &forwarding(), outcome).await,
-            ForwardedWriteOutcome::Transport(TransportFailure::Unreadable(_))
-        ));
+        let read = with_full_update_result_names(&engine(), &forwarding(), outcome).await;
+        let ForwardedWriteOutcome::Transport(TransportFailure::Unreadable(error)) = read else {
+            panic!("the answer is unreadable: {read:?}");
+        };
+        assert!(matches!(error.as_ref(), FederationError::MultiStatusUnreadable(_)), "{error:?}");
+        assert!(error.to_string().starts_with("the 207 body is not an UpdateResult: "), "{error}");
     }
 }

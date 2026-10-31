@@ -82,6 +82,10 @@ pub enum FederationError {
     /// registration left local.
     #[error("the forwarded write payload could not be serialised or read back: {0}")]
     ForwardedBody(#[source] serde_json::Error),
+    /// A context source answered a forwarded attribute write 207 with a body
+    /// that is no clause 5.2.18 `UpdateResult`.
+    #[error("the 207 body is not an UpdateResult: {0}")]
+    MultiStatusUnreadable(#[source] serde_json::Error),
     /// A `q` naming a target language a `q_target_languages` level above the
     /// specification's admits would reach a Context Source that does not
     /// advertise that level. The source refuses a full tag outright, and reads

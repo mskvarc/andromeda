@@ -35,7 +35,11 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
         FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
         FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
-        FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
+        // A 207 the source answered with a body its operation does not define
+        // is that source failing the forwarded request (clause 6.3.17).
+        FederationError::BadGateway { .. } | FederationError::MultiStatusUnreadable(_) => {
+            ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string())
+        }
         // A `q` the reached sources cannot read as asked, or an identifier list
         // no split carries within this broker's forwarded URL budget, is
         // request data the operation cannot meet (clause 5.5.2).
@@ -75,6 +79,7 @@ pub fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::Compaction(_)
         | FederationError::Representation(_)
         | FederationError::ForwardedBody(_)
+        | FederationError::MultiStatusUnreadable(_)
         | FederationError::Internal(_) => classify_forwarding_error(error),
     }
 }
@@ -142,6 +147,7 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
         | FederationError::Compaction(_)
         | FederationError::Representation(_)
         | FederationError::ForwardedBody(_)
+        | FederationError::MultiStatusUnreadable(_)
         | FederationError::Internal(_) => None,
     }
 }

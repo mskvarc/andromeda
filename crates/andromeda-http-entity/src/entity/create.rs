@@ -145,6 +145,7 @@ fn located(locator: &ResourceLocator, response: Response, id: &Identifier) -> Re
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
@@ -160,7 +161,7 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         http::{StatusCode, Uri as HttpUri},
-        response::Response,
+        response::{IntoResponse, Response},
     };
 
     const ENTITY: &str = "urn:ngsi-ld:Vehicle:1";
@@ -224,6 +225,29 @@ mod tests {
         .expect("a success");
         pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
         pretty_assertions::assert_eq!(location(&response), Some("/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:1"));
+    }
+
+    /// Clause 6.3.17: a create whose single redirect source loops back onto
+    /// the broker, and of which nothing remained here, is 508 Loop Detected.
+    #[test]
+    fn a_create_whose_lone_redirect_source_loops_back_is_loop_detected() {
+        let looped = ForwardedWriteResult {
+            registration_id: "urn:ngsi-ld:ContextSourceRegistration:test".parse().expect("valid URI"),
+            mode: ForwardingMode::Redirect,
+            outcome: ForwardedWriteOutcome::LoopDetected,
+            attributes: vec!["https://example.org/speed".parse().expect("a valid attribute name")],
+        };
+        let answer = distributed_create_response(
+            &ResourceLocator::default(),
+            &entity_id(),
+            &[looped],
+            &LocalOutcome::NothingRemained,
+            &instance(),
+        );
+        let Err(problem) = answer else {
+            panic!("a loop is the operation's error");
+        };
+        pretty_assertions::assert_eq!(problem.into_response().status(), StatusCode::LOOP_DETECTED);
     }
 
     #[test]

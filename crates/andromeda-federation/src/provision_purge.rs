@@ -14,6 +14,7 @@ use crate::{
     forwarded_write::PlannedWrite,
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
+    multi_status_body::MultiStatusBody,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
@@ -203,6 +204,7 @@ impl FederationService {
                     context: request.context,
                     triggering: request.triggering,
                     linked_map,
+                    multi_status: MultiStatusBody::of(ForwardingOperation::PurgeEntity),
                 });
             } else if is_proxied(&csr) {
                 let mode = proxied_mode(&csr);

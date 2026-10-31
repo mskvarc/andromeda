@@ -12,6 +12,7 @@ use crate::{
     forwarded_content::{AttributeWrite, ForwardedContent},
     forwarded_payload::{ItemBody, ItemReading, OutgoingBody, build_identifiers_payload},
     forwarding_context::BodyPresence,
+    multi_status_body::MultiStatusBody,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     registration_payload::forwarding_decision,
     request::TriggeringRequest,
@@ -49,6 +50,8 @@ pub(crate) struct PlannedWrite<'a> {
     /// is linked to under the Entity Map in use (clause 5.5.14), or `None` when
     /// the write runs under no map.
     pub(crate) linked_map: Option<Identifier>,
+    /// How the body of a 207 answer to the write is read.
+    pub(crate) multi_status: MultiStatusBody,
 }
 
 /// The body of one planned write.
@@ -147,6 +150,9 @@ pub(crate) struct ForwardWrite<'a> {
     /// The error answer the operation follows up instead of counting it a
     /// failure of the source.
     pub(crate) acted_on: ActedOnAnswer,
+    /// How the body of a 207 answer is read; a batch array is always answered
+    /// in entity identifiers, kept as the source wrote them.
+    pub(crate) multi_status: MultiStatusBody,
 }
 
 impl FederationService {
@@ -170,6 +176,7 @@ impl FederationService {
             context,
             triggering,
             linked_map,
+            multi_status,
         } = write;
         let mode = registration.access.mode.unwrap_or_default();
         let payload = match &body {
@@ -189,6 +196,7 @@ impl FederationService {
                 triggering,
                 linked_map: linked_map.as_ref(),
                 acted_on: ActedOnAnswer::NoErrorAnswer,
+                multi_status,
             })
             .await;
         if let ForwardedWriteOutcome::Transport(failure) = &outcome {
@@ -212,6 +220,7 @@ impl FederationService {
             triggering,
             linked_map,
             acted_on,
+            multi_status,
         } = write;
         if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
@@ -225,17 +234,17 @@ impl FederationService {
             return ForwardedWriteOutcome::Transport(failure);
         }
         debug!("CS forwarding {} {}", method, url);
-        // A single-entity write answers a partial success with an
-        // `UpdateResult` whose names are spelled in the context the request
-        // was written in; a batch answers with entity identifiers alone.
+        // An attribute write answers a partial success with an `UpdateResult`
+        // whose names are spelled in the context the request was written in;
+        // every other write answers with entity identifiers alone.
         let (payload, naming) = match payload {
             WritePayload::Empty(context) => (
                 self.payload_for(registration, context, None).await,
-                single_write_naming(registration, context, BodyPresence::Absent),
+                update_result_naming(multi_status, registration, context, BodyPresence::Absent),
             ),
             WritePayload::Document { content, element, context } => (
                 self.payload_for(registration, context, Some(outgoing_body(content, element))).await,
-                single_write_naming(registration, context, BodyPresence::Present),
+                update_result_naming(multi_status, registration, context, BodyPresence::Present),
             ),
             WritePayload::Items { items, reading } => (self.payload_for_items(registration, items, reading).await, Ok(None)),
             WritePayload::Identifiers(ids) => (build_identifiers_payload(ids), Ok(None)),
@@ -283,11 +292,54 @@ const fn outgoing_body(content: ForwardedContent<'_>, element: AdaptedPayload) -
     }
 }
 
-/// The context a single-entity write to `registration` is written in.
-fn single_write_naming(
+/// The context the names of a 207 `UpdateResult` answering a write to
+/// `registration` are spelled in, or `None` when the write's 207 carries no
+/// `UpdateResult`.
+fn update_result_naming(
+    multi_status: MultiStatusBody,
     registration: &ContextSourceRegistration,
     inbound: &ContextSpec,
     presence: BodyPresence,
 ) -> Result<Option<ContextSpec>, FederationError> {
-    Ok(Some(forwarding_decision(registration, inbound, presence)?.context.naming(inbound)))
+    match multi_status {
+        MultiStatusBody::UpdateResult => Ok(Some(forwarding_decision(registration, inbound, presence)?.context.naming(inbound))),
+        MultiStatusBody::AsWritten => Ok(None),
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::{forwarded_write::update_result_naming, forwarding_context::BodyPresence, multi_status_body::MultiStatusBody};
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use serde_json::json;
+
+    fn registration() -> ContextSourceRegistration {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:csr:1",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid registration")
+    }
+
+    /// Clause 6.3.6: only the 207 of an attribute write is an `UpdateResult`
+    /// whose names are read back in the forwarding context; an entity-level
+    /// write's 207 is kept as the source wrote it.
+    #[test]
+    fn only_a_write_answering_an_update_result_reads_its_names_back() {
+        let inbound = ContextSpec::none();
+        let read = update_result_naming(MultiStatusBody::UpdateResult, &registration(), &inbound, BodyPresence::Present).expect("a forwarding decision");
+        assert!(read.is_some());
+        let kept = update_result_naming(MultiStatusBody::AsWritten, &registration(), &inbound, BodyPresence::Present).expect("no decision needed");
+        assert!(kept.is_none());
+    }
 }

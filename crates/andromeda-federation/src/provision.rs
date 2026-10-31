@@ -10,6 +10,7 @@ use crate::{
     forwarded_write::{PlannedBody, PlannedContent, PlannedWrite},
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
+    multi_status_body::MultiStatusBody,
     operation::ProvisionResource,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision_plan::{ProvisionPlan, RegistrationSelection},
@@ -81,30 +82,37 @@ impl FederationService {
         content: Option<ForwardedContent<'_>>,
     ) -> Result<Vec<ForwardedWriteResult>, FederationError> {
         let RegistrationSelection {
-            mut settled,
+            looped,
             receiving,
             not_advertising,
             entity_types,
             expanded_attribute,
         } = selection;
-        if receiving.is_empty() && not_advertising.is_empty() {
-            return Ok(settled);
+        if looped.is_empty() && receiving.is_empty() && not_advertising.is_empty() {
+            return Ok(Vec::new());
         }
         let resolver = TermResolver::new(&self.engine, request.context);
         let requested = content.as_ref().map(ForwardedContent::written_attributes).unwrap_or_default();
-        for csr in not_advertising {
-            // Clauses 5.6.1.4 and following: a proxied registration that
-            // does not support the operation still owns its attributes, so
-            // the write fails for them instead of landing here.
-            let attributes = matching_attributes(&csr, &entity_types, request.entity_id, expanded_attribute.as_ref(), &requested);
-            let mode = proxied_mode(&csr);
-            settled.push(ForwardedWriteResult {
-                registration_id: csr.id,
-                mode,
-                outcome: ForwardedWriteOutcome::NotAdvertised,
-                attributes,
-            });
-        }
+        // Clauses 4.3.6.3 and 5.6.1.4 and following: a proxied registration
+        // owns its attributes whether or not the write can be sent to it, so a
+        // looped-back one, and one that does not support the operation, fail
+        // the write for them instead of letting them land here.
+        let unsent = looped
+            .into_iter()
+            .map(|csr| (csr, ForwardedWriteOutcome::LoopDetected))
+            .chain(not_advertising.into_iter().map(|csr| (csr, ForwardedWriteOutcome::NotAdvertised)));
+        let mut settled = unsent
+            .map(|(csr, outcome)| {
+                let attributes = matching_attributes(&csr, &entity_types, request.entity_id, expanded_attribute.as_ref(), &requested);
+                let mode = proxied_mode(&csr);
+                ForwardedWriteResult {
+                    registration_id: csr.id,
+                    mode,
+                    outcome,
+                    attributes,
+                }
+            })
+            .collect::<Vec<_>>();
 
         let mut planned: Vec<PlannedWrite<'_>> = Vec::new();
         for csr in receiving {
@@ -183,6 +191,7 @@ impl FederationService {
             triggering: request.triggering,
             // A single-entity provision runs under no Entity Map.
             linked_map: None,
+            multi_status: MultiStatusBody::of(request.operation),
         })
     }
 
@@ -278,9 +287,15 @@ mod tests {
         term_resolver::TermResolver,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        context_source_pseudonym::ContextSourcePseudonym,
+        entity_type_name::EntityTypeName,
+        identifier::Identifier,
+    };
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use indexmap::IndexMap;
     use serde_json::json;
@@ -318,9 +333,35 @@ mod tests {
         )
     }
 
+    /// A redirect registration covering the fixture entity that advertises
+    /// Create Entity.
+    fn redirect_registration_advertising_create() -> ContextSourceRegistration {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:csr:redirect",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "mode": "redirect",
+            "information": [{"entities": [{"id": ENTITY_ID, "type": "https://example.org/Vehicle"}]}],
+            "operations": ["createEntity"],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid registration")
+    }
+
+    /// A `Via` chain naming the offline service itself, as a request this
+    /// broker forwarded carries when it comes back.
+    fn looped_back_via() -> Via {
+        Via::with_entry(
+            ReceivedProtocol::new("1.1").expect("a valid protocol"),
+            ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+        )
+    }
+
     /// Forward a create of the fixture entity whose admitted content is
-    /// `document`.
-    async fn forward_create(service: &FederationService, document: &EntityDocument) -> Vec<ForwardedWriteResult> {
+    /// `document`, triggered by a request carrying `via`.
+    async fn forward_create(service: &FederationService, document: &EntityDocument, via: Option<&Via>) -> Vec<ForwardedWriteResult> {
         let entity_id: Identifier = ENTITY_ID.parse().expect("valid identifier");
         let context = ContextSpec::none();
         service
@@ -336,7 +377,7 @@ mod tests {
                     operation: ForwardingOperation::CreateEntity,
                     path_suffix: None,
                     query_string: None,
-                    triggering: TriggeringRequest { via: None, headers: None },
+                    triggering: TriggeringRequest { via, headers: None },
                 },
                 Some(ForwardedContent::Entity(document)),
             )
@@ -347,7 +388,7 @@ mod tests {
     /// Clause 5.12: a write no registration matches is not forwarded.
     #[tokio::test]
     async fn a_write_no_registration_matches_is_not_forwarded() {
-        let results = forward_create(&offline_service(Vec::new()), &vehicle_document()).await;
+        let results = forward_create(&offline_service(Vec::new()), &vehicle_document(), None).await;
         assert!(results.is_empty(), "{:?}", results.iter().map(|result| &result.outcome).collect::<Vec<_>>());
     }
 
@@ -377,11 +418,30 @@ mod tests {
     /// expanded names.
     #[tokio::test]
     async fn a_matched_registration_claims_the_expanded_names_of_the_content() {
-        let results = forward_create(&offline_service(vec![exclusive_registration_advertising_no_write()]), &vehicle_document()).await;
+        let results = forward_create(&offline_service(vec![exclusive_registration_advertising_no_write()]), &vehicle_document(), None).await;
         let [result] = results.as_slice() else {
             panic!("exactly the one registration answers: {}", results.len());
         };
         assert!(matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised), "{:?}", result.outcome);
+        pretty_assertions::assert_eq!(result.proxied_attrs(), [SPEED.parse::<AttributeName>().expect("an attribute name")]);
+    }
+
+    /// Clauses 4.3.6.3 and 6.3.17: a create that looped back is not sent to a
+    /// redirect registration, which still claims every attribute it covers,
+    /// so none of them is created here.
+    #[tokio::test]
+    async fn a_looped_back_create_leaves_a_redirect_registration_every_attribute_it_covers() {
+        let via = looped_back_via();
+        let results = forward_create(
+            &offline_service(vec![redirect_registration_advertising_create()]),
+            &vehicle_document(),
+            Some(&via),
+        )
+        .await;
+        let [result] = results.as_slice() else {
+            panic!("exactly the one registration answers: {}", results.len());
+        };
+        assert!(matches!(result.outcome, ForwardedWriteOutcome::LoopDetected), "{:?}", result.outcome);
         pretty_assertions::assert_eq!(result.proxied_attrs(), [SPEED.parse::<AttributeName>().expect("an attribute name")]);
     }
 
