@@ -15,16 +15,18 @@ use crate::{error::TemporalStoreError, stored_catalog_error::StoredCatalogError,
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
-use andromeda_postgresql_schema::{queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
+    branch::qualified,
     cast::cast,
     external_arguments::ExternalArguments,
     pg_array::{any, text_array},
     pg_type::PostgresType,
+    scalar_subquery::scalar_subquery,
     statement::Statement,
     unnest::{Ordinality, unnest_of},
 };
-use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, DynIden, Expr, ExprTrait, Iden, IntoIden, Query, SelectStatement, SimpleExpr};
 use sqlx::PgConnection;
 
 /// The source relation's alias, `i`.
@@ -36,6 +38,11 @@ pub(crate) struct I;
 #[derive(Iden, Clone, Copy)]
 #[iden = "e"]
 pub(crate) struct E;
+
+/// The alias of the Entity [`intent_entity_key`] reads, `ie`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ie"]
+struct IntentEntity;
 
 /// The alias of one bound intent inside the bound source, `input`.
 #[derive(Iden, Clone, Copy)]
@@ -259,6 +266,25 @@ pub(crate) fn entry(field: TemporalEntry) -> SimpleExpr {
 /// One column of the intent under `i`.
 pub(crate) fn intent(column: TemporalAppendIntents) -> SimpleExpr {
     Expr::col((I, column))
+}
+
+/// The key of the Entity the intent under `i` is about, read by its
+/// identifier in a scalar subquery; NULL when no such Entity exists.
+///
+/// A catalogue row keyed by Entity and attribute is matched against this key
+/// rather than against a joined `entities` row. PostgreSQL never turns a
+/// scalar subquery into a join, so every equality on the catalogue row then
+/// relates it to the intent and its entry alone and lands in one probe. Joined
+/// to `entities` instead, the row can be probed by attribute before the Entity
+/// is known, reading every row of the attribute for each entry, which the
+/// planner picks whenever the statistics understate the table, as they do
+/// while a tenant's first writes fill it.
+pub(crate) fn intent_entity_key(schema: Option<&DynIden>) -> SimpleExpr {
+    let mut key = Query::select();
+    key.column((IntentEntity, Entities::EntityKey))
+        .from_as(qualified(schema, Entities::Table), IntentEntity)
+        .and_where(Expr::col((IntentEntity, Entities::Id)).equals((I, TemporalAppendIntents::EntityId)));
+    scalar_subquery(key)
 }
 
 /// The write ordinal of the entry under `e`: its intent's base ordinal plus

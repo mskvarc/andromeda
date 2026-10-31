@@ -12,7 +12,7 @@
 use crate::{
     intent_application::{
         deletion_judgement::{created_by_application, ended_before_evolution},
-        intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, source_entries, write_ordinal},
+        intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, intent_entity_key, source_entries, write_ordinal},
         scope_judgement::recorded_scope_entry,
     },
     stream_shape_growth::shape_growth_statement,
@@ -100,7 +100,7 @@ fn entries_with_stream(source: &StagedSource<'_>, schema: Option<&DynIden>) -> S
     let mut select = recorded_attribute_entries(source, schema);
     select
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).eq(intent_entity_key(schema)))
         .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(same_nullable_text_key(
             Expr::col((S, TemporalAttributeStreams::DatasetId)),
@@ -129,7 +129,7 @@ pub(crate) fn replaced_instances_statement(source: &StagedSource<'_>, schema: Op
         .column((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId))
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S2)
         .from(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::col((S2, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
+        .and_where(Expr::col((S2, TemporalAttributeStreams::EntityKey)).eq(intent_entity_key(schema)))
         .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).equals((S2, TemporalAttributeStreams::StreamKey)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((E, TemporalEntry::VerbatimInstanceId)));
@@ -143,7 +143,7 @@ pub(crate) fn released_claims_statement(source: &StagedSource<'_>, schema: Optio
     let mut released = verbatim_entries(source, schema);
     released
         .expr(Expr::val(1))
-        .and_where(Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::EntityKey)).equals((Te, Entities::EntityKey)))
+        .and_where(Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::EntityKey)).eq(intent_entity_key(schema)))
         .and_where(
             Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)),
         )

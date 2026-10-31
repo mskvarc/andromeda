@@ -892,6 +892,28 @@ fn a_deletion_of_an_entity_without_evolution_records_nothing() {
     }
 }
 
+/// A stream or claim is probed by the key of the intent's own Entity, so no
+/// plan can read every row of an attribute for each entry.
+#[test]
+fn every_stream_and_claim_probe_is_keyed_by_the_entity_of_the_intent() {
+    let key = r#"(SELECT "ie"."entity_key" FROM "entities" AS "ie" WHERE "ie"."id" = "i"."entity_id")"#;
+    let released = rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#))
+        .expect("a claim release");
+    for (probe, sql) in [
+        (r#""s"."entity_key" = "#, writing("attribute_history")),
+        (r#""s"."entity_key" = "#, shape_growth()),
+        (r#""s"."entity_key" = "#, growth()),
+        (r#""s2"."entity_key" = "#, in_role(StepRole::Replace)),
+        (r#""attribute_history_instance_claims"."entity_key" = "#, released),
+    ] {
+        assert!(sql.contains(&format!("{probe}{key}")), "{sql}");
+        assert!(!sql.contains(&format!(r#"{probe}"te"."entity_key""#)), "{sql}");
+    }
+}
+
 /// Clause 4.5.1 makes at least one type part of an Entity: an intent that
 /// observes an Entity with no evolution and states none is refused by name.
 #[test]
