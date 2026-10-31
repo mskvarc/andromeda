@@ -8,3 +8,4 @@ mod o_bat_del_2700;
 mod o_bat_del_9001;
 mod o_bat_del_9002;
 mod o_bat_del_9003;
+mod o_bat_del_9004;
