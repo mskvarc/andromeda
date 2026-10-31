@@ -49,8 +49,9 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::{command::Command, statement::Statement};
 use andromeda_postgresql_temporal_query::history::build_temporal_history_query;
-use andromeda_temporal::error::TemporalError;
+use andromeda_temporal::{error::TemporalError, merged_parts::LocalPart};
 use chrono::Utc;
+use sea_query::DynIden;
 use sqlx::{Connection, PgConnection, Row};
 use std::collections::HashSet;
 
@@ -63,8 +64,8 @@ const STAGED_KEY_CEILING: i64 = i64::MAX;
 type Grain = (AttributeName, Option<Identifier>);
 
 impl TemporalRepository {
-    /// Aggregate `entity_id` over its local instances together with
-    /// `answered`.
+    /// Aggregate `entity_id` over `answered`, together with its local
+    /// instances when `local` includes them.
     ///
     /// # Errors
     ///
@@ -75,6 +76,7 @@ impl TemporalRepository {
         &self,
         target: &ContextTarget,
         entity_id: &Identifier,
+        local: LocalPart,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],
@@ -85,6 +87,31 @@ impl TemporalRepository {
         for statement in staging_tables(&branch) {
             statement.to_query().execute(&mut *tx).await.map_err(TemporalStoreError::from)?;
         }
+        match local {
+            LocalPart::Included => self.copy_local_part(&mut tx, target, &branch, entity_id, entity_types, compiled).await?,
+            LocalPart::Excluded => {}
+        }
+        self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
+        let names = self.resolve_query_names(compiled).await?;
+        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), entity_id, compiled, &names);
+        let pg_rows = statement.to_query().fetch_all(&mut *tx).await.map_err(TemporalStoreError::from)?;
+        let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
+        tx.commit().await.map_err(TemporalStoreError::from)?;
+        Ok(rows)
+    }
+
+    /// Copy the entity's catalogue row, its streams and the history the
+    /// aggregation reads of it from `target` into the staging, together with
+    /// the streams its queued entries extend on the live branch.
+    async fn copy_local_part(
+        &self,
+        tx: &mut PgConnection,
+        target: &ContextTarget,
+        branch: &DynIden,
+        entity_id: &Identifier,
+        entity_types: &[EntityTypeName],
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<(), TemporalStoreError> {
         let copied = if compiled.representation.format.is_grouped() {
             CopiedHistory::Whole
         } else {
@@ -94,34 +121,13 @@ impl TemporalRepository {
             }
         };
         let snapshot = schema_iden(target);
-        copy_entity(&branch, entity_id)
-            .map_err(TemporalStoreError::from)?
-            .to_query()
-            .execute(&mut *tx)
-            .await
-            .map_err(TemporalStoreError::from)?;
-        copy_streams(&branch)
-            .map_err(TemporalStoreError::from)?
-            .to_query()
-            .execute(&mut *tx)
-            .await
-            .map_err(TemporalStoreError::from)?;
+        copy_entity(branch, entity_id)?.to_query().execute(&mut *tx).await?;
+        copy_streams(branch)?.to_query().execute(&mut *tx).await?;
         if snapshot.is_none() {
-            self.stage_queued_streams(&mut tx, entity_id, entity_types).await?;
+            self.stage_queued_streams(tx, entity_id, entity_types).await?;
         }
-        copy_history(snapshot.as_ref(), entity_id, copied)
-            .map_err(TemporalStoreError::from)?
-            .to_query()
-            .execute(&mut *tx)
-            .await
-            .map_err(TemporalStoreError::from)?;
-        self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
-        let names = self.resolve_query_names(compiled).await?;
-        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), entity_id, compiled, &names);
-        let pg_rows = statement.to_query().fetch_all(&mut *tx).await.map_err(TemporalStoreError::from)?;
-        let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
-        tx.commit().await.map_err(TemporalStoreError::from)?;
-        Ok(rows)
+        copy_history(snapshot.as_ref(), entity_id, copied)?.to_query().execute(tx).await?;
+        Ok(())
     }
 
     /// Stage the answered rows beside the copied local ones, in streams of

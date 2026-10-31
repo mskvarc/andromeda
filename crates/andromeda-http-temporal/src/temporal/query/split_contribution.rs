@@ -28,8 +28,7 @@ use andromeda_federation::{aggregation_gathering::AggregationGathering, split_en
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     temporal::contributed_entities::{ContributedEntities, ContributedRendering},
@@ -37,6 +36,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_temporal::{
     error::TemporalError,
     local_in_effect::LocalInEffect,
+    merged_parts::{EntityParts, LocalPart},
     query_reading::QueryReading,
     service::TemporalService,
     split_settlement::{AnsweredParts, SplitSettlement},
@@ -117,14 +117,23 @@ async fn render_contributions(
     let (ContributionShape::MergedInstances, Some(history), Some(settlement)) = (shape, request.forwarded, settlement) else {
         return Ok(None);
     };
-    let mut parts: Vec<(Identifier, Vec<TemporalDocument>)> = settlement.retained.iter().map(|entity_id| (entity_id.clone(), Vec::new())).collect(); // clone: each part list owns the identifier it is rendered under
+    // Every part is merged before a split query's filters are decided, so the local part of a retained entity is in it.
+    let mut parts: Vec<EntityParts> = settlement
+        .retained
+        .iter()
+        .map(|entity_id| EntityParts {
+            entity_id: entity_id.clone(), // clone: each part list owns the identifier it is rendered under
+            local: LocalPart::Included,
+            answered: Vec::new(),
+        })
+        .collect();
     for answer in instance_documents(&history.sources) {
         let Some(entity_id) = answer.id() else {
             continue;
         };
-        if let Some((_, answers)) = parts.iter_mut().find(|(held, _)| held == entity_id) {
+        if let Some(part) = parts.iter_mut().find(|part| part.entity_id == *entity_id) {
             // clone: the sources' answers stay with the history their warnings and contributions are read from
-            answers.push(answer.clone());
+            part.answered.push(answer.clone());
         }
     }
     let rendered = render_merged_instances(service, request.target, request.params, request.reading(), parts, instance).await?;

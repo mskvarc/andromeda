@@ -3,6 +3,7 @@
 
 use crate::{
     error::TemporalError,
+    merged_parts::LocalPart,
     observed_instance::ObservedInstance,
     outcome::TemporalEntityIdOutcome,
     port::{
@@ -166,11 +167,16 @@ impl TemporalHistoryReader for StubBroker {
     async fn query_merged_entity_aggregation(
         &self,
         _scope: &TemporalReadScope<'_>,
-        _entity_id: &Identifier,
-        _entity_types: &[EntityTypeName],
+        entity_id: &Identifier,
+        local: LocalPart,
+        entity_types: &[EntityTypeName],
         _compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        self.merged_entities
+            .lock()
+            .expect("the recording lock is never poisoned")
+            .push((entity_id.clone(), local, entity_types.to_vec())); // clone: the recording owns what it was handed
         self.merged_answers
             .lock()
             .expect("the recording lock is never poisoned")

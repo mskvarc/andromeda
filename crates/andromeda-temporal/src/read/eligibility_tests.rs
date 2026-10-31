@@ -2,6 +2,7 @@
 
 use crate::{
     error::TemporalError,
+    merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
     port::{
         history_reader::{
@@ -182,6 +183,7 @@ impl TemporalHistoryReader for ShapedReader {
         &self,
         _scope: &TemporalReadScope<'_>,
         _entity_id: &Identifier,
+        _local: LocalPart,
         _entity_types: &[EntityTypeName],
         _compiled: &CompiledTemporalQuery,
         _answered: &[TemporalHistoryRow],

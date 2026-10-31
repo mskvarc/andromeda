@@ -8,6 +8,7 @@
 
 use crate::{
     instance_limits::TemporalInstanceLimits,
+    merged_parts::LocalPart,
     port::{
         history_reader::TemporalHistoryReader,
         in_effect_reads::{InEffectReads, ScopeRead},
@@ -32,6 +33,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
     identifier::Identifier,
     instance_identity::InstanceIdentity,
     time::date_time::NgsiLdDateTime,
@@ -81,6 +83,9 @@ pub(crate) struct StubBroker {
     /// The rows the sources answered with, as each merged aggregation was
     /// handed them.
     merged_answers: Mutex<Vec<TemporalHistoryRow>>,
+    /// Each entity a merged aggregation ran for, whether its local part joined,
+    /// and the types it was named with, in order.
+    merged_entities: Mutex<Vec<(Identifier, LocalPart, Vec<EntityTypeName>)>>,
     /// The entity selections each identifier listing ran under, in order.
     listed_selections: Mutex<Vec<EntitySelection>>,
     /// The page of history an entity reads as in place of its links.
@@ -109,6 +114,7 @@ impl StubBroker {
             current_state: CurrentState::Held,
             aggregated: Vec::new(),
             merged_answers: Mutex::new(Vec::new()),
+            merged_entities: Mutex::new(Vec::new()),
             listed_selections: Mutex::new(Vec::new()),
             pages: HashMap::new(),
             leaf_truths: HashMap::new(),
@@ -198,6 +204,12 @@ impl StubBroker {
     /// in the order they were handed them.
     pub(crate) fn merged_answers(&self) -> Vec<TemporalHistoryRow> {
         self.merged_answers.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
+    }
+
+    /// Each entity a merged aggregation ran for, whether its local part joined,
+    /// and the types it was named with, in the order they ran.
+    pub(crate) fn merged_entities(&self) -> Vec<(Identifier, LocalPart, Vec<EntityTypeName>)> {
+        self.merged_entities.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
     }
 
     /// The same graph with the current state of every entity deleted.

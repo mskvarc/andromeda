@@ -29,6 +29,7 @@ use andromeda_postgresql_temporal_query::{
 };
 use andromeda_temporal::{
     error::TemporalError,
+    merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
     port::{
         history_reader::{
@@ -309,11 +310,12 @@ impl TemporalHistoryReader for TemporalRepository {
         &self,
         scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
+        local: LocalPart,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        self.merged_entity_aggregation(scope.target(), entity_id, entity_types, compiled, answered)
+        self.merged_entity_aggregation(scope.target(), entity_id, local, entity_types, compiled, answered)
             .await
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     temporal::query::{
-        hub_aggregation::{HubAggregates, overlapping_entities, parts_by_entity},
+        hub_aggregation::{HubAggregates, overlapping_entities, parts_by_entity, with_local_parts},
         merged_history::MergedTemporalHistory,
     },
     test_history::held_history,
@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_model::{
     registration::forwarding_mode::ForwardingMode,
     temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
 };
+use andromeda_temporal::merged_parts::LocalPart;
 use serde_json::json;
 
 fn id(raw: &str) -> Identifier {
@@ -131,4 +132,34 @@ async fn an_entity_aggregated_here_replaces_its_merged_holders() {
     );
     pretty_assertions::assert_eq!(merged.entities.last().map(TemporalHistory::instance_count), Some(3));
     pretty_assertions::assert_eq!(merged.warnings.len(), 1);
+}
+
+/// Clause 5.7.4.4 selects S2 to S4 from the local entities before the merge
+/// when entities are not split: an entity the local read left out failed the
+/// filters locally, so only its answered parts are aggregated, and one the read
+/// returned joins its local instances to them.
+#[tokio::test]
+async fn only_an_entity_the_local_read_returned_joins_its_local_part() {
+    let local = vec![vehicle(1, &[60]).await];
+    let parts = vec![
+        (id("urn:ngsi-ld:Vehicle:1"), vec![document(vehicle(1, &[70, 80]).await)]),
+        (id("urn:ngsi-ld:Vehicle:2"), vec![document(vehicle(2, &[90]).await)]),
+    ];
+    let joined: Vec<(String, LocalPart, Vec<usize>)> = with_local_parts(&local, parts)
+        .iter()
+        .map(|part| {
+            (
+                part.entity_id.to_string(),
+                part.local,
+                part.answered.iter().map(TemporalDocument::instance_count).collect(),
+            )
+        })
+        .collect();
+    pretty_assertions::assert_eq!(
+        joined,
+        vec![
+            (String::from("urn:ngsi-ld:Vehicle:1"), LocalPart::Included, vec![2]),
+            (String::from("urn:ngsi-ld:Vehicle:2"), LocalPart::Excluded, vec![1]),
+        ]
+    );
 }

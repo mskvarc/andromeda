@@ -63,6 +63,8 @@ pub mod linked;
 /// What this broker holds in effect of each contributed entity when a split
 /// query's window opens.
 pub mod local_in_effect;
+/// The parts an entity held in more than one place is aggregated over.
+pub mod merged_parts;
 /// Reading one written attribute instance as the observation a history row records.
 pub mod observed_instance;
 pub mod outcome;

@@ -3,6 +3,7 @@
 use crate::{
     append_intent::TemporalObservationIdentity,
     error::TemporalError,
+    merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
     port::{
         in_effect_reads::InEffectReads,
@@ -297,12 +298,15 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// which is one aggregation over the union of the parts, never a union of
     /// per-part aggregates. An instance a local one already carries the
     /// `instanceId` of is the same instance and counts once (clause 4.5.7).
-    /// `entity_types` names the entity when this view holds none of it.
+    /// `local` says whether the instances held in this view are a part of the
+    /// merged entity at all; when they are not, or when this view holds none of
+    /// the entity, `entity_types` names it.
     #[must_use = "temporal aggregation reads must be awaited"]
     async fn query_merged_entity_aggregation(
         &self,
         scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
+        local: LocalPart,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         answered: &[TemporalHistoryRow],

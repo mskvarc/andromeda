@@ -1,11 +1,18 @@
 use crate::{
+    merged_parts::{EntityParts, LocalPart},
     query_reading::QueryReading,
     stub_broker::{StubBroker, live_target, service_over, uri},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_type::AttributeType, temporal_format::TemporalFormat, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    temporal_format::TemporalFormat,
+    time_rel::TimeRel,
+};
 use andromeda_ngsi_ld_model::{
     received::{ReceivedElement, ReceivedEntities},
     temporal::{
@@ -103,7 +110,11 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
             },
-            vec![(uri("urn:ngsi-ld:T:A"), vec![answered(5).await])],
+            vec![EntityParts {
+                entity_id: uri("urn:ngsi-ld:T:A"),
+                local: LocalPart::Included,
+                answered: vec![answered(5).await],
+            }],
         )
         .await
         .expect("the merged aggregation renders");
@@ -129,4 +140,68 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
         "{triples:?}"
     );
     assert!(rendering.warnings.is_empty(), "{:?}", rendering.warnings);
+}
+
+/// Clause 5.7.4.4: without split entities a local part that failed the filters
+/// is no part of the entity merged into S4, so the store is told to leave this
+/// broker's instances out and the entity is named by the types its answered
+/// parts carry, not by the local catalogue.
+#[tokio::test]
+async fn an_excluded_local_part_is_left_to_the_store_and_the_answered_types_name_the_entity() {
+    let broker = Arc::new(StubBroker::new([(uri("urn:ngsi-ld:T:A"), Vec::new())]).aggregating(vec![aggregate_of_the_merged_instances(5)]));
+    let service = service_over(Arc::clone(&broker), None);
+
+    service
+        .render_merged_aggregations(
+            &live_target(),
+            &aggregated_query(),
+            QueryReading {
+                context: &context(),
+                language_targeting: LanguageTargeting::Specification,
+            },
+            vec![EntityParts {
+                entity_id: uri("urn:ngsi-ld:T:A"),
+                local: LocalPart::Excluded,
+                answered: vec![answered(5).await],
+            }],
+        )
+        .await
+        .expect("the merged aggregation renders");
+
+    let answered_type: EntityTypeName = "https://uri.etsi.org/ngsi-ld/default-context/Thing".parse().expect("a type IRI");
+    assert_eq!(
+        broker.merged_entities(),
+        vec![(uri("urn:ngsi-ld:T:A"), LocalPart::Excluded, vec![answered_type])]
+    );
+}
+
+/// An included local part keeps the types the local catalogue holds for the
+/// entity, whatever its answered parts call it.
+#[tokio::test]
+async fn an_included_local_part_is_named_by_the_local_catalogue() {
+    let broker = Arc::new(StubBroker::new([(uri("urn:ngsi-ld:T:A"), Vec::new())]).aggregating(vec![aggregate_of_the_merged_instances(5)]));
+    let service = service_over(Arc::clone(&broker), None);
+
+    service
+        .render_merged_aggregations(
+            &live_target(),
+            &aggregated_query(),
+            QueryReading {
+                context: &context(),
+                language_targeting: LanguageTargeting::Specification,
+            },
+            vec![EntityParts {
+                entity_id: uri("urn:ngsi-ld:T:A"),
+                local: LocalPart::Included,
+                answered: vec![answered(5).await],
+            }],
+        )
+        .await
+        .expect("the merged aggregation renders");
+
+    let catalogued_type: EntityTypeName = "https://example.com/Thing".parse().expect("a type IRI");
+    assert_eq!(
+        broker.merged_entities(),
+        vec![(uri("urn:ngsi-ld:T:A"), LocalPart::Included, vec![catalogued_type])]
+    );
 }

@@ -31,7 +31,11 @@ use andromeda_federation::{aggregation_gathering::AggregationGathering, outcome:
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
-use andromeda_temporal::{query_reading::QueryReading, service::TemporalService};
+use andromeda_temporal::{
+    merged_parts::{EntityParts, LocalPart},
+    query_reading::QueryReading,
+    service::TemporalService,
+};
 use axum::http::Uri;
 use std::collections::HashSet;
 
@@ -96,7 +100,8 @@ pub(crate) async fn aggregate_at_hub(
             ..HubAggregates::default()
         });
     }
-    let ids: HashSet<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the set outlives the parts the rendering consumes
+    let parts = with_local_parts(local, parts);
+    let ids: HashSet<Identifier> = parts.iter().map(|part| part.entity_id.clone()).collect(); // clone: the set outlives the parts the rendering consumes
     let GatheringRequest { target, query } = request;
     let reading = QueryReading {
         context: query.context,
@@ -109,8 +114,8 @@ pub(crate) async fn aggregate_at_hub(
     Ok(HubAggregates { ids, entities, warnings })
 }
 
-/// Render each entity of `parts`, against `target` under `params`, with the aggregates of its local instances
-/// together with the instances the sources answered for it.
+/// Render each entity of `parts`, against `target` under `params`, with the aggregates of the instances the sources
+/// answered for it, together with its local instances when its local part is included.
 ///
 /// # Errors
 ///
@@ -121,7 +126,7 @@ pub(crate) async fn render_merged_instances(
     target: &ContextTarget,
     params: &TemporalQueryParameters,
     reading: QueryReading<'_>,
-    parts: Vec<(Identifier, Vec<TemporalDocument>)>,
+    parts: Vec<EntityParts>,
     instance: &Uri,
 ) -> Result<(Vec<TemporalHistory>, Vec<NgsiLdWarning>), ProblemResponse> {
     let rendering = service
@@ -134,6 +139,31 @@ pub(crate) async fn render_merged_instances(
         .map(|warning| NgsiLdWarning::new(WarnCode::RevalidationFailed, warning))
         .collect();
     Ok((rendering.entities, warnings))
+}
+
+/// Each entity of `parts` with the documents the sources answered for it, its local part included only when the
+/// local read returned the entity.
+///
+/// The local read holds exactly the local parts that belong to the merged entities. Without split entities it applied
+/// the value, geo and scope filters before the merge, the sets S2 to S4 of clause 5.7.4.4, so an entity it left out
+/// failed them locally and its local instances are no part of the entity merged into S4. With split entities this
+/// broker aggregates only a query carrying none of those filters, so the read left out no local part holding an
+/// instance of the window. The read is never cut to a page: a distributed query reads past its result budget only to
+/// be refused.
+fn with_local_parts(local: &[TemporalHistory], parts: Vec<(Identifier, Vec<TemporalDocument>)>) -> Vec<EntityParts> {
+    let read: HashSet<&Identifier> = local.iter().filter_map(TemporalHistory::id).collect();
+    parts
+        .into_iter()
+        .map(|(entity_id, answered)| EntityParts {
+            local: if read.contains(&entity_id) {
+                LocalPart::Included
+            } else {
+                LocalPart::Excluded
+            },
+            entity_id,
+            answered,
+        })
+        .collect()
 }
 
 /// The entities more than one part answered: this broker's local read and
