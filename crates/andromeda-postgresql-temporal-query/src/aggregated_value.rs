@@ -25,14 +25,12 @@ use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::Valu
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    jsonb::{jsonb_array_length, jsonb_typeof},
+    json_type::{JsonType, jsonb_type_is},
+    jsonb::jsonb_array_length,
     literal::int_literal,
     pg_type::PostgresType,
 };
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, SimpleExpr};
-
-/// The JSON type name `jsonb_typeof` reports for an array.
-const JSON_ARRAY_TYPE: &str = "array";
 
 /// The families whose every value-derived aggregate the tables mark N/A.
 ///
@@ -80,7 +78,7 @@ fn boolean_as_numeric() -> SimpleExpr {
 fn array_size() -> SimpleExpr {
     CaseStatement::new()
         .case(
-            Expr::expr(jsonb_typeof(structured_json())).eq(JSON_ARRAY_TYPE),
+            jsonb_type_is(structured_json(), JsonType::Array),
             cast(jsonb_array_length(structured_json()), PostgresType::Numeric),
         )
         .into()

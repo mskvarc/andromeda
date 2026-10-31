@@ -68,54 +68,32 @@ impl<'a> TargetValue<'a> {
         }
     }
 
-    /// The value as an exact number, accepting the textual form typed JSON-LD
-    /// values use.
+    /// The value when it is a number.
+    ///
+    /// A string spelling a number is a String, not a number: clause 4.9 makes a
+    /// target of another data type unequal to the operand.
     #[must_use]
     pub fn as_number(&self) -> Option<Cow<'_, JsonNumber>> {
         match self {
             TargetValue::Number(number) => Some(Cow::Borrowed(number.as_ref())),
-            TargetValue::Text(text) => text.parse().ok().map(Cow::Owned),
             TargetValue::Json(json) => match json.kind() {
                 JsonKind::Number => json.as_number().map(Cow::Owned),
-                JsonKind::String => json.as_str().and_then(|text| text.parse().ok()).map(Cow::Owned),
-                JsonKind::Null | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
+                JsonKind::Null | JsonKind::String | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
+            TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
     }
 
-    /// The value as a boolean, accepting its textual form.
+    /// The value when it is a boolean; a string spelling one is a String.
     #[must_use]
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             TargetValue::Boolean(boolean) => Some(*boolean),
-            TargetValue::Text(text) => boolean_spelled(text),
             TargetValue::Json(json) => match json.kind() {
                 JsonKind::Boolean => json.as_bool(),
-                JsonKind::String => json.as_str().and_then(|text| boolean_spelled(&text)),
-                JsonKind::Null | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
+                JsonKind::Null | JsonKind::String | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
-        }
-    }
-
-    /// The value rendered as text for string comparisons: a string as it is, a
-    /// number or a boolean in its JSON spelling. A time value is no String
-    /// (clause 4.9: no equality of data types, no match).
-    #[must_use]
-    pub fn as_lexical(&self) -> Option<Cow<'_, str>> {
-        match self {
-            TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
-            TargetValue::Number(number) => Some(Cow::Owned(number.to_string())),
-            TargetValue::Boolean(boolean) => Some(Cow::Owned(boolean.to_string())),
-            // An admitted literal spells its numbers and booleans canonically,
-            // so their text is their JSON spelling.
-            TargetValue::Json(json) => match json.kind() {
-                JsonKind::String => json.as_str(),
-                JsonKind::Number | JsonKind::Boolean => Some(Cow::Borrowed(json.text())),
-                JsonKind::Null | JsonKind::Array | JsonKind::Object => None,
-            },
-            TargetValue::Array(_) | TargetValue::Time(_) => None,
+            TargetValue::Text(_) | TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
     }
 
@@ -128,8 +106,9 @@ impl<'a> TargetValue<'a> {
         }
     }
 
-    /// The value when it is a String, the only type a pattern operator applies
-    /// to (clause 4.9).
+    /// The value when it is a String, the only type a String or URI operand
+    /// and a pattern operator compare with (clause 4.9); a number or a boolean
+    /// is no String, whatever its spelling.
     #[must_use]
     pub fn as_text(&self) -> Option<Cow<'_, str>> {
         match self {
@@ -137,17 +116,6 @@ impl<'a> TargetValue<'a> {
             TargetValue::Json(json) => json.as_str(),
             TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
         }
-    }
-}
-
-/// A boolean in its textual spelling.
-fn boolean_spelled(text: &str) -> Option<bool> {
-    match text {
-        "true" => Some(true),
-        "false" => Some(false),
-        // `&str` is unbounded, so a catch-all is the only way to close this
-        // match; anything else is not a boolean in any spelling.
-        _ => None,
     }
 }
 
@@ -249,20 +217,22 @@ mod tests {
         );
     }
 
-    /// Numbers, booleans and strings read in each other's domains exactly as
-    /// their JSON spellings allow.
+    /// Clause 4.9 makes a target of another data type unequal to the operand,
+    /// so a value reads only in the domain of its own JSON type.
     #[test]
-    fn a_target_reads_in_the_domain_of_the_operand() {
-        let number = TargetValue::Text(Cow::Borrowed("0.5"));
-        pretty_assertions::assert_eq!(number.as_number().map(Cow::into_owned), "0.5".parse().ok());
-        pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("true")).as_boolean(), Some(true));
-        pretty_assertions::assert_eq!(TargetValue::Boolean(false).as_lexical().as_deref(), Some("false"));
-        let (twelve, object, text) = (literal("12"), literal(r#"{"a": 1}"#), literal(r#""true""#));
-        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_lexical().as_deref(), Some("12"));
-        pretty_assertions::assert_eq!(TargetValue::Json(object.piece()).as_lexical(), None);
+    fn a_target_reads_only_in_the_domain_of_its_own_json_type() {
+        let (twelve, object, text, yes) = (literal("12"), literal(r#"{"a": 1}"#), literal(r#""12""#), literal("true"));
+        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_number().map(Cow::into_owned), "12".parse().ok());
         pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_text(), None);
-        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_boolean(), Some(true));
-        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_text().as_deref(), Some("true"));
+        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_number(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_text().as_deref(), Some("12"));
+        pretty_assertions::assert_eq!(TargetValue::Json(yes.piece()).as_boolean(), Some(true));
+        pretty_assertions::assert_eq!(TargetValue::Json(yes.piece()).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(object.piece()).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("0.5")).as_number(), None);
+        pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("true")).as_boolean(), None);
+        pretty_assertions::assert_eq!(TargetValue::Number(Cow::Owned("12".parse().expect("a number"))).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Boolean(false).as_text(), None);
     }
 
     /// Raw JSON members are addressed by their verbatim keys; anything that is

@@ -47,6 +47,7 @@ pub mod gin_index;
 mod identifier;
 pub mod interval;
 pub mod introspection;
+pub mod json_type;
 pub mod jsonb;
 pub mod literal;
 pub mod ltree;

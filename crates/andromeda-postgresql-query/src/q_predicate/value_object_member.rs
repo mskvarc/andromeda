@@ -38,7 +38,8 @@ use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
-    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_array, jsonb_path_query_silent, jsonb_typeof},
+    json_type::{JsonType, jsonb_type_is},
+    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_array, jsonb_path_query_silent},
     literal::{int_literal, text_literal, true_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -52,9 +53,6 @@ const MEMBER: &str = "member";
 /// The alias one value of an array target is read under, which is also the
 /// name of its one column.
 const ELEMENT: &str = "element";
-
-/// The JSON type `jsonb_typeof` names an array by.
-const JSON_ARRAY_TYPE: &str = "array";
 
 /// The jsonpath keeping the values of an expanded member that are literals,
 /// which are what a Query Term compares: a nested node or a reference carries
@@ -80,7 +78,7 @@ impl MemberShape {
     fn holds_scalar(self, member: SimpleExpr) -> SimpleExpr {
         match self {
             MemberShape::ValueNodes => SeaExpr::expr(jsonb_array_length(member)).eq(int_literal(1)),
-            MemberShape::JsonLiteral => SeaExpr::expr(jsonb_typeof(member)).ne(text_literal(JSON_ARRAY_TYPE)),
+            MemberShape::JsonLiteral => jsonb_type_is(member, JsonType::Array).not(),
         }
     }
 
@@ -88,7 +86,7 @@ impl MemberShape {
     fn holds_array(self, member: SimpleExpr) -> SimpleExpr {
         match self {
             MemberShape::ValueNodes => SeaExpr::expr(jsonb_array_length(member)).gte(int_literal(2)),
-            MemberShape::JsonLiteral => SeaExpr::expr(jsonb_typeof(member)).eq(text_literal(JSON_ARRAY_TYPE)),
+            MemberShape::JsonLiteral => jsonb_type_is(member, JsonType::Array),
         }
     }
 
@@ -416,7 +414,7 @@ mod tests {
     #[test]
     fn an_ordering_on_a_member_compares_a_scalar_target_only() {
         let sql = member_sql("address[city]<4", InstanceRow::Current);
-        assert!(sql.contains("pg_input_is_valid("), "{sql}");
+        assert!(sql.contains("= ('number')"), "{sql}");
         assert!(!sql.contains("NOT COALESCE("), "{sql}");
         assert!(!sql.contains(r#"AS "element""#), "{sql}");
     }

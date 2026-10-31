@@ -12,16 +12,18 @@
 use crate::{alias::Ah, structured_json::structured_json};
 use andromeda_postgresql_codes::{recorded_shape::RecordedShape, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
-use andromeda_postgresql_seaquery::{cast::cast, jsonb::jsonb_typeof, literal::int_literal, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    json_type::{JsonType, jsonb_type_is},
+    literal::int_literal,
+    pg_type::PostgresType,
+};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, SimpleExpr};
 
 /// The name this shape is projected under by [`recorded_shape`].
 #[derive(Iden, Clone, Copy)]
 #[iden = "recorded_shape"]
 pub struct RecordedShapeColumn;
-
-/// The JSON type name `jsonb_typeof` reports for an array.
-const JSON_ARRAY_TYPE: &str = "array";
 
 /// Whether the row's stored value shape is `kind`.
 fn value_kind_is(kind: ValueKind) -> SimpleExpr {
@@ -47,7 +49,7 @@ pub fn recorded_shape() -> SimpleExpr {
 
     CaseStatement::new()
         .case(
-            value_kind_is(ValueKind::Object).and(Expr::expr(jsonb_typeof(structured_json())).eq(JSON_ARRAY_TYPE)),
+            value_kind_is(ValueKind::Object).and(jsonb_type_is(structured_json(), JsonType::Array)),
             shape(RecordedShape::Array),
         )
         .case(value_kind_is(ValueKind::Object), shape(RecordedShape::Object))
@@ -116,6 +118,6 @@ mod tests {
     #[test]
     fn the_projection_binds_no_parameter_of_its_own() {
         let (_sql, values) = Query::select().expr(recorded_shape()).to_owned().build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(values.0.len(), 1, "only the jsonb type name binds");
+        pretty_assertions::assert_eq!(values.0.len(), 0, "nothing binds");
     }
 }

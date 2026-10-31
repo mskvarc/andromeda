@@ -23,16 +23,11 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_seaquery::{
     cast::cast_compound,
-    jsonb::jsonb_typeof,
-    literal::text_literal,
+    json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
     operator::{negate_total, present_and},
-    pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
-
-/// The JSON type `jsonb_typeof` names a string by.
-const JSON_STRING_TYPE: &str = "string";
+use sea_query::{Condition, ExprTrait, SimpleExpr};
 
 /// One JSON target value.
 #[derive(Debug, Clone)]
@@ -46,37 +41,29 @@ pub(crate) struct JsonTarget {
     pub(crate) presence: SimpleExpr,
 }
 
-/// Read a JSONB value out as its whole text: `(jsonb) #>> '{}'`.
+/// Compare a stored JSONB value against one scalar operand.
 ///
-/// The empty `text[]` path yields the value itself as text, which is what every
-/// `q` comparison lifts from.
-fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
-    jsonb.json_path_text(text_literal("{}"))
-}
-
-/// Compare a stored text expression against one scalar operand.
-///
-/// Everything that decides the comparison domain (the cast a number or boolean
-/// needs, the guarded `timestamptz` comparison a `DateTime` needs, the
+/// Everything that decides the comparison domain (the JSON type the operand
+/// reads, the cast a number or boolean needs, the guarded `timestamptz` comparison a `DateTime` needs, the
 /// normalisation a `Time` needs) lives in [`lift_comparison`], so this reading
 /// and the CSR renderer compare the same way. A String ordering compares under
 /// the collation [`ordered_string`] picks.
-fn scalar_predicate(stored_text: SimpleExpr, datatype: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    let lifted = lift_comparison(scalar, stored_text, datatype);
+fn scalar_predicate(stored: SimpleExpr, datatype: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
+    let lifted = lift_comparison(scalar, stored, datatype);
     compare(ordered_string(lifted.stored, scalar, op), op, lifted.operand)
 }
 
 /// Whether the target equals a scalar, lies inside a range, or equals one
 /// member of a value list (clause 4.9 `equal`).
 ///
-/// A value of another data type than the operand lifts to `NULL` and leaves
+/// A value of another JSON type than the operand lifts to `NULL` and leaves
 /// the comparison unknown, which is not a match; the reading negates this
 /// condition totally for `unequal`, which clause 4.9 makes hold for it: "If the
 /// data type of the target value and the data type of the Query Term value are
 /// different, then they shall be considered unequal."
 pub(crate) fn json_equal(target: &JsonTarget, rhs: &CompareValue) -> Condition {
     // clone: sea-query owns every operand, and one target is compared by several arms
-    let stored = || whole_text(target.value.clone());
+    let stored = || target.value.clone();
     match rhs {
         CompareValue::Scalar(scalar) => Condition::all().add(scalar_predicate(stored(), target.datatype.clone(), scalar, CmpOp::Equal)),
         CompareValue::Range { min, max } => {
@@ -108,7 +95,7 @@ pub(crate) fn json_equal(target: &JsonTarget, rhs: &CompareValue) -> Condition {
 /// not matching".
 pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -> Condition {
     // clone: the target may be read by further terms
-    Condition::all().add(scalar_predicate(whole_text(target.value.clone()), target.datatype.clone(), rhs, op.as_cmp_op()))
+    Condition::all().add(scalar_predicate(target.value.clone(), target.datatype.clone(), rhs, op.as_cmp_op()))
 }
 
 /// Decide a pattern Query Term (`~=`/`!~=`) against one target.
@@ -119,10 +106,9 @@ pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -
 /// shall be considered as not matching". A JSON string declared as a time value
 /// is a time value, not a String.
 pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
-    let text = cast_compound(whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
+    let text = cast_compound(jsonb_whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
     let value = pattern_predicate(text, polarity, pattern, PatternIndexes::None);
-    let string = SeaExpr::expr(jsonb_typeof(target.value.clone())) // clone: as above
-        .eq(text_literal(JSON_STRING_TYPE))
+    let string = jsonb_type_is(target.value.clone(), JsonType::String) // clone: as above
         .and(negate_total(declares_time_value(target.datatype.clone()))); // clone: as above
     Condition::all().add(present_and(target.presence.clone().and(string), value)) // clone: as above
 }

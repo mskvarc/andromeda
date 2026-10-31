@@ -5,32 +5,18 @@ use crate::temporal_operand::{declared_date, declared_date_time, declared_time};
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_postgresql_seaquery::{
-    cast::{cast, cast_compound},
-    datetime::pg_input_is_valid,
-    literal::text_literal,
-    operator::regex_match,
+    cast::cast,
+    json_type::{JsonType, jsonb_typed_reading, jsonb_whole_text},
     pg_type::PostgresType,
 };
-use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, SimpleExpr};
-
-/// The JSON number grammar (IETF RFC 8259 section 6), anchored: the spellings
-/// a stored text is read as a number in.
-///
-/// `numeric` input also takes surrounding blanks, a leading `+`, `NaN`,
-/// `Infinity`, digit separators and non-decimal radixes, none of which is a
-/// JSON number. The ranges are spelled out because `\d` follows the
-/// database's character classes, which can count digits of other scripts.
-const JSON_NUMBER: &str = r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$";
-
-/// The two spellings a stored text is read as a boolean in.
-const JSON_BOOLEANS: [&str; 2] = ["true", "false"];
+use sea_query::{Expr as SeaExpr, SimpleExpr};
 
 /// Both sides of one document comparison, lifted into the domain the operand's
 /// kind is ordered in.
 ///
-/// A value read out of JSONB with `#>>` arrives as text, so neither side can be
-/// compared until both have been lifted the same way. Without that a numeric
-/// comparison orders lexicographically and `9` exceeds `10`.
+/// A value read out of JSONB is JSON, so neither side can be compared until
+/// both have been lifted the same way. Without that a numeric comparison
+/// orders lexicographically and `9` exceeds `10`.
 pub struct LiftedComparison {
     /// The stored value, read out of the document and lifted.
     pub stored: SimpleExpr,
@@ -38,18 +24,18 @@ pub struct LiftedComparison {
     pub operand: SimpleExpr,
 }
 
-/// Lift a stored JSONB text expression and one `q` operand into a common domain.
+/// Lift a stored JSONB value and one `q` operand into a common domain.
 ///
-/// `stored_text` is an expression already yielding `text` (the `… #>> '{}'`
-/// form every document reader builds), `datatype` the expanded datatype IRI the
+/// `stored` is a JSONB expression, `datatype` the expanded datatype IRI the
 /// value is declared as (`NULL` when none), and the operand carries its own
 /// bound value, so sea-query numbers both sides' placeholders when the
 /// enclosing statement renders.
 ///
 /// The domains, by operand kind:
 ///
-/// * numbers and booleans cast on both sides,
-/// * strings compare as text, which is what they are,
+/// * a number reads only a JSON number and a boolean only a JSON boolean, each
+///   cast on both sides,
+/// * a string or a URI reads only a JSON string, as text,
 /// * a `DateTime`, `Date` or `Time` compares only with a value declared as one
 ///   of its form (clause 4.9: no equality of data types, no match), a
 ///   `DateTime` as `timestamptz` bound as the instant itself, a `Time` in the
@@ -59,61 +45,42 @@ pub struct LiftedComparison {
 /// Numbers bind directly as `NUMERIC` and `DateTime` values as `timestamptz`;
 /// booleans bind as text and are cast in the statement.
 ///
-/// A stored side that does not spell a value of the operand's kind (a String
-/// member against a number, an object against a boolean) lifts to `NULL`
-/// rather than raising, so the comparison is unknown for that one value:
-/// clause 4.9 makes a target of another data type unequal to the operand, and
-/// never makes the query fail over it.
+/// A stored value of another JSON type than the operand's (the String `"3310"`
+/// against the number `3310`, the number `3310` against the String `"3310"`,
+/// an object against a boolean) lifts to `NULL` rather than to its spelling, so
+/// the comparison is unknown for that one value: clause 4.9 makes a target of
+/// another data type unequal to the operand, and never makes the query fail
+/// over it.
 #[must_use]
-pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
+pub fn lift_comparison(scalar: &Scalar, stored: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
     match scalar {
         Scalar::Number(number) => LiftedComparison {
-            stored: numeric_text(stored_text),
+            stored: jsonb_typed_reading(stored, JsonType::Number, PostgresType::Numeric),
             // SeaQuery owns every AST bind, so the exact decimal must be cloned
             // from the borrowed query operand.
             operand: SeaExpr::val(number.decimal().clone()),
         },
         Scalar::Bool(_) => LiftedComparison {
-            stored: boolean_text(stored_text),
+            stored: jsonb_typed_reading(stored, JsonType::Boolean, PostgresType::Boolean),
             operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Boolean),
         },
         Scalar::Str(_) | Scalar::Uri(_) => LiftedComparison {
-            stored: stored_text,
+            stored: jsonb_typed_reading(stored, JsonType::String, PostgresType::Text),
             operand: SeaExpr::val(scalar.literal_text()),
         },
         Scalar::DateTime(instant) => LiftedComparison {
-            stored: declared_date_time(stored_text, datatype),
+            stored: declared_date_time(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(*instant),
         },
         Scalar::Date(date) => LiftedComparison {
-            stored: declared_date(stored_text, datatype),
+            stored: declared_date(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(NgsiLdDate::from(*date).to_string()),
         },
         Scalar::Time(time) => LiftedComparison {
-            stored: declared_time(stored_text, datatype),
+            stored: declared_time(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
         },
     }
-}
-
-/// A text spelling a JSON number, lifted to `numeric`; `NULL` otherwise.
-///
-/// Neither check can raise, so the `CASE` never reaches the cast with a text
-/// it would refuse. `pg_input_is_valid` (PostgreSQL 16+) catches a JSON number
-/// whose exponent lies outside what `numeric` holds.
-fn numeric_text(text: SimpleExpr) -> SimpleExpr {
-    // clone: the grammar, the range check and the cast read one text
-    let guard = regex_match(text.clone(), text_literal(JSON_NUMBER)).and(pg_input_is_valid(text.clone(), PostgresType::Numeric));
-    CaseStatement::new().case(guard, cast_compound(text, PostgresType::Numeric)).into()
-}
-
-/// A text spelling a JSON boolean, lifted to `boolean`; `NULL` otherwise.
-///
-/// `boolean` input also takes `t`, `yes`, `on`, `1` and their kin, none of
-/// which is a JSON boolean.
-fn boolean_text(text: SimpleExpr) -> SimpleExpr {
-    let guard = text.clone().is_in(JSON_BOOLEANS.map(text_literal)); // clone: the guard and the cast read one text
-    CaseStatement::new().case(guard, cast_compound(text, PostgresType::Boolean)).into()
 }
 
 #[cfg(test)]
@@ -127,8 +94,7 @@ mod tests {
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
     use sea_query::{Alias, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
 
-    /// A plain column stands in for the `#>> '{}'` extraction real
-    /// callers lift.
+    /// A plain column stands in for the JSONB value real callers lift.
     fn stored() -> SimpleExpr {
         SeaExpr::col(Alias::new("stored"))
     }
@@ -184,25 +150,22 @@ mod tests {
         assert_eq!(bound_value(lifted.operand), "9", "the operand binds NUMERIC, not a float");
     }
 
-    /// Clause 4.9 makes a String target unequal to a number operand, so a text
-    /// that is no JSON number lifts to NULL instead of reaching the cast,
-    /// which would raise and fail the whole query.
+    /// Clause 4.9 makes a target of another data type unequal to the operand,
+    /// so the String `"4"` is no number: only a JSON number reaches the cast.
     #[test]
-    fn a_number_lift_casts_only_a_text_spelling_a_json_number() {
+    fn a_number_lift_reads_only_a_json_number() {
         let sql = render(lift_comparison(&Scalar::Number(4.into()), stored(), datatype()).stored);
         assert!(
-            sql.contains(r#"CASE WHEN (("stored" ~ ('^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$'))"#),
+            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('number')) THEN ("stored" #>> ('{}'))::numeric END"#),
             "{sql}"
         );
-        assert!(sql.contains(r#"pg_input_is_valid("stored", 'numeric')"#), "{sql}");
-        assert!(sql.contains(r#"THEN ("stored")::numeric END"#), "{sql}");
     }
 
     #[test]
-    fn a_boolean_lift_casts_only_the_two_json_boolean_spellings() {
+    fn a_boolean_lift_reads_only_a_json_boolean() {
         let sql = render(lift_comparison(&Scalar::Bool(true), stored(), datatype()).stored);
         assert!(
-            sql.contains(r#"CASE WHEN ("stored" IN ('true', 'false')) THEN ("stored")::boolean END"#),
+            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('boolean')) THEN ("stored" #>> ('{}'))::boolean END"#),
             "{sql}"
         );
     }
@@ -215,10 +178,16 @@ mod tests {
         assert_eq!(bound_value(lifted.operand), "true");
     }
 
+    /// Clause 4.9 makes a target of another data type unequal to the operand,
+    /// so the number `3310` is not the String `"3310"` its spelling reads as.
     #[test]
-    fn a_string_operand_is_compared_as_the_text_it_already_is() {
+    fn a_string_operand_reads_only_a_json_string() {
         let lifted = lift_comparison(&Scalar::Str("red".to_string()), stored(), datatype());
-        assert!(!render(lifted.stored).contains("::"), "the stored side is not cast");
+        let sql = render(lifted.stored);
+        assert!(
+            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('string')) THEN ("stored" #>> ('{}'))::text END"#),
+            "{sql}"
+        );
         assert!(!render(lifted.operand.clone()).contains("::"), "the operand is not cast");
         assert_eq!(bound_value(lifted.operand), "red");
     }
@@ -257,6 +226,7 @@ mod tests {
         let lifted = lift_comparison(&Scalar::Date(date), stored(), datatype());
         let stored_sql = render(lifted.stored);
         assert!(!stored_sql.contains("::"), "the stored side is not cast: {stored_sql}");
+        assert!(stored_sql.contains(r#""stored" #>> ('{}')"#), "the value is read as its text: {stored_sql}");
         assert!(stored_sql.contains("'https://uri.etsi.org/ngsi-ld/Date'"), "only a declared Date: {stored_sql}");
         assert_eq!(bound_value(lifted.operand), "2024-01-01");
     }

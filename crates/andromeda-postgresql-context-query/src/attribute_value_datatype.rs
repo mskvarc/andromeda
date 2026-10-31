@@ -27,7 +27,8 @@ use andromeda_ngsi_ld_vocabulary::{
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    jsonb::{jsonb_key_exists, jsonb_typeof},
+    json_type::{JsonType, jsonb_type_is},
+    jsonb::jsonb_key_exists,
     literal::text_literal,
     pg_array::{array_position, text_array},
     pg_type::PostgresType,
@@ -86,9 +87,7 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
     let (time, date, date_time) = (TIME, DATE, DATE_TIME);
     // clone: sea-query owns every expression in its AST, so each reading takes
     // its own copy of the columns the lateral projects once.
-    let listed = jsonb_typeof(value.object.clone())
-        .eq(text_literal(ARRAY_TYPE))
-        .or(jsonb_key_exists(value.object.clone(), text_literal(keyword::LIST)));
+    let listed = jsonb_type_is(value.object.clone(), JsonType::Array).or(jsonb_key_exists(value.object.clone(), text_literal(keyword::LIST)));
     CaseStatement::new()
         .case(value.number.clone().is_not_null(), text_literal(NUMBER_TYPE))
         .case(value.boolean.clone().is_not_null(), text_literal(BOOLEAN_TYPE))

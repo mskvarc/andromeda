@@ -26,6 +26,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
+    json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
     jsonb::{jsonb_key_exists, jsonb_path_query},
     literal::{false_literal, int_literal, text_literal},
     operator::{negate_total, present_and},
@@ -112,16 +113,18 @@ fn present(extract: SimpleExpr) -> SimpleExpr {
 
 /// Compile a pattern predicate against `context_source_properties`.
 ///
-/// Both polarities require the property to be present (clause 4.9), so both
-/// build through [`present_and`].
+/// Both polarities require the property to be present and to be a String
+/// (clause 4.9: "If the target value data type is different than String then
+/// it shall be considered as not matching"), so both build through
+/// [`present_and`].
 fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
     let extract = csr_value_extract(path);
     // `#>> '{}'` unwraps the jsonb value to its text form without the surrounding
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
-    // `Alpha` (clause 4.9). Every comparison arm in this file extracts the same
-    // way; the pattern arm must agree.
-    let value = pattern_predicate(stored_text(extract.clone()), polarity, pattern, PatternIndexes::None); // clone: the presence guard reads the same extraction
-    Condition::all().add(present_and(present(extract), value))
+    // `Alpha` (clause 4.9).
+    let value = pattern_predicate(jsonb_whole_text(extract.clone()), polarity, pattern, PatternIndexes::None); // clone: the guards read the same extraction
+    let string = present(extract.clone()).and(jsonb_type_is(extract, JsonType::String)); // clone: as above
+    Condition::all().add(present_and(string, value))
 }
 
 /// Build an expression that extracts the value of a CSR property from
@@ -174,14 +177,9 @@ fn unwrap_property(expr: SimpleExpr) -> SimpleExpr {
     SimpleExpr::SubQuery(None, Box::new(unwrapped.into_sub_query_statement()))
 }
 
-/// The text form of one extracted registration property, which is the side
-/// [`lift_comparison`] lifts: `(extract) #>> '{}'`.
-fn stored_text(extract: SimpleExpr) -> SimpleExpr {
-    extract.json_path_text(text_literal("{}"))
-}
-
-/// The text and the declared datatype IRI one extracted registration property
-/// is compared with `scalar` through.
+/// The JSONB value and the declared datatype IRI one extracted registration
+/// property is compared with `scalar` through, which [`lift_comparison`]
+/// lifts.
 ///
 /// Only a value object declaring a time value form in its `@type` compares
 /// with a time operand (clause 4.9: no equality of data types, no match), so
@@ -202,9 +200,9 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
                         text_literal(iri.as_str()),
                     ) // clone: every arm reads the one datatype
                 });
-            (extract.json_get_text(text_literal(keyword::VALUE)), declared.into())
+            (extract.json_get(text_literal(keyword::VALUE)), declared.into())
         }
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => (stored_text(extract), typed_null(PostgresType::Text)),
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => (extract, typed_null(PostgresType::Text)),
     }
 }
 
@@ -405,9 +403,29 @@ mod tests {
     #[test]
     fn a_date_time_operand_reads_the_declared_value_and_datatype() {
         let sql = render("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z");
-        assert!(sql.contains("->> ('@value')"), "{sql}");
+        assert!(sql.contains("-> ('@value')) #>> ('{}')"), "{sql}");
         assert!(sql.contains("->> ('@type')"), "{sql}");
         assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
+    }
+
+    /// Clause 4.9 makes a target of another data type unequal to the operand,
+    /// so a number reads only a JSON number and a String only a JSON string.
+    #[test]
+    fn an_operand_reads_only_a_property_of_its_own_json_type() {
+        let number = render("\"https://example.com/zip\"==3310");
+        assert!(number.contains("jsonb_typeof(\"element\".\"element\") = ('number')"), "{number}");
+        let string = render("\"https://example.com/zip\"==\"3310\"");
+        assert!(string.contains("jsonb_typeof(\"element\".\"element\") = ('string')"), "{string}");
+    }
+
+    /// Clause 4.9: "If the target value data type is different than String
+    /// then it shall be considered as not matching", in both polarities.
+    #[test]
+    fn a_pattern_reads_only_a_string_property() {
+        for q in ["\"https://example.com/zip\"~=\"^33\"", "\"https://example.com/zip\"!~=\"^33\""] {
+            let sql = render(q);
+            assert!(sql.contains("= ('string')"), "{sql}");
+        }
     }
 
     /// Clause 4.9: an Equal term holds when its value "is included in the
@@ -418,7 +436,9 @@ mod tests {
         let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\"");
         assert!(sql.contains("IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
         assert!(
-            sql.contains("'$[*]') AS \"element\" WHERE (\"element\".\"element\" #>> ('{}')) = 'queryEntity'"),
+            sql.contains(
+                "'$[*]') AS \"element\" WHERE (CASE WHEN (jsonb_typeof(\"element\".\"element\") = ('string')) THEN (\"element\".\"element\" #>> ('{}'))::text END) = 'queryEntity'"
+            ),
             "{sql}"
         );
         assert!(!sql.contains("NOT EXISTS"), "{sql}");

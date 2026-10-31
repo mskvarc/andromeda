@@ -4,7 +4,7 @@
 //! value is declared as.
 
 use crate::{
-    attribute_value_datatype::{ARRAY_TYPE, NULL_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue},
+    attribute_value_datatype::{NULL_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
 use andromeda_ngsi_ld_query::filter::{
@@ -27,10 +27,10 @@ use andromeda_postgresql_query::q_predicate::{
 };
 use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
 use andromeda_postgresql_seaquery::{
-    cast::{cast, cast_compound, typed_null},
+    cast::{cast, typed_null},
+    json_type::{JsonType, jsonb_type_is, jsonb_typed_reading, jsonb_whole_text},
     jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{false_literal, int_literal, text_literal},
-    pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     unnest::composite_field,
 };
@@ -181,7 +181,7 @@ impl Holder {
                         .case(json_property, jsonb_path_query_first(object.clone(), &literal_jsonpath(&members.written))) // clone: as above
                         .into(),
                 );
-                jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE)).json_path_text(text_literal("{}")) // clone: as above
+                jsonb_whole_text(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE))) // clone: as above
             }
             None => typed_null(PostgresType::Text),
         };
@@ -195,7 +195,7 @@ impl Holder {
             date_time: typed_null(PostgresType::Timestamptz),
             text: json_text(member.clone()), // clone: as above
             datatype: declared,
-            json_null: jsonb_typeof(member.clone()).eq(text_literal(NULL_TYPE)), // clone: as above
+            json_null: jsonb_type_is(member.clone(), JsonType::Null), // clone: as above
             object: json_compound(member),
         }
     }
@@ -221,24 +221,24 @@ fn target_language_jsonpath(language: LanguageSelector<'_>) -> String {
 
 /// `json` read as a number when it is a JSON number.
 fn json_number(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, NUMBER_TYPE, PostgresType::Numeric)
+    jsonb_typed_reading(json, JsonType::Number, PostgresType::Numeric)
 }
 
 /// `json` read as a boolean when it is a JSON boolean.
 fn json_boolean(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, "boolean", PostgresType::Boolean)
+    jsonb_typed_reading(json, JsonType::Boolean, PostgresType::Boolean)
 }
 
 /// `json` read as text when it is a JSON string.
 fn json_text(json: SimpleExpr) -> SimpleExpr {
-    json_scalar(json, "string", PostgresType::Text)
+    jsonb_typed_reading(json, JsonType::String, PostgresType::Text)
 }
 
 /// `json` when it is a structure: an object or an array.
 fn json_compound(json: SimpleExpr) -> SimpleExpr {
     CaseStatement::new()
         .case(
-            jsonb_typeof(json.clone()).is_in([text_literal(OBJECT_TYPE), text_literal(ARRAY_TYPE)]), // clone: the test reads the value it guards
+            jsonb_typeof(json.clone()).is_in([JsonType::Object, JsonType::Array].map(|json_type| text_literal(json_type.into()))), // clone: the test reads the value it guards
             json,
         )
         .into()
@@ -255,17 +255,4 @@ fn stored_json_null(object: SimpleExpr) -> SimpleExpr {
         text_literal(keyword::JSON),
     ]);
     object.is_in([expanded, cast(text_literal(NULL_TYPE), PostgresType::Jsonb)])
-}
-
-/// `json` as `ty` when its JSON type is `json_type`, `NULL` otherwise.
-///
-/// Guarded by a `CASE`, because the cast raises on a value of another type and
-/// only a `CASE` guarantees the test runs first.
-fn json_scalar(json: SimpleExpr, json_type: &str, ty: PostgresType) -> SimpleExpr {
-    CaseStatement::new()
-        .case(
-            jsonb_typeof(json.clone()).eq(text_literal(json_type)), // clone: the test reads the value it guards
-            cast_compound(json.json_path_text(text_literal("{}")), ty),
-        )
-        .into()
 }

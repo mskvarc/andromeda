@@ -229,8 +229,8 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
     match scalar {
         Scalar::Number(rhs) => Some(op.holds(value.as_number()?.as_ref().cmp(rhs))),
         Scalar::Bool(rhs) => Some(op.holds(value.as_boolean()?.cmp(rhs))),
-        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_lexical()?, rhs, op))),
-        Scalar::Uri(rhs) => Some(op.holds(value.as_lexical()?.as_ref().cmp(rhs.as_str()))),
+        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_text()?, rhs, op))),
+        Scalar::Uri(rhs) => Some(op.holds(value.as_text()?.as_ref().cmp(rhs.as_str()))),
         // A time operand compares only with a value declared as one of its form
         // (clause 4.9: no equality of data types, no match), in the temporal
         // order clause 4.9 asks for.
@@ -429,16 +429,27 @@ mod tests {
         ));
     }
 
+    /// A literal's datatype counts only where it declares a time value, so a
+    /// JSON string is a String whatever it spells (clause 4.9: a target of
+    /// another data type is unequal to the operand).
     #[test]
-    fn a_typed_json_ld_numeric_string_uses_the_same_exact_domain() {
+    fn a_typed_json_ld_numeric_string_compares_as_the_string_it_is_written_as() {
         let entity = serde_json::json!([{
             "@id": "urn:ngsi-ld:Sensor:1",
             "https://example.com/reading": [{
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "0.100000000000000005", "@type": "http://www.w3.org/2001/XMLSchema#decimal"}]
             }]
         }]);
+        assert!(!holds(
+            &parse("\"https://example.com/reading\"==0.100000000000000005").expect("a number operand"),
+            &entity
+        ));
         assert!(holds(
-            &parse("\"https://example.com/reading\"==0.100000000000000005").expect("exact equality"),
+            &parse("\"https://example.com/reading\"!=0.100000000000000005").expect("a number operand"),
+            &entity
+        ));
+        assert!(holds(
+            &parse("\"https://example.com/reading\"==\"0.100000000000000005\"").expect("a String operand"),
             &entity
         ));
     }
@@ -651,6 +662,42 @@ mod tests {
     /// Whether the `q` text holds for [`entity_with_several_member_values`].
     fn several_values_hold(q: &str) -> bool {
         holds(&parse(q).expect("parses"), &entity_with_several_member_values())
+    }
+
+    /// Clause 4.9: "If the data type of the target value and the data type of
+    /// the Query Term value are different, then they shall be considered
+    /// unequal", so a quoted operand compares only with a String member and an
+    /// unquoted number only with a number member, alone and inside `;` and `|`.
+    #[test]
+    fn a_member_compares_only_with_an_operand_of_its_own_json_type() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:3",
+            "https://example.com/address": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/zip": [{"@value": 3310}],
+                    "https://example.com/code": [{"@value": "3310"}],
+                    "https://example.com/open": [{"@value": "true"}]
+                }]
+            }]
+        }]);
+        let member_holds = |q: &str| holds(&parse(q).expect("parses"), &entity);
+        let zip = "\"https://example.com/address\"[\"https://example.com/zip\"]";
+        let code = "\"https://example.com/address\"[\"https://example.com/code\"]";
+        let open = "\"https://example.com/address\"[\"https://example.com/open\"]";
+        assert!(!member_holds(&format!("{zip}==\"3310\"")));
+        assert!(member_holds(&format!("{zip}!=\"3310\"")));
+        assert!(member_holds(&format!("{zip}==3310")));
+        assert!(!member_holds(&format!("{zip}<\"4\"")));
+        assert!(member_holds(&format!("{code}==\"3310\"")));
+        assert!(!member_holds(&format!("{code}==3310")));
+        assert!(member_holds(&format!("{code}!=3310")));
+        assert!(!member_holds(&format!("{code}>3000")));
+        assert!(!member_holds(&format!("{open}==true")));
+        assert!(member_holds(&format!("{open}!=true")));
+        assert!(!member_holds(&format!("{zip}==\"3310\"|{code}==9")));
+        assert!(member_holds(&format!("{zip}==\"3310\"|{code}==\"3310\"")));
+        assert!(!member_holds(&format!("{zip}==3310;{code}==3310")));
+        assert!(member_holds(&format!("{zip}==3310;{code}!=3310")));
     }
 
     /// Clause 4.9 `equal`: the operand "Is included in the target value, if
@@ -1417,12 +1464,16 @@ mod tests {
         assert!(!holds(&value_above(40), &entity));
     }
 
-    /// A number compared with a String operand is compared in its JSON
-    /// spelling.
+    /// Clause 4.9: "If the data type of the target value and the data type of
+    /// the Query Term value are different, then they shall be considered
+    /// unequal", so the number 80 is not the String spelling it.
     #[test]
-    fn a_number_is_equal_to_a_string_spelling_it() {
-        assert!(holds(&parse("\"https://example.com/speed\"==\"80\"").expect("parses"), &vehicle_entity()));
-        assert!(!holds(&parse("\"https://example.com/speed\"==\"81\"").expect("parses"), &vehicle_entity()));
+    fn a_number_is_unequal_to_a_string_spelling_it() {
+        let speed = |q: &str| holds(&parse(q).expect("parses"), &vehicle_entity());
+        assert!(!speed("\"https://example.com/speed\"==\"80\""));
+        assert!(speed("\"https://example.com/speed\"!=\"80\""));
+        assert!(!speed("\"https://example.com/speed\"<\"9\""));
+        assert!(speed("\"https://example.com/speed\"==80"));
     }
 
     /// A member of a structured value reached through the value member, and a
