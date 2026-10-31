@@ -18,3 +18,4 @@ mod o_cmn_err_2012;
 mod o_cmn_err_9001;
 mod o_cmn_err_9002;
 mod o_cmn_err_9003;
+mod o_cmn_err_9004;

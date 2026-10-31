@@ -25,7 +25,7 @@ use ngsi_ld::model::ErrorType;
 /// Clause: 5.5.3, 6.3.2, 6.3.4, 6.3.5
 /// Recorded: Table 6.3.2-1 lists 405 among the HTTP binding errors but names no error type for it, so
 /// `MethodNotAllowed` is Andromeda's own, the same move `RequestEntityTooLarge` is for 413; the Allow header is IETF
-/// RFC 9110 clause 15.5.5
+/// RFC 9110 clause 15.5.6
 #[gtest]
 #[tokio::test]
 async fn o_cmn_err_9003_a_method_a_resource_does_not_serve_gets_a_405_problem_document() -> Result<()> {

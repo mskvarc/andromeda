@@ -37,8 +37,6 @@ impl EntityRoutes {
             .route("/", post(entity::create::create))
             .route("/", accept_language.negotiate(get(entity::query::query)))
             .route("/", delete(entity::delete_by_query::delete_by_query))
-            .route("/", patch(entity::missing_identifier::patch_no_id))
-            .route("/", put(entity::missing_identifier::put_no_id))
             .route("/{id}", accept_language.negotiate(get(entity::retrieve::get)))
             .route("/{id}", delete(entity::delete::delete))
             .route("/{id}", patch(entity::merge::merge))
@@ -127,8 +125,6 @@ mod tests {
             (Method::POST, "/entities"),
             (Method::GET, "/entities"),
             (Method::DELETE, "/entities"),
-            (Method::PATCH, "/entities"),
-            (Method::PUT, "/entities"),
             (Method::GET, "/entities/urn:ngsi-ld:Entity:1"),
             (Method::DELETE, "/entities/urn:ngsi-ld:Entity:1"),
             (Method::PATCH, "/entities/urn:ngsi-ld:Entity:1"),
@@ -208,6 +204,8 @@ mod tests {
     async fn methods_outside_the_inventory_are_rejected() -> Result<(), Box<dyn Error>> {
         let routes = EntityRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none(), AcceptLanguageReading::Ignored).into_router();
         for (method, path) in [
+            (Method::PATCH, "/entities"),
+            (Method::PUT, "/entities"),
             (Method::POST, "/types"),
             (Method::DELETE, "/attributes/speed"),
             (Method::GET, "/entityOperations/create"),

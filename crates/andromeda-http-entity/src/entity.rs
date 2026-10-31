@@ -1,5 +1,5 @@
 use crate::{
-    error::{EntityResultExt, public_error},
+    error::EntityResultExt,
     join::{JoinRequest, ResolvedJoin},
     request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
@@ -43,7 +43,7 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
 };
-use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
+use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::purge::PurgeMode};
 use andromeda_ngsi_ld_render::geometry_selection::GeometrySelection;
 use andromeda_ngsi_ld_request::{
@@ -84,8 +84,6 @@ pub mod delete_attribute;
 pub mod delete_by_query;
 /// Entity merge handling.
 pub mod merge;
-/// Requests missing a required entity identifier.
-pub mod missing_identifier;
 /// Partial attribute update handling.
 pub mod partial_update_attribute;
 /// The `EntityMap` a purge determines its entities from.

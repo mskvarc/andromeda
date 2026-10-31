@@ -382,8 +382,6 @@ mod tests {
             (Method::POST, "/ngsi-ld/v1/entities"),
             (Method::GET, "/ngsi-ld/v1/entities"),
             (Method::DELETE, "/ngsi-ld/v1/entities"),
-            (Method::PATCH, "/ngsi-ld/v1/entities"),
-            (Method::PUT, "/ngsi-ld/v1/entities"),
             (Method::GET, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1"),
             (Method::DELETE, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1"),
             (Method::PATCH, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1"),
@@ -482,7 +480,7 @@ mod tests {
     /// A request whose method a resource does not serve is answered a problem
     /// document rather than a bare status: the document names the method it
     /// refused and the request target, and Axum still attaches the `Allow`
-    /// header naming what the resource serves (RFC 9110, clause 15.5.5).
+    /// header naming what the resource serves (RFC 9110, clause 15.5.6).
     #[tokio::test]
     async fn a_wrong_method_request_gets_a_problem_document_and_the_allow_header() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
@@ -504,6 +502,33 @@ mod tests {
             document["detail"]
         );
         pretty_assertions::assert_eq!(document["instance"], "/ngsi-ld/v1/tenants/acme");
+        Ok(())
+    }
+
+    /// Clauses 6.4.3 and 6.3.2: the Entities collection serves `POST`, `GET`
+    /// and `DELETE` only, so a `PUT` or `PATCH` on it is a wrong verb over the
+    /// resource, with or without a trailing slash; Replace and Merge Entity are
+    /// bound to `/entities/{entityId}` (clauses 6.5.3.3 and 6.5.3.4).
+    #[tokio::test]
+    async fn put_and_patch_on_the_entities_collection_are_methods_it_does_not_serve() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        for method in [Method::PUT, Method::PATCH] {
+            for path in ["/ngsi-ld/v1/entities", "/ngsi-ld/v1/entities/"] {
+                let response = service.clone().oneshot(request(method.clone(), path)?).await?; // clone: the method labels the assertion
+                pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+                let allow = response
+                    .headers()
+                    .get("allow")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned();
+                for served in ["GET", "POST", "DELETE"] {
+                    assert!(allow.contains(served), "{method} {path}: {allow}");
+                }
+                assert!(!allow.contains("PUT") && !allow.contains("PATCH"), "{method} {path}: {allow}");
+                pretty_assertions::assert_eq!(problem_type(response).await?, "MethodNotAllowed", "{method} {path}");
+            }
+        }
         Ok(())
     }
 

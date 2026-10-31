@@ -14,7 +14,7 @@ struct UnservedMethod(Method);
 /// Register the wrong-method document as the method-not-allowed fallback of an
 /// assembled router, so every resource the router serves answers a method it
 /// does not serve with the document and the `Allow` header Axum computes for
-/// that resource (RFC 9110, clause 15.5.5).
+/// that resource (RFC 9110, clause 15.5.6).
 pub fn registered_on(router: Router) -> Router {
     router.method_not_allowed_fallback(problem_document)
 }

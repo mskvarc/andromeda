@@ -12,7 +12,11 @@ use andromeda_test_suite::{
     wire::{content_type, request_to},
 };
 use googletest::prelude::*;
-use http::{Method, StatusCode, header::LINK};
+use http::{
+    Method,
+    StatusCode,
+    header::{ALLOW, LINK},
+};
 use ngsi_ld::{
     http::UncheckedDocument,
     model::{APPLICATION_JSON, Lossless, RawJson},
@@ -42,7 +46,10 @@ async fn e054_02_01_replace_an_existing_entity_giving_an_invalid_id() -> Result<
 }
 
 /// Pins: Check that if the target entity ID is faulty an error is raised
-/// Clause: 5.6.18, 6.5.3.3
+/// Clause: 5.6.18, 6.5.3.3, 6.4.3, 6.3.2
+/// Expected: an empty id sends the request to the collection `/entities/`, which serves `POST`, `GET` and `DELETE`
+/// only (clause 6.4.3), so the wrong verb is answered 405 with `Allow` (clause 6.3.2), not 400; the operation
+/// takes its target from `/entities/{entityId}` (clause 6.5.3.3)
 #[gtest]
 #[tokio::test]
 async fn e054_02_02_replace_an_existing_entity_without_giving_an_id() -> Result<()> {
@@ -55,7 +62,12 @@ async fn e054_02_02_replace_an_existing_entity_without_giving_an_id() -> Result<
     let request = content_type(request_to(&broker, Method::PUT, "entities/")?.document_as_is(&document), &APPLICATION_JSON)?
         .append_header(LINK, context_link(&vocabulary)?);
     let answer = broker.send_unchecked(request).await;
-    expect_that!(&answer, answered(StatusCode::BAD_REQUEST));
+    expect_that!(
+        &answer,
+        answered(StatusCode::METHOD_NOT_ALLOWED)
+            .with_header_containing(ALLOW, "GET")
+            .with_header_containing(ALLOW, "POST")
+    );
     delete_entities(&broker, &[&original.id]).await;
     Ok(())
 }
