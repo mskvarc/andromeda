@@ -38,8 +38,9 @@ async fn a_snp_cln_9170_a_delete_of_a_clone_during_its_copy_returns_within_the_r
     expect_that!(started.elapsed(), lt(Duration::from_secs(5)));
     let gone = tenant.with_responses().snapshots().retrieve(&clone_id).send().await;
     expect_that!(&gone, problem(StatusCode::NOT_FOUND, ErrorType::ResourceNotFound));
-    // The clone's worker finds the clone gone and records nothing, so the clone does not come back.
-    time::sleep(Duration::from_secs(10)).await;
+    // The clone's worker finds the clone gone when it restarts its claim, and its few retries are milliseconds
+    // apart, so it has ended and recorded nothing well before three seconds pass: the clone does not come back.
+    time::sleep(Duration::from_secs(3)).await;
     let still_gone = tenant.with_responses().snapshots().retrieve(&clone_id).send().await;
     expect_that!(&still_gone, problem(StatusCode::NOT_FOUND, ErrorType::ResourceNotFound));
     let source = json.snapshots().retrieve(&source_id).send().await?;

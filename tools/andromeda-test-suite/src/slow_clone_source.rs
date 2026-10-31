@@ -1,6 +1,6 @@
 //! A Snapshot large enough that a clone of it copies for several seconds, so a test can act on the clone or its
-//! source while the copy runs (clause 5.16.2.4): 20,000 Devices of one type, each with a `temperature` Property and
-//! a `location` Point, captured by one Snapshot.
+//! source while the copy runs (clause 5.16.2.4): 40,000 Devices of one type, each with eight Properties and a
+//! `location` Point, captured by one Snapshot.
 
 use crate::{broker::BrokerClient, namespace::Namespace, outcome::Done, snapshot_capture::await_status};
 use googletest::Result as TestResult;

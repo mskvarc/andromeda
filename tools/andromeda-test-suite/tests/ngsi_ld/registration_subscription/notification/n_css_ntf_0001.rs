@@ -44,5 +44,6 @@ async fn n_css_ntf_0001_a_periodic_csource_notification_carries_its_subscription
     let notification = notifications.first().or_fail()?.registrations()?;
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(notification.data().first().map(CSourceRegistration::<Output>::id), some(eq(&registration_id)));
+    broker.registration_subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

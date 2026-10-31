@@ -57,5 +57,7 @@ async fn o_sub_upd_0002_refuses_a_time_interval_beside_a_stored_throttling_and_c
         .send()
         .await?;
     expect_that!(subscription_3.time_interval().and_then(|number| number.as_ref().as_i64()), some(eq(5)));
+    broker.subscriptions().delete(&subscription_id).send().await?;
+    broker.subscriptions().delete(&subscription_2_id).send().await?;
     Ok(())
 }

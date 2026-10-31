@@ -8,12 +8,16 @@ use andromeda_test_suite::{
     outcome::Done,
     remote_context::{RemoteContexts, ServedAnswer},
 };
+use futures::{StreamExt, TryStreamExt, stream};
 use googletest::prelude::*;
 use http::header::CACHE_CONTROL;
 use ngsi_ld::{
     http::ContextDelivery,
     model::{Context, Entity},
 };
+
+/// How many of the thousand downloads are in flight at once.
+const DOWNLOADS_IN_FLIGHT: usize = 8;
 
 /// Pins: List @contexts of kind Cached, with and without details, walked by its next pointer from a page of 1000,
 /// answers every Cached @context stored under its original URL, the first and the last of more than a thousand each
@@ -37,9 +41,13 @@ async fn n_ctx_lst_3003_list_contexts_answers_every_cached_context_beyond_a_thou
         )
         .await?;
     download(&tenant, &contexts, &namespace, "first").await?;
-    for index in 0..1000 {
-        download(&tenant, &contexts, &namespace, &format!("many-{index}")).await?;
-    }
+    let (tenant_ref, contexts_ref, namespace_ref) = (&tenant, &contexts, &namespace);
+    stream::iter(0..1000)
+        .map(Ok)
+        .try_for_each_concurrent(DOWNLOADS_IN_FLIGHT, move |index| async move {
+            download(tenant_ref, contexts_ref, namespace_ref, &format!("many-{index}")).await
+        })
+        .await?;
     download(&tenant, &contexts, &namespace, "last").await?;
     let (first_url, last_url) = (contexts.url("contexts/first")?.to_string(), contexts.url("contexts/last")?.to_string());
     // Clause 5.13.3.1 lists a Cached @context under the URL it was downloaded from, clause 5.13.3.4 has the broker

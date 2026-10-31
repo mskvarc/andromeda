@@ -63,5 +63,6 @@ async fn n_lnk_ntf_0004_a_periodic_subscription_q_hop_carries_only_the_entities_
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(notification.data().as_slice(), len(eq(1)));
     expect_that!(notification.data().as_slice(), contains(has_id(&car_parked_id)));
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

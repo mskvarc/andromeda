@@ -52,5 +52,6 @@ async fn n_ntf_trg_0013_a_periodic_subscription_q_with_a_language_carries_only_t
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(notification.data().as_slice(), len(eq(1)));
     expect_that!(notification.data().as_slice(), contains(has_id(&door_door_id)));
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

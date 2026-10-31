@@ -67,5 +67,6 @@ async fn n_ntf_pay_0008_a_periodic_notification_with_listed_attributes_and_sys_a
             all!(has_id(&building_id), has_attribute("name", any_attribute()), lacks_attribute("locatedAt"))
         )
     );
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

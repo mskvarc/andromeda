@@ -60,5 +60,6 @@ async fn n_ntf_pay_0007_a_periodic_inline_join_nests_the_linked_entity() -> Resu
     let item = notification.data().as_slice().first().or_fail()?;
     expect_that!(linked_entities(item, &["locatedAt"]), nth(0, has_id(&city_id)));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&building_id)));
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

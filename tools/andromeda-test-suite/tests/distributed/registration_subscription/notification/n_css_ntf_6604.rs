@@ -63,5 +63,6 @@ async fn n_css_ntf_6604_a_time_interval_subscription_notifies_initially_and_agai
     expect_that!(notification_2.data(), len(eq(2)));
     expect_that!(notification_2.data(), contains(has_id(&registration_id)));
     expect_that!(notification_2.data(), contains(has_id(&registration_2_id)));
+    broker.registration_subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

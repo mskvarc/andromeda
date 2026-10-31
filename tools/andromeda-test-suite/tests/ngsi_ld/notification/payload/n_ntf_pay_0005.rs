@@ -61,5 +61,6 @@ async fn n_ntf_pay_0005_a_periodic_notification_carries_only_the_selected_datase
         entity,
         has_attribute("locatedAt", relationship().object(namespace.urn("Ville", "paris")?).with_dataset_id(french))
     );
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

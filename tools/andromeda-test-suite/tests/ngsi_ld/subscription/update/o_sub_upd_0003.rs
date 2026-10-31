@@ -42,5 +42,6 @@ async fn o_sub_upd_0003_refuses_a_time_interval_beside_stored_watched_attributes
         .await?;
     expect_that!(subscription_2.watched_attributes(), len(eq(2)));
     expect_that!(subscription_2.time_interval(), none());
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

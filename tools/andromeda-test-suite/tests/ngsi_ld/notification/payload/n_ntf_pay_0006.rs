@@ -51,5 +51,6 @@ async fn n_ntf_pay_0006_a_periodic_flat_join_carries_the_linked_entity_beside_th
     expect_that!(notification.data().as_slice(), len(eq(2)));
     expect_that!(notification.data().as_slice(), contains(has_id(&building_id)));
     expect_that!(notification.data().as_slice(), contains(has_id(&city_id)));
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }

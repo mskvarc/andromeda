@@ -2304,6 +2304,7 @@ dependencies = [
  "cefact-units",
  "chrono",
  "figment2",
+ "futures",
  "googletest",
  "http",
  "indexmap 2.14.2",

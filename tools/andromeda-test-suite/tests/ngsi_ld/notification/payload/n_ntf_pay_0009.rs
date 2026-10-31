@@ -57,5 +57,6 @@ async fn n_ntf_pay_0009_a_periodic_notification_with_omit_type_carries_no_type()
     expect_that!(entity.id, some(eq(&building_id)));
     expect_that!(entity.entity_type, none());
     expect_that!(entity, has_attribute("name", any_attribute()));
+    broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())
 }
