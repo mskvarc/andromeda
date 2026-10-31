@@ -2,7 +2,6 @@
 
 mod n_ent_rpl_0001;
 mod n_ent_rpl_0003;
-mod n_ent_rpl_0004;
 mod n_ent_rpl_0005;
 mod n_ent_rpl_0006;
 mod n_ent_rpl_0008;
