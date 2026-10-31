@@ -18,7 +18,7 @@ pub(crate) fn instances<'e>(entity: &'e TemporalEntity<Output>, name: &str) -> O
     entity
         .attributes
         .iter()
-        .find_map(|(candidate, evolution)| (candidate.to_string() == name).then(|| evolution.as_slice()))
+        .find_map(|(candidate, evolution)| (candidate.as_str() == name).then(|| evolution.as_slice()))
 }
 
 /// Which instance of an evolution a test names.

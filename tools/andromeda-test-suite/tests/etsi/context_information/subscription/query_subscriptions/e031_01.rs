@@ -1,6 +1,6 @@
-//! ETSI `031_01`: a query lists every subscription of the tenant, each with the members it was created with (clause 5.8.4).
+//! A query lists every subscription of the tenant, each with the members it was created with (clause 5.8.4).
 
-use crate::suite_keywords::create_query_subscriptions;
+use crate::subscription_operations::create_query_subscriptions;
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
@@ -17,10 +17,10 @@ use serde_json::json;
 
 /// Pins: Check that one can query a list of subscriptions
 /// Clause: 5.8.4
-/// Tenant: private (Query Subscriptions lists every subscription of the tenant, and the case compares the whole first page
-/// with its three subscriptions (DeepDiff over the list, no element left out); in the shared tenant every other file's
-/// subscriptions are listed too, and the page Andromeda answers without a limit (the first 100 in identifier order) need
-/// not hold this file's, so only a tenant of its own keeps the comparison exact)
+/// Tenant: private (Query Subscriptions lists every subscription of the tenant, and the test compares the whole first
+/// page with its three subscriptions, no element left out; in the shared tenant every other file's subscriptions are
+/// listed too, and the page Andromeda answers without a limit (the first 100 in identifier order) need not hold this
+/// file's, so only a tenant of its own keeps the comparison exact)
 #[gtest]
 #[tokio::test]
 async fn e031_01_01_query_subscriptions() -> Result<()> {

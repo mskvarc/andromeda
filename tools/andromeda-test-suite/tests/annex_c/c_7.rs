@@ -57,8 +57,7 @@ async fn parking_written(served: &ServedContexts, namespace: &Namespace, front: 
 /// Pins: The `OffStreetParking` written under one vocabulary and retrieved under another naming the same IRIs
 /// differently is rendered with the retrieval @context terms, name falling back to its Fully Qualified Name
 /// Clause: C.7, 5.5.7, 5.7.1
-/// Corrected: abbreviated-name: name is the Fully Qualified Name, the abbreviated @context defining no name term
-/// (5.5.7)
+/// Expected: name is the Fully Qualified Name, the abbreviated @context defining no name term (clause 5.5.7)
 #[gtest]
 #[tokio::test]
 async fn c_7_0001_retrieval_renders_terms_of_the_retrieval_context() -> Result<()> {

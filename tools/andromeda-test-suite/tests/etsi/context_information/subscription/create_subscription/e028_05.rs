@@ -1,7 +1,7 @@
-//! ETSI `028_05`: a create-subscription request whose throttling is combined with a time interval, or is negative, is refused
-//! with 400 `BadRequestData` (clause 5.8.1).
+//! A create-subscription request whose throttling is combined with a time interval, or is negative, is refused with 400
+//! `BadRequestData` (clause 5.8.1).
 
-use crate::suite_keywords::refused;
+use crate::unchecked_requests::refused;
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink};
 use googletest::prelude::*;
 use ngsi_ld::{

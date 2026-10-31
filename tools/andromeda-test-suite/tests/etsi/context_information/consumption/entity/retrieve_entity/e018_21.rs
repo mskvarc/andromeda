@@ -1,10 +1,7 @@
-//! ETSI `018_21`: an entity is retrieved with an `omit` on a linked entity, and on a second level linked entity, joined
-//! inline or flat (clauses 5.7.1, 4.5.23 and 4.21).
+//! An entity is retrieved with an `omit` on a linked entity, and on a second level linked entity, joined inline or flat
+//! (clauses 5.7.1, 4.5.23 and 4.21).
 
-use crate::{
-    suite_keywords::{create_paris_in_france, delete_entities},
-    suite_payloads::PARIS_IN_FRANCE_TERMS,
-};
+use crate::{entity_operations::delete_entities, linked_entity_fixtures::create_paris_in_france, linked_place_payloads::PARIS_IN_FRANCE_TERMS};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -20,7 +17,6 @@ use std::num::NonZeroU32;
 
 /// Pins: Check that an entity can be retrieved with inline join and omit on linked entity
 /// Clause: 5.7.1, 4.5.23, 4.21
-/// Defect: D-31: Andromeda carries the Linked Entity Term locatedAt{name} past the City to the Country, which no term addresses, so the Country comes back without name where the expectation keeps it
 #[gtest]
 #[tokio::test]
 async fn e018_21_01_retrieve_inline_with_omit_on_linked_entity() -> Result<()> {
@@ -74,7 +70,6 @@ async fn e018_21_01_retrieve_inline_with_omit_on_linked_entity() -> Result<()> {
 
 /// Pins: Check that an entity can be retrieved with flat join and omit on linked entity
 /// Clause: 5.7.1, 4.5.23, 4.21
-/// Defect: D-31: Andromeda carries the Linked Entity Term locatedAt{name} past the City to the Country, which no term addresses, so the Country comes back without name where the expectation keeps it
 #[gtest]
 #[tokio::test]
 async fn e018_21_02_retrieve_flat_with_omit_on_linked_entity() -> Result<()> {

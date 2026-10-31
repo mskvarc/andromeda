@@ -1,22 +1,11 @@
-//! ETSI `004_01`: a batch upsert of entities that do not exist yet creates every one of them (clause 5.6.8).
+//! A batch upsert of entities that do not exist yet creates every one of them (clause 5.6.8).
 
 use crate::{
-    suite_keywords::{
-        bare_located_building_json,
-        delete_entities,
-        expect_upsert_created,
-        ld_json_body_client,
-        query_entities_json,
-        simple_building_json,
-        weather_building_json,
-    },
-    suite_payloads::{
-        BUILDING_AIR_QUALITY_WEATHER_TERMS,
-        BUILDING_SIMPLE_TERMS,
-        building_located_in_paris,
-        building_simple_attributes,
-        building_with_weather_sensor,
-    },
+    batch_operations::expect_upsert_created,
+    building_documents::{bare_located_building_json, simple_building_json, weather_building_json},
+    building_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, BUILDING_SIMPLE_TERMS, building_simple_attributes, building_with_weather_sensor},
+    entity_operations::{delete_entities, ld_json_body_client, query_entities_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

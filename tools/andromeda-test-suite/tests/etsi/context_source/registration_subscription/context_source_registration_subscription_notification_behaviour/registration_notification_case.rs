@@ -1,18 +1,21 @@
-//! The steps the notification cases of the ETSI `047` Robot runs share: the context source registration that is
-//! created, the check of the `ContextSourceNotification` it is notified in, and the teardown.
+//! The steps the registration notification tests share: the context source registration that is created, the check of
+//! the `ContextSourceNotification` it is notified in, and the teardown.
 
 use crate::{
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client, without_members},
-    suite_payloads::{building_registration, point},
+    entity_operations::ld_json_body_client,
+    geometry_payloads::point,
+    registration_operations::csource_endpoint,
+    registration_payloads::building_registration,
+    registration_subscription_operations::{create_registration_subscription, without_members},
 };
 use andromeda_test_suite::{
-    broker::{self, BrokerClient},
+    broker,
+    broker::BrokerClient,
     cleanup::Cleanup,
     comparison::matches_document,
     namespace::Namespace,
     ngsild_date::is_ngsild_date,
     notification_sink::NotificationSink,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
 };
@@ -45,8 +48,8 @@ pub(crate) async fn registered_any(broker: &BrokerClient, vocabulary: &Vocabular
     Ok(cleanup)
 }
 
-/// `Wait for CSource notification and validate it`: requires `body` to be the `ContextSourceNotification` of
-/// `subscription` notified at a date, carrying the registration `registration` alone, for `reason`.
+/// Requires `body` to be the `ContextSourceNotification` of `subscription` notified at a date, carrying the
+/// registration `registration` alone, for `reason`.
 pub(crate) fn expect_csource_notification(body: &Value, subscription: &SubscriptionId, registration: &RegistrationId, reason: &str) {
     expect_that!(body.pointer("/type"), some(eq(&json!("ContextSourceNotification"))));
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(subscription.to_string()))));
@@ -56,7 +59,7 @@ pub(crate) fn expect_csource_notification(body: &Value, subscription: &Subscript
     expect_that!(body.pointer("/triggerReason"), some(eq(&json!(reason))));
 }
 
-/// The terms of the `@context` the Building source cases register.
+/// The terms of the `@context` the Building source tests register.
 pub(crate) const BUILDING_SOURCE_TERMS: [&str; 4] = ["Building", "name", "subCategory", "locatedAt"];
 
 /// The cases that subscribe first and then register a source: registers `terms`, creates `subscription` notifying
@@ -80,7 +83,7 @@ pub(crate) async fn notified_of_source(
     let _registration = registered_any(&broker, &vocabulary, &registration).await?;
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_csource_notification(&body, id, registration_id, "newlyMatching");
 
     teardown(&broker, registration_id, id).await
@@ -134,7 +137,7 @@ pub(crate) fn expect_delivery_state(mut body: Value, status: &str, instants: [&s
     );
 }
 
-/// Whether `value` is a non-empty list, object or string, as the ETSI `length(...) > 0` check reads it.
+/// Whether `value` is a non-empty list, object or string.
 fn is_non_empty(value: &Value) -> bool {
     match value {
         Value::String(text) => !text.is_empty(),
@@ -144,7 +147,7 @@ fn is_non_empty(value: &Value) -> bool {
     }
 }
 
-/// `Delete Created Context Source Registration And Subscription`: deletes `registration`, requiring a status below
+/// Deletes `registration`, requiring a status below
 /// 400, and the subscription `subscription`, whatever the answer.
 pub(crate) async fn teardown(broker: &BrokerClient, registration: &RegistrationId, subscription: &SubscriptionId) -> Result<()> {
     broker.registrations().delete(registration).send().await?;

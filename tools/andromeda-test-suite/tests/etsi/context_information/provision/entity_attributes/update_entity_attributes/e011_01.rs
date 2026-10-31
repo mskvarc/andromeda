@@ -1,9 +1,10 @@
-//! ETSI `011_01`: an update changes the attributes it names, the instance of a dataset it names, the targets of a
-//! Relationship and the type of an attribute, and appends the attributes the entity does not hold (clause 5.6.2).
+//! An update changes the attributes it names, the instance of a dataset it names, the targets of a Relationship and the
+//! type of an attribute, and appends the attributes the entity does not hold (clause 5.6.2).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_gps, delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, gps_speed_dataset, parked_dataset, speedometer_speed_99_fragment},
+    entity_operations::{delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, gps_speed_dataset, parked_dataset, speedometer_speed_99_fragment},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_gps,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;

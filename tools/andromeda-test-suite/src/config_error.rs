@@ -1,4 +1,4 @@
-//! Why a value of the suite configuration a test needs is not available, and the key it should have been given.
+//! Why a value of the test configuration a test needs is not available, and the key it should have been given.
 
 use crate::config::PREFIX;
 use std::{fmt, io, sync::Arc};
@@ -8,7 +8,7 @@ use url::Url;
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigError {
     /// The environment does not describe a configuration.
-    #[error("the suite configuration in the {PREFIX}* environment is invalid: {0}")]
+    #[error("the test configuration in the {PREFIX}* environment is invalid: {0}")]
     Invalid(#[source] Box<figment2::Error>),
     /// The stack names no value for the key.
     #[error("the stack sets no {0}")]

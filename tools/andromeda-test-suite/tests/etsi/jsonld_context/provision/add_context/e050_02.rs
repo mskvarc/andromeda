@@ -1,5 +1,5 @@
-//! ETSI `050_02`: an Add @context request whose body is a term object with no `@context` is refused with 400
-//! `BadRequestData`, and one whose body is not JSON with 400 `InvalidRequest` (clauses 5.13.2.4 and 6.3.2).
+//! An Add @context request whose body is a term object with no `@context` is refused with 400 `BadRequestData`, and one
+//! whose body is not JSON with 400 `InvalidRequest` (clauses 5.13.2.4 and 6.3.2).
 
 use crate::jsonld_context::stored_contexts::attribute_terms;
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire};
@@ -13,11 +13,8 @@ use ngsi_ld::{
 
 /// Pins: Check that the payload include "@context"
 /// Clause: 5.13.2
-/// Corrected: `fix(050_02_01)`: expect `BadRequestData` for a valid-JSON body without @context (5.13.2.4)
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Expected: a valid JSON body without @context is refused with `BadRequestData` (clause 5.13.2.4)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e050_02_01_checking_incorrect_payload() -> Result<()> {
@@ -36,11 +33,8 @@ async fn e050_02_01_checking_incorrect_payload() -> Result<()> {
 
 /// Pins: Check that the payload include "@context"
 /// Clause: 5.13.2
-/// Corrected: `fix(050_02_01)`: expect `BadRequestData` for a valid-JSON body without @context (5.13.2.4)
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Expected: a valid JSON body without @context is refused with `BadRequestData` (clause 5.13.2.4)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e050_02_02_checking_wrong_json() -> Result<()> {

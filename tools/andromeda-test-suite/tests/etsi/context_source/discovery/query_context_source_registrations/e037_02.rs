@@ -1,7 +1,7 @@
-//! ETSI `037_02`: a query of context source registrations naming neither entity types nor attribute names is refused
-//! with 400 (clause 5.10.2).
+//! A query of context source registrations naming neither entity types nor attribute names is refused with 400 (clause
+//! 5.10.2).
 
-use crate::suite_keywords::refused_registration_query;
+use crate::registration_operations::refused_registration_query;
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 

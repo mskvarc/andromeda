@@ -1,14 +1,13 @@
-//! ETSI `D011_02_exc`: a query by type, by `GET /entities` or by `POST /entityOperations/query`, forwarded to the
-//! exclusive context source of the registered attribute answers the one merged entity (clauses 4.3.3, 4.3.6.3 and
-//! 5.7.2).
+//! A query by type, by `GET /entities` or by `POST /entityOperations/query`, forwarded to the exclusive context source
+//! of the registered attribute answers the one merged entity (clauses 4.3.3, 4.3.6.3 and 5.7.2).
 
 use crate::{
     distributed_operations::{
         fork_rule::ForkRule,
         forwarding_source::{create_entity_locally, listed_ids, register, serve, source_endpoint, source_path, stub, unregister, vehicle_registration},
     },
-    suite_keywords::delete_entities,
-    suite_payloads::vehicle_parked,
+    entity_operations::delete_entities,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -84,15 +83,7 @@ async fn torn_down(broker: &BrokerClient, namespace: &Namespace) -> Result<()> {
 /// Pins: Check that if one queries the Context Broker for type, and the registration only allows the queryEntity
 /// operation, the request is forwarded as expected
 /// Clause: 4.3.3, 4.3.6.3, 5.7.2
-/// Corrected: `fix(D011_02_exc)`: stub the downgraded get queryentity the broker forwards (4.3.6.1)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D011_02_exc_01`, with the case number after the mode; the file name moves it
-/// before the mode (d011-02-01-exc), as in the other files of the area
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the broker forwards the query to the source as a downgraded GET (clause 4.3.6.1)
 #[gtest]
 #[tokio::test]
 async fn d011_02_01_exc_query_the_context_broker_with_type_with_query_entity() -> Result<()> {
@@ -116,15 +107,7 @@ async fn d011_02_01_exc_query_the_context_broker_with_type_with_query_entity() -
 /// Pins: Check that if one queries the Context Broker for type, and the registration only allows the queryBatch
 /// operation, the request is forwarded as expected
 /// Clause: 4.3.3, 4.3.6.3, 5.7.2
-/// Corrected: `fix(D011_02_exc)`: stub the downgraded get queryentity the broker forwards (4.3.6.1)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D011_02_exc_02`, with the case number after the mode; the file name moves it
-/// before the mode (d011-02-02-exc), as in the other files of the area
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the broker forwards the query to the source as a downgraded GET (clause 4.3.6.1)
 #[gtest]
 #[tokio::test]
 async fn d011_02_02_exc_query_the_context_broker_with_type_with_query_batch() -> Result<()> {

@@ -1,8 +1,10 @@
-//! ETSI `042_01`: a deleted Context Source Registration Subscription is no longer found (clause 5.11.6).
+//! A deleted Context Source Registration Subscription is no longer found (clause 5.11.6).
 
 use crate::{
-    suite_keywords::{create_registration_subscription, expect_batch_done, ld_json_body_client},
-    suite_payloads::building_registration_subscription,
+    batch_operations::expect_batch_done,
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::create_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

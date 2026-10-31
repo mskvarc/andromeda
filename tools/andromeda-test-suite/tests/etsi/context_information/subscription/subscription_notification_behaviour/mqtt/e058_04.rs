@@ -1,7 +1,7 @@
-//! ETSI `058_04`: a broker publishes an MQTT notification whose message is a well-formed notification, carrying the
-//! receiver information of the subscription in its metadata (clause 7.2).
+//! A broker publishes an MQTT notification whose message is a well-formed notification, carrying the receiver
+//! information of the subscription in its metadata (clause 7.2).
 
-use crate::suite_keywords::{MqttConfiguration, MqttListener, mqtt_notification};
+use crate::mqtt_notification::{MqttConfiguration, MqttListener, mqtt_notification};
 use googletest::prelude::*;
 use ngsi_ld::{model::KeyValuePair, subscription::MqttNotification};
 use rumqttc::v5::mqttbytes::QoS;
@@ -10,17 +10,9 @@ use std::str::from_utf8;
 
 /// Pins: Check that the broker send well formed data
 /// Clause: 5.8.6
-/// Changed: Check Message Contain Key is Dictionary Should Contain Key, whose argument Robot converts to a mapping: it
-/// fails on a list, a null or a string, except a string holding a Python dict literal, which it evaluates; the port
-/// requires the message, its metadata, its body and body.data[0] to be objects (isObject), stricter only for such a
-/// string; and it reads data[0] as the first element of a list, where Robot's item access also reads the member "0" of
-/// an object, stricter only for a data object, which clause 5.3.1 rules out (data is an array of entities)
-/// Changed: stricter than Robot, the message must have been received with QoS 0, the default of clause 7.2, Table
-/// 7.2-1, when notifierInfo names no MQTT-QoS; Robot's client subscribes at QoS 1, so it cannot tell QoS 0 from QoS 1
-/// and receives a QoS 2 message as QoS 1, and `MQTTLibrary` does not return the QoS at all; the observer subscribes at
-/// QoS 2, so it receives the QoS the message was published with, which `mosquitto_sub`'s %J record carries only for a
-/// JSON payload, so a payload that is not JSON, which the JSON object of clause 7.2 rules out, fails here where Robot
-/// only counts it
+/// Expected: the message arrives with QoS 0, the default of clause 7.2, Table 7.2-1, when notifierInfo names no
+/// MQTT-QoS; the observer subscribes at QoS 2, so it receives the QoS the message was published with, and records it
+/// only for a JSON payload, which clause 7.2 requires
 #[gtest]
 #[tokio::test]
 async fn e058_04_01_basic_subscription() -> Result<()> {

@@ -1,11 +1,11 @@
-//! ETSI `046_05`: a notification of a watched attribute's change includes the subscribed entities that changed and satisfy
-//! the subscription's `q` (clauses 5.8.6, 4.9 and 4.10).
+//! A notification of a watched attribute's change includes the subscribed entities that changed and satisfy the
+//! subscription's `q` (clauses 5.8.6, 4.9 and 4.10).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscribed, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -18,13 +18,7 @@ use serde_json::{Value, json};
 /// Pins: The notification message shall include all the subscribed Entities that changed and that match (as mandated by
 /// clauses 4.9 and 4.10) the query and geoquery conditions
 /// Clause: 5.8.6
-/// Corrected: fix(`046_05`): body q spells the space literally, not percent-encoded (4.9)
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: The non-empty `$.data` is required to be an array, which the normalized notification always carries; the Hurl
-/// line also accepts an object or a string
+/// Expected: the body q spells the space literally, not percent-encoded (clause 4.9)
 #[gtest]
 #[tokio::test]
 async fn e046_05_01_check_that_a_notification_is_sent_with_all_entities() -> Result<()> {
@@ -54,7 +48,7 @@ async fn e046_05_01_check_that_a_notification_is_sent_with_all_entities() -> Res
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(gt(0)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));

@@ -1,9 +1,9 @@
-//! ETSI `056_06`: a Merge Entity whose fragment gives a `datasetId` of the NGSI-LD Null is refused with 400
-//! `BadRequestData` (clauses 5.6.17 and 6.5.3.4).
+//! A Merge Entity whose fragment gives a `datasetId` of the NGSI-LD Null is refused with 400 `BadRequestData` (clauses
+//! 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

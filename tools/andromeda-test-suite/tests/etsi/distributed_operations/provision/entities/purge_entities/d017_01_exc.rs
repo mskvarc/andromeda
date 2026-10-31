@@ -1,5 +1,5 @@
-//! ETSI `D017_01_exc`: purging the Vehicles, one of which an exclusive registration holds the `speed` of, purges them
-//! on the broker and on the context source (clauses 4.3.3, 4.3.6.3 and 5.6.21).
+//! Purging the Vehicles, one of which an exclusive registration holds the `speed` of, purges them on the broker and on
+//! the context source (clauses 4.3.3, 4.3.6.3 and 5.6.21).
 
 use crate::{
     distributed_operations::{
@@ -10,8 +10,8 @@ use crate::{
             purge_entities::purge_request::{purge_rule, purge_vehicles},
         },
     },
-    suite_keywords::send_create_entity,
-    suite_payloads::vehicle_parked,
+    entity_operations::send_create_entity,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -26,14 +26,7 @@ use ngsi_ld::{
 /// Pins: Verify that, when one has an exclusive registration on a Context Broker, one is able to purge entities based
 /// on type on both Context Broker and Context Source
 /// Clause: 4.3.3, 4.3.6.3, 5.6.21
-/// Corrected: `fix(D017_01_exc)`: register the exclusive source for the created entity (4.3.6.3, 5.6.1.4, 5.5.13)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the exclusive source is registered for the created entity (clauses 4.3.6.3, 5.6.1.4, 5.5.13)
 #[gtest]
 #[tokio::test]
 async fn d017_01_exc_purge_entities_on_both_context_broker_and_context_source() -> Result<()> {

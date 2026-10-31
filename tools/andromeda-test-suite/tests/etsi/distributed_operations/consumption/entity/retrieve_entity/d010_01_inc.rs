@@ -1,5 +1,5 @@
-//! ETSI `D010_01_inc`: an entity that lives on an inclusive context source alone is retrieved through the broker
-//! (clauses 4.3.3, 4.3.6.2 and 5.7.1).
+//! An entity that lives on an inclusive context source alone is retrieved through the broker (clauses 4.3.3, 4.3.6.2
+//! and 5.7.1).
 
 use crate::distributed_operations::forwarding_source::{
     register,
@@ -18,11 +18,6 @@ use ngsi_ld::http::headers::Accept;
 
 /// Pins: Check that if one retrieves entity living on a Context Source from a Context Broker, entity gets returned
 /// Clause: 4.3.3, 4.3.6.2, 5.7.1
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

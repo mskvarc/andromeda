@@ -1,10 +1,10 @@
-//! ETSI `021_19`: the temporal evolutions of the Vehicles are queried with the simplified temporal representation named
-//! by the `format` parameter, by the `options` parameter, or by both, where `format` takes precedence over `options`
-//! (clauses 5.7.3 and 6.3.12).
+//! The temporal evolutions of the Vehicles are queried with the simplified temporal representation named by the
+//! `format` parameter, by the `options` parameter, or by both, where `format` takes precedence over `options` (clauses
+//! 5.7.3 and 6.3.12).
 
 use crate::{
-    suite_keywords::{create_temporal_entity, create_temporal_evolution, delete_temporal_entities},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on},
+    temporal_operations::{create_temporal_entity, create_temporal_evolution, delete_temporal_entities},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -52,8 +52,8 @@ fn expected_vehicle(namespace: &Namespace, suffix: &str, day: &str) -> Value {
     })
 }
 
-/// The suite setup of the cases: creates the Vehicles `<ns>-021-19-A` and `<ns>-021-19-B` in the context of their
-/// terms, and answers the vocabulary they are stored under.
+/// The setup of the tests: creates the Vehicles `<ns>-021-19-A` and `<ns>-021-19-B` in the context of their terms, and
+/// answers the vocabulary they are stored under.
 async fn created_vehicles(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     let vocabulary = create_temporal_evolution(
         broker,

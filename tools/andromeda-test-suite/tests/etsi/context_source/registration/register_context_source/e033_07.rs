@@ -1,9 +1,9 @@
-//! ETSI `033_07`: a registration created with the `@context` of its `application/ld+json` body is retrieved compacted
-//! under that context or expanded without one (clauses 5.9.2 and 6.3.5).
+//! A registration created with the `@context` of its `application/ld+json` body is retrieved compacted under that
+//! context or expanded without one (clauses 5.9.2 and 6.3.5).
 
 use crate::{
-    suite_keywords::ld_json_body_client,
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -42,9 +42,8 @@ async fn retrieved_type(reader: &BrokerClient, id: &RegistrationId) -> Result<Va
 /// Pins: Check that the @context is obtained from the request payload body itself if the Content-Type header is
 /// "application/ld+json" and retrieve the information with ngsild context
 /// Clause: 6.3.5
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_07_01_payload_context_with_json_ld_content_type_retrieved_with_context() -> Result<()> {
@@ -62,9 +61,8 @@ async fn e033_07_01_payload_context_with_json_ld_content_type_retrieved_with_con
 /// Pins: Check that the @context is obtained from the request payload body itself if the Content-Type header is
 /// "application/ld+json" and retrieve the information without ngsild context
 /// Clause: 6.3.5
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_07_02_payload_context_with_json_ld_content_type_retrieved_without_context() -> Result<()> {

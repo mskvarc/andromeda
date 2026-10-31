@@ -1,7 +1,7 @@
-//! ETSI `018_08`: an entity with a geospatial Property named `observationSpace` is retrieved in the simplified and the
-//! normalized representation (clauses 5.7.1 and 4.7).
+//! An entity with a geospatial Property named `observationSpace` is retrieved in the simplified and the normalized
+//! representation (clauses 5.7.1 and 4.7).
 
-use crate::suite_keywords::create_entity;
+use crate::entity_operations::create_entity;
 use andromeda_test_suite::{
     broker::{self},
     comparison::matches_document,

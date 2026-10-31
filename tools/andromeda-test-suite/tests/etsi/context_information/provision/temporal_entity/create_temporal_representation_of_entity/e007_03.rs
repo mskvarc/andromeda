@@ -1,9 +1,8 @@
-//! ETSI `007_03`: a temporal representation of an entity is refused when its id is missing or is not an IRI (clause
-//! 5.6.11).
+//! A temporal representation of an entity is refused when its id is missing or is not an IRI (clause 5.6.11).
 
 use crate::{
-    suite_keywords::ld_json_body_client,
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
+    entity_operations::ld_json_body_client,
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{
     broker,
@@ -22,7 +21,7 @@ use ngsi_ld::{
 
 /// Pins: Check that one cannot create a temporal entity with an invalid @context
 /// Clause: 5.6.11
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e007_03_01_create_a_temporal_entity_with_missing_id() -> Result<()> {

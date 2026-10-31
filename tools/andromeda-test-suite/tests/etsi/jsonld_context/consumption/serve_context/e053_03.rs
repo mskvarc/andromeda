@@ -1,5 +1,5 @@
-//! ETSI `053_03`: serving the details of a `@context` the broker does not store is refused with 404
-//! `ResourceNotFound` (clause 5.13.4).
+//! Serving the details of a `@context` the broker does not store is refused with 404 `ResourceNotFound` (clause
+//! 5.13.4).
 
 use crate::jsonld_context::stored_contexts::{add_context, attribute_terms};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, wire};
@@ -9,10 +9,7 @@ use ngsi_ld::model::ErrorType;
 
 /// Pins: Check that an error is returned when one requests for a @context that does not exist
 /// Clause: 5.13.4
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e053_03_01_serve_a_contexts_with_a_wrong_id_and_correct_details() -> Result<()> {

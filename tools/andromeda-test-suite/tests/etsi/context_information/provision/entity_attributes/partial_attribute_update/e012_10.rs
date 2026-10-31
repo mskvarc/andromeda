@@ -1,9 +1,9 @@
-//! ETSI `012_10`: a partial attribute update that sets a sub-attribute of an `airQualityLevel` to the NGSI-LD Null
-//! removes that sub-attribute and keeps the others (clauses 5.6.4 and 6.7.3.1).
+//! A partial attribute update that sets a sub-attribute of an `airQualityLevel` to the NGSI-LD Null removes that
+//! sub-attribute and keeps the others (clauses 5.6.4 and 6.7.3.1).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, ld_json_body_client, partial_update, partial_update_document, retrieve_entity_json},
-    suite_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, building_with_air_quality},
+    building_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, building_with_air_quality},
+    entity_operations::{create_entity, delete_entities, ld_json_body_client, partial_update, partial_update_document, retrieve_entity_json},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -133,7 +133,7 @@ async fn e012_10_03_remove_sub_attribute_from_air_quality_level() -> Result<()> 
     let air_quality: AttributeName = "airQualityLevel".parse()?;
     let removal = value_four_patch()?.delete_sub_attribute("hasWeatherObserved", InstanceDeletion::new(AttributeKind::Relationship))?;
     let client = ld_json_body_client(&broker, &vocabulary)?;
-    partial_update(&client, &id, &air_quality, Change::Set(removal), Lossless::Normalized).await?;
+    partial_update(&client, &id, &air_quality, Change::from(removal), Lossless::Normalized).await?;
     let read = broker.with_context(vocabulary.context())?.with_accept(NgsiLdMediaType::JsonLd);
     let body = retrieve_entity_json(&read, &id).await?;
     expect_that!(

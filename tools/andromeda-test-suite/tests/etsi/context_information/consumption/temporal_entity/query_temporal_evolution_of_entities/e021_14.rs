@@ -1,10 +1,9 @@
-//! ETSI `021_14`: the temporal evolutions of the Vehicles are queried in the simplified temporal representation, each
-//! attribute written as its type and its `values`, pairs of a value and an instant (clause 5.7.4).
+//! The temporal evolutions of the Vehicles are queried in the simplified temporal representation, each attribute
+//! written as its type and its `values`, pairs of a value and an instant (clause 5.7.4).
 //!
-//! The answers are compared with the case's expectations as the suite's `Compare Dictionaries Ignoring Keys` makes
-//! them.
+//! The answers are compared exactly with the test's expectations.
 
-use crate::suite_keywords::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
+use crate::vehicle_fixtures::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

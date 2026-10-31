@@ -1,5 +1,4 @@
-//! ETSI `044_01`: a PATCH of an entity attribute is accepted with `application/merge-patch+json` as its Content-Type
-//! (clause 6.3.4).
+//! A PATCH of an entity attribute is accepted with `application/merge-patch+json` as its Content-Type (clause 6.3.4).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -20,7 +19,7 @@ use ngsi_ld::{
     model::{Attribute, AttributeName, Entity, Property, Relationship},
 };
 
-/// The client of `broker` sending `vocabulary` in the body, as the create case sends the suite's `@context`.
+/// The client of `broker` sending `vocabulary` in the body, as the create test sends the test vocabulary.
 fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClient> {
     Ok(broker
         .with_context(vocabulary.context_list())?

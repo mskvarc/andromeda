@@ -1,18 +1,18 @@
-//! ETSI `039_01`: an update of the notification of a Context Source Registration Subscription is retrieved with the
-//! new endpoint (clause 5.11.3).
+//! An update of the notification of a Context Source Registration Subscription is retrieved with the new endpoint
+//! (clause 5.11.3).
 
 use crate::{
-    suite_keywords::{
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{
         REGISTRATION_SUBSCRIPTION_STATE,
         create_registration_subscription,
-        ld_json_body_client,
         registration_notification_fragment,
         registration_subscription_json,
-        subscription_updated,
         update_registration_subscription_request,
         without_members,
     },
-    suite_payloads::building_registration_subscription,
+    subscription_operations::subscription_updated,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{
     broker,
@@ -31,10 +31,7 @@ use serde_json::json;
 
 /// Pins: Check that one can update a context source registration subscription
 /// Clause: 5.11.3
-/// Corrected: `fix(csrsub-jsonldcontext)`: compare csr-subscription create/update with jsonldcontext ignored (5.8.1.4)
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause
-/// 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
+/// Expected: the created or updated registration subscription is compared with jsonldContext left out (clause 5.8.1.4)
 #[gtest]
 #[tokio::test]
 async fn e039_01_01_update_context_source_registration_subscription() -> Result<()> {

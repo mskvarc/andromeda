@@ -1,6 +1,6 @@
-//! ETSI `039_02`: an update whose target is not a valid URI is refused with 400 `BadRequestData` (clause 5.11.3).
+//! An update whose target is not a valid URI is refused with 400 `BadRequestData` (clause 5.11.3).
 
-use crate::suite_keywords::{registration_notification_fragment, update_registration_subscription_request};
+use crate::registration_subscription_operations::{registration_notification_fragment, update_registration_subscription_request};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::problem, vocabulary::Vocabulary, wire::api_uri};
 use googletest::prelude::*;
 use http::StatusCode;

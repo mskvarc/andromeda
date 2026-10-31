@@ -1,9 +1,9 @@
-//! ETSI `037_07`: a query of context source registrations with a geoquery is matched against the registration's
-//! `location` (clause 5.10.2).
+//! A query of context source registrations with a geoquery is matched against the registration's `location` (clause
+//! 5.10.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint, delete_registrations},
-    suite_payloads::{point, polygon},
+    geometry_payloads::{point, polygon},
+    registration_operations::{create_registration, csource_endpoint, delete_registrations},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -57,8 +57,7 @@ async fn queried(geo_q: GeoQueryBuilder) -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the geoquery is matched against the
 /// `GeoProperty` programmatic parameter identified in the geoquery
 /// Clause: 5.10.2
-/// Corrected: `fix(037_07_01)`: csr location is a bare geojson geometry, not a geoproperty (table 5.2.9-1)
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: a registration location is a bare `GeoJSON` geometry, not a `GeoProperty` (Table 5.2.9-1)
 #[gtest]
 #[tokio::test]
 async fn e037_07_01_near_point() -> Result<()> {
@@ -68,9 +67,8 @@ async fn e037_07_01_near_point() -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the geoquery is matched against the
 /// `GeoProperty` programmatic parameter identified in the geoquery
 /// Clause: 5.10.2
-/// Corrected: `fix(037_07_02)`: within-polygon query uses a valid closed geojson polygon (4.10)
-/// Corrected: `fix(037_07_01)`: csr location is a bare geojson geometry, not a geoproperty (table 5.2.9-1)
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: the within-polygon query uses a valid closed `GeoJSON` polygon (clause 4.10)
+/// Expected: a registration location is a bare `GeoJSON` geometry, not a `GeoProperty` (Table 5.2.9-1)
 #[gtest]
 #[tokio::test]
 async fn e037_07_02_within_polygon() -> Result<()> {

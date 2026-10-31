@@ -1,9 +1,9 @@
-//! ETSI `021_02`: the temporal evolutions of the Vehicles of a context are queried for the `speed` attribute alone
-//! (clause 5.7.4), so the answer holds no `fuelLevel`.
+//! The temporal evolutions of the Vehicles of a context are queried for the `speed` attribute alone (clause 5.7.4), so
+//! the answer holds no `fuelLevel`.
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::{create_vehicle_pair, delete_vehicle_pair};
+use crate::vehicle_fixtures::{create_vehicle_pair, delete_vehicle_pair};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

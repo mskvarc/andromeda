@@ -1,9 +1,11 @@
-//! ETSI `034_04`: an update of a context source registration whose body is not JSON is refused with 400
-//! `InvalidRequest` (clause 5.9.3).
+//! An update of a context source registration whose body is not JSON is refused with 400 `InvalidRequest` (clause
+//! 5.9.3).
 
 use crate::{
-    suite_keywords::{csource_endpoint, ld_json_body_client, refused, update_registration_request, with_doubled_separator},
-    suite_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information},
+    entity_operations::ld_json_body_client,
+    registration_operations::{csource_endpoint, update_registration_request},
+    registration_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information},
+    unchecked_requests::{refused, with_doubled_separator},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -16,9 +18,8 @@ use ngsi_ld::{
 
 /// Pins: Check that one cannot update a context source registration if the request body is invalid
 /// Clause: 5.9.3
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_04_01_update_a_context_source_registration_if_the_request_body_is_invalid() -> Result<()> {

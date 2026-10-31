@@ -1,5 +1,5 @@
-//! ETSI `D016_01_exc`: a batch merge of the `speed` an exclusive registration holds for two broker entities is sent to
-//! the context source and leaves no `speed` on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.20).
+//! A batch merge of the `speed` an exclusive registration holds for two broker entities is sent to the context source
+//! and leaves no `speed` on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.20).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -18,17 +18,9 @@ use ngsi_ld::{model::NgsiLdMediaType, query::Locality};
 /// Pins: Check that if one requests the Context Broker to merge a batch of entities that match an exclusive
 /// registration, they are merged on the Context Source too.
 /// Clause: 4.3.3, 4.3.6.3, 5.6.20
-/// Corrected: `fix(D016_01_exc)`: check that no returned entity carries speed (4.3.6.3, 5.6.20.4)
-/// Corrected: `fix(D016_01_exc)`: exclusive merge-batch registration names entities by id (4.3.6.3)
-/// Corrected: `fix(D012_01_exc)`: exclusive batch registration names entities by id (4.3.6.3)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the query is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: no returned entity carries speed (clauses 4.3.6.3, 5.6.20.4)
+/// Expected: an exclusive registration names its entities by id (clause 4.3.6.3)
+/// Expected: an exclusive registration names its entities by id (clause 4.3.6.3)
 #[gtest]
 #[tokio::test]
 async fn d016_01_exc_merge_batch_entities_on_both_context_broker_and_context_source() -> Result<()> {

@@ -72,8 +72,8 @@ fn printed_document(subscription: &Subscription<Input>, coordinates: [i64; 2]) -
 /// Pins: The subscription C.4 prints, with its geoQ reference position written on the WGS 84 axes, is created and
 /// retrieved with every member it prints; members 5.2.12 defaults or reports are not compared
 /// Clause: C.4, 4.10, 5.2.12, 5.8.1, 5.8.3
-/// Corrected: geoq-latitude: the geoQ reference [-1, 100] is replayed with its ordinates exchanged, latitude 100
-/// being off the WGS 84 axes (4.10)
+/// Expected: the geoQ reference [-1, 100] is sent with its ordinates exchanged, latitude 100 being off the WGS 84 axes
+/// (clause 4.10)
 #[gtest]
 #[tokio::test]
 async fn c_4_0001_the_subscription_round_trips_with_an_in_range_reference() -> Result<()> {

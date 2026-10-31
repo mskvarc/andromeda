@@ -16,8 +16,8 @@ use crate::{
             vehicle_retrieval_rule,
         },
     },
-    suite_keywords::delete_entities,
-    suite_payloads::vehicle_parked,
+    entity_operations::delete_entities,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker::BrokerClient, cleanup::Cleanup, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

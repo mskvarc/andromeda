@@ -1,16 +1,10 @@
-//! ETSI `010_04`: with `noOverwrite`, an existing multi-attribute instance is left as it is and reported as not
-//! updated, and a new multi-attribute instance is added (clauses 5.6.3 and 6.6.3.1).
+//! With `noOverwrite`, an existing multi-attribute instance is left as it is and reported as not updated, and a new
+//! multi-attribute instance is added (clauses 5.6.3 and 6.6.3.1).
 
 use crate::{
-    suite_keywords::{
-        append_attributes,
-        create_vehicle_brand_parked_speed_sources,
-        delete_entities,
-        ld_json_body_client,
-        non_empty_member,
-        retrieve_entity_json,
-    },
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    entity_operations::{append_attributes, delete_entities, ld_json_body_client, non_empty_member, retrieve_entity_json},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
@@ -20,10 +14,8 @@ use serde_json::{Value, json};
 
 /// Pins: Check that one can append entity attributes with noOverwrite option
 /// Clause: 5.6.3
-/// Changed: the expected updated attribute name <https://uri.etsi.org/ngsi-ld/default-context/attribute_to_be_added> is
-/// the per-file IRI of `attribute_to_be_added`: the suite @context does not define the term, so the Robot run expands
-/// it under the core default vocabulary, while the file vocabulary maps it, as every term the case sends with a
-/// @context
+/// Expected: the updated attribute name is the per-file IRI of `attribute_to_be_added`: the file vocabulary maps it, as
+/// every term the test sends with a @context
 #[gtest]
 #[tokio::test]
 async fn e010_04_01_append_entity_attributes_and_ignore_existing_multi_attribute_instance() -> Result<()> {
@@ -94,7 +86,6 @@ async fn e010_04_01_append_entity_attributes_and_ignore_existing_multi_attribute
 
 /// Pins: Check that one can append entity attributes with noOverwrite option
 /// Clause: 5.6.3
-/// Changed: the response body is also checked to be empty, which the Hurl file does not check
 #[gtest]
 #[tokio::test]
 async fn e010_04_02_append_entity_attributes_with_a_new_multi_attribute_instance() -> Result<()> {

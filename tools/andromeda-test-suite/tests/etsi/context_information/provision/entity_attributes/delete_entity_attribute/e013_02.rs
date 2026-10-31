@@ -1,9 +1,11 @@
-//! ETSI `013_02`: an attribute is not deleted when its entity id is absent or not a URI, or when its attribute name is
-//! absent (clause 5.6.5).
+//! An attribute is not deleted when its entity id is absent or not a URI, or when its attribute name is absent (clause
+//! 5.6.5).
 
 use crate::{
-    suite_keywords::{answered_with, create_vehicle_brand_parked_speed_gps, delete_entities},
-    suite_payloads::VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS,
+    entity_operations::delete_entities,
+    unchecked_requests::answered_with,
+    vehicle_entity_payloads::VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS,
+    vehicle_fixtures::create_vehicle_brand_parked_speed_gps,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -14,9 +16,11 @@ use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::model::APPLICATION_JSON;
 
-/// A `DELETE` of `target`, written as the ETSI keyword writes it and sent as `application/json` without a `Link`,
+/// A `DELETE` of `target`, written exactly as given and sent as `application/json` without a `Link`,
 /// requiring `status`.
 async fn refused_delete(broker: &BrokerClient, target: &str, status: StatusCode) -> Result<()> {
+    // Each path leaves out the entity id or the attribute name, or names an id the model refuses, so no typed Delete
+    // Attribute writes it.
     answered_with(broker, content_type(request_to(broker, Method::DELETE, target)?, &APPLICATION_JSON)?, status).await
 }
 

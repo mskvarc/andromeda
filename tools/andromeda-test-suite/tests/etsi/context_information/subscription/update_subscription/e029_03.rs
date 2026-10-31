@@ -1,7 +1,11 @@
-//! ETSI `029_03`: an update whose fragment breaks the data types or restrictions of a subscription is refused with 400
+//! An update whose fragment breaks the data types or restrictions of a subscription is refused with 400
 //! `BadRequestData` (clause 5.8.2).
 
-use crate::suite_keywords::{create_timed_building_subscription, ld_json_body_client, refused, update_subscription_request};
+use crate::{
+    entity_operations::ld_json_body_client,
+    subscription_operations::{create_timed_building_subscription, update_subscription_request},
+    unchecked_requests::refused,
+};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{

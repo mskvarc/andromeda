@@ -1,9 +1,9 @@
-//! ETSI `020_17`: the temporal evolution of an entity is retrieved after one of its attributes is deleted, as the
-//! `deletedAt` temporal property names the instances the deletion removed (clause 5.7.3).
+//! The temporal evolution of an entity is retrieved after one of its attributes is deleted, as the `deletedAt` temporal
+//! property names the instances the deletion removed (clause 5.7.3).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::{create_vehicle_parking_name_fuel, delete_attribute};
+use crate::{entity_operations::delete_attribute, vehicle_fixtures::create_vehicle_parking_name_fuel};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

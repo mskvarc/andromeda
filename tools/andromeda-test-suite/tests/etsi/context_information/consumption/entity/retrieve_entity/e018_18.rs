@@ -1,9 +1,10 @@
-//! ETSI `018_18`: an entity is not retrieved when `pick` and `omit` name the same member, when `attrs` is sent beside
-//! `pick` or `omit`, or when the projection is malformed (clauses 5.7.1 and 4.21).
+//! An entity is not retrieved when `pick` and `omit` name the same member, when `attrs` is sent beside `pick` or
+//! `omit`, or when the projection is malformed (clauses 5.7.1 and 4.21).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, refused},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -41,7 +42,6 @@ async fn refused_query(client: &BrokerClient, id: &EntityId, query: &str) -> Res
 
 /// Pins: Check that a `BadRequestDataException` is returned if an entity member is present in pick and omit
 /// Clause: 5.7.1, 4.21
-/// Defect: D-80: Andromeda admits a member named in both pick and omit instead of refusing it with `BadRequestData`; GET entities/{id}?pick=name&omit=name answers 404 `ResourceNotFound`
 #[gtest]
 #[tokio::test]
 async fn e018_18_01_retrieve_with_same_entity_member_in_pick_and_omit() -> Result<()> {

@@ -1,9 +1,8 @@
-//! ETSI `054_03`: a replace that names several scopes replaces the scope the entity had
-//! (clauses 4.18, 5.6.18 and 6.5.3.3).
+//! A replace that names several scopes replaces the scope the entity had (clauses 4.18, 5.6.18 and 6.5.3.3).
 
 use crate::{
-    suite_keywords::{create_entity_with_link, delete_entities, retrieve_entity_json},
-    suite_payloads::{building_with_many_scopes, building_with_one_scope},
+    building_payloads::{building_with_many_scopes, building_with_one_scope},
+    entity_operations::{create_entity_with_link, delete_entities, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

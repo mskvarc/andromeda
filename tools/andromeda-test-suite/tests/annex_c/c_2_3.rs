@@ -98,8 +98,7 @@ async fn c_2_3_0003_the_simplified_parking() -> Result<()> {
 /// Pins: Retrieve Entity with Accept application/geo+json answers the `OffStreetParking` as a `GeoJSON` Feature as
 /// C.2.3 prints it
 /// Clause: C.2.3, 4.5.16, 6.3.15, 5.7.1
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0004_the_normalized_geojson_feature() -> Result<()> {
@@ -115,8 +114,7 @@ async fn c_2_3_0004_the_normalized_geojson_feature() -> Result<()> {
 /// Pins: Retrieve Entity with Accept application/geo+json and format=concise answers a `GeoJSON` Feature with
 /// concise properties as C.2.3 prints it
 /// Clause: C.2.3, 4.5.16, 6.3.15, 5.7.1
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0005_the_concise_geojson_feature() -> Result<()> {
@@ -132,8 +130,7 @@ async fn c_2_3_0005_the_concise_geojson_feature() -> Result<()> {
 /// Pins: Retrieve Entity with Accept application/geo+json and format=simplified answers a `GeoJSON` Feature with
 /// simplified properties as C.2.3 prints it
 /// Clause: C.2.3, 4.5.17, 6.3.15, 5.7.1
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0006_the_simplified_geojson_feature() -> Result<()> {
@@ -164,8 +161,7 @@ fn expect_parking_collection(mut body: serde_json::Value, namespace: &Namespace,
 /// Pins: Query Entities with Accept application/geo+json answers both parkings as a `GeoJSON` `FeatureCollection`,
 /// features in any order, as C.2.3 prints it
 /// Clause: C.2.3, 4.5.16, 6.3.15, 5.7.2
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0007_the_normalized_geojson_feature_collection() -> Result<()> {
@@ -188,8 +184,7 @@ async fn c_2_3_0007_the_normalized_geojson_feature_collection() -> Result<()> {
 /// Pins: Query Entities with Accept application/geo+json and format=concise answers a `FeatureCollection` with
 /// concise properties, features in any order, as C.2.3 prints it
 /// Clause: C.2.3, 4.5.16, 6.3.15, 5.7.2
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0008_the_concise_geojson_feature_collection() -> Result<()> {
@@ -213,8 +208,7 @@ async fn c_2_3_0008_the_concise_geojson_feature_collection() -> Result<()> {
 /// Pins: Query Entities with Accept application/geo+json and format=simplified answers a `FeatureCollection` with
 /// simplified properties, features in any order, as C.2.3 prints it
 /// Clause: C.2.3, 4.5.17, 6.3.15, 5.7.2
-/// Corrected: one-location: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location
-/// alike (4.5.16)
+/// Expected: Downtown1 is at the [-8.5, 41.2] the first example prints, in geometry and location alike (clause 4.5.16)
 #[gtest]
 #[tokio::test]
 async fn c_2_3_0009_the_simplified_geojson_feature_collection() -> Result<()> {

@@ -1,8 +1,7 @@
-//! ETSI `020_18`: the temporal evolution of an entity is retrieved in simplified temporal representation after one of
-//! its attributes is deleted, as the `deletedAt` temporal property names the instance that the deletion recorded
-//! (clause 5.7.3).
+//! The temporal evolution of an entity is retrieved in simplified temporal representation after one of its attributes
+//! is deleted, as the `deletedAt` temporal property names the instance that the deletion recorded (clause 5.7.3).
 
-use crate::suite_keywords::{create_vehicle_parking_name_fuel, delete_attribute, deleted_temporal_values};
+use crate::{entity_operations::delete_attribute, temporal_operations::deleted_temporal_values, vehicle_fixtures::create_vehicle_parking_name_fuel};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, teardown::AnyAnswer};
 use googletest::prelude::*;
 use serde_json::json;
@@ -10,9 +9,8 @@ use serde_json::json;
 /// Pins: Check that one can retrieve the temporal evolution of an entity following the deletedAt temporal property
 /// with temporal values
 /// Clause: 5.7.3
-/// Changed: the deleted value is matched exactly as the NGSI-LD Null, and the pair must hold it first. The
-/// alternative that holds a fixed instant first is not admitted, since a deletion instant is fixed by the run that
-/// recorded it.
+/// Expected: the deleted value is the NGSI-LD Null and comes first in the pair; a deletion instant depends on the run
+/// that recorded it, so no fixed instant is compared
 #[gtest]
 #[tokio::test]
 async fn e020_18_01_with_a_property() -> Result<()> {
@@ -45,9 +43,8 @@ async fn e020_18_01_with_a_property() -> Result<()> {
 /// Pins: Check that one can retrieve the temporal evolution of an entity following the deletedAt temporal property
 /// with temporal values
 /// Clause: 5.7.3
-/// Changed: the deleted object is matched exactly as the NGSI-LD Null, and the pair must hold it first. The
-/// alternative that holds a fixed instant first is not admitted, since a deletion instant is fixed by the run that
-/// recorded it.
+/// Expected: the deleted object is the NGSI-LD Null and comes first in the pair; a deletion instant depends on the run
+/// that recorded it, so no fixed instant is compared
 #[gtest]
 #[tokio::test]
 async fn e020_18_02_with_a_relationship() -> Result<()> {
@@ -80,9 +77,8 @@ async fn e020_18_02_with_a_relationship() -> Result<()> {
 /// Pins: Check that one can retrieve the temporal evolution of an entity following the deletedAt temporal property
 /// with temporal values
 /// Clause: 5.7.3, 4.5.18
-/// Changed: the deleted language map is matched exactly as the NGSI-LD Null under `@none`, and the pair must hold it
-/// first. The alternative that holds a fixed instant first is not admitted, since a deletion instant is fixed by the
-/// run that recorded it.
+/// Expected: the deleted language map is the NGSI-LD Null under `@none` and comes first in the pair; a deletion instant
+/// depends on the run that recorded it, so no fixed instant is compared
 #[gtest]
 #[tokio::test]
 async fn e020_18_03_with_a_language_property() -> Result<()> {

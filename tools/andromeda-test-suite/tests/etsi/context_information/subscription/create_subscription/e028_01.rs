@@ -1,7 +1,7 @@
-//! ETSI `028_01`: a subscription created with a time interval and a key-value notification is retrieved with the members it
-//! was created with (clause 5.8.1).
+//! A subscription created with a time interval and a key-value notification is retrieved with the members it was
+//! created with (clause 5.8.1).
 
-use crate::suite_payloads::key_values_document;
+use crate::subscription_payloads::key_values_document;
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,

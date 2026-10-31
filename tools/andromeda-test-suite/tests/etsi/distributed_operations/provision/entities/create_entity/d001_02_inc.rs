@@ -1,12 +1,12 @@
-//! ETSI `D001_02_inc`: an entity with a malformed id that an inclusive registration would match is refused, and
-//! reaches neither the broker nor the context source (clauses 4.3.3, 4.3.6.2, 5.6.1 and 6.3.3).
+//! An entity with a malformed id that an inclusive registration would match is refused, and reaches neither the broker
+//! nor the context source (clauses 4.3.3, 4.3.6.2, 5.6.1 and 6.3.3).
 
 use crate::{
     distributed_operations::{
         forwarding_source::{register, serve, source_endpoint, unregister},
         provision::entities::entity_sources::vehicle_type_registration,
     },
-    suite_payloads::vehicle_parked,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{
     broker,
@@ -32,13 +32,7 @@ const ABSENCE_WINDOW: Duration = Duration::from_secs(5);
 /// Pins: Check that if one requests the Context Broker to create an entity that matches an inclusive registration but
 /// is malformed, this is created neither on the Context Broker nor on the Context Source
 /// Clause: 4.3.3, 4.3.6.2, 5.6.1, 6.3.3
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
-/// Absence: Wait For No Request 5 s
+/// Absence: no request within 5 s
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

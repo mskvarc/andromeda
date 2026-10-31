@@ -1,9 +1,10 @@
-//! ETSI `003_05`: a batch sent as `application/json` without a `Link` header is created in the default context, and the
-//! entity is retrieved with and without a context (clause 6.3.5).
+//! A batch sent as `application/json` without a `Link` header is created in the default context, and the entity is
+//! retrieved with and without a context (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{batch_create, delete_entities, non_empty_member, retrieve_entity_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::batch_create,
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{delete_entities, non_empty_member, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -12,7 +13,7 @@ use ngsi_ld::http::headers::Accept;
 /// Pins: Check that the default @context is used if the Content-Type header is "application/json" and the Link header
 /// does not contain a JSON-LD @context and retrieve the entity without context
 /// Clause: 6.3.5
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e003_05_01_default_context_with_json_content_type_retrieved_without_context() -> Result<()> {

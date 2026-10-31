@@ -1,7 +1,7 @@
-//! ETSI `028_04`: a create-subscription request naming the id of an existing subscription is refused with 409
-//! `AlreadyExists` (clause 5.8.1).
+//! A create-subscription request naming the id of an existing subscription is refused with 409 `AlreadyExists` (clause
+//! 5.8.1).
 
-use crate::{suite_keywords::ld_json_body_client, suite_payloads::building_subscription};
+use crate::{entity_operations::ld_json_body_client, subscription_payloads::building_subscription};
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,

@@ -1,15 +1,15 @@
-//! The suite's term document (`ngsi-ld-test-suite.jsonld`), served by the case's own server for the broker to
-//! download and cache, every suite term mapped to the case's namespace.
+//! The term document (`ngsi-ld-test-suite.jsonld`), served by the test's own server for the broker to download and
+//! cache, every term mapped to the test's namespace.
 
 use andromeda_test_suite::{namespace::Namespace, remote_context::RemoteContexts};
 use googletest::prelude::*;
 use std::collections::BTreeMap;
 use url::Url;
 
-/// The path the suite serves its term document at.
+/// The path the term document is served at.
 const PATH: &str = "forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
 
-/// The terms of the suite's term document.
+/// The terms of the term document.
 const TERMS: [&str; 15] = [
     "Building",
     "Vehicle",

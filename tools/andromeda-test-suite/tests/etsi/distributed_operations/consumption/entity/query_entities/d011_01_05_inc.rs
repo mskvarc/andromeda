@@ -1,5 +1,5 @@
-//! ETSI `D011_01_05_inc`: a query by type merges the broker's entity and the inclusive context source's entity of the
-//! same id into one entity holding the attributes of both (clauses 4.3.3, 4.3.6.2 and 5.7.2).
+//! A query by type merges the broker's entity and the inclusive context source's entity of the same id into one entity
+//! holding the attributes of both (clauses 4.3.3, 4.3.6.2 and 5.7.2).
 
 use crate::{
     distributed_operations::{
@@ -7,7 +7,7 @@ use crate::{
         forwarding_source::{listed_ids, register, serve, source_endpoint, source_path, stub, type_registration, unregister, vehicle_reply},
         vehicle_payloads::vehicle_speed_parked2,
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
+    entity_operations::{create_entity_with_context_string, delete_entities},
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -18,12 +18,6 @@ use serde_json::json;
 /// Pins: Check that entities on the Context Broker and Context Source with the same id get merged and returned as one
 /// entity
 /// Clause: 4.3.3, 4.3.6.2, 5.7.2
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

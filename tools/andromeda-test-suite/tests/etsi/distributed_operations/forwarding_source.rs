@@ -1,13 +1,13 @@
-//! The context source of a distributed-operations case and the keywords that set it up: `Start Context Source Mock
-//! Server` and `Set Stub Reply`, the registration the case forwards through, and the replies the source answers with.
+//! The context source of a distributed-operations test, the stubs that set up its replies, and the registration the
+//! test forwards through.
 //!
-//! The source is the test's own server. It closes every connection until the case's registration exists, then answers
+//! The source is the test's own server. It closes every connection until the test's registration exists, then answers
 //! each request with the first stub whose [`ForkRule`] matches it, in the order the stubs were set. A request no stub
-//! matches is answered 502 after five seconds: the suite's server closes such a connection after five seconds.
+//! matches is answered 502 after five seconds.
 
 use crate::{
     distributed_operations::fork_rule::{ForkRule, QueriedEntity},
-    suite_keywords::ld_json_body_client,
+    entity_operations::ld_json_body_client,
 };
 use andromeda_test_suite::{
     broker::BrokerClient,
@@ -34,11 +34,12 @@ use std::time::Duration;
 use url::Url;
 use wiremock::{Match, Mock, MockBuilder, ResponseTemplate, matchers::any};
 
-/// How long the source holds a request no stub matches before it answers.
-const UNMATCHED_DELAY: Duration = Duration::from_secs(5);
+/// How long the source holds a request no stub matches before it answers: below the broker's 5 s wait for a
+/// source, so the answer, and the request with it, is recorded before the broker answers the client.
+const UNMATCHED_DELAY: Duration = Duration::from_secs(3);
 
-/// `Start Context Source Mock Server`: `source` serving from now on, with nothing recorded of what it refused, and
-/// answering 502 after [`UNMATCHED_DELAY`] to every request no stub matches.
+/// Starts `source` serving, with nothing recorded of what it refused, and answering 502 after [`UNMATCHED_DELAY`] to
+/// every request no stub matches.
 pub(crate) async fn serve(source: ContextSource) -> Result<ContextSource> {
     let source = source.start_serving().await;
     let unmatched = ResponseTemplate::new(StatusCode::BAD_GATEWAY).set_delay(UNMATCHED_DELAY);
@@ -46,13 +47,13 @@ pub(crate) async fn serve(source: ContextSource) -> Result<ContextSource> {
     Ok(source)
 }
 
-/// `Set Stub Reply`: answers every request `rule` matches with `status`, and with `body` as its JSON text and no
+/// Answers every request `rule` matches with `status`, and with `body` as its JSON text and no
 /// `Content-Type` when it names one.
 pub(crate) async fn stub(source: &ContextSource, rule: ForkRule, status: StatusCode, body: Option<&Value>) -> Result<()> {
     mount_reply(source, Mock::given(rule), status, body).await
 }
 
-/// `Set Stub Reply` of a `POST /entityOperations/query` as [`stub`] sets it, matching only a body whose first
+/// A stub of a `POST /entityOperations/query` as [`stub`] sets it, matching only a body whose first
 /// queried entity `queried` names.
 pub(crate) async fn stub_query_of(source: &ContextSource, rule: ForkRule, queried: QueriedEntity, status: StatusCode, body: Option<&Value>) -> Result<()> {
     mount_reply(source, Mock::given(rule).and(queried), status, body).await
@@ -110,7 +111,7 @@ pub(crate) async fn create_entity_locally(broker: &BrokerClient, vocabulary: &Vo
     verify_that!(&answer, answered(StatusCode::CREATED))
 }
 
-/// `Get Stub Count`: how many of the requests the source received on entity paths `rule` matches.
+/// How many of the requests the source received on entity paths `rule` matches.
 pub(crate) async fn stub_count(source: &ContextSource, rule: &ForkRule) -> Result<usize> {
     Ok(source.received().await?.iter().filter(|request| rule.matches(request)).count())
 }

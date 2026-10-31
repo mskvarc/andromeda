@@ -1,9 +1,10 @@
-//! ETSI `019_18`: a query is refused with `BadRequestData` when `pick` and `omit` name the same member, when `attrs` is
-//! sent beside `pick` or `omit`, or when the projection is malformed (clauses 5.7.1, 5.7.2 and 4.21).
+//! A query is refused with `BadRequestData` when `pick` and `omit` name the same member, when `attrs` is sent beside
+//! `pick` or `omit`, or when the projection is malformed (clauses 5.7.1, 5.7.2 and 4.21).
 
 use crate::{
-    suite_keywords::{create_eiffel_vehicle_pisa, delete_eiffel_vehicle_pisa, refused_get},
-    suite_payloads::BUILDING_VEHICLE_TERMS,
+    building_payloads::BUILDING_VEHICLE_TERMS,
+    linked_entity_fixtures::{create_eiffel_vehicle_pisa, delete_eiffel_vehicle_pisa},
+    unchecked_requests::refused_get,
 };
 use andromeda_test_suite::{
     broker::{self},
@@ -51,8 +52,6 @@ const LOCATED_AT_TERMS: [&str; 11] = [
 
 /// Pins: Check that a `BadRequestDataException` is returned if an entity member is present in pick and omit
 /// Clause: 5.7.2, 4.21
-/// Defect: D-80: Andromeda admits a member named in both pick and omit instead of refusing it with `BadRequestData`;
-/// GET entities?pick=name&omit=name answers 200 []
 #[gtest]
 #[tokio::test]
 async fn e019_18_01_retrieve_with_same_entity_member_in_pick_and_omit() -> Result<()> {
@@ -135,6 +134,7 @@ async fn e019_18_04_retrieve_with_invalid_character() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &BUILDING_VEHICLE_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(&broker.with_context(vocabulary.context())?, "entities/?type=Building%2CVehicle&pick=id%3Bname").await?;
     delete_eiffel_vehicle_pisa(&broker, &namespace).await?;
     Ok(())
@@ -149,6 +149,7 @@ async fn e019_18_05_retrieve_with_unclosed_brace() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &LOCATED_AT_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(
         &broker.with_context(vocabulary.context())?,
         "entities/?type=Building%2CVehicle&pick=id%2ClocatedAt%7Bname",
@@ -167,6 +168,7 @@ async fn e019_18_06_retrieve_with_double_braces() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &LOCATED_AT_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(
         &broker.with_context(vocabulary.context())?,
         "entities/?type=Building%2CVehicle&pick=id%2ClocatedAt%7B%7Bname%7D",
@@ -185,6 +187,7 @@ async fn e019_18_07_retrieve_with_consecutive_separators() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &BUILDING_VEHICLE_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(
         &broker.with_context(vocabulary.context())?,
         "entities/?type=Building%2CVehicle&pick=id%2C%2Cname",
@@ -203,6 +206,7 @@ async fn e019_18_08_retrieve_with_expression_starting_with_special_character() -
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &LOCATED_AT_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(
         &broker.with_context(vocabulary.context())?,
         "entities/?type=Building%2CVehicle&pick=id%2ClocatedAt%7B%2Cname%7D",
@@ -221,6 +225,7 @@ async fn e019_18_09_retrieve_with_expression_containing_no_attribute() -> Result
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &LOCATED_AT_TERMS).await?;
     create_eiffel_vehicle_pisa(&broker, &vocabulary, &namespace).await?;
+    // The model refuses this malformed projection, so the query is sent as written.
     refused_get(
         &broker.with_context(vocabulary.context())?,
         "entities/?type=Building%2CVehicle&pick=id%2ClocatedAt%7B%7D",

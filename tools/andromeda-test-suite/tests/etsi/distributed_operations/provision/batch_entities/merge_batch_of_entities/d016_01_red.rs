@@ -1,5 +1,5 @@
-//! ETSI `D016_01_red`: a batch merge of two entities two redirect registrations match is sent to both context sources
-//! once, and a later query reads the merged `speed` from the sources (clauses 4.3.3, 4.3.6.3 and 5.6.20).
+//! A batch merge of two entities two redirect registrations match is sent to both context sources once, and a later
+//! query reads the merged `speed` from the sources (clauses 4.3.3, 4.3.6.3 and 5.6.20).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -20,18 +20,10 @@ const QUERY_ATTRS: [&str; 5] = ["@context", "id", "isParked2", "speed", "type"];
 /// Pins: Check that if one requests the Context Broker to merge a batch of entities that match an exclusive
 /// registration, they are merged on the Context Source too.
 /// Clause: 4.3.3, 4.3.6.3, 5.6.20
-/// Corrected: `fix(D016_01_red)`: stub the forwarded post-merge query (4.3.6.3)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the query is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
+/// Expected: the query that follows the merge is forwarded to the source, which answers it (clause 4.3.6.3)
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d016_01_red_merge_batch_entities_on_the_context_source() -> Result<()> {

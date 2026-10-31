@@ -1,5 +1,5 @@
-//! ETSI `D002_02_02_inc`: deleting an entity that exists on the context source alone, which an inclusive registration
-//! names, is answered 204 (clauses 4.3.3, 4.3.6.2, 5.6.6 and 6.3.3).
+//! Deleting an entity that exists on the context source alone, which an inclusive registration names, is answered 204
+//! (clauses 4.3.3, 4.3.6.2, 5.6.6 and 6.3.3).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -13,13 +13,7 @@ use http::{Method, StatusCode};
 /// Pins: Verify that, when one has an inclusive registration on a Context Broker, one is able to delete entities on
 /// a Context Source and should get a `BatchOperationResult` structure
 /// Clause: 4.3.3, 4.3.6.2, 5.6.6, 6.3.3
-/// Corrected: `fix(D002_02_02_inc)`: delete of a remote-only entity is 204 not 207 (5.6.6.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the delete of a remote-only entity answers 204, not 207 (clause 5.6.6.4)
 #[gtest]
 #[tokio::test]
 async fn d002_02_02_inc_delete_entity_on_a_context_source() -> Result<()> {

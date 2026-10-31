@@ -1,5 +1,5 @@
-//! ETSI `D001_02_exc`: an entity whose `speed` an exclusive registration holds for the retrieval operations alone is
-//! refused as existing, and nothing reaches the context source (clauses 4.3.3, 4.3.6.3 and 5.6.1).
+//! An entity whose `speed` an exclusive registration holds for the retrieval operations alone is refused as existing,
+//! and nothing reaches the context source (clauses 4.3.3, 4.3.6.3 and 5.6.1).
 
 use crate::{
     distributed_operations::{
@@ -7,8 +7,8 @@ use crate::{
         forwarding_source::{create_entity_locally, register, serve, source_endpoint, source_path, stub, stub_count, unregister},
         provision::entities::entity_sources::{Coverage, vehicle_id_registration},
     },
-    suite_keywords::{delete_entities, send_create_entity},
-    suite_payloads::vehicle_parked,
+    entity_operations::{delete_entities, send_create_entity},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -21,14 +21,7 @@ use ngsi_ld::{
 
 /// Pins: Check that the entity cannot be created in the Context Source. The creation shall raise a conflict error.
 /// Clause: 4.3.3, 4.3.6.3, 5.6.1
-/// Corrected: `fix(D001_02_exc)`: declare attributes and retrieve-only ops on the exclusive registration (4.3.6.3)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the exclusive registration declares attributes and retrieve-only operations (clause 4.3.6.3)
 #[gtest]
 #[tokio::test]
 async fn d001_02_exc_create_entity_without_redirection_operations() -> Result<()> {

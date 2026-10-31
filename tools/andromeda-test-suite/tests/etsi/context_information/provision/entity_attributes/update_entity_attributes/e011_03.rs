@@ -1,9 +1,8 @@
-//! ETSI `011_03`: an update is refused with 404 `ResourceNotFound` when its entity id is not known to the system
-//! (clause 5.6.2).
+//! An update is refused with 404 `ResourceNotFound` when its entity id is not known to the system (clause 5.6.2).
 
 use crate::{
-    suite_keywords::{delete_entities, ld_json_body_client},
-    suite_payloads::speedometer_speed_99_fragment,
+    entity_operations::{delete_entities, ld_json_body_client},
+    vehicle_entity_payloads::speedometer_speed_99_fragment,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

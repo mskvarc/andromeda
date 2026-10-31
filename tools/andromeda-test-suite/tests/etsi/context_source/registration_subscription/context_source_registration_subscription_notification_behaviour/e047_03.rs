@@ -1,5 +1,5 @@
-//! ETSI `047_03`: a csource notification carries only the `RegistrationInfo` elements of the registration that match
-//! the subscription (clause 5.11.7).
+//! A csource notification carries only the `RegistrationInfo` elements of the registration that match the subscription
+//! (clause 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
@@ -7,10 +7,12 @@ use crate::{
         registered_any,
         teardown,
     },
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client},
-    suite_payloads::building_registration_subscription,
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_subscription_operations::create_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     registration::{CSourceRegistration, RegistrationId, RegistrationInfo},
@@ -22,10 +24,6 @@ use serde_json::{Value, json};
 /// context source registration information relevant for the subscription, in particular only matching
 /// `RegistrationInfo` elements
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_03_01_receive_csource_notification_with_relevant_information() -> Result<()> {
@@ -49,7 +47,7 @@ async fn e047_03_01_receive_csource_notification_with_relevant_information() -> 
     let _registration = registered_any(&broker, &vocabulary, &registration).await?;
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_csource_notification(&body, &id, &registration_id, "newlyMatching");
     let information = body.pointer("/data/0/information").and_then(Value::as_array);
     expect_that!(information.map(Vec::len), some(eq(1)));

@@ -1,9 +1,9 @@
-//! ETSI `056_03`: an attribute is deleted by a Merge Entity whose fragment holds the NGSI-LD Null in the shape of its
-//! kind (clauses 5.6.17 and 6.5.3.4).
+//! An attribute is deleted by a Merge Entity whose fragment holds the NGSI-LD Null in the shape of its kind (clauses
+//! 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
-    suite_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
+    building_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
+    entity_operations::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

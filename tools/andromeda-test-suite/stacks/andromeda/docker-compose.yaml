@@ -1,0 +1,407 @@
+name: test-suite-andromeda
+
+# Brokers configured for Andromeda's own behaviour, for the andromeda tree. The front
+# broker runs on the broker's defaults with every extension enabled; a switch
+# gets a broker of its own only where it conflicts with another switch or with
+# files running in parallel. Each broker is an identity over a PostgreSQL
+# server of its own: a tenant is a database, so two identities on one server
+# could name the same tenant database.
+#
+# The tests run in the runner service on the same network and reach every broker by its network name; no service
+# publishes a host port.
+
+x-postgres: &postgres
+  image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-test-suite-postgres:latest}
+  command: ["postgres", "-c", "max_connections=200"]
+  shm_size: 1gb
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 40
+
+x-broker: &broker
+  image: ${ANDROMEDA_IMAGE:-andromeda-test-suite:latest}
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+    start_period: 5s
+
+# Timings and pool sizes only: every behaviour a test reads is the broker's
+# default unless a broker below says otherwise.
+x-broker-environment: &broker-environment
+  ANDROMEDA__SERVER__HOST: "0.0.0.0"
+  ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
+  ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
+  ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
+  ANDROMEDA__DATABASE__MAX_CONNECTIONS: "32"
+  ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
+  ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "16"
+
+services:
+  postgres:
+    <<: *postgres
+
+  postgres-conformance:
+    <<: *postgres
+
+  postgres-history:
+    <<: *postgres
+
+  broker:
+    <<: *broker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1071"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker:1071"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__NEAR_DISTANCE_BAND__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__ACCEPT_LANGUAGE__MODE: "enabled"
+      # Bounds small enough for one file's own data to reach the TooManyResults refusal.
+      ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY__MAX_MATCHES: "2"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING__MAX_GROUPS: "3"
+      # The position budget of runner.env, so a geometry one position over it stays a small payload.
+      ANDROMEDA__REQUEST_LIMITS__MAX_GEOMETRY_POSITIONS: "100000"
+
+  # Conformance mode forces every extension off, which no file running on the
+  # front broker can share; the flags stay on to show the mode overrides them.
+  broker-conformance:
+    <<: *broker
+    depends_on:
+      postgres-conformance:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1072"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-conformance:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-conformance"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-conformance"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-conformance:1072"
+      ANDROMEDA__EXTENSIONS__MODE: "conformance"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__PURGE_DATASET_SCOPE__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__ACCEPT_LANGUAGE__MODE: "enabled"
+
+  # The three core write history brokers share one database, so a file writes
+  # through one and reads the Temporal Evolution back through another: whether
+  # a Core write is recorded is decided by the broker that commits it. No other
+  # broker may share it, since the front broker records Core writes and sweeps
+  # expiries. Broker share: 3 x (16 + 4 x 16) = 240 of max_connections at the
+  # runtime cache bound, three runtimes each in practice (3 x 16 x 3 = 144).
+  broker-not-recorded:
+    <<: *broker
+    depends_on:
+      postgres-history:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1073"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-history:5432/postgres"
+      ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-not-recorded"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-not-recorded"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-not-recorded:1073"
+      ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "not-recorded"
+
+  # The same, under an identity of its own: every broker queues the Temporal API's history and drains it after
+  # commit, and the tests of that queue write through this one.
+  broker-deferred:
+    <<: *broker
+    depends_on:
+      postgres-history:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1074"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-history:5432/postgres"
+      ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-deferred"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-deferred"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-deferred:1074"
+      ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "not-recorded"
+
+  # Records Core writes, the default. The expiry sweep deletes as the broker
+  # that runs it, so this one does not sweep: otherwise whichever broker won the
+  # race would decide whether an expiry reached the Temporal Evolution. It takes
+  # geometries of up to 1,000,000 positions (`large_position_budget`), the
+  # position budget's design target, where the other brokers keep the default.
+  broker-recorded:
+    <<: *broker
+    depends_on:
+      postgres-history:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1075"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-history:5432/postgres"
+      ANDROMEDA__DATABASE__MAX_CONNECTIONS: "16"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-recorded"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-recorded"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-recorded:1075"
+      ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "24h"
+      ANDROMEDA__REQUEST_LIMITS__MAX_GEOMETRY_POSITIONS: "1000000"
+
+  postgres-snapshot:
+    <<: *postgres
+
+  # A tenant holds at most three Snapshots, and an operation scoped to a
+  # Snapshot still preparing waits two seconds for it. The quota is counted per
+  # tenant, so every file on this broker works in a tenant of its own.
+  broker-snapshot:
+    <<: *broker
+    depends_on:
+      postgres-snapshot:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1078"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-snapshot:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-snapshot"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-snapshot"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-snapshot:1078"
+      ANDROMEDA__SNAPSHOT__QUOTA__MAX_PER_TENANT: "3"
+      ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "2s"
+
+  postgres-single-tenant:
+    <<: *postgres
+
+  # Multi-tenancy off: a request naming a tenant is refused.
+  broker-single-tenant:
+    <<: *broker
+    depends_on:
+      postgres-single-tenant:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1079"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-single-tenant:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-single-tenant"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-single-tenant"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-single-tenant:1079"
+      ANDROMEDA__TENANCY__MODE: "disabled"
+
+  postgres-durable:
+    <<: *postgres
+
+  # Durable notification delivery: every notification is queued in the tenant
+  # database and sent by the delivery worker. A live broker also drains a
+  # queue it finds, so this one keeps a PostgreSQL server of its own.
+  broker-durable:
+    <<: *broker
+    depends_on:
+      postgres-durable:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1080"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-durable:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-durable"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-durable"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-durable:1080"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
+
+  postgres-notification-limits:
+    <<: *postgres
+    profiles: ["notification-limits"]
+
+  # Durable delivery with an HTTP notification body limit of 1 KiB, and a queue
+  # that polls and retries within a second, so a test sees a failing delivery
+  # run out of its four attempts while it waits. A live broker also drains a
+  # queue it finds, so this one keeps a PostgreSQL server of its own. It starts only
+  # with `--profile notification-limits`, because a broker image older than the
+  # `notifications.delivery.max_http_body` key refuses to start with it.
+  broker-notification-limits:
+    <<: *broker
+    profiles: ["notification-limits"]
+    depends_on:
+      postgres-notification-limits:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1085"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-notification-limits:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-notification-limits"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-notification-limits"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-notification-limits:1085"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "1 KiB"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__POLL_INTERVAL: "100ms"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_POLL_INTERVAL: "1s"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_ATTEMPTS: "4"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__RETRY_INTERVAL: "100ms"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_RETRY_INTERVAL: "1s"
+
+  postgres-edge:
+    <<: *postgres
+
+  # Trusts the Forwarded and X-Forwarded-Proto fields a client sends, as a
+  # broker behind a TLS terminator does, so it mints the scheme they name. It
+  # advertises no URL of its own: a configured apiRoot outranks the request's
+  # origin, forwarded scheme included. Collections page by offset unless a
+  # client opts into a cursor walk with an empty cursor.
+  broker-edge:
+    <<: *broker
+    depends_on:
+      postgres-edge:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1081"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-edge:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-edge"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-edge"
+      ANDROMEDA__HTTP__FORWARDED__TRUST: "proxies"
+      ANDROMEDA__HTTP__FORWARDED__PROXIES: "0.0.0.0/0,::/0"
+      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "available"
+
+  postgres-edge-unlisted:
+    <<: *postgres
+
+  # Believes the forwarded fields of no peer, which is what a broker told to
+  # believe them only from a proxy range the runner is outside of does: every
+  # forwarded field it receives is ignored, and it mints the scheme and
+  # authority the request addressed.
+  broker-edge-unlisted:
+    <<: *broker
+    depends_on:
+      postgres-edge-unlisted:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1087"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-edge-unlisted:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-edge-unlisted"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-edge-unlisted"
+
+  postgres-prefixed:
+    <<: *postgres
+
+  # Advertises an apiRoot under a path prefix on an origin nothing serves, the
+  # URL a reverse proxy mounting the broker under /broker would publish. Cursor
+  # pagination is off, so collections page by offset alone.
+  broker-prefixed:
+    <<: *broker
+    depends_on:
+      postgres-prefixed:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1082"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-prefixed:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-prefixed"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-prefixed"
+      ANDROMEDA__SERVER__PUBLIC_URL: "https://gw.example.com/broker"
+      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "disabled"
+
+  postgres-language-range:
+    <<: *postgres
+
+  # Runs the language-ranges level of q_target_languages, which reads a q
+  # target language as an RFC 4647 extended range; the front broker keeps the
+  # clause 4.9 grammar, the behaviour every other file sees.
+  broker-language-range:
+    <<: *broker
+    depends_on:
+      postgres-language-range:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1083"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-language-range:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-language-range"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-language-range"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-language-range:1083"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-ranges"
+
+  postgres-language-tags:
+    <<: *postgres
+
+  # Runs the language-tags level of q_target_languages, which admits every RFC
+  # 5646 tag as a q target language; the front broker keeps the clause 4.9
+  # grammar, which Annex C.5.13.2's marque[en-GB] is refused under.
+  broker-language-tags:
+    <<: *broker
+    depends_on:
+      postgres-language-tags:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1084"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-language-tags:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-language-tags"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-language-tags"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-language-tags:1084"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-tags"
+
+  postgres-tls:
+    <<: *postgres
+
+  # Terminates TLS itself on TCP and serves HTTP/3 over QUIC on the same port
+  # number, both presenting the shared identity in ./tls. Client certificates
+  # from client-ca.crt are optional, and the management listener terminates
+  # TLS too.
+  broker-tls:
+    <<: *broker
+    depends_on:
+      postgres-tls:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1076"
+      ANDROMEDA__SERVER__TRANSPORT: "tls"
+      ANDROMEDA__SERVER__HTTP3__MODE: "enabled"
+      ANDROMEDA__TLS__CERTIFICATE: "/etc/andromeda/tls/broker.crt"
+      ANDROMEDA__TLS__PRIVATE_KEY: "/etc/andromeda/tls/broker.key"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__MODE: "optional"
+      ANDROMEDA__TLS__CLIENT_AUTHENTICATION__CA: "/etc/andromeda/tls/client-ca.crt"
+      ANDROMEDA__HTTP__SECURITY_HEADERS__STRICT_TRANSPORT_SECURITY__MODE: "enabled"
+      ANDROMEDA__MANAGEMENT__PORT: "1077"
+      ANDROMEDA__MANAGEMENT__TRANSPORT: "tls"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-tls:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-tls"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-tls"
+    volumes:
+      - ./tls:/etc/andromeda/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --ca-certificate=/etc/andromeda/tls/ca.crt https://localhost:1076/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+  runner:
+    image: andromeda-test-suite-runner:latest
+    build:
+      context: ../runner
+    profiles: ["runner"]
+    env_file: runner.env
+    working_dir: /andromeda/tools/andromeda-test-suite
+    volumes:
+      - ../../../..:/andromeda:ro
+      - target:/andromeda/target
+      - registry:/usr/local/cargo/registry
+
+volumes:
+  target:
+    name: test-suite-target
+  registry:
+    name: test-suite-cargo-registry

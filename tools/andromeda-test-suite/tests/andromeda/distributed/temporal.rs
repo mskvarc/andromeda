@@ -1,0 +1,10 @@
+//! The tests of `distributed/temporal`.
+
+mod a_fed_tmp_9001;
+mod a_fed_tmp_9002;
+mod a_fed_tmp_9003;
+mod a_fed_tmp_9004;
+mod a_fed_tmp_9009;
+mod a_fed_tmp_9024;
+mod a_fed_tmp_9025;
+mod a_fed_tmp_9026;

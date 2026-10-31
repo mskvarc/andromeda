@@ -1,9 +1,9 @@
-//! ETSI `019_23`: Buildings linked to Cities linked to Countries are queried with an `omit` on the linked entities,
-//! joined inline or flat, at one and at two levels (clauses 5.7.2, 4.5.23 and 4.21).
+//! Buildings linked to Cities linked to Countries are queried with an `omit` on the linked entities, joined inline or
+//! flat, at one and at two levels (clauses 5.7.2, 4.5.23 and 4.21).
 
 use crate::{
-    suite_keywords::{create_building_city_country_pairs, delete_building_city_country_pairs},
-    suite_payloads::PARIS_IN_FRANCE_TERMS,
+    linked_entity_fixtures::{create_building_city_country_pairs, delete_building_city_country_pairs},
+    linked_place_payloads::PARIS_IN_FRANCE_TERMS,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -38,9 +38,6 @@ async fn created(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabul
 
 /// Pins: Check that entities can be queried with inline join and omit on linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
-/// Defect: D-31: Andromeda carries the Linked Entity Term locatedAt{name} past the City to the Country, which no term
-/// addresses, so the Country comes back without name where the expectation keeps it
 #[gtest]
 #[tokio::test]
 async fn e019_23_01_query_inline_with_omit_on_linked_entity() -> Result<()> {
@@ -121,9 +118,6 @@ async fn e019_23_01_query_inline_with_omit_on_linked_entity() -> Result<()> {
 
 /// Pins: Check that entities can be queried with flat join and omit on linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
-/// Defect: D-31: Andromeda carries the Linked Entity Term locatedAt{name} past the City to the Country, which no term
-/// addresses, so the Country comes back without name where the expectation keeps it
 #[gtest]
 #[tokio::test]
 async fn e019_23_02_query_flat_with_omit_on_linked_entity() -> Result<()> {
@@ -192,7 +186,6 @@ async fn e019_23_02_query_flat_with_omit_on_linked_entity() -> Result<()> {
 
 /// Pins: Check that entities can be queried with inline join and omit on second level linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_23_03_query_inline_with_omit_on_second_level_linked_entity() -> Result<()> {
@@ -274,7 +267,6 @@ async fn e019_23_03_query_inline_with_omit_on_second_level_linked_entity() -> Re
 
 /// Pins: Check that entities can be queried with flat join and omit on second level linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_23_04_query_flat_with_omit_on_second_level_linked_entity() -> Result<()> {

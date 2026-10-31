@@ -1,9 +1,9 @@
-//! ETSI `060_03`: entities are purged by their type, by a q query, by the local flag and by a type with an id (clauses
-//! 5.6.21 and 6.4.3.3).
+//! Entities are purged by their type, by a q query, by the local flag and by a type with an id (clauses 5.6.21 and
+//! 6.4.3.3).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes, pisa_tower},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes, pisa_tower},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

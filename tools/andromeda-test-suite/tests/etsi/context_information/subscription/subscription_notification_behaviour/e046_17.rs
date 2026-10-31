@@ -1,10 +1,10 @@
-//! ETSI `046_17`: a notification carries the system generated attributes of the entity when `sysAttrs` is `true` (clause 5.8.6).
+//! A notification carries the system generated attributes of the entity when `sysAttrs` is `true` (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{first_notification_with_sys_attrs, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -14,12 +14,6 @@ use ngsi_ld::{
 /// Pins: The system generated attributes are included in the response payload body of a notification if sysAttrs parameter is
 /// set to true.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: Create Subscription requires the 201 answer, where the Hurl request accepts any answer; a refused subscription leaves
-/// no notification to wait for, so the case fails either way
 #[gtest]
 #[tokio::test]
 async fn e046_17_01_check_that_the_response_payload_body_contains_the_system_generated_attributes_if_sys_attrs_parameter_is_set_to_true() -> Result<()> {
@@ -36,7 +30,7 @@ async fn e046_17_01_check_that_the_response_payload_body_contains_the_system_gen
     let id: SubscriptionId = namespace.urn_text("Subscription", 1).parse()?;
     let (notification, _subscription) =
         first_notification_with_sys_attrs(&as_string, &as_list, &sink, &building, &id, SystemAttributeReporting::Include).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/data/0/createdAt"), some(anything()));
     expect_that!(body.pointer("/data/0/modifiedAt"), some(anything()));
 

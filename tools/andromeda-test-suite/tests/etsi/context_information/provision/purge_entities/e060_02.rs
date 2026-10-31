@@ -1,5 +1,5 @@
-//! ETSI `060_02`: a Purge Entities that names both `keep` and `drop` is refused with 400 `BadRequestData` (clauses 5.6.21
-//! and 6.4.3.3).
+//! A Purge Entities that names both `keep` and `drop` is refused with 400 `BadRequestData` (clauses 5.6.21 and
+//! 6.4.3.3).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

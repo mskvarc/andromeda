@@ -1,14 +1,34 @@
-//! The ETSI NGSI-LD conformance suite (the Robot Framework suite for ETSI GS CIM 009) against the base stack, one
-//! test per ETSI case, each named after its case identifier.
+//! Conformance tests of ETSI GS CIM 009 against the base stack, grouped by the area of the specification they cover.
 //!
-//! Each test stores a vocabulary of its own (see `andromeda_test_suite::vocabulary`) where the case references the
-//! suite's `@context`, and namespaces every identifier, so every test runs in the shared default tenant beside every
-//! other.
+//! Each test stores a vocabulary of its own and namespaces every identifier, so every test runs in the shared default
+//! tenant beside every other.
 
+#![deny(missing_docs, unreachable_pub, unused_qualifications)]
+#![deny(clippy::missing_docs_in_private_items)]
+#![forbid(unsafe_code)]
+
+mod batch_operations;
+mod building_documents;
+mod building_fixtures;
+mod building_payloads;
 mod common_behaviours;
 mod context_information;
 mod context_source;
 mod distributed_operations;
+mod entity_operations;
+mod geometry_payloads;
 mod jsonld_context;
-mod suite_keywords;
-mod suite_payloads;
+mod linked_entity_fixtures;
+mod linked_place_payloads;
+mod mqtt_notification;
+mod pagination_links;
+mod registration_operations;
+mod registration_payloads;
+mod registration_subscription_operations;
+mod subscription_operations;
+mod subscription_payloads;
+mod temporal_operations;
+mod unchecked_requests;
+mod vehicle_entity_payloads;
+mod vehicle_evolution_payloads;
+mod vehicle_fixtures;

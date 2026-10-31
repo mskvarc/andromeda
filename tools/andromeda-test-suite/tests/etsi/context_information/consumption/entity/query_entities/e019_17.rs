@@ -1,9 +1,9 @@
-//! ETSI `019_17`: Buildings and a Vehicle are queried with `pick` or `omit` on their attributes, on their core members,
-//! or on both (clauses 5.7.2 and 4.21).
+//! Buildings and a Vehicle are queried with `pick` or `omit` on their attributes, on their core members, or on both
+//! (clauses 5.7.2 and 4.21).
 
 use crate::{
-    suite_keywords::{create_eiffel_vehicle_pisa, delete_eiffel_vehicle_pisa},
-    suite_payloads::BUILDING_VEHICLE_TERMS,
+    building_payloads::BUILDING_VEHICLE_TERMS,
+    linked_entity_fixtures::{create_eiffel_vehicle_pisa, delete_eiffel_vehicle_pisa},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -52,10 +52,6 @@ async fn e019_17_01_query_with_pick_on_attributes() -> Result<()> {
 
 /// Pins: Check that one can query entities with omit on attributes
 /// Clause: 5.7.2, 4.21
-/// Changed: every `airQualityLevel` value is checked as an integer, where the Hurl file checks it only for the entities
-/// whose `observedAt` differs from the expected text
-/// Changed: each `observedAt` equals the text written, where the Hurl file matches the whole second and requires one of
-/// the three to carry the exact text
 #[gtest]
 #[tokio::test]
 async fn e019_17_02_query_with_omit_on_attributes() -> Result<()> {
@@ -157,8 +153,6 @@ async fn e019_17_03_query_with_pick_on_non_core_members() -> Result<()> {
 
 /// Pins: Check that one can query entities with omit on core members
 /// Clause: 5.7.2, 4.21
-/// Changed: each `observedAt` equals the text written, where the Hurl file matches the whole second and requires one of
-/// the three to carry the exact text
 #[gtest]
 #[tokio::test]
 async fn e019_17_04_query_with_omit_on_non_core_members() -> Result<()> {
@@ -259,10 +253,6 @@ async fn e019_17_05_query_with_pick_on_attributes_and_core_members() -> Result<(
 
 /// Pins: Check that one can query entities with omit on attributes and core members
 /// Clause: 5.7.2, 4.21
-/// Changed: every `airQualityLevel` value is checked as an integer, where the Hurl file checks it only for the entities
-/// whose `observedAt` differs from the expected text
-/// Changed: each `observedAt` equals the text written, where the Hurl file matches the whole second and requires one of
-/// the three to carry the exact text
 #[gtest]
 #[tokio::test]
 async fn e019_17_06_query_with_omit_on_attributes_and_core_members() -> Result<()> {

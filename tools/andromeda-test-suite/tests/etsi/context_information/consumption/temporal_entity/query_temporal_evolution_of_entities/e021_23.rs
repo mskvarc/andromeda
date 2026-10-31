@@ -1,8 +1,11 @@
-//! ETSI `021_23`: the temporal evolutions of Buildings are queried with `orderBy`. Only ordering by `id` is answered;
-//! every other ordering is refused with `BadRequestData` (clause 5.7.4.4). The refused orderings are sent as written
-//! on the wire, because the typed temporal query refuses them before sending.
+//! The temporal evolutions of Buildings are queried with `orderBy`. Only ordering by `id` is answered; every other
+//! ordering is refused with `BadRequestData` (clause 5.7.4.4). The refused orderings are sent as written on the wire,
+//! because the typed temporal query refuses them before sending.
 
-use crate::suite_keywords::{BUILDING_TERMS, create_named_buildings, delete_named_buildings, expect_building_order, refused_get};
+use crate::{
+    building_fixtures::{BUILDING_TERMS, create_named_buildings, delete_named_buildings, expect_building_order},
+    unchecked_requests::refused_get,
+};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     namespace::Namespace,
@@ -33,8 +36,7 @@ async fn refused_order(broker: &BrokerClient, vocabulary: &Vocabulary, order_by:
 
 /// Pins: Check that one can query entities with orderBy on an attribute
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_01_query_with_order_by_attribute() -> Result<()> {
@@ -49,7 +51,7 @@ async fn e021_23_01_query_with_order_by_attribute() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on id
 /// Clause: 5.7.4, 4.23
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_02_query_with_order_by_id() -> Result<()> {
@@ -76,8 +78,7 @@ async fn e021_23_02_query_with_order_by_id() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on createdAt
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_03_query_with_order_by_created_at() -> Result<()> {
@@ -92,8 +93,7 @@ async fn e021_23_03_query_with_order_by_created_at() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on an attribute createdAt
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_04_query_with_order_by_name_created_at() -> Result<()> {
@@ -108,8 +108,7 @@ async fn e021_23_04_query_with_order_by_name_created_at() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy an attribute subproperty
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_05_query_with_order_by_sub_attribute() -> Result<()> {
@@ -124,8 +123,7 @@ async fn e021_23_05_query_with_order_by_sub_attribute() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on a name ascending
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_06_query_with_order_by_ascending() -> Result<()> {
@@ -140,8 +138,7 @@ async fn e021_23_06_query_with_order_by_ascending() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on a name descending
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_07_query_with_order_by_descending() -> Result<()> {
@@ -156,8 +153,7 @@ async fn e021_23_07_query_with_order_by_descending() -> Result<()> {
 
 /// Pins: Check that one can query entities with orderBy on multiple members
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_08_query_with_multiple_order_by() -> Result<()> {
@@ -172,8 +168,7 @@ async fn e021_23_08_query_with_multiple_order_by() -> Result<()> {
 
 /// Pins: Check that one can query entities with a complex orderBy
 /// Clause: 5.7.4, 4.23
-/// Changed: the refusal also requires a non-empty problem title
-/// Corrected: `fix(021_23)`: temporal orderBy other than id is refused with `BadRequestData` (5.7.4.4)
+/// Expected: a temporal orderBy other than id is refused with `BadRequestData` (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_23_09_query_with_complex_order_by() -> Result<()> {

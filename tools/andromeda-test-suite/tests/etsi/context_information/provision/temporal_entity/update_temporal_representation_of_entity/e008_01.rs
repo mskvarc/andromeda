@@ -1,9 +1,10 @@
-//! ETSI `008_01`: an upsert of instances into an existing temporal representation of an entity appends them, and the
-//! entity is retrieved with every instance it holds (clause 5.6.11).
+//! An upsert of instances into an existing temporal representation of an entity appends them, and the entity is
+//! retrieved with every instance it holds (clause 5.6.11).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, ld_json_body_client, retrieve_temporal_json},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
+    entity_operations::ld_json_body_client,
+    temporal_operations::{create_temporal_evolution, retrieve_temporal_json},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::send_to};
 use googletest::prelude::*;
@@ -31,11 +32,10 @@ fn updated_vehicle(namespace: &Namespace) -> Result<TemporalEntity<Input>> {
 
 /// Pins: Check that one can update a temporal representation of an entity with simple temporal properties
 /// Clause: 5.6.11
-/// Corrected: `fix(008_01_01)`: temporal upsert appends instances, not replace (5.6.11)
-/// Changed: the expectation lists an attribute instance more than once (clause 5.6.11.4 adds every instance of an upsert,
-///     an equal one included); DeepDiff (`ignore_order`) compares the distinct instances only and ignores how often each
-///     occurs, while the port requires each instance as often as the expectation lists it and counts a repeated one by
-///     its exact expected content, observedAt in the expected text
+/// Expected: a temporal upsert appends instances rather than replacing them (clause 5.6.11)
+/// Expected: the expectation lists an attribute instance more than once (clause 5.6.11.4 adds every instance of an
+/// upsert, an equal one included), and each instance is required as often as the expectation lists it, a repeated one
+/// counted by its exact expected content, observedAt in the expected text
 #[gtest]
 #[tokio::test]
 async fn e008_01_01_update_a_temporal_representation_of_an_entity_with_simple_temporal_properties() -> Result<()> {

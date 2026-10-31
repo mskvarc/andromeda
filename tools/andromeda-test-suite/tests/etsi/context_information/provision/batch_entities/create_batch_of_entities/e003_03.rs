@@ -1,8 +1,8 @@
-//! ETSI `003_03`: a batch whose body is not JSON, or is an empty array, is refused as a whole (clause 5.6.7).
+//! A batch whose body is not JSON, or is an empty array, is refused as a whole (clause 5.6.7).
 
 use crate::{
-    suite_keywords::{post_text, refused, with_doubled_separator},
-    suite_payloads::bare_building,
+    building_payloads::bare_building,
+    unchecked_requests::{post_text, refused, with_doubled_separator},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -13,7 +13,7 @@ use ngsi_ld::{
     model::{APPLICATION_LD_JSON, Context, ContextEntry, ErrorType},
 };
 
-/// The `@context` of `vocabulary` followed by the ETSI core context v1.8, the two references the invalid body names.
+/// The `@context` of `vocabulary` followed by the core context v1.8, the two references the invalid body names.
 fn vocabulary_then_core(vocabulary: &Vocabulary) -> Result<Context> {
     let core: IriBuf = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld".parse()?;
     // The context owns its references, and the vocabulary keeps its URL for later requests.
@@ -44,7 +44,7 @@ async fn e003_03_01_invalid_json() -> Result<()> {
 
 /// Pins: Check that one cannot create a batch of entities with an invalid request
 /// Clause: 5.6.7
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e003_03_02_empty_json() -> Result<()> {

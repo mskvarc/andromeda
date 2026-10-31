@@ -1,4 +1,4 @@
-//! ETSI `002_03`: an entity cannot be deleted by an id the broker does not hold (clause 5.6.6).
+//! An entity cannot be deleted by an id the broker does not hold (clause 5.6.6).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer};
 use googletest::prelude::*;
@@ -7,7 +7,7 @@ use ngsi_ld::model::ErrorType;
 
 /// Pins: Check that one cannot delete an entity if the entity id is not known to the system
 /// Clause: 5.6.6
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e002_03_01_entity_id_not_known() -> Result<()> {

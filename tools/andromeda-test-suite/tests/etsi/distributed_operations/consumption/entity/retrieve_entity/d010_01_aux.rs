@@ -1,12 +1,12 @@
-//! ETSI `D010_01_aux`: an entity on both the broker and an auxiliary context source is retrieved merged, the broker's
-//! attributes taking precedence (clauses 4.3.3, 4.3.6.2 and 5.7.1).
+//! An entity on both the broker and an auxiliary context source is retrieved merged, the broker's attributes taking
+//! precedence (clauses 4.3.3, 4.3.6.2 and 5.7.1).
 
 use crate::{
     distributed_operations::{
         forwarding_source::{register_in_mode, serve, source_endpoint, stub, type_registration, unregister, vehicle_reply, vehicle_retrieval_rule},
         vehicle_payloads::vehicle_parked2,
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
+    entity_operations::{create_entity_with_context_string, delete_entities},
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -17,12 +17,6 @@ use serde_json::{Map, Value, json};
 /// Pins: Check that if one retrieves entity living on on both the Context Broker and a Context Source, entities get
 /// merged correctly
 /// Clause: 4.3.3, 4.3.6.2, 5.7.1
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

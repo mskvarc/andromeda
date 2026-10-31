@@ -1,9 +1,12 @@
-//! ETSI `056_04`: one instance of an attribute, told apart by its `datasetId`, is deleted by a Merge Entity whose
-//! fragment holds the NGSI-LD Null with that `datasetId` (clauses 5.6.17 and 6.5.3.4).
+//! One instance of an attribute, told apart by its `datasetId`, is deleted by a Merge Entity whose fragment holds the
+//! NGSI-LD Null with that `datasetId` (clauses 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
-    suite_payloads::{BUILDING_LOCATED_STREET_TERMS, dataset, district_paris_08, point},
+    building_payloads::BUILDING_LOCATED_STREET_TERMS,
+    entity_operations::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
+    geometry_payloads::point,
+    linked_place_payloads::district_paris_08,
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

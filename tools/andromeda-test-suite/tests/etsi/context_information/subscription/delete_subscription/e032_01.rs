@@ -1,6 +1,6 @@
-//! ETSI `032_01`: a delete whose target names no subscription, or is not a valid URI, is refused (clause 5.8.5).
+//! A delete whose target names no subscription, or is not a valid URI, is refused (clause 5.8.5).
 
-use crate::suite_keywords::{answered_with, refused};
+use crate::unchecked_requests::{answered_with, refused};
 use andromeda_test_suite::{broker, wire::request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};

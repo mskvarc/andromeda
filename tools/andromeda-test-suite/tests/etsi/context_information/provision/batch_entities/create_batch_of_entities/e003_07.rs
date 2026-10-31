@@ -1,9 +1,10 @@
-//! ETSI `003_07`: a batch sent as `application/ld+json` with its `@context` in the body is created, and the entity is
-//! retrieved with and without that context (clause 6.3.5).
+//! A batch sent as `application/ld+json` with its `@context` in the body is created, and the entity is retrieved with
+//! and without that context (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{batch_create, delete_entities, ld_json_body_client, non_empty_member, retrieve_entity_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::batch_create,
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{delete_entities, ld_json_body_client, non_empty_member, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

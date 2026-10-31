@@ -1,0 +1,37 @@
+//! The tests of `attribute/append`.
+
+mod n_att_app_0001;
+mod n_att_app_0003;
+mod n_att_app_0004;
+mod n_att_app_0005;
+mod n_att_app_0006;
+mod n_att_app_0007;
+mod n_att_app_0008;
+mod n_att_app_0009;
+mod n_att_app_0010;
+mod n_att_app_0011;
+mod n_att_app_0012;
+mod n_att_app_0013;
+mod n_att_app_0014;
+mod n_att_app_0015;
+mod n_att_app_0016;
+mod n_att_app_2301;
+mod n_att_app_2302;
+mod n_att_app_7602;
+mod n_att_app_7603;
+mod n_att_app_9001;
+mod n_att_app_9002;
+mod n_att_app_9003;
+mod n_att_app_9004;
+mod n_att_app_9005;
+mod n_att_app_9006;
+mod n_att_app_9007;
+mod n_att_app_9010;
+mod n_att_app_9011;
+mod n_att_app_9012;
+mod o_att_app_0002;
+mod o_att_app_2303;
+mod o_att_app_2606;
+mod o_att_app_9008;
+mod o_att_app_9009;
+mod o_att_app_9013;

@@ -1,7 +1,11 @@
-//! ETSI `057_03`: a merge batch whose body is not JSON is refused with 400, and one whose entity carries a null
-//! Property is answered 207 with the entity in error (clause 5.6.17).
+//! A merge batch whose body is not JSON is refused with 400, and one whose entity carries a null Property is answered
+//! 207 with the entity in error (clause 5.6.17).
 
-use crate::suite_keywords::{expect_bad_request_entity, ld_json_body_client, partial_batch_answer, with_doubled_separator};
+use crate::{
+    batch_operations::{expect_bad_request_entity, partial_batch_answer},
+    entity_operations::ld_json_body_client,
+    unchecked_requests::with_doubled_separator,
+};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

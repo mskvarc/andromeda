@@ -1,7 +1,6 @@
-//! ETSI `045_01`: a GET whose `Accept` field is `*/*` is answered as `application/json`, with a `Link` field
-//! (clause 6.3.4).
+//! A GET whose `Accept` field is `*/*` is answered as `application/json`, with a `Link` field (clause 6.3.4).
 
-use crate::suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, vehicle_evolution_payloads::VEHICLE_SPEED_FUEL_TERMS};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     cleanup::Cleanup,
@@ -30,7 +29,7 @@ use ngsi_ld::{
     subscription::{Endpoint, EntitySubscription, NotificationParams, Subscription, SubscriptionId},
 };
 
-/// The client of `broker` sending `vocabulary` in the body, as the create cases send the suite's `@context`.
+/// The client of `broker` sending `vocabulary` in the body, as the create tests send the test vocabulary.
 fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClient> {
     Ok(broker
         .with_context(vocabulary.context_list())?
@@ -110,10 +109,10 @@ async fn e045_01_02_retrieve_subscription() -> Result<()> {
 /// Pins: Verify that on a GET HTTP request if nothing is specified on the Accept header, "application/json" is assumed
 /// (/csourceRegistrations/)
 /// Clause: 6.3.4
-/// Changed: the suite sets every id member ($..id) to the registration id, so the registered entity id is the
-/// registration id and the query's id parameter matches it; the port keeps that
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Expected: every id member of the registration is the registration id, so the registered entity id is the
+/// registration id and the query's id parameter matches it
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e045_01_03_query_csource_registrations() -> Result<()> {

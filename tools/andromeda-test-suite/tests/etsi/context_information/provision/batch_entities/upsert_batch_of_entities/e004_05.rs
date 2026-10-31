@@ -1,9 +1,11 @@
-//! ETSI `004_05`: a batch upsert whose third entity has no type is answered 207, with the two valid entities written and
-//! the invalid one reported in error (clause 5.6.8).
+//! A batch upsert whose third entity has no type is answered 207, with the two valid entities written and the invalid
+//! one reported in error (clause 5.6.8).
 
 use crate::{
-    suite_keywords::{bare_building_json, delete_entities, expect_partial_batch, ld_json_body_client, partial_batch_answer, query_entities_json},
-    suite_payloads::bare_building,
+    batch_operations::{expect_partial_batch, partial_batch_answer},
+    building_documents::bare_building_json,
+    building_payloads::bare_building,
+    entity_operations::{delete_entities, ld_json_body_client, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

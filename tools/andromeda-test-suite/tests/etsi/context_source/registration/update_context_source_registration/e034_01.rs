@@ -1,9 +1,9 @@
-//! ETSI `034_01`: a context source registration updated by its id with a new endpoint is retrieved with that endpoint
-//! (clause 5.9.3).
+//! A context source registration updated by its id with a new endpoint is retrieved with that endpoint (clause 5.9.3).
 
 use crate::{
-    suite_keywords::{csource_endpoint, ld_json_body_client},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -13,9 +13,8 @@ use serde_json::json;
 
 /// Pins: Check that one can update a context source registration by id
 /// Clause: 5.9.3
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_01_01_update_a_context_source_registration_by_id() -> Result<()> {

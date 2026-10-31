@@ -1,6 +1,6 @@
-//! ETSI `033_02`: a context source registration whose `information` is null is refused with 400 (clause 5.9.2).
+//! A context source registration whose `information` is null is refused with 400 (clause 5.9.2).
 
-use crate::suite_keywords::refused;
+use crate::unchecked_requests::refused;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     cleanup::Cleanup,

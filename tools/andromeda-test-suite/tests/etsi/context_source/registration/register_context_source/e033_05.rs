@@ -1,5 +1,5 @@
-//! ETSI `033_05`: a registration created as `application/json` with no JSON-LD `@context` expands under the default
-//! context, whatever context its retrieval names (clauses 5.9.2 and 6.3.5).
+//! A registration created as `application/json` with no JSON-LD `@context` expands under the default context, whatever
+//! context its retrieval names (clauses 5.9.2 and 6.3.5).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -46,7 +46,6 @@ async fn retrieved_type(reader: &BrokerClient, id: &RegistrationId) -> Result<Va
 /// Tenant: private (the case registers a Building with no @context, which expands under the core default vocabulary,
 /// where any other file that names Building without a @context shares it; such a registration would capture and
 /// forward that file's queries (clause 5.12), and clause 4.14 keeps each tenant's registrations its own)
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e033_05_01_default_context_with_json_content_type_retrieved_with_context() -> Result<()> {
@@ -69,8 +68,7 @@ async fn e033_05_01_default_context_with_json_content_type_retrieved_with_contex
 /// Tenant: private (the case registers a Building with no @context, which expands under the core default vocabulary,
 /// where any other file that names Building without a @context shares it; such a registration would capture and
 /// forward that file's queries (clause 5.12), and clause 4.14 keeps each tenant's registrations its own)
-/// Vocabulary: none (the ETSI case references no @context)
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e033_05_02_default_context_with_json_content_type_retrieved_without_context() -> Result<()> {

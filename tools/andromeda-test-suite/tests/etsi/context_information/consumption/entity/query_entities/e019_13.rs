@@ -1,7 +1,7 @@
-//! ETSI `019_13`: Buildings linked to Cities are queried with the linked entities joined inline or flat, in the
-//! normalized and the simplified representation (clauses 5.7.2 and 4.5.23).
+//! Buildings linked to Cities are queried with the linked entities joined inline or flat, in the normalized and the
+//! simplified representation (clauses 5.7.2 and 4.5.23).
 
-use crate::suite_keywords::{create_linked_pairs, delete_linked_pairs};
+use crate::linked_entity_fixtures::{create_linked_pairs, delete_linked_pairs};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -20,7 +20,7 @@ const PAIR: &str = "019-13";
 
 /// Pins: Check that entities can be queried with a linked entity in different join types and representations
 /// Clause: 5.7.2, 4.5.23
-/// Corrected: `fix(019_13)`: normalized linked expectations carry objecttype (table 5.2.6-1)
+/// Expected: normalized linked entities carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e019_13_01_query_inline_normalized() -> Result<()> {
@@ -73,7 +73,7 @@ async fn e019_13_01_query_inline_normalized() -> Result<()> {
 
 /// Pins: Check that entities can be queried with a linked entity in different join types and representations
 /// Clause: 5.7.2, 4.5.23
-/// Corrected: `fix(019_13)`: normalized linked expectations carry objecttype (table 5.2.6-1)
+/// Expected: normalized linked entities carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e019_13_02_query_flat_normalized() -> Result<()> {

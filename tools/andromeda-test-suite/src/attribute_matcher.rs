@@ -5,7 +5,10 @@
 //! same matches. An attribute with one instance is matched by it; a matcher naming a `datasetId` picks the instance of
 //! that dataset (clause 4.5.5).
 
-use crate::attribute_check::{Check, check_mismatch};
+use crate::{
+    attribute_check::{Check, check_mismatch},
+    attribute_member::Member,
+};
 use cefact_units::UnitCode;
 use googletest::{
     description::Description,
@@ -40,44 +43,6 @@ enum MissingInstance<'a> {
     /// The matcher names no dataset and the attribute holds this many instances.
     #[error("has {0} instances")]
     Several(usize),
-}
-
-/// An optional member of an attribute that a matcher may require to be absent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
-pub enum Member {
-    /// `observedAt`.
-    #[strum(serialize = "observedAt")]
-    ObservedAt,
-    /// `expiresAt`.
-    #[strum(serialize = "expiresAt")]
-    ExpiresAt,
-    /// `unitCode`.
-    #[strum(serialize = "unitCode")]
-    UnitCode,
-    /// `datasetId`.
-    #[strum(serialize = "datasetId")]
-    DatasetId,
-    /// `valueType`.
-    #[strum(serialize = "valueType")]
-    ValueType,
-    /// `createdAt`.
-    #[strum(serialize = "createdAt")]
-    CreatedAt,
-    /// `modifiedAt`.
-    #[strum(serialize = "modifiedAt")]
-    ModifiedAt,
-    /// `deletedAt`, which a broker writes on an instance it reports deleted (clause 4.5.0).
-    #[strum(serialize = "deletedAt")]
-    DeletedAt,
-    /// `instanceId` (clause 4.5.7), which a broker writes on every instance of a temporal representation.
-    #[strum(serialize = "instanceId")]
-    InstanceId,
-    /// `languageMap`, which only a `LanguageProperty` holds (clause 4.5.18).
-    #[strum(serialize = "languageMap")]
-    LanguageMap,
-    /// `lang`, which a language filter writes on the Property it picked one language of (clause 4.15).
-    #[strum(serialize = "lang")]
-    Lang,
 }
 
 /// The requirements on one attribute.
@@ -138,6 +103,20 @@ impl AttributeMatcher {
         self
     }
 
+    /// Requires the whole `json` of a `JsonProperty` to equal `json` as parsed (clause 4.5.24 keeps the json opaque;
+    /// the whole-object comparison is stricter than a member-by-member assert, since no member may sit beside the
+    /// expected ones).
+    #[must_use]
+    pub fn json(self, json: serde_json::Value) -> AttributeMatcher {
+        self.with(Check::Json(json))
+    }
+
+    /// Requires the whole `previousJson` of a `JsonProperty` to equal `json` as parsed (clause 5.8.1).
+    #[must_use]
+    pub fn previous_json(self, json: serde_json::Value) -> AttributeMatcher {
+        self.with(Check::PreviousJson(json))
+    }
+
     /// Requires the value of a Property, or the items of a `ListProperty`, to be `value`.
     #[must_use]
     pub fn value(self, value: impl Into<Value>) -> AttributeMatcher {
@@ -185,6 +164,12 @@ impl AttributeMatcher {
     #[must_use]
     pub fn object(self, object: impl Into<OneOrMany<EntityId>>) -> AttributeMatcher {
         self.with(Check::Object(object.into()))
+    }
+
+    /// Requires the `objectType` of a Relationship to be `object_type`.
+    #[must_use]
+    pub fn object_type(self, object_type: impl Into<OneOrMany<VocabTerm>>) -> AttributeMatcher {
+        self.with(Check::ObjectType(object_type.into()))
     }
 
     /// Requires the geometry of a `GeoProperty` to be `geometry`.
@@ -309,7 +294,8 @@ impl AttributeMatcher {
         self.with(Check::SubAttributeInstances(name.to_owned(), count))
     }
 
-    /// Requires the payload `value` to be the NGSI-LD Null, as a broker writes a deleted Property (clause 4.5.0).
+    /// Requires the payload to be the NGSI-LD Null, as a broker writes a deleted Property, `GeoProperty` or
+    /// Relationship (clause 4.5.0).
     #[must_use]
     pub fn null_value(self) -> AttributeMatcher {
         self.with(Check::NullValue)
@@ -319,6 +305,12 @@ impl AttributeMatcher {
     #[must_use]
     pub fn previous_value(self, value: impl Into<Value>) -> AttributeMatcher {
         self.with(Check::PreviousValue(value.into()))
+    }
+
+    /// Requires the Relationship's `previousObject` to be `object` (clause 5.8.1).
+    #[must_use]
+    pub fn previous_object(self, object: impl Into<OneOrMany<EntityId>>) -> AttributeMatcher {
+        self.with(Check::PreviousObject(object.into()))
     }
 
     /// Requires the attribute to hold `count` sub-attributes.
@@ -364,7 +356,7 @@ impl AttributeMatcher {
     pub(crate) fn mismatch_in(&self, attributes: &Attributes<Output>, name: &str) -> Option<String> {
         let Some(instances) = attributes
             .iter()
-            .find_map(|(candidate, instances)| (candidate.to_string() == name).then_some(instances))
+            .find_map(|(candidate, instances)| (candidate.as_str() == name).then_some(instances))
         else {
             return Some(format!("has no attribute {name}"));
         };
@@ -394,10 +386,15 @@ impl Matcher<&Attribute<Output>> for AttributeMatcher {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_matcher::{Member, any_attribute, property, relationship};
+    use crate::{
+        attribute_matcher::{any_attribute, property, relationship},
+        attribute_member::Member,
+        entity_matcher::has_attribute,
+    };
     use cefact_units::UnitCode;
     use googletest::prelude::*;
     use ngsi_ld::model::{Attribute, DatasetId, Entity, EntityId, EntityTypeName, Lossless, Output, Value};
+    use serde_json::json;
 
     /// The one Property of an entity as a broker answers it.
     fn level() -> Result<Attribute<Output>> {
@@ -447,6 +444,37 @@ mod tests {
         expect_that!(&attribute, not(property().value(5)));
         expect_that!(&attribute, not(relationship()));
         verify_that!(&attribute, not(property().without(Member::UnitCode)))
+    }
+
+    #[gtest]
+    fn the_previous_member_of_each_kind_is_present_only_where_written() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:V:1","type":"V","speed":{"type":"Property","value":2,"previousValue":1},
+            "owner":{"type":"Relationship","object":"urn:ngsi-ld:P:2","previousObject":"urn:ngsi-ld:P:1"},
+            "label":{"type":"LanguageProperty","languageMap":{"en":"b"},"previousLanguageMap":{"en":"a"}},
+            "plain":{"type":"Property","value":3},"link":{"type":"Relationship","object":"urn:ngsi-ld:P:3"}}"#,
+            Lossless::Normalized,
+        )?;
+        expect_that!(&entity, has_attribute("speed", any_attribute().with_member(Member::Previous)));
+        expect_that!(&entity, has_attribute("owner", any_attribute().with_member(Member::Previous)));
+        expect_that!(&entity, has_attribute("label", any_attribute().with_member(Member::Previous)));
+        expect_that!(&entity, has_attribute("plain", any_attribute().without(Member::Previous)));
+        verify_that!(&entity, has_attribute("link", any_attribute().without(Member::Previous)))
+    }
+
+    #[gtest]
+    fn a_deleted_relationship_holds_the_null_and_its_previous_object() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:V:1","type":"V","owner":{"type":"Relationship","object":"urn:ngsi-ld:null","previousObject":"urn:ngsi-ld:P:1"},
+            "link":{"type":"Relationship","object":"urn:ngsi-ld:P:3"}}"#,
+            Lossless::Normalized,
+        )?;
+        let person: EntityId = "urn:ngsi-ld:P:1".parse()?;
+        let other: EntityId = "urn:ngsi-ld:P:3".parse()?;
+        expect_that!(&entity, has_attribute("owner", relationship().null_value().previous_object(person.clone())));
+        expect_that!(&entity, not(has_attribute("owner", relationship().previous_object(other))));
+        expect_that!(&entity, not(has_attribute("link", relationship().null_value())));
+        verify_that!(&entity, not(has_attribute("link", relationship().previous_object(person))))
     }
 
     #[gtest]
@@ -562,5 +590,27 @@ mod tests {
         let (_, instances) = entity.attributes.iter().next().or_fail()?;
         expect_that!(instances.first(), property().instance_id(&"urn:ngsi-ld:Instance:a".parse()?));
         verify_that!(instances.first(), not(property().instance_id(&"urn:ngsi-ld:Instance:b".parse()?)))
+    }
+
+    #[gtest]
+    fn the_whole_json_of_a_json_property_is_checked() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:V:1","type":"V","config":{"type":"JsonProperty","json":{"@context":"kept","count":3}}}"#,
+            Lossless::Normalized,
+        )?;
+        let (_, instances) = entity.attributes.iter().next().or_fail()?;
+        expect_that!(instances.first(), any_attribute().json(json!({"count": 3, "@context": "kept"})));
+        verify_that!(instances.first(), not(any_attribute().json(json!({"count": 3}))))
+    }
+
+    #[gtest]
+    fn the_previous_json_of_a_json_property_is_checked() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:V:1","type":"V","config":{"type":"JsonProperty","json":[{"code":"b"}],"previousJson":[{"code":"a"}]}}"#,
+            Lossless::Normalized,
+        )?;
+        let (_, instances) = entity.attributes.iter().next().or_fail()?;
+        expect_that!(instances.first(), any_attribute().previous_json(json!([{"code": "a"}])));
+        verify_that!(instances.first(), not(any_attribute().previous_json(json!([{"code": "b"}]))))
     }
 }

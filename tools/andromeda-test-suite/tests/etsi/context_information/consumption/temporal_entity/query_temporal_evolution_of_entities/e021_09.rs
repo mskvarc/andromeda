@@ -1,13 +1,13 @@
-//! ETSI `021_09`: the temporal evolutions of the Vehicles are queried by a geoquery, a Vehicle near a point and a
-//! Vehicle
-//! within a polygon (clause 5.7.4). Only the Vehicle with a location is answered, with every instance of its attributes
-//! and of its location.
+//! The temporal evolutions of the Vehicles are queried by a geoquery, a Vehicle near a point and a Vehicle within a
+//! polygon (clause 5.7.4). Only the Vehicle with a location is answered, with every instance of its attributes and of
+//! its location.
 //!
-//! The answers are compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes them.
+//! The answers are compared exactly with the test's expectation.
 
 use crate::{
-    suite_keywords::{create_temporal_entity, delete_temporal_entities},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, point, polygon, vehicle_speed_fuel_level_on},
+    geometry_payloads::{point, polygon},
+    temporal_operations::{create_temporal_entity, delete_temporal_entities},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

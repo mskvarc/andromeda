@@ -1,9 +1,9 @@
-//! ETSI `018_06`: the JSON-LD `@context` of a response comes from the `Link` header the request carries, and the
-//! default one applies when the request carries none (clause 6.3.5).
+//! The JSON-LD `@context` of a response comes from the `Link` header the request carries, and the default one applies
+//! when the request carries none (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{OBSERVED_AT_WHOLE_SECOND, create_entity_with_link, observed_at},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{OBSERVED_AT_WHOLE_SECOND, create_entity_with_link, observed_at},
 };
 use andromeda_test_suite::{
     broker,

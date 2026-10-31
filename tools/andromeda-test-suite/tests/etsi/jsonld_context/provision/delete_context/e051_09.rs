@@ -1,5 +1,5 @@
-//! ETSI `051_09`: the core `@context` is no stored context: serving its details and reloading it are both answered
-//! with 404 (clauses 5.13.4 and 5.13.5).
+//! The core `@context` is no stored context: serving its details and reloading it are both answered with 404 (clauses
+//! 5.13.4 and 5.13.5).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered};
 use googletest::prelude::*;
@@ -11,12 +11,12 @@ use ngsi_ld::{
 
 /// Pins: Delete a core @contexts with reload set to true and check downloaded core context
 /// Clause: 5.13.5
-/// Corrected: `fix(051_09_01)`: reload of the non-cached core @context is refused (5.13.5.4)
-/// Changed: the core @context URL is no stored identifier, so 5.13.4.4 and 5.13.5.4 answer `ResourceNotFound`;
-/// resolution of the core @context itself is unaffected, and o-ctx-del-0007 pins that an entity answer still names it
+/// Expected: a reload of the non-cached core @context is refused (clause 5.13.5.4)
+/// Expected: the core @context URL is no stored identifier, so clauses 5.13.4.4 and 5.13.5.4 answer `ResourceNotFound`;
+/// resolution of the core @context itself is unaffected
 /// Tenant: private (the case deletes the core @context, which every file relies on; a broker that failed to refuse it
 /// would remove or replace it in the shared tenant)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e051_09_01_delete_the_core_context_with_reload_set_to_true_and_serve_it() -> Result<()> {

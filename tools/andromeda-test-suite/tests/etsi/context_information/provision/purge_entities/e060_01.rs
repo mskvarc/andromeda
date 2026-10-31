@@ -1,6 +1,6 @@
-//! ETSI `060_01`: a Purge Entities without any selector is refused with 400 `BadRequestData` (clauses 5.6.21 and 6.4.3.3).
+//! A Purge Entities without any selector is refused with 400 `BadRequestData` (clauses 5.6.21 and 6.4.3.3).
 
-use crate::suite_keywords::refused;
+use crate::unchecked_requests::refused;
 use andromeda_test_suite::{broker, namespace::Namespace, wire::request_to};
 use googletest::prelude::*;
 use http::Method;
@@ -10,7 +10,7 @@ use ngsi_ld::model::ErrorType;
 /// Clause: 5.6.21, 6.4.3.3
 /// Tenant: private (the purge names no selector, so a broker that failed to refuse it would delete every entity of the
 /// shared tenant)
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e060_01_01_purge_entities_without_any_query_parameter() -> Result<()> {

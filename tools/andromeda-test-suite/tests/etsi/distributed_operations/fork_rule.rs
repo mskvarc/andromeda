@@ -1,9 +1,9 @@
-//! The request rule of a stubbed context source answer, as the suite's HTTP control server matches a `Set Stub Reply`.
+//! The request rule of a stubbed context source answer.
 //!
-//! The rule reads the request target lower-cased, as the suite's server compares without case: the path is the stub's
-//! path followed by any number of `/`, and a stub naming query tokens requires a query holding each token. A stub's
-//! `attrs` rule restricts every `attrs` parameter of the query to the listed names, separated by `,` or `%2C`; an
-//! empty list admits only an empty `attrs`. A percent-encoded `:` or `@` reads as the character it encodes.
+//! The rule reads the request target lower-cased, comparing without case: the path is the stub's path followed by any
+//! number of `/`, and a stub naming query tokens requires a query holding each token. A stub's `attrs` rule restricts
+//! every `attrs` parameter of the query to the listed names, separated by `,` or `%2C`; an empty list admits only an
+//! empty `attrs`. A percent-encoded `:` or `@` reads as the character it encodes.
 
 use http::Method;
 use serde_json::Value;

@@ -1,7 +1,7 @@
-//! ETSI `012_04`: a partial attribute update replaces the languageMap of a `LanguageProperty` and adds a sub-attribute
-//! to it, keeping the sub-attributes the update does not name (clauses 5.6.4 and 4.5.18).
+//! A partial attribute update replaces the languageMap of a `LanguageProperty` and adds a sub-attribute to it, keeping
+//! the sub-attributes the update does not name (clauses 5.6.4 and 4.5.18).
 
-use crate::suite_keywords::{create_entity, delete_entities, ld_json_body_client, partial_update, retrieve_entity_json};
+use crate::entity_operations::{create_entity, delete_entities, ld_json_body_client, partial_update, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::model::{Attribute, AttributeName, Change, Entity, Input, LanguageMap, LanguageProperty, Lossless, NgsiLdMediaType, Property};
@@ -39,7 +39,7 @@ async fn e012_04_01_check_that_one_can_partially_update_a_language_property_prop
         &client,
         &id,
         &street,
-        Change::Set(Attribute::from(updated.build()?).into_patch()),
+        Change::from(Attribute::from(updated.build()?).into_patch()),
         Lossless::Normalized,
     )
     .await?;

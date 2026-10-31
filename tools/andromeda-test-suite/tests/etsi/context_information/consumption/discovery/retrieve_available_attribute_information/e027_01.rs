@@ -1,7 +1,7 @@
-//! ETSI `027_01`: an attribute that the request names without a `@context` is not known to the broker, so its detailed
-//! representation is not retrieved (clause 5.7.10).
+//! An attribute that the request names without a `@context` is not known to the broker, so its detailed representation
+//! is not retrieved (clause 5.7.10).
 
-use crate::{suite_keywords::create_entity_with_link, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

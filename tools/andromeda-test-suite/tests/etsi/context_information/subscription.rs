@@ -1,4 +1,4 @@
-//! The ETSI subscription cases (clause 5.8).
+//! The subscription tests (clause 5.8).
 
 mod create_subscription;
 mod delete_subscription;

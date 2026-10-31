@@ -1,10 +1,11 @@
-//! ETSI `019_05`: entities queried by id are returned as a `GeoJSON` collection (clause 6.3.7).
+//! Entities queried by id are returned as a `GeoJSON` collection (clause 6.3.7).
 //!
 //! The collection's `@context` may sit on the collection, on each feature, or on both, as the case allows.
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, feature_collection},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, eiffel_tower_located},
+    building_documents::feature_collection,
+    building_payloads::{BUILDING_SIMPLE_TERMS, eiffel_tower_located},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -29,8 +30,7 @@ fn building_feature(namespace: &Namespace, suffix: &str) -> Value {
 
 /// Pins: Check that the queried entities by id can be returned in `GeoJSON` format
 /// Clause: 6.3.7
-/// Changed: the setup creations require 201, where the case accepts any answer
-/// Changed: the response's `@context` may sit on the collection, on each feature, or on both, as the case allows
+/// Expected: the response's `@context` may sit on the collection, on each feature, or on both
 #[gtest]
 #[tokio::test]
 async fn e019_05_01_query_by_ids_in_geojson() -> Result<()> {

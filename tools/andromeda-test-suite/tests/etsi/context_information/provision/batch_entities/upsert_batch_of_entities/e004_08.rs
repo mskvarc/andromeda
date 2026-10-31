@@ -1,20 +1,15 @@
-//! ETSI `004_08`: a batch upsert of existing entities with a new type replaces each entity with the types the batch
-//! carries (clauses 4.16 and 5.6.8).
+//! A batch upsert of existing entities with a new type replaces each entity with the types the batch carries (clauses
+//! 4.16 and 5.6.8).
 
 use crate::{
-    suite_keywords::{
-        create_entity_with_context_string_any,
-        delete_entities,
-        expect_batch_done,
-        ld_json_body_client,
-        query_entities_json,
-        typed_building_json,
-    },
-    suite_payloads::{bare_building, building_of_types},
+    batch_operations::expect_batch_done,
+    building_documents::typed_building_json,
+    building_payloads::{bare_building, building_of_types},
+    entity_operations::{create_entity_with_context_string_any, delete_entities, ld_json_body_client, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
-use ngsi_ld::{http::operation::UpsertMode, model::NgsiLdMediaType};
+use ngsi_ld::model::NgsiLdMediaType;
 use serde_json::json;
 
 /// Pins: Check that you can upsert a batch of existing entities with new types
@@ -35,7 +30,6 @@ async fn e004_08_01_entity_with_new_types() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;

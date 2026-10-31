@@ -1,5 +1,4 @@
-//! ETSI `051_02`: deleting a `@context` the broker does not store is refused with 404 `ResourceNotFound` (clause
-//! 5.13.5).
+//! Deleting a `@context` the broker does not store is refused with 404 `ResourceNotFound` (clause 5.13.5).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire};
 use googletest::prelude::*;
@@ -8,11 +7,7 @@ use ngsi_ld::model::ErrorType;
 
 /// Pins: Check that an error message is obtained in the response when one tries to delete a @context with unknonwn id
 /// Clause: 5.13.5
-/// Changed: the random 16-digit identifier is {{ns}}, unique per file and per run as the random digits are
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e051_02_01_delete_a_context_with_unknown_context_identifier() -> Result<()> {

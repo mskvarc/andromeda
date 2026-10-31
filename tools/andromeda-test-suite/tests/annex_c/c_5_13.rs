@@ -18,8 +18,8 @@ use serde_json::json;
 /// Pins: Query Entities filtering marque[en] and asking lang=de answers the Vehicle with its German marque as C.5.13
 /// prints; the printed marque[en-GB] selector is outside the 4.9 grammar, so it is refused as `BadRequestData`
 /// Clause: C.5.13, 4.9, 4.15, 5.7.2
-/// Corrected: language-tag: the filter is marque[en], the 4.9 grammar admitting no - in the selector, and
-/// marque[en-GB] is refused
+/// Expected: the filter is marque[en], the clause 4.9 grammar admitting no - in the selector, and marque[en-GB] is
+/// refused
 #[gtest]
 #[tokio::test]
 async fn c_5_13_0001_a_language_filtered_query_answers_the_german_marque() -> Result<()> {

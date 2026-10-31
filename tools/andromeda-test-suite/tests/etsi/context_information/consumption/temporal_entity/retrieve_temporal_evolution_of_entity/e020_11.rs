@@ -1,10 +1,9 @@
-//! ETSI `020_11`: the temporal evolution of an entity is retrieved in the aggregated temporal representation, each
-//! attribute as its aggregate values for one-hour or one-day periods, named by `options=aggregatedValues` (clauses
-//! 5.7.3 and 4.5.19).
+//! The temporal evolution of an entity is retrieved in the aggregated temporal representation, each attribute as its
+//! aggregate values for one-hour or one-day periods, named by `options=aggregatedValues` (clauses 5.7.3 and 4.5.19).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::create_vehicle_speed_fuel_level;
+use crate::vehicle_fixtures::create_vehicle_speed_fuel_level;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,

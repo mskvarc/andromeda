@@ -1,16 +1,12 @@
-//! ETSI `003_01`: a batch of entities with a minimal body, simple properties, a relationship and a relationship
-//! property is created, and the broker retrieves the entities as written (clause 5.6.7).
+//! A batch of entities with a minimal body, simple properties, a relationship and a relationship property is created,
+//! and the broker retrieves the entities as written (clause 5.6.7).
 
 use crate::{
-    suite_keywords::{batch_create, delete_entities, ld_json_body_client, query_entities_json, simple_building_json, weather_building_json},
-    suite_payloads::{
-        BUILDING_AIR_QUALITY_WEATHER_TERMS,
-        BUILDING_SIMPLE_TERMS,
-        bare_building,
-        building_located_in_paris,
-        building_simple_attributes,
-        building_with_weather_sensor,
-    },
+    batch_operations::batch_create,
+    building_documents::{simple_building_json, weather_building_json},
+    building_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes, building_with_weather_sensor},
+    entity_operations::{delete_entities, ld_json_body_client, query_entities_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

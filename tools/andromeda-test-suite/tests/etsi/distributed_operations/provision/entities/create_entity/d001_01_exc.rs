@@ -1,5 +1,5 @@
-//! ETSI `D001_01_exc`: an entity created on the broker with the `speed` an exclusive registration holds has that
-//! attribute created on the context source alone (clauses 4.3.3, 4.3.6.3 and 5.6.1).
+//! An entity created on the broker with the `speed` an exclusive registration holds has that attribute created on the
+//! context source alone (clauses 4.3.3, 4.3.6.3 and 5.6.1).
 
 use crate::{
     distributed_operations::{
@@ -7,8 +7,8 @@ use crate::{
         forwarding_source::{create_entity_locally, register, serve, source_endpoint, source_path, stub, stub_count, unregister},
         provision::entities::entity_sources::{Coverage, vehicle_id_registration},
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
-    suite_payloads::vehicle_parked,
+    entity_operations::{create_entity_with_context_string, delete_entities},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -23,14 +23,6 @@ use ngsi_ld::{
 /// Pins: Check that the entity is created correctly on both the Context Broker and the Context Source. The entity
 /// shall be retrieved correctly.
 /// Clause: 4.3.3, 4.3.6.3, 5.6.1
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the retrieval is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 #[gtest]
 #[tokio::test]
 async fn d001_01_exc_create_entity_with_exclusive_registration() -> Result<()> {

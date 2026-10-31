@@ -1,0 +1,29 @@
+//! The tests of `distributed/error`.
+
+mod n_fed_err_6400;
+mod n_fed_err_6401;
+mod n_fed_err_6402;
+mod n_fed_err_6403;
+mod n_fed_err_7200;
+mod n_fed_err_7201;
+mod n_fed_err_7202;
+mod n_fed_err_7203;
+mod n_fed_err_7204;
+mod n_fed_err_7206;
+mod n_fed_err_7207;
+mod n_fed_err_7208;
+mod n_fed_err_7212;
+mod n_fed_err_7600;
+mod n_fed_err_7601;
+mod n_fed_err_7602;
+mod n_fed_err_7603;
+mod n_fed_err_7604;
+mod n_fed_err_7605;
+mod o_fed_err_7205;
+mod o_fed_err_7209;
+mod o_fed_err_7210;
+mod o_fed_err_7211;
+mod o_fed_err_7213;
+mod o_fed_err_7214;
+mod o_fed_err_7215;
+mod o_fed_err_7216;

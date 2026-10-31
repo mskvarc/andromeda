@@ -1,9 +1,9 @@
-//! ETSI `019_30`: a Building with a multivalued `locatedAt` relationship is queried, normalized or simplified, with its
-//! linked Cities joined inline or flat (clauses 5.7.2 and 4.5.23).
+//! A Building with a multivalued `locatedAt` relationship is queried, normalized or simplified, with its linked Cities
+//! joined inline or flat (clauses 5.7.2 and 4.5.23).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::city,
+    entity_operations::{create_entity, delete_entities},
+    linked_place_payloads::city,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

@@ -1,9 +1,9 @@
-//! ETSI `016_01`: an attribute instance of a temporal representation of an entity is replaced by a partial update
-//! (clause 5.6.14).
+//! An attribute instance of a temporal representation of an entity is replaced by a partial update (clause 5.6.14).
 
 use crate::{
-    suite_keywords::{create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_json},
-    suite_payloads::replacement_speed_instance,
+    temporal_operations::{first_speed_instance_id, retrieve_temporal_json},
+    vehicle_evolution_payloads::replacement_speed_instance,
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer};
 use googletest::prelude::*;
@@ -13,7 +13,8 @@ use serde_json::json;
 
 /// Pins: Check that one can partially update an attribute instance of a temporal representation of an entity
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_01_01_modify_attribute_instance_in_temporal_representation_of_an_entity() -> Result<()> {

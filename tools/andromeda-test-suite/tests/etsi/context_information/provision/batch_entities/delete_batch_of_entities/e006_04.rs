@@ -1,9 +1,10 @@
-//! ETSI `006_04`: a batch naming the same existing entity twice deletes it once and reports the repeat in error
-//! (clauses 5.5.11 and 5.6.10).
+//! A batch naming the same existing entity twice deletes it once and reports the repeat in error (clauses 5.5.11 and
+//! 5.6.10).
 
 use crate::{
-    suite_keywords::{create_entity_with_context_string, expect_partial_batch, partial_batch_outcome},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::{expect_partial_batch, partial_batch_outcome},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::create_entity_with_context_string,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

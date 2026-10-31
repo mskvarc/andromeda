@@ -1,6 +1,6 @@
-//! ETSI `029_01`: an update whose subscription identifier is missing or is not a valid URI is refused (clause 5.8.2).
+//! An update whose subscription identifier is missing or is not a valid URI is refused (clause 5.8.2).
 
-use crate::suite_keywords::{answered_with, refused};
+use crate::unchecked_requests::{answered_with, refused};
 use andromeda_test_suite::{broker, wire::request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};

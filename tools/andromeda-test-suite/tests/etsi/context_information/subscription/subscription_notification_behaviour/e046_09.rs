@@ -1,11 +1,11 @@
-//! ETSI `046_09`: a notification is sent to the endpoint the subscription names, with its `receiverInfo` fields (clauses
-//! 5.8.6 and 5.2.22).
+//! A notification is sent to the endpoint the subscription names, with its `receiverInfo` fields (clauses 5.8.6 and
+//! 5.2.22).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscribed, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -18,14 +18,6 @@ use ngsi_ld::{
 /// endpoint.receiverInfo defined by clause 5.2.22) to the endpoint specified by the endpoint.uri member of the notification
 /// structure defined by clause 5.2.1
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: Wait for notification hands the headers over as a plain dictionary (Convert To Dictionary of the received
-/// message), keyed by the field names exactly as the broker spelled them, so the keyword looks the name up
-/// case-sensitively; field names are case-insensitive (RFC 9110 clause 5.1), so the port checks the field whatever its
-/// case, through a WireMock request pattern, which matches names without regard to case
 #[gtest]
 #[tokio::test]
 async fn e046_09_01_check_that_a_notification_is_sent_to_the_endpoint() -> Result<()> {
@@ -55,7 +47,7 @@ async fn e046_09_01_check_that_a_notification_is_sent_to_the_endpoint() -> Resul
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    robot_literal::read(&notification.body)?;
+    notification.json()?;
     expect_that!(notification.headers.get("x-additional-key"), some(anything()));
     // The sink keeps no logged date, so the body identifies the journal entry the wait returned.
     let received = sink.received(1).await?;

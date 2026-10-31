@@ -6,6 +6,10 @@
 //! case isolates itself by an entity type and entity identifiers of its own namespace, and every registration it
 //! creates names that type.
 
+#![deny(missing_docs, unreachable_pub, unused_qualifications)]
+#![deny(clippy::missing_docs_in_private_items)]
+#![forbid(unsafe_code)]
+
 #[macro_use]
 mod scenario;
 mod composition;

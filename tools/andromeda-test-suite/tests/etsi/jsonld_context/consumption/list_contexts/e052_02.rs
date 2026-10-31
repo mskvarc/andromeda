@@ -1,5 +1,5 @@
-//! ETSI `052_02`: a listing of the stored `@context`s names the one context the case added, with no `details` or
-//! `details=false`, of every kind or of kind `Hosted` (clause 5.13.3).
+//! A listing of the stored `@context`s names the one context the case added, with no `details` or `details=false`, of
+//! every kind or of kind `Hosted` (clause 5.13.3).
 
 use crate::jsonld_context::stored_contexts::{add_context, attribute_terms};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire};
@@ -35,17 +35,11 @@ async fn lists_the_added_context(kind: Option<ContextKindFilter>, details: Summa
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_02_01_list_contexts_no_details_no_kind_one_added() -> Result<()> {
@@ -54,17 +48,11 @@ async fn e052_02_01_list_contexts_no_details_no_kind_one_added() -> Result<()> {
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_02_02_list_contexts_no_details_kind_hosted_one_added() -> Result<()> {
@@ -73,17 +61,11 @@ async fn e052_02_02_list_contexts_no_details_kind_hosted_one_added() -> Result<(
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_02_03_list_contexts_details_false_no_kind_one_added() -> Result<()> {
@@ -92,17 +74,11 @@ async fn e052_02_03_list_contexts_details_false_no_kind_one_added() -> Result<()
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_02_04_list_contexts_details_false_kind_hosted_one_added() -> Result<()> {

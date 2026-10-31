@@ -1,10 +1,12 @@
-//! ETSI `012_03`: a partial attribute update is refused with 404 `ResourceNotFound` when its entity is not known, when
-//! the attribute has no default instance or no instance with the `datasetId` it names, and when the attribute is not
-//! in the entity (clause 5.6.4).
+//! A partial attribute update is refused with 404 `ResourceNotFound` when its entity is not known, when the attribute
+//! has no default instance or no instance with the `datasetId` it names, and when the attribute is not in the entity
+//! (clause 5.6.4).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_sources, delete_entities, ld_json_body_client, not_found, partial_update_request},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, provided_by_john_doe},
+    entity_operations::{delete_entities, ld_json_body_client, partial_update_request},
+    unchecked_requests::not_found,
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, provided_by_john_doe},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, namespace::Namespace};
 use googletest::prelude::*;
@@ -60,7 +62,7 @@ async fn e012_03_02_partial_update_when_no_default_instance_and_no_dataset_id_sp
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
-    let change = Change::Set(speedometer_56_without_dataset()?);
+    let change = Change::from(speedometer_56_without_dataset()?);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
     not_found(&client, client.unchecked(&operation)?).await?;
     delete_entities(&broker, &[&id]).await;
@@ -79,7 +81,7 @@ async fn e012_03_03_partial_update_when_no_instance_with_the_dataset_id_specifie
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
-    let change = Change::Set(speedometer_56_in_unknown_dataset(&namespace)?);
+    let change = Change::from(speedometer_56_in_unknown_dataset(&namespace)?);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
     not_found(&client, client.unchecked(&operation)?).await?;
     delete_entities(&broker, &[&id]).await;

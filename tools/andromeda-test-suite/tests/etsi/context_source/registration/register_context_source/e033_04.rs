@@ -1,5 +1,5 @@
-//! ETSI `033_04`: a registration created with the `@context` of a `Link` header and the `application/json` content
-//! type is retrieved compacted under that context or expanded without one (clauses 5.9.2 and 6.3.5).
+//! A registration created with the `@context` of a `Link` header and the `application/json` content type is retrieved
+//! compacted under that context or expanded without one (clauses 5.9.2 and 6.3.5).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -51,7 +51,6 @@ async fn retrieved_type(reader: &BrokerClient, id: &RegistrationId) -> Result<Va
 
 /// Pins: Check that the @context is obtained from a Link Header if the Content-Type header is "application/json"
 /// Clause: 6.3.5
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e033_04_01_link_header_with_json_content_type_retrieved_with_context() -> Result<()> {
@@ -69,7 +68,6 @@ async fn e033_04_01_link_header_with_json_content_type_retrieved_with_context() 
 
 /// Pins: Check that the @context is obtained from a Link Header if the Content-Type header is "application/json"
 /// Clause: 6.3.5
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e033_04_02_link_header_with_json_content_type_retrieved_without_context() -> Result<()> {

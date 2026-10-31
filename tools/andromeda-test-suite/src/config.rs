@@ -1,9 +1,9 @@
-//! The one configuration of the suite: where the brokers of the stack listen, how they reach the test process back,
-//! and the limits the stack configures them with.
+//! The one configuration of the tests: where the brokers of the stack listen, how they reach the test process back, and
+//! the limits the stack configures them with.
 //!
 //! Every value comes from the environment under the prefix `ANDROMEDA_TEST_SUITE__`, with `__` separating the nested
 //! keys, the format Andromeda reads its own configuration in (`ANDROMEDA_TEST_SUITE__BROKERS__FRONT`). Nothing else in
-//! the suite reads the environment. A value a test needs that the stack does not name fails the test with the key it
+//! the tests reads the environment. A value a test needs that the stack does not name fails the test with the key it
 //! should have been given.
 
 use crate::config_error::{ConfigError, ConfigKey};
@@ -19,7 +19,7 @@ use std::{
 use strum::IntoStaticStr;
 use url::{Host, Url};
 
-/// The prefix every key of the suite's configuration carries in the environment.
+/// The prefix every key of the test configuration carries in the environment.
 pub(crate) const PREFIX: &str = "ANDROMEDA_TEST_SUITE__";
 
 /// A broker of a stack, by the role the stack gives it.
@@ -41,10 +41,15 @@ pub enum BrokerRole {
     F,
     /// Broker G of the multi-broker stacks, reading `q` target languages as extended ranges.
     G,
+    /// The broker of the multi stack that gathers at most 5 distinct entities and 15 source rows for one forwarded query.
+    Bounded,
     /// The andromeda stack broker in conformance mode.
     Conformance,
     /// The andromeda stack broker that leaves Core writes out of the Temporal Evolution.
     NotRecorded,
+    /// The andromeda stack broker that leaves Core writes out of the Temporal Evolution and lands the Temporal API's
+    /// history after the write answers.
+    Deferred,
     /// The andromeda stack broker that records Core writes and runs no expiry sweep.
     Recorded,
     /// The andromeda stack broker that terminates TLS itself.
@@ -61,12 +66,16 @@ pub enum BrokerRole {
     Edge,
     /// The edge broker's authority under `https`.
     EdgeHttps,
+    /// The andromeda stack broker believing forwarded fields only from a proxy range the runner is outside of.
+    EdgeUnlisted,
     /// The andromeda stack broker configured with a path-prefixed apiRoot.
     Prefixed,
     /// The andromeda stack broker reading `q` target languages as RFC 4647 extended ranges.
     LanguageRange,
     /// The andromeda stack broker admitting every RFC 5646 tag as a `q` target language.
     LanguageTags,
+    /// The andromeda stack broker delivering durably with a 1 KiB HTTP notification body limit and four attempts.
+    NotificationLimits,
 }
 
 /// A broker as another broker of the stack reaches it: what a registration `endpoint` names.
@@ -138,6 +147,9 @@ pub struct MqttSettings {
     host: HostName,
     /// The Mosquitto broker refusing anonymous clients on the ports endpoints name.
     auth_host: HostName,
+    /// The anonymous Mosquitto broker whose packet limit admits a notification of several MiB, on a stack that runs it.
+    #[serde(default)]
+    large_host: Option<HostName>,
     /// The listener port other than 1883 both Mosquitto brokers serve.
     non_default_port: u16,
     /// The listener without a mount point an observer subscribes on, so that every topic carries the port it was
@@ -158,6 +170,15 @@ impl MqttSettings {
         self.auth_host.host()
     }
 
+    /// The Mosquitto broker that admits a notification of several MiB.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack runs no such broker.
+    pub fn large_host(&self) -> Result<&Host<String>, ConfigError> {
+        self.large_host.as_ref().map(HostName::host).ok_or(missing("MQTT", "LARGE_HOST"))
+    }
+
     /// The listener port other than 1883.
     #[must_use]
     pub const fn non_default_port(&self) -> u16 {
@@ -171,7 +192,7 @@ impl MqttSettings {
     }
 }
 
-/// The configuration of the stack the suite runs against.
+/// The configuration of the stack the tests run against.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SuiteConfig {
     /// Every broker the stack runs, by role, as the test process reaches it.
@@ -431,12 +452,14 @@ mod tests {
         pairs.extend([
             ("MQTT__HOST", "mosquitto"),
             ("MQTT__AUTH_HOST", "mosquitto-auth"),
+            ("MQTT__LARGE_HOST", "mosquitto-large"),
             ("MQTT__NON_DEFAULT_PORT", "8085"),
             ("MQTT__OBSERVER_PORT", "1880"),
         ]);
         let config = SuiteConfig::read(&figment(&pairs))?;
         let mqtt = config.mqtt()?;
         expect_that!(mqtt.host(), eq(&Host::Domain("mosquitto".to_owned())));
+        expect_that!(mqtt.large_host()?, eq(&Host::Domain("mosquitto-large".to_owned())));
         expect_that!(mqtt.non_default_port(), eq(8085));
         expect_that!(mqtt.observer_port(), eq(1880));
         Ok(())

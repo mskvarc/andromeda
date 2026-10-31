@@ -1,5 +1,5 @@
-//! ETSI `D008_01_inc`: merging an entity an inclusive registration matches sends the merge to the context source and
-//! merges the broker's entity as well (clauses 4.3.3, 4.3.6.2 and 5.6.17).
+//! Merging an entity an inclusive registration matches sends the merge to the context source and merges the broker's
+//! entity as well (clauses 4.3.3, 4.3.6.2 and 5.6.17).
 
 use crate::{
     distributed_operations::{
@@ -8,7 +8,7 @@ use crate::{
         provision::entities::entity_sources::{REDIRECTION, vehicle_id_registration},
         vehicle_payloads::{vehicle_parked2, vehicle_speed_parked2_by_bob},
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities, ld_json_body_client},
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client},
 };
 use andromeda_test_suite::{
     broker,
@@ -26,14 +26,6 @@ use ngsi_ld::{http::headers::Accept, registration::RegistrationMode};
 /// Pins: Check that if one requests the Context Broker to merge an entity that matches an inclusive registration,
 /// this is merged on the Context Source too
 /// Clause: 4.3.3, 4.3.6.2, 5.6.17
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: both retrievals are held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 #[gtest]
 #[tokio::test]
 async fn d008_01_inc_merge_entity_on_both_context_broker_and_context_source() -> Result<()> {

@@ -1,9 +1,8 @@
-//! ETSI `021_07`: the temporal evolutions of the entities whose identifiers match an identifier pattern are queried
-//! (clause 5.7.4).
+//! The temporal evolutions of the entities whose identifiers match an identifier pattern are queried (clause 5.7.4).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::{create_vehicle_pair, delete_vehicle_pair};
+use crate::vehicle_fixtures::{create_vehicle_pair, delete_vehicle_pair};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

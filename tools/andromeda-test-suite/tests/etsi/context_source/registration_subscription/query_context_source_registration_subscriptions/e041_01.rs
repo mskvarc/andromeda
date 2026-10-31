@@ -1,7 +1,7 @@
-//! ETSI `041_01`: a query lists every Context Source Registration Subscription of the tenant, each with the members it
-//! was created with (clause 5.11.5).
+//! A query lists every Context Source Registration Subscription of the tenant, each with the members it was created
+//! with (clause 5.11.5).
 
-use crate::suite_keywords::create_registration_subscription_pair;
+use crate::registration_subscription_operations::create_registration_subscription_pair;
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
@@ -19,9 +19,9 @@ use serde_json::json;
 /// Pins: Check that one can query context source registration subscriptions
 /// Clause: 5.11.5
 /// Tenant: private (Query Context Source Registration Subscriptions lists every context source registration
-/// subscription of the tenant, and the case compares the whole page with its own (DeepDiff over the list, or the
-/// number of subscriptions a limit lets through); in the shared tenant every other file's subscriptions are listed
-/// too, so only a tenant of its own keeps the comparison exact)
+/// subscription of the tenant, and the test compares the whole page with its own, or counts the subscriptions a limit
+/// lets through; in the shared tenant every other file's subscriptions are listed too, so only a tenant of its own
+/// keeps the comparison exact)
 #[gtest]
 #[tokio::test]
 async fn e041_01_01_query_context_source_registration_subscriptions() -> Result<()> {

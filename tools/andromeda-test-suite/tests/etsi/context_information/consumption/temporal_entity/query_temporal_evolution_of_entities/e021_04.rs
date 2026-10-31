@@ -1,9 +1,9 @@
-//! ETSI `021_04`: the temporal evolutions of the Vehicles of a context are queried after an instant, with the
-//! vocabulary named in the `Link` header of the request (clause 5.7.4).
+//! The temporal evolutions of the Vehicles of a context are queried after an instant, with the vocabulary named in the
+//! `Link` header of the request (clause 5.7.4).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::{create_vehicle_pair, delete_vehicle_pair};
+use crate::vehicle_fixtures::{create_vehicle_pair, delete_vehicle_pair};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

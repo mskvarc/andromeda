@@ -1,9 +1,10 @@
-//! ETSI `020_23`: the temporal evolution of an entity is not retrieved when `pick` names no member the entity holds,
-//! or when `omit` names every member it holds (clauses 5.7.3 and 4.21).
+//! The temporal evolution of an entity is not retrieved when `pick` names no member the entity holds, or when `omit`
+//! names every member it holds (clauses 5.7.3 and 4.21).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, create_vehicle_speed_fuel_level},
-    suite_payloads::vehicle_speed_fuel_level,
+    temporal_operations::create_temporal_evolution,
+    vehicle_evolution_payloads::vehicle_speed_fuel_level,
+    vehicle_fixtures::create_vehicle_speed_fuel_level,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer};
 use googletest::prelude::*;

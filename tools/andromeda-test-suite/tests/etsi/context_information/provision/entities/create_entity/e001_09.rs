@@ -1,9 +1,9 @@
-//! ETSI `001_09`: an entity sent with a JSON-LD content type and a `Link` header naming its `@context` is refused
-//! (clause 6.3.5).
+//! An entity sent with a JSON-LD content type and a `Link` header naming its `@context` is refused (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{context_link, ld_json_body_client, refused},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{context_link, ld_json_body_client},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary, wire::content_type};
 use googletest::prelude::*;

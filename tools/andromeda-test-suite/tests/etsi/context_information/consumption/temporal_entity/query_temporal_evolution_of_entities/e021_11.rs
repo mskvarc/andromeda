@@ -1,10 +1,10 @@
-//! ETSI `021_11`: the temporal evolutions of the entities of the types a request names are queried with a limit on the
-//! number of entities answered (clause 5.7.4). Every Vehicle of the setup is a member of the selected types, so the
-//! count of the answer is the limit.
+//! The temporal evolutions of the entities of the types a request names are queried with a limit on the number of
+//! entities answered (clause 5.7.4). Every Vehicle of the setup is a member of the selected types, so the count of the
+//! answer is the limit.
 
 use crate::{
-    suite_keywords::{create_temporal_entity, delete_temporal_entities},
-    suite_payloads::vehicle_speed_fuel_level_on,
+    temporal_operations::{create_temporal_entity, delete_temporal_entities},
+    vehicle_evolution_payloads::vehicle_speed_fuel_level_on,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -40,7 +40,7 @@ async fn limited_query(broker: &BrokerClient, vocabulary: &Vocabulary, limit: u3
         .with_responses()
         .temporal()
         .query(temporal_query::after("2020-07-01T12:05:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .limit(limit)
         .send()
         .await;

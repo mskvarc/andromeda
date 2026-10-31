@@ -1,7 +1,9 @@
-//! ETSI `006_03`: a batch delete whose body is not JSON, and one whose body is an empty array, are refused with 400
-//! (clause 5.6.10).
+//! A batch delete whose body is not JSON, and one whose body is an empty array, are refused with 400 (clause 5.6.10).
 
-use crate::suite_keywords::{ld_json_body_client, post_text, refused, with_doubled_separator};
+use crate::{
+    entity_operations::ld_json_body_client,
+    unchecked_requests::{post_text, refused, with_doubled_separator},
+};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -30,7 +32,7 @@ async fn e006_03_01_invalid_json() -> Result<()> {
 
 /// Pins: Check that one cannot delete a batch of entities with an invalid request
 /// Clause: 5.6.10
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e006_03_02_empty_json() -> Result<()> {

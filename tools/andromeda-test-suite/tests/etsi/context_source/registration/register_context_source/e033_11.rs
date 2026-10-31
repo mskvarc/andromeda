@@ -1,9 +1,9 @@
-//! ETSI `033_11`: a context source registration sent without an id is created with the id the broker names in its
-//! `Location` (clause 5.9.2).
+//! A context source registration sent without an id is created with the id the broker names in its `Location` (clause
+//! 5.9.2).
 
 use crate::{
-    suite_keywords::csource_endpoint,
-    suite_payloads::{VEHICLE_PARKING_TERMS, a456_information, offstreet_pattern, parking_information},
+    registration_operations::csource_endpoint,
+    registration_payloads::{VEHICLE_PARKING_TERMS, a456_information, offstreet_pattern, parking_information},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -34,12 +34,8 @@ fn registration(namespace: &Namespace, endpoint: &Url) -> Result<CSourceRegistra
 
 /// Pins: Check that one can create a context source registration without specifying an ID
 /// Clause: 5.9.2
-/// Changed: Check Response Headers ID Not Empty reads the header under the exact keys `Location` or `location`; header
-/// names are case-insensitive (RFC 9110 clause 5.1), so the port reads Location whatever its case, requires it, and
-/// takes the text after its last `/` as the id, which must not be empty
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_11_create_context_source_registration_without_specifying_an_id() -> Result<()> {

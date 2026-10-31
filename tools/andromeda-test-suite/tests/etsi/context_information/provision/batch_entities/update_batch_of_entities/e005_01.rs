@@ -1,25 +1,18 @@
-//! ETSI `005_01`: a batch of fragments updates two existing entities with simple properties, simple relationships and a
-//! relationship property, and the broker retrieves the updated entities (clause 5.6.9).
+//! A batch of fragments updates two existing entities with simple properties, simple relationships and a relationship
+//! property, and the broker retrieves the updated entities (clause 5.6.9).
 
 use crate::{
-    suite_keywords::{
-        create_entity_with_context_string,
-        delete_entities,
-        expect_batch_done,
-        ld_json_body_client,
-        located_building_json,
-        query_entities_json,
-        simple_building_json,
-        weather_building_json,
-    },
-    suite_payloads::{
+    batch_operations::expect_batch_done,
+    building_documents::{located_building_json, simple_building_json, weather_building_json},
+    building_payloads::{
         BUILDING_AIR_QUALITY_WEATHER_TERMS,
         BUILDING_REPLACE_TERMS,
         BUILDING_SIMPLE_TERMS,
-        building_located_in_paris,
         building_simple_attributes,
         building_with_weather_sensor,
     },
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

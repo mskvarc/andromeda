@@ -1,7 +1,10 @@
-//! ETSI `041_03`: a query pages through the Context Source Registration Subscriptions of the tenant, and the `Link`
-//! field of each page names the pages before and after it (clause 5.11.5).
+//! A query pages through the Context Source Registration Subscriptions of the tenant, and the `Link` field of each page
+//! names the pages before and after it (clause 5.11.5).
 
-use crate::suite_keywords::{PageLink, create_registration_subscription_triple, expect_page_links, page_link};
+use crate::{
+    pagination_links::{PageLink, expect_page_links, page_link},
+    registration_subscription_operations::create_registration_subscription_triple,
+};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -14,27 +17,9 @@ use serde_json::{Value, json};
 /// Pins: Check that one can query context source registration subscriptions with providing offset and limit
 /// parameters for pagination
 /// Clause: 5.11.5
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(041_03)`: request application/ld+json in the csr-subscription pagination query (6.3.6)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest, spaces removed, with the expected prev and next links, reduced the same way, as a multiset; the port
-/// asserts exactly that with regexes over the field value, which assumes that the response carries at most one Link
-/// field line: Hurl 8.0.1 reads a field sent on several lines as a list (runner/query.rs:107-122), and every predicate
-/// and filter takes either a string or a list (matches and endsWith are type errors on a list, contains tests list
-/// membership, toString refuses a list, runner/filter/to_string.rs:25-40 and runner/value.rs:165-173, and no filter
-/// joins one), so a broker that sends its link-values on several Link lines, which RFC 9110 clause 5.3 and RFC 8288
-/// clause 3 allow, fails here although the keyword passes it (Andromeda defect D-26 records the one-line shape the
-/// port needs)
-/// Changed: header "Link" not contains "\\", not contains "'''" and not endsWith "'": the keyword pastes the field
-/// value into a Python '''...''' literal, so a backslash is read as an escape and a ''' or a final ' ends the literal;
-/// the port refuses all three, which is stricter only where an escape leaves the keyword reading, and accepting, a
-/// value other than the one sent
-/// Changed: Hurl trims the whitespace around a field value (http/client.rs:902), so an item ending in a HTAB at the
-/// end of the field, which the keyword compares with the HTAB kept, reads here without it; RFC 9110 clause 5.5 puts
-/// that whitespace outside the field value
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the registration subscription pagination query requests application/ld+json (clause 6.3.6)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
 /// Tenant: private (Query Context Source Registration Subscriptions pages through every context source registration
 /// subscription of the tenant, and the case checks how many a limit and an offset let through and the prev and next
 /// links that follow from the tenant's total; in the shared tenant every other file's subscriptions are paged too, so
@@ -57,27 +42,9 @@ async fn e041_03_01_query_second_subscription() -> Result<()> {
 /// Pins: Check that one can query context source registration subscriptions with providing offset and limit
 /// parameters for pagination
 /// Clause: 5.11.5
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(041_03)`: request application/ld+json in the csr-subscription pagination query (6.3.6)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest, spaces removed, with the expected prev and next links, reduced the same way, as a multiset; the port
-/// asserts exactly that with regexes over the field value, which assumes that the response carries at most one Link
-/// field line: Hurl 8.0.1 reads a field sent on several lines as a list (runner/query.rs:107-122), and every predicate
-/// and filter takes either a string or a list (matches and endsWith are type errors on a list, contains tests list
-/// membership, toString refuses a list, runner/filter/to_string.rs:25-40 and runner/value.rs:165-173, and no filter
-/// joins one), so a broker that sends its link-values on several Link lines, which RFC 9110 clause 5.3 and RFC 8288
-/// clause 3 allow, fails here although the keyword passes it (Andromeda defect D-26 records the one-line shape the
-/// port needs)
-/// Changed: header "Link" not contains "\\", not contains "'''" and not endsWith "'": the keyword pastes the field
-/// value into a Python '''...''' literal, so a backslash is read as an escape and a ''' or a final ' ends the literal;
-/// the port refuses all three, which is stricter only where an escape leaves the keyword reading, and accepting, a
-/// value other than the one sent
-/// Changed: Hurl trims the whitespace around a field value (http/client.rs:902), so an item ending in a HTAB at the
-/// end of the field, which the keyword compares with the HTAB kept, reads here without it; RFC 9110 clause 5.5 puts
-/// that whitespace outside the field value
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the registration subscription pagination query requests application/ld+json (clause 6.3.6)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
 /// Tenant: private (Query Context Source Registration Subscriptions pages through every context source registration
 /// subscription of the tenant, and the case checks how many a limit and an offset let through and the prev and next
 /// links that follow from the tenant's total; in the shared tenant every other file's subscriptions are paged too, so
@@ -101,27 +68,9 @@ async fn e041_03_02_query_last_subscription() -> Result<()> {
 /// Pins: Check that one can query context source registration subscriptions with providing offset and limit
 /// parameters for pagination
 /// Clause: 5.11.5
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(041_03)`: request application/ld+json in the csr-subscription pagination query (6.3.6)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest, spaces removed, with the expected prev and next links, reduced the same way, as a multiset; the port
-/// asserts exactly that with regexes over the field value, which assumes that the response carries at most one Link
-/// field line: Hurl 8.0.1 reads a field sent on several lines as a list (runner/query.rs:107-122), and every predicate
-/// and filter takes either a string or a list (matches and endsWith are type errors on a list, contains tests list
-/// membership, toString refuses a list, runner/filter/to_string.rs:25-40 and runner/value.rs:165-173, and no filter
-/// joins one), so a broker that sends its link-values on several Link lines, which RFC 9110 clause 5.3 and RFC 8288
-/// clause 3 allow, fails here although the keyword passes it (Andromeda defect D-26 records the one-line shape the
-/// port needs)
-/// Changed: header "Link" not contains "\\", not contains "'''" and not endsWith "'": the keyword pastes the field
-/// value into a Python '''...''' literal, so a backslash is read as an escape and a ''' or a final ' ends the literal;
-/// the port refuses all three, which is stricter only where an escape leaves the keyword reading, and accepting, a
-/// value other than the one sent
-/// Changed: Hurl trims the whitespace around a field value (http/client.rs:902), so an item ending in a HTAB at the
-/// end of the field, which the keyword compares with the HTAB kept, reads here without it; RFC 9110 clause 5.5 puts
-/// that whitespace outside the field value
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the registration subscription pagination query requests application/ld+json (clause 6.3.6)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
 /// Tenant: private (Query Context Source Registration Subscriptions pages through every context source registration
 /// subscription of the tenant, and the case checks how many a limit and an offset let through and the prev and next
 /// links that follow from the tenant's total; in the shared tenant every other file's subscriptions are paged too, so

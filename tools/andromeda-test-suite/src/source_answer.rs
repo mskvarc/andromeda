@@ -1,9 +1,17 @@
 //! What a test's context source answers a forwarded request with (clause 6.3.3 and the answers of the operations a
 //! registration covers), written from typed documents.
 
-use http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
+use http::{
+    HeaderValue,
+    StatusCode,
+    header::{CONTENT_TYPE, LINK},
+};
+use iri_rs::IriRefBuf;
 use ngsi_ld::{
-    http::BatchOperationResult,
+    http::{
+        BatchOperationResult,
+        headers::{Link, LinkBuildError, LinkValue, RelationType},
+    },
     model::{Entity, ErrorType, Input, Lossless, Output, ProblemDetails, Representation, evolution::TemporalEntity},
     registration::EntityMap,
 };
@@ -94,9 +102,21 @@ pub fn status(status: StatusCode) -> ResponseTemplate {
     ResponseTemplate::new(status.as_u16())
 }
 
+/// `answer` linking the next page at `next` (clause 6.3.10), a target the broker resolves against the request it sent,
+/// as a source paginating by offset writes it (`</ngsi-ld/v1/entities?type=Vehicle&limit=1000&offset=1000>;
+/// rel="next"`).
+///
+/// # Errors
+///
+/// Returns [`LinkBuildError`] when `next` cannot be written in a `Link` header.
+pub fn linked_to_next(answer: ResponseTemplate, next: IriRefBuf) -> Result<ResponseTemplate, LinkBuildError> {
+    let link = Link::try_new(LinkValue::builder(next).rel(RelationType::Next).build())?;
+    Ok(answer.insert_header(LINK, link.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::source_answer::{entities_body, entity_map, problem_without_detail, temporal_entity, text};
+    use crate::source_answer::{entities_body, entity_map, linked_to_next, problem_without_detail, status, temporal_entity, text};
     use googletest::prelude::*;
     use http::{HeaderValue, StatusCode};
     use iri_rs::iri;
@@ -186,5 +206,20 @@ mod tests {
         let response = reqwest::get(server.uri()).await?;
         expect_that!(response.headers().get("content-type"), some(eq(&HeaderValue::from_static("text/html"))));
         verify_that!(response.text().await?, eq("<html>x</html>"))
+    }
+
+    #[gtest]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_page_names_its_next_page_in_a_link_header() -> Result<()> {
+        let server = MockServer::start().await;
+        let page = linked_to_next(status(StatusCode::OK), "/a/ngsi-ld/v1/entities?type=Vehicle&limit=1000&offset=1000".parse()?)?;
+        Mock::given(method("GET")).respond_with(page).mount(&server).await;
+        let answer = reqwest::get(server.uri()).await?;
+        verify_that!(
+            answer.headers().get("link"),
+            some(eq(&HeaderValue::from_static(
+                r#"</a/ngsi-ld/v1/entities?type=Vehicle&limit=1000&offset=1000>; rel="next""#
+            )))
+        )
     }
 }

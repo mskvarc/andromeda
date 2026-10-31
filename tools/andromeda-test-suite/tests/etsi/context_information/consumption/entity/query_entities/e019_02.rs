@@ -1,9 +1,11 @@
-//! ETSI `019_02`: entities are queried through the POST interaction, by id, by type, by id pattern, by attribute names,
-//! as a `GeoJSON` collection and by several ids (clause 5.7.2).
+//! Entities are queried through the POST interaction, by id, by type, by id pattern, by attribute names, as a `GeoJSON`
+//! collection and by several ids (clause 5.7.2).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, feature_collection},
-    suite_payloads::{bare_building, offstreet_parking, vehicle_parked},
+    building_documents::feature_collection,
+    building_payloads::bare_building,
+    entity_operations::{create_entity, delete_entities},
+    vehicle_entity_payloads::{offstreet_parking, vehicle_parked},
 };
 use andromeda_test_suite::{
     broker,
@@ -38,7 +40,7 @@ const GEO_TERMS: [&str; 9] = [
     "totalSpotNumber",
 ];
 
-/// The `isParked` Relationship of a Vehicle, as the Hurl expectations name it: observed at 2017-07-29T12:00:04Z, its
+/// The `isParked` Relationship of a Vehicle, as the expectations name it: observed at 2017-07-29T12:00:04Z, its
 /// `providedBy` written under the default vocabulary.
 fn is_parked(namespace: &Namespace) -> Value {
     json!({
@@ -100,10 +102,9 @@ async fn e019_02_01_query_one_entity_via_post_interaction_based_on_id() -> Resul
 
 /// Pins: Check that one can query several entities via POST Interaction based on the entity type
 /// Clause: 5.7.2
-/// Corrected: `fix(019_01_02)`: key the query-by-type expectations by expanded iris (5.5.7)
-/// Changed: providedBy stays out of the file vocabulary: the case reads it without a @context, so it expands under the
-/// core default vocabulary as in the Robot run
-/// Changed: observedAt is compared as written, where the case matches the whole-second pattern
+/// Expected: the query-by-type expectations are keyed by expanded IRIs (clause 5.5.7)
+/// Expected: providedBy stays out of the file vocabulary: the test reads it without a @context, so it expands under the
+/// core default vocabulary
 #[gtest]
 #[tokio::test]
 async fn e019_02_02_query_several_entities_via_post_interaction_based_on_the_entities_types() -> Result<()> {
@@ -183,10 +184,9 @@ async fn e019_02_03_query_several_entities_via_post_interaction_based_on_the_giv
 
 /// Pins: Check that one can query several entities via POST Interaction based on attribute names
 /// Clause: 5.7.2
-/// Corrected: `fix(019_02_04)`: correct the isparked context drift to the suite iri (5.5.7)
-/// Changed: providedBy stays out of the file vocabulary: the case reads it without a @context, so it expands under the
-/// core default vocabulary as in the Robot run
-/// Changed: observedAt is compared as written, where the case matches the whole-second pattern
+/// Expected: isParked expands to the test vocabulary's IRI (clause 5.5.7)
+/// Expected: providedBy stays out of the file vocabulary: the test reads it without a @context, so it expands under the
+/// core default vocabulary
 /// Tenant: private (a query selected by attribute names alone names no entity type, id or idPattern, so clause 5.12
 /// matches it with every registration of the tenant that names those attributes or no attribute at all, and the broker
 /// forwards it to each; in the shared tenant another file's context source then answers it beside the case's own
@@ -219,9 +219,7 @@ async fn e019_02_04_query_several_entities_via_post_interaction_based_on_attribu
 
 /// Pins: Check that one can query entities via POST Interaction asking for a `GeoJSON` representation
 /// Clause: 5.7.2
-/// Changed: the response's `@context` may sit on the collection, on each feature, or on both, as the case allows
-/// Changed: observedAt and the number values are compared as written, where the case compares them by a hash blind to
-/// the number type
+/// Expected: the response's `@context` may sit on the collection, on each feature, or on both
 #[gtest]
 #[tokio::test]
 async fn e019_02_05_query_via_post_asking_for_geojson() -> Result<()> {

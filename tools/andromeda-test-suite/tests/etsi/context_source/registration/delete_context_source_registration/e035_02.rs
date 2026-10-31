@@ -1,9 +1,10 @@
-//! ETSI `035_02`: a context source registration is not deleted when the request names no id, or names one that is not
-//! a valid URI (clause 5.9.4).
+//! A context source registration is not deleted when the request names no id, or names one that is not a valid URI
+//! (clause 5.9.4).
 
 use crate::{
-    suite_keywords::{ld_json_body_client, refused},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -33,9 +34,8 @@ async fn initial_registration(broker: &BrokerClient, namespace: &Namespace, voca
 
 /// Pins: Check that one cannot delete a context source registration under some conditions
 /// Clause: 5.9.4
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e035_02_01_delete_a_context_source_registration_if_the_id_is_not_present() -> Result<()> {
@@ -55,9 +55,8 @@ async fn e035_02_01_delete_a_context_source_registration_if_the_id_is_not_presen
 
 /// Pins: Check that one cannot delete a context source registration under some conditions
 /// Clause: 5.9.4
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e035_02_02_delete_a_context_source_registration_if_the_id_is_not_a_valid_uri() -> Result<()> {

@@ -1,5 +1,5 @@
-//! ETSI `D017_01_red`: purging the Vehicles two redirect registrations match purges them on both context sources
-//! (clauses 4.3.3, 4.3.6.3 and 5.6.21).
+//! Purging the Vehicles two redirect registrations match purges them on both context sources (clauses 4.3.3, 4.3.6.3
+//! and 5.6.21).
 
 use crate::{
     distributed_operations::{
@@ -10,8 +10,8 @@ use crate::{
             purge_entities::purge_request::{purge_rule, purge_vehicles},
         },
     },
-    suite_keywords::create_entity_with_context_string,
-    suite_payloads::vehicle_parked,
+    entity_operations::create_entity_with_context_string,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -21,13 +21,6 @@ use ngsi_ld::registration::RegistrationMode;
 /// Pins: Verify that, when one has a redirect registration on a Context Broker, one is able to purge entities based
 /// on type on the Context Source
 /// Clause: 4.3.3, 4.3.6.3, 5.6.21
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

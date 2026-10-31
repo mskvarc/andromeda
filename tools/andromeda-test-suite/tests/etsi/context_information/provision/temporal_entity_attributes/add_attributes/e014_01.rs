@@ -1,9 +1,10 @@
-//! ETSI `014_01`: instances of an attribute added to a temporal representation of an entity are appended to its evolution
-//! (clause 5.6.12).
+//! Instances of an attribute added to a temporal representation of an entity are appended to its evolution (clause
+//! 5.6.12).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, ld_json_body_client, retrieve_temporal_json},
-    suite_payloads::{VEHICLE_SPEED_FUEL_ADDED_TERMS, added_attribute_instances, vehicle_speed_fuel_level_with_dataset},
+    entity_operations::ld_json_body_client,
+    temporal_operations::{create_temporal_evolution, retrieve_temporal_json},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_ADDED_TERMS, added_attribute_instances, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer};
 use googletest::prelude::*;

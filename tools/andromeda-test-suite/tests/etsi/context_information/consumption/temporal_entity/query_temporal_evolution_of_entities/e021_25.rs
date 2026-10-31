@@ -1,7 +1,7 @@
-//! ETSI `021_25`: the temporal evolutions of a private tenant are queried with `local=true`, the only narrowing of
-//! the query, so the answer holds every temporal evolution of the tenant (clause 5.7.4).
+//! The temporal evolutions of a private tenant are queried with `local=true`, the only narrowing of the query, so the
+//! answer holds every temporal evolution of the tenant (clause 5.7.4).
 
-use crate::suite_keywords::{create_vehicle_pair, delete_vehicle_pair};
+use crate::vehicle_fixtures::{create_vehicle_pair, delete_vehicle_pair};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -13,8 +13,7 @@ use serde_json::json;
 
 /// Pins: Check that one can query all temporal evolution of entities if query is local
 /// Clause: 5.7.4
-/// Changed: observedAt is compared as written, not as the fractional-zero forms the expectation's regex admits
-/// Corrected: `fix(021_25)`: expect both local entities from the unfiltered temporal query (5.7.4)
+/// Expected: the unfiltered temporal query answers both local entities (clause 5.7.4)
 /// Tenant: private (local=true is the only narrowing, so the query answers every temporal entity of the tenant)
 #[gtest]
 #[tokio::test]

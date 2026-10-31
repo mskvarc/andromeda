@@ -1,10 +1,10 @@
-//! ETSI `020_16`: the temporal evolution of an entity with a `VocabProperty` is retrieved in the normalized and in the
-//! simplified temporal representation, one instance holding a single term and one holding a list of terms (clauses
-//! 5.7.3, 4.5.7, 4.5.9 and 4.5.24).
+//! The temporal evolution of an entity with a `VocabProperty` is retrieved in the normalized and in the simplified
+//! temporal representation, one instance holding a single term and one holding a list of terms (clauses 5.7.3, 4.5.7,
+//! 4.5.9 and 4.5.24).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::create_temporal_evolution;
+use crate::temporal_operations::create_temporal_evolution;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,
@@ -43,13 +43,12 @@ fn vehicle_with_vocab_properties(namespace: &Namespace) -> Result<TemporalEntity
         .build()?)
 }
 
-/// Creates the case's Vehicle as its suite setup does, and answers the vocabulary it is stored under.
+/// Creates the test's Vehicle, and answers the vocabulary it is stored under.
 async fn created_vehicle(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     create_temporal_evolution(broker, namespace, &["Vehicle", "vocabProperty"], &vehicle_with_vocab_properties(namespace)?).await
 }
 
 /// Clause: 5.7.3, 4.5.7, 4.5.24
-/// Changed: the setup requires 201 Created for the evolution, where the suite accepts any answer to that request
 #[gtest]
 #[tokio::test]
 async fn e020_16_01_retrieve_the_normalized_temporal_representation_of_an_entity_with_a_vocab_property_property() -> Result<()> {
@@ -84,7 +83,6 @@ async fn e020_16_01_retrieve_the_normalized_temporal_representation_of_an_entity
 }
 
 /// Clause: 5.7.3, 4.5.9, 4.5.24
-/// Changed: the setup requires 201 Created for the evolution, where the suite accepts any answer to that request
 #[gtest]
 #[tokio::test]
 async fn e020_16_02_retrieve_the_simplified_temporal_representation_of_an_entity_with_a_vocab_property_property() -> Result<()> {

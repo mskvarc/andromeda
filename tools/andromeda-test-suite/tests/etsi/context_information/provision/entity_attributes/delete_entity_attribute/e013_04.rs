@@ -1,6 +1,6 @@
-//! ETSI `013_04`: the scope of an entity is deleted (clauses 5.6.5 and 4.18).
+//! The scope of an entity is deleted (clauses 5.6.5 and 4.18).
 
-use crate::suite_keywords::{create_entity_plain, delete_entities, retrieve_entity_json};
+use crate::entity_operations::{create_entity_plain, delete_entities, retrieve_entity_json};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
@@ -15,7 +15,7 @@ use serde_json::json;
 
 /// Pins: Check that one can delete a scope from an entity
 /// Clause: 5.6.5, 4.18
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e013_04_delete_scope_from_an_entity() -> Result<()> {

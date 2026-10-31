@@ -1,7 +1,7 @@
-//! ETSI `015_02`: an attribute of a temporal representation of an entity is not deleted by a request whose entity id
-//! is missing or invalid, or whose attribute name is invalid (clause 5.6.13).
+//! An attribute of a temporal representation of an entity is not deleted by a request whose entity id is missing or
+//! invalid, or whose attribute name is invalid (clause 5.6.13).
 
-use crate::suite_keywords::{create_vehicle_speed_fuel_level_with_dataset, refused};
+use crate::{unchecked_requests::refused, vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset};
 use andromeda_test_suite::{
     broker,
     broker::BrokerClient,
@@ -15,6 +15,7 @@ use ngsi_ld::model::{APPLICATION_JSON, ErrorType};
 
 /// Sends the `DELETE` of `target` as `application/json` and requires the 400 `BadRequestData` refusal with a title.
 async fn refused_deletion(broker: &BrokerClient, target: &str) -> Result<()> {
+    // Each path names an id or an attribute the model refuses, so the request is sent as written.
     refused(
         broker,
         content_type(request_to(broker, Method::DELETE, target)?, &APPLICATION_JSON)?,

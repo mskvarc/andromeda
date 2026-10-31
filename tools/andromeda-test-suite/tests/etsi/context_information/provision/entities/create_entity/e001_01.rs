@@ -1,9 +1,10 @@
-//! ETSI `001_01`: an entity with a minimal body, simple properties, relationships, geo properties and a multi-valued
-//! relationship is created, and the broker retrieves it as written (clause 5.6.1).
+//! An entity with a minimal body, simple properties, relationships, geo properties and a multi-valued relationship is
+//! created, and the broker retrieves it as written (clause 5.6.1).
 
 use crate::{
-    suite_keywords::{create_entity_answer, create_entity_plain, delete_entities, expect_created, retrieve_entity_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes, building_with_weather_sensor, eiffel_tower_located, point},
+    building_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes, building_with_weather_sensor, eiffel_tower_located},
+    entity_operations::{create_entity_answer, create_entity_plain, delete_entities, expect_created, retrieve_entity_json},
+    geometry_payloads::point,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -33,11 +34,7 @@ fn building_located_at_two(namespace: &Namespace) -> Result<Entity<Input>> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_01_01_minimal_entity() -> Result<()> {
@@ -54,10 +51,6 @@ async fn e001_01_01_minimal_entity() -> Result<()> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_01_02_entity_with_simple_properties() -> Result<()> {
@@ -92,10 +85,6 @@ async fn e001_01_02_entity_with_simple_properties() -> Result<()> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_01_03_entity_with_relationships_properties() -> Result<()> {
@@ -133,10 +122,6 @@ async fn e001_01_03_entity_with_relationships_properties() -> Result<()> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_01_04_entity_with_location_attribute() -> Result<()> {
@@ -168,10 +153,6 @@ async fn e001_01_04_entity_with_location_attribute() -> Result<()> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_01_05_entity_with_non_core_geo_property() -> Result<()> {
@@ -201,10 +182,6 @@ async fn e001_01_05_entity_with_non_core_geo_property() -> Result<()> {
 
 /// Pins: Check that one can create an entity
 /// Clause: 5.6.1
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_01_06_entity_with_multivalued_relationship() -> Result<()> {

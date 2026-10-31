@@ -1,5 +1,5 @@
-//! The Vehicle documents the batch cases expect a broker to forward to a context source or to answer with, as the
-//! suite's `JSONPath` filters describe them member by member.
+//! The Vehicle documents the batch tests expect a broker to forward to a context source or to answer with, described
+//! member by member.
 
 use andromeda_test_suite::namespace::Namespace;
 use serde_json::{Value, json};

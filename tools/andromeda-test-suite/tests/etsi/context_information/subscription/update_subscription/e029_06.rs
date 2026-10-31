@@ -1,7 +1,9 @@
-//! ETSI `029_06`: an update replaces the notification of a subscription, and the subscription keeps the replacement
-//! (clause 5.8.2).
+//! An update replaces the notification of a subscription, and the subscription keeps the replacement (clause 5.8.2).
 
-use crate::suite_keywords::{create_timed_building_subscription, key_values_fragment, ld_json_body_client, subscription_updated, update_subscription_request};
+use crate::{
+    entity_operations::ld_json_body_client,
+    subscription_operations::{create_timed_building_subscription, key_values_fragment, subscription_updated, update_subscription_request},
+};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,

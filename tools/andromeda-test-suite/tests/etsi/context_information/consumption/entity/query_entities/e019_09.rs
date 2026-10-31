@@ -1,10 +1,11 @@
-//! ETSI `019_09`: several entities are selected with a `q` query parameter over their names, their air quality levels,
-//! their `almostFull` Properties and their `locatedIn` Relationships, and the `NGSILD-Results-Count` header states how
-//! many match (clause 5.7.2).
+//! Several entities are selected with a `q` query parameter over their names, their air quality levels, their
+//! `almostFull` Properties and their `locatedIn` Relationships, and the `NGSILD-Results-Count` header states how many
+//! match (clause 5.7.2).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, results_count},
-    suite_payloads::{building_simple_attributes, pisa_tower, pisa_tower_sightseeing},
+    building_payloads::{building_simple_attributes, pisa_tower, pisa_tower_sightseeing},
+    entity_operations::{create_entity, delete_entities},
+    unchecked_requests::results_count,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

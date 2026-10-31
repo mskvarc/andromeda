@@ -1,10 +1,6 @@
-//! ETSI `028_03`: a create-subscription request whose subscription id is not an IRI, or is empty, is refused with 400
-//! (clause 5.8.1).
+//! A create-subscription request whose subscription id is not an IRI, or is empty, is refused with 400 (clause 5.8.1).
 
-use crate::{
-    suite_keywords::{ld_json_body_client, refused},
-    suite_payloads::building_subscription,
-};
+use crate::{entity_operations::ld_json_body_client, subscription_payloads::building_subscription, unchecked_requests::refused};
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{

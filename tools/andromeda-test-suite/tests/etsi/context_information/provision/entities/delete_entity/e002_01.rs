@@ -1,8 +1,8 @@
-//! ETSI `002_01`: an entity is deleted by its id, after which it is no longer retrieved (clause 5.6.6).
+//! An entity is deleted by its id, after which it is no longer retrieved (clause 5.6.6).
 
 use crate::{
-    suite_keywords::create_entity,
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::create_entity,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;

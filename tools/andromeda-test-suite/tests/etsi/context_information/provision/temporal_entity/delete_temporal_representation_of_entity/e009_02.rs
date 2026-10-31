@@ -1,7 +1,7 @@
-//! ETSI `009_02`: a temporal representation of an entity is not deleted by a request without an entity id, nor by one whose
-//! id the broker refuses (clause 5.6.16).
+//! A temporal representation of an entity is not deleted by a request without an entity id, nor by one whose id the
+//! broker refuses (clause 5.6.16).
 
-use crate::suite_keywords::refused;
+use crate::unchecked_requests::refused;
 use andromeda_test_suite::{broker, problem::answered, wire::request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};
@@ -9,7 +9,7 @@ use ngsi_ld::model::ErrorType;
 
 /// Pins: Check that an error is raised if one deletes a temporal entity with an empty/invalid `EntityId`
 /// Clause: 5.6.16
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e009_02_01_delete_a_temporal_representation_of_an_entity_with_an_empty_entity_id() -> Result<()> {
@@ -21,7 +21,7 @@ async fn e009_02_01_delete_a_temporal_representation_of_an_entity_with_an_empty_
 
 /// Pins: Check that an error is raised if one deletes a temporal entity with an empty/invalid `EntityId`
 /// Clause: 5.6.16
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e009_02_02_delete_a_temporal_representation_of_an_entity_with_an_invalid_entity_id() -> Result<()> {

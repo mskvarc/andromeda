@@ -1,10 +1,9 @@
-//! ETSI `019_24`: Buildings linked to Cities are queried in the normalized and the simplified representation, with the
-//! linked entities joined inline or flat, through the `entityOperations/query` binding (clauses 5.7.2, 4.5.23 and
-//! 6.23).
+//! Buildings linked to Cities are queried in the normalized and the simplified representation, with the linked entities
+//! joined inline or flat, through the `entityOperations/query` binding (clauses 5.7.2, 4.5.23 and 6.23).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{building_located_in_city, city},
+    entity_operations::{create_entity, delete_entities},
+    linked_place_payloads::{building_located_in_city, city},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

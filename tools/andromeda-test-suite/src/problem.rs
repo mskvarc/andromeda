@@ -1,5 +1,5 @@
 //! Matchers on what a broker answers a call with: the status, the problem of an error response, its header fields and
-//! whether it has a body.
+//! whether it has a body; and the members of a reported problem a test compares on their own.
 //!
 //! A typed call succeeds only with a status its operation defines, so a successful outcome already states its
 //! status (Create Entity's `Created` is 201). These matchers state the status of everything else: the error
@@ -11,10 +11,14 @@ use googletest::{
     matcher::{Matcher, MatcherBase, MatcherResult},
 };
 use http::{HeaderMap, HeaderName, StatusCode};
-use ngsi_ld::model::ErrorType;
-use std::fmt::Debug;
+use iri_rs::{Iri, IriBuf, IriRefBuf, iri};
+use ngsi_ld::{client::ClientError, model::ErrorType};
+use std::{fmt::Debug, result::Result as StdResult};
 
-/// Whether the problem's `title` must be a non-empty string, as the ETSI `ProblemDetails` check requires.
+/// The problem type of a request refused for its size (clause 6.3.2), which `ErrorType` names by no variant of its own.
+const REQUEST_ENTITY_TOO_LARGE: Iri<&str> = iri!("https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge");
+
+/// What a matcher requires of the `title` of a problem (clause 5.5.3), and of its `detail` beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TitleCheck {
     /// The title is not checked.
@@ -258,12 +262,32 @@ impl<A: AnsweredStatus + Debug> Matcher<&A> for AnsweredMatcher {
     }
 }
 
+/// The problem type of a request refused for its size (clause 6.3.2).
+#[must_use]
+pub fn request_entity_too_large() -> ErrorType {
+    ErrorType::from(IriRefBuf::from(IriBuf::from(REQUEST_ENTITY_TOO_LARGE)))
+}
+
+/// The `status` member of the problem a refused call reports, which the HTTP status repeats (clause 6.3.3).
+#[must_use]
+pub fn problem_status<V, E>(answer: &StdResult<V, ClientError<E>>) -> Option<u16> {
+    answer.as_ref().err().and_then(ClientError::problem).and_then(|details| details.status)
+}
+
+/// The `instance` of the problem `answer` reports (IETF RFC 7807 section 3.1), the reference that identifies the
+/// occurrence of the problem, when it reports one.
+#[must_use]
+pub fn instance_of<A: AnsweredStatus>(answer: &A) -> Option<&str> {
+    answer.answered_problem().and_then(|problem| problem.instance.as_ref()).map(IriRefBuf::as_str)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::problem::{answered, problem, problem_among};
+    use crate::problem::{answered, instance_of, problem, problem_among, problem_status, request_entity_too_large};
     use bytes::Bytes;
     use googletest::prelude::*;
     use http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode, header::LOCATION};
+    use iri_rs::IriRefBuf;
     use ngsi_ld::{
         client::ClientError,
         http::{ResponseError, ResponseHead},
@@ -381,5 +405,46 @@ mod tests {
         let answer = refused(StatusCode::BAD_REQUEST, ErrorType::BadRequestData, "Bad request")?;
         expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail("refused"));
         verify_that!(&answer, not(problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail("refuse")))
+    }
+
+    #[gtest]
+    fn the_instance_of_a_problem_is_its_reference_text() -> Result<()> {
+        let details = ProblemDetails::builder()
+            .error_type(ErrorType::InvalidRequest)
+            .title("Invalid request")
+            .detail("refused")
+            .instance(IriRefBuf::new("/ngsi-ld/v1/entities?type=A&q=bad((".to_owned())?)
+            .build();
+        let answer: Answer = Err(ClientError::Response(ResponseError::Problem {
+            status: StatusCode::BAD_REQUEST,
+            head: Box::new(ResponseHead::default()),
+            details: Box::new(details),
+            body: Box::new("{}".parse::<RawJson>()?),
+        }));
+        verify_that!(instance_of(&answer), some(eq("/ngsi-ld/v1/entities?type=A&q=bad((")))
+    }
+
+    #[gtest]
+    fn an_answer_without_a_problem_has_no_instance_and_no_status_member() -> Result<()> {
+        let answer: Answer = Ok(Response::builder().status(StatusCode::OK).body(Bytes::new())?);
+        expect_that!(instance_of(&answer), none());
+        verify_that!(problem_status(&answer), none())
+    }
+
+    #[gtest]
+    fn the_status_member_of_a_problem_is_read() -> Result<()> {
+        let details = ProblemDetails::builder()
+            .error_type(request_entity_too_large())
+            .title("Request entity too large")
+            .detail("over 5 bytes")
+            .status(413)
+            .build();
+        let answer: Answer = Err(ClientError::Response(ResponseError::Problem {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            head: Box::new(ResponseHead::default()),
+            details: Box::new(details),
+            body: Box::new("{}".parse::<RawJson>()?),
+        }));
+        verify_that!(problem_status(&answer), some(eq(413)))
     }
 }

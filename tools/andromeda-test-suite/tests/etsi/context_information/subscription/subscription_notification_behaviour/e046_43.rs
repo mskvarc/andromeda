@@ -1,14 +1,14 @@
-//! ETSI `046_43`: a subscription whose notification omits `type` and `name` notifies the updated entity without them
-//! (clauses 5.8.6 and 4.21).
+//! A subscription whose notification omits `type` and `name` notifies the updated entity without them (clauses 5.8.6
+//! and 4.21).
 
 use crate::{
+    building_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
     context_information::subscription::subscription_notification_behaviour::{
         change_case::{ContextForm, EntityChange, change_notification},
         notification_case::{data_item, teardown},
     },
-    suite_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
 };
-use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, robot_literal};
+use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{EntityFragment, NgsiLdMediaType},
@@ -19,10 +19,6 @@ use serde_json::{Value, json};
 
 /// Pins: Update an attribute and check the notification does not contain entity members specified in the omit parameter
 /// Clause: 5.8.6, 4.21
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_43_01_update_attribute_and_check_entity_members_in_notification() -> Result<()> {
@@ -48,7 +44,7 @@ async fn e046_43_01_update_attribute_and_check_entity_members_in_notification() 
         EntityChange::UpdateAttributes(&fragment, ContextForm::List),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let expected = json!({

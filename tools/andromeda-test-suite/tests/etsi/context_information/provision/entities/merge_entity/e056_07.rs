@@ -1,13 +1,13 @@
-//! ETSI `056_07`: sub-attributes set to the NGSI-LD Null in a Merge Entity are removed from the Property they belong to
-//! (clauses 5.6.17 and 6.5.3.4).
+//! Sub-attributes set to the NGSI-LD Null in a Merge Entity are removed from the Property they belong to (clauses
+//! 5.6.17 and 6.5.3.4).
 
-use crate::suite_keywords::{OBSERVED_AT_WHOLE_SECOND, create_entity, delete_entities, merge_entity, observed_at, retrieve_entity_json};
+use crate::entity_operations::{OBSERVED_AT_WHOLE_SECOND, create_entity, delete_entities, merge_entity, observed_at, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use cefact_units::UnitCode;
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
-    model::{Attribute, Entity, EntityFragment, Input, NgsiLdMediaType, PatchMember, Property, Relationship, Value},
+    model::{Attribute, Entity, EntityFragment, Input, NgsiLdMediaType, PatchMember, Property, Relationship},
 };
 use serde_json::json;
 
@@ -32,13 +32,12 @@ fn building_with_weather_sensor(namespace: &Namespace) -> Result<Entity<Input>> 
                 .observed_at("2020-09-09T16:40:00.000Z".parse()?)
                 .relationship("hasWeatherObserved", Relationship::builder(namespace.urn("Sensor", SENSOR_SUFFIX)?)),
         )
-        .property("almostFull", Value::Boolean(false))
+        .property("almostFull", false)
         .build()?)
 }
 
 /// Pins: Check that sub-attributes set to NGSI-LD Null in a Merge Entity operation are removed
 /// Clause: 5.6.17, 6.5.3.4
-/// Changed: the body is compared as one exact document, where the Hurl file checks its members one by one
 #[gtest]
 #[tokio::test]
 async fn e056_07_01_remove_unit_code_from_property() -> Result<()> {
@@ -85,7 +84,6 @@ async fn e056_07_01_remove_unit_code_from_property() -> Result<()> {
 
 /// Pins: Check that sub-attributes set to NGSI-LD Null in a Merge Entity operation are removed
 /// Clause: 5.6.17, 6.5.3.4
-/// Changed: the body is compared as one exact document, where the Hurl file checks its members one by one
 #[gtest]
 #[tokio::test]
 async fn e056_07_02_remove_sub_attribute_from_property() -> Result<()> {

@@ -1,7 +1,7 @@
-//! ETSI `020_21`: the temporal evolution of an entity is retrieved with its attributes, or its attributes and core
-//! members, projected by `pick` or `omit` (clauses 5.7.3 and 4.21).
+//! The temporal evolution of an entity is retrieved with its attributes, or its attributes and core members, projected
+//! by `pick` or `omit` (clauses 5.7.3 and 4.21).
 
-use crate::suite_keywords::create_vehicle_speed_fuel_level;
+use crate::vehicle_fixtures::create_vehicle_speed_fuel_level;
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -24,8 +24,6 @@ fn instance_values(body: &Value, attribute: &str) -> Vec<Option<i64>> {
 
 /// Pins: Check that one can retrieve an entity with pick on attributes
 /// Clause: 5.7.3, 4.21
-/// Changed: the value of every instance is checked to be an integer, where the expectation checks it only for an
-/// instance whose `observedAt` is not the exact text.
 #[gtest]
 #[tokio::test]
 async fn e020_21_01_retrieve_with_pick_on_attributes() -> Result<()> {
@@ -67,8 +65,6 @@ async fn e020_21_01_retrieve_with_pick_on_attributes() -> Result<()> {
 
 /// Pins: Check that one can retrieve an entity with omit on attributes
 /// Clause: 5.7.3, 4.21
-/// Changed: the value of every instance is checked to be an integer, where the expectation checks it only for an
-/// instance whose `observedAt` is not the exact text.
 #[gtest]
 #[tokio::test]
 async fn e020_21_02_retrieve_with_omit_on_attributes() -> Result<()> {
@@ -112,8 +108,6 @@ async fn e020_21_02_retrieve_with_omit_on_attributes() -> Result<()> {
 
 /// Pins: Check that one can retrieve an entity with pick on attributes and core members
 /// Clause: 5.7.3, 4.21
-/// Changed: the value of every instance is checked to be an integer, where the expectation checks it only for an
-/// instance whose `observedAt` is not the exact text.
 #[gtest]
 #[tokio::test]
 async fn e020_21_03_retrieve_with_pick_on_attributes_and_core_members() -> Result<()> {
@@ -156,8 +150,6 @@ async fn e020_21_03_retrieve_with_pick_on_attributes_and_core_members() -> Resul
 
 /// Pins: Check that one can retrieve an entity with omit on attributes and core members
 /// Clause: 5.7.3, 4.21
-/// Changed: the value of every instance is checked to be an integer, where the expectation checks it only for an
-/// instance whose `observedAt` is not the exact text.
 #[gtest]
 #[tokio::test]
 async fn e020_21_04_retrieve_with_omit_on_attributes_and_core_members() -> Result<()> {

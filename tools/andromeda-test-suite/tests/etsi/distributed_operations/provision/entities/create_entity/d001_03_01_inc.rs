@@ -1,5 +1,5 @@
-//! ETSI `D001_03_01_inc`: an entity that exists on the broker and that an inclusive registration matches is refused
-//! by the broker and created on the context source, answered 207 (clauses 4.3.3, 4.3.6.2, 5.6.1 and 6.3.3).
+//! An entity that exists on the broker and that an inclusive registration matches is refused by the broker and created
+//! on the context source, answered 207 (clauses 4.3.3, 4.3.6.2, 5.6.1 and 6.3.3).
 
 use crate::{
     distributed_operations::{
@@ -8,8 +8,8 @@ use crate::{
         provision::entities::entity_sources::{REDIRECTION, vehicle_id_registration},
         redirected_request::{forwarded_body, wait_for_redirected},
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities, send_create_entity},
-    suite_payloads::vehicle_parked,
+    entity_operations::{create_entity_with_context_string, delete_entities, send_create_entity},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -20,18 +20,6 @@ use serde_json::{Value, json};
 /// Pins: Check that if one requests the Context Broker to create an entity that matches an inclusive registration and
 /// already exists locally, this raises an error on the Context Broker but is created correctly on the Context Source
 /// Clause: 4.3.3, 4.3.6.2, 5.6.1, 6.3.3
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request hands over the most recent request the server holds; the port waits until the source
-/// holds a request earlier waits did not take and reads the last one, which is the one the case's action forwarded.
-/// Changed: Wait for redirected request replies 200 to a request the stub has already answered, so the server keeps
-/// that reply for the next request no stub matches; the port queues it on the source as one reply of 200 and no body.
-/// Changed: Get Request Body is parsed as a Python `'''...'''` literal; the port refuses a backslash, a `'''` and a
-/// final `'` and then requires the body to be JSON.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 #[gtest]
 #[tokio::test]
 async fn d001_03_01_inc_create_entity_already_existing_locally_on_a_context_source() -> Result<()> {

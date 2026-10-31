@@ -1,4 +1,4 @@
-//! The one way the suite waits for the broker: poll until a condition holds or a deadline passes.
+//! The one way the tests wait for the broker: poll until a condition holds or a deadline passes.
 //!
 //! Notifications, forwarded requests and records the broker writes after answering arrive on the broker's schedule,
 //! while other tests keep it busy. A wait therefore polls with a bound, and the bound is generous: a passing wait
@@ -11,9 +11,9 @@ use tokio::time::{Instant, sleep};
 /// The longest a positive wait waits when the stack sets no `ANDROMEDA_TEST_SUITE__DELIVERY_DEADLINE_SECONDS`.
 ///
 /// A positive wait (a notification, a forwarded request, an MQTT message, a record the broker writes after answering)
-/// ends at the first poll that sees its condition, so the deadline costs only a failing test. The ETSI retry budgets
-/// (1 s, 5 s, 10 s) are shorter than the broker's delivery latency when several runs share one stack. Absence windows
-/// and the real-time waits a case requires (a Sleep, an expiry, a throttling) are not deadlines and do not use it.
+/// ends at the first poll that sees its condition, so the deadline costs only a failing test. Retry budgets of 1 s,
+/// 5 s or 10 s are shorter than the broker's delivery latency when several runs share one stack. Absence windows
+/// and the real-time waits a test requires (a sleep, an expiry, a throttling) are not deadlines and do not use it.
 pub const DEFAULT_DELIVERY_DEADLINE: Duration = Duration::from_secs(60);
 
 /// The deadline of every positive wait: the stack's `ANDROMEDA_TEST_SUITE__DELIVERY_DEADLINE_SECONDS`, or

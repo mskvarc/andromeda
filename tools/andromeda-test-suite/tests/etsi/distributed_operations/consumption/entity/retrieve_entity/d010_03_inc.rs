@@ -1,5 +1,5 @@
-//! ETSI `D010_03_inc`: a retrieval by id is forwarded to an inclusive context source registered for `retrieveEntity`,
-//! and to none registered only for `queryEntity` or `queryBatch` (clauses 4.3.3, 4.3.6.2 and 5.7.1).
+//! A retrieval by id is forwarded to an inclusive context source registered for `retrieveEntity`, and to none
+//! registered only for `queryEntity` or `queryBatch` (clauses 4.3.3, 4.3.6.2 and 5.7.1).
 
 use crate::distributed_operations::{
     fork_rule::{ForkRule, QueriedEntity},
@@ -89,15 +89,9 @@ async fn expect_no_request(source: &ContextSource) -> Result<()> {
 /// Pins: Check that if one retrieves entity living on a Context Source from a Context Broker, and the registration
 /// only allows the retrieveEntity operation, the request is forwarded as expected
 /// Clause: 4.3.3, 4.3.6.2, 5.7.1
-/// Corrected: `fix(D010_03_inc)`: assert the unforwarded retrieve without counting the queryBatch stub (5.7.1.4)
-/// Corrected: `fix(D010_03_inc)`: a retrieve is not forwarded to a query-only registration (5.7.1.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D010_03_inc_01`, with the case number after the mode; the file name moves it
-/// before the mode (d010-03-01-inc), as in the other files of the area
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: the retrieve is not forwarded, which the test checks without counting the queryBatch requests (clause
+/// 5.7.1.4)
+/// Expected: a retrieve is not forwarded to a query-only registration (clause 5.7.1.4)
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]
@@ -120,16 +114,10 @@ async fn d010_03_01_inc_retrieve_entity_by_id_using_the_retrieve_entity_operatio
 /// Pins: Check that if one retrieves entity living on a Context Source from a Context Broker, and the registration
 /// only allows the queryEntity operation, the request is not forwarded and the entity is not found
 /// Clause: 4.3.3, 4.3.6.2, 5.7.1
-/// Corrected: `fix(D010_03_inc)`: assert the unforwarded retrieve without counting the queryBatch stub (5.7.1.4)
-/// Corrected: `fix(D010_03_inc)`: a retrieve is not forwarded to a query-only registration (5.7.1.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D010_03_inc_02`, with the case number after the mode; the file name moves it
-/// before the mode (d010-03-02-inc), as in the other files of the area
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
-/// Absence: Wait For No Request 5 s
+/// Expected: the retrieve is not forwarded, which the test checks without counting the queryBatch requests (clause
+/// 5.7.1.4)
+/// Expected: a retrieve is not forwarded to a query-only registration (clause 5.7.1.4)
+/// Absence: no request within 5 s
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]
@@ -159,16 +147,10 @@ async fn d010_03_02_inc_retrieve_entity_by_id_using_the_query_entity_operation()
 /// Pins: Check that if one retrieves entity living on a Context Source from a Context Broker, and the registration
 /// only allows the queryBatch operation, the request is not forwarded and the entity is not found
 /// Clause: 4.3.3, 4.3.6.2, 5.7.1
-/// Corrected: `fix(D010_03_inc)`: assert the unforwarded retrieve without counting the queryBatch stub (5.7.1.4)
-/// Corrected: `fix(D010_03_inc)`: a retrieve is not forwarded to a query-only registration (5.7.1.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D010_03_inc_03`, with the case number after the mode; the file name moves it
-/// before the mode (d010-03-03-inc), as in the other files of the area
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
-/// Absence: Wait For No Request 5 s
+/// Expected: the retrieve is not forwarded, which the test checks without counting the queryBatch requests (clause
+/// 5.7.1.4)
+/// Expected: a retrieve is not forwarded to a query-only registration (clause 5.7.1.4)
+/// Absence: no request within 5 s
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

@@ -1,5 +1,5 @@
-//! ETSI `053_08`: the `numberOfHits` of an `ImplicitlyCreated` `@context` counts the requests that use it (clauses
-//! 5.13.3.5 and 5.13.4).
+//! The `numberOfHits` of an `ImplicitlyCreated` `@context` counts the requests that use it (clauses 5.13.3.5 and
+//! 5.13.4).
 
 use crate::jsonld_context::{
     implicit_context::{ImplicitSubscription, ImplicitTeardown},
@@ -9,24 +9,17 @@ use crate::jsonld_context::{
 use andromeda_test_suite::{broker, namespace::Namespace, teardown::AnyAnswer};
 use googletest::prelude::*;
 use ngsi_ld::http::operation::{ContextKindFilter, ServeContextDetails};
-use serde_json::{Value, json};
 
 /// Pins: Check that the numberOfHits is increased after using a `ImplicitlyCreated` context
 /// Clause: 5.13.4
-/// Corrected: fix(numberofhits): count context uses, not metadata serves (5.13.3.5)
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a Subscription has no such member, Table 5.2.12-1), so its check never applies; the port requires
-/// the member to be absent, which implies the check
-/// Changed: numberOfHits is required to be absent or the expected number, where the keyword also skips a null or empty
-/// value and compares a text as a number; clause 5.13.3.5 makes it a number
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Expected: numberOfHits counts uses of the @context, not serves of its metadata (clause 5.13.3.5)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a Subscription has no numberOfHits member (Table 5.2.12-1), so the answer carries none
+/// Expected: numberOfHits is absent or the expected number (clause 5.13.3.5 makes it a number)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e053_08_01_number_of_hits_increases_after_using_an_implicitly_created_context() -> Result<()> {
@@ -42,8 +35,8 @@ async fn e053_08_01_number_of_hits_increases_after_using_an_implicitly_created_c
         .send_unchecked(broker.unchecked(&ServeContextDetails { id: &implicit.id })?)
         .await
         .any_answer();
-    let details = serde_json::from_slice::<Value>(served_details(&broker, &implicit.id).await?.body())?;
-    expect_that!(details.get("numberOfHits"), any![none(), some(eq(&json!(1)))]);
+    let details = served_details(&broker, &implicit.id).await?;
+    expect_that!(details.number_of_hits, any![none(), some(eq(1))]);
     implicit.delete(&broker, ImplicitTeardown::Delete).await?;
     broker.entities().delete(&testing.id).send().await.any_answer();
     broker.temporal().delete(&testing.id).send().await.any_answer();

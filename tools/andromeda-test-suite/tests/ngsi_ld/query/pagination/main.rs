@@ -1,0 +1,62 @@
+//! The ngsi-ld tree, its `query` area, its `pagination` part: one test per scenario of the broker's NGSI-LD behaviour,
+//! each a sequence of requests and the requirements on their answers, in the shared default tenant unless the test
+//! names a private one.
+
+#![deny(missing_docs, unreachable_pub, unused_qualifications)]
+#![deny(clippy::missing_docs_in_private_items)]
+#![forbid(unsafe_code)]
+
+mod n_qry_pag_0001;
+mod n_qry_pag_0002;
+mod n_qry_pag_0003;
+mod n_qry_pag_0004;
+mod n_qry_pag_0005;
+mod n_qry_pag_0006;
+mod n_qry_pag_0007;
+mod n_qry_pag_0008;
+mod n_qry_pag_0009;
+mod n_qry_pag_0010;
+mod n_qry_pag_0011;
+mod n_qry_pag_0013;
+mod n_qry_pag_0017;
+mod n_qry_pag_0018;
+mod n_qry_pag_0021;
+mod n_qry_pag_0036;
+mod n_qry_pag_9001;
+mod n_qry_pag_9002;
+mod n_qry_pag_9003;
+mod n_qry_pag_9004;
+mod n_qry_pag_9005;
+mod n_qry_pag_9006;
+mod n_qry_pag_9007;
+mod n_qry_pag_9008;
+mod n_qry_pag_9009;
+mod n_qry_pag_9010;
+mod n_qry_pag_9011;
+mod n_qry_pag_9012;
+mod n_qry_pag_9013;
+mod n_qry_pag_9016;
+mod o_qry_pag_0012;
+mod o_qry_pag_0014;
+mod o_qry_pag_0019;
+mod o_qry_pag_0020;
+mod o_qry_pag_0022;
+mod o_qry_pag_0023;
+mod o_qry_pag_0024;
+mod o_qry_pag_0025;
+mod o_qry_pag_0026;
+mod o_qry_pag_0027;
+mod o_qry_pag_0028;
+mod o_qry_pag_0029;
+mod o_qry_pag_0030;
+mod o_qry_pag_0031;
+mod o_qry_pag_0032;
+mod o_qry_pag_0035;
+mod o_qry_pag_2620;
+mod o_qry_pag_2700;
+mod o_qry_pag_2701;
+mod o_qry_pag_4001;
+mod o_qry_pag_4002;
+mod o_qry_pag_9014;
+mod o_qry_pag_9015;
+mod o_qry_pag_9017;

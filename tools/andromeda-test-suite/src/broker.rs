@@ -1,7 +1,7 @@
 //! Clients of the stack's brokers, and the private tenant a test brings up when no selector can scope its subject.
 //!
-//! Every client of a test prints its exchanges ([`ExchangeLog`]) and speaks to the broker as the Hurl suite did:
-//! HTTP/1.1 or HTTP/2 as the broker offers, no redirect followed, no proxy and no content decoding.
+//! Every client of a test prints its exchanges ([`ExchangeLog`]) and speaks to the broker over HTTP/1.1 or HTTP/2 as
+//! the broker offers, following no redirect, through no proxy and with no content decoding.
 
 use crate::{
     config::{BrokerRole, PeerRole, SuiteConfig},
@@ -23,7 +23,7 @@ use url::Url;
 /// The longest a request may take: beyond every forward timeout a broker waits out before answering.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The transport of every client of the suite.
+/// The transport every test client shares.
 pub type SuiteTransport = ExchangeLog<ReqwestTransport>;
 
 /// A client of one broker of the stack.

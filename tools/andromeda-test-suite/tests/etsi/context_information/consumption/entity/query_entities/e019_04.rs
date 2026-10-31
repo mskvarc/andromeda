@@ -1,8 +1,8 @@
-//! ETSI `019_04`: entities queried by id are returned in a simplified representation (clause 6.3.7).
+//! Entities queried by id are returned in a simplified representation (clause 6.3.7).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

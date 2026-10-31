@@ -1,15 +1,16 @@
-//! ETSI `055_01`: an entity attribute is replaced, and its `createdAt` keeps the value it had (clauses 5.6.19 and 6.7.3.3).
+//! An entity attribute is replaced, and its `createdAt` keeps the value it had (clauses 5.6.19 and 6.7.3.3).
 
 use crate::{
-    suite_keywords::{create_vehicle_parked_speed_sources, delete_entities, retrieve_entity_sys_attrs_json},
-    suite_payloads::{VEHICLE_PARKED_SPEED_SOURCE_TERMS, is_parked_downtown2},
+    entity_operations::{delete_entities, retrieve_entity_sys_attrs_json},
+    vehicle_entity_payloads::{VEHICLE_PARKED_SPEED_SOURCE_TERMS, is_parked_downtown2},
+    vehicle_fixtures::create_vehicle_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{Attribute, AttributeName, Property, Value},
+    model::{Attribute, AttributeName, Property},
 };
 use serde_json::json;
 
@@ -91,7 +92,7 @@ async fn e055_01_02_replace_entity_attribute_giving_a_new_attribute_type() -> Re
     let created_at = before.pointer("/isParked/createdAt");
     verify_that!(created_at, some(anything()))?;
 
-    let replacement = Attribute::from(Property::builder(Value::Boolean(true)).build()?);
+    let replacement = Attribute::from(Property::builder(true).build()?);
     let replaced = client.with_responses().entities().replace_attribute(&id, &is_parked, &replacement).send().await;
     verify_that!(&replaced, answered(StatusCode::NO_CONTENT))?;
     expect_that!(replaced?.body.len(), eq(0));

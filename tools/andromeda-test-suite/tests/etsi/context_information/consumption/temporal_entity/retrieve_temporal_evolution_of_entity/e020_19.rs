@@ -1,7 +1,7 @@
-//! ETSI `020_19`: the temporal evolution of a scope is retrieved after the scope attribute is deleted, as the
-//! `deletedAt` temporal property names the instance that the deletion recorded (clauses 4.18 and 5.7.3).
+//! The temporal evolution of a scope is retrieved after the scope attribute is deleted, as the `deletedAt` temporal
+//! property names the instance that the deletion recorded (clauses 4.18 and 5.7.3).
 
-use crate::suite_keywords::{create_vehicle_scoped_fuel, delete_attribute};
+use crate::{entity_operations::delete_attribute, vehicle_fixtures::create_vehicle_scoped_fuel};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -10,7 +10,7 @@ use serde_json::json;
 
 /// Pins: Check that one can retrieve the temporal evolution of a scope following the deletedAt temporal property
 /// Clause: 4.18, 5.7.3, 6.19.3.1
-/// Corrected: fix(deleted-scope): deleted scope renders urn:ngsi-ld:null (4.5.7, 4.18)
+/// Expected: a deleted scope renders as urn:ngsi-ld:null (clauses 4.5.7, 4.18)
 #[gtest]
 #[tokio::test]
 async fn e020_19_01_with_a_scope() -> Result<()> {

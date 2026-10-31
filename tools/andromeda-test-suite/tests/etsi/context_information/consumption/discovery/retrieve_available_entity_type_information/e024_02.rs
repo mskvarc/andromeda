@@ -1,7 +1,7 @@
-//! ETSI `024_02`: a specified entity type is retrieved in its detailed representation, named by its compacted or by its
-//! expanded name (clause 5.7.7).
+//! A specified entity type is retrieved in its detailed representation, named by its compacted or by its expanded name
+//! (clause 5.7.7).
 
-use crate::{suite_keywords::create_entity_with_link, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,

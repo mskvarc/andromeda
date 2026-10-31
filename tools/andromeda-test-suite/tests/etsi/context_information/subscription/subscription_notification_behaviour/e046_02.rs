@@ -1,10 +1,10 @@
-//! ETSI `046_02`: a subscription with a `timeInterval` notifies periodically, regardless of attribute changes (clause 5.8.6).
+//! A subscription with a `timeInterval` notifies periodically, regardless of attribute changes (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{created, subscribed, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -17,12 +17,6 @@ use serde_json::{Value, json};
 /// Pins: If a Subscription defines a timeInterval member, a Notification shall be sent periodically, when the time interval
 /// (in seconds) specified in such value field is reached, regardless of Attribute changes.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: The non-empty `$.data` is required to be an array, which the normalized notification always carries; the Hurl
-/// line also accepts an object or a string
 #[gtest]
 #[tokio::test]
 async fn e046_02_01_check_that_a_notification_is_sent_on_the_time_interval() -> Result<()> {
@@ -49,9 +43,9 @@ async fn e046_02_01_check_that_a_notification_is_sent_on_the_time_interval() -> 
     let _subscription = subscribed(&as_list, &subscription).await?;
 
     let first = sink.wait_for(1, 1).await?;
-    robot_literal::read(&first.body)?;
+    first.json()?;
     let second = sink.wait_for(1, 2).await?;
-    let body = robot_literal::read(&second.body)?;
+    let body = second.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(gt(0)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));

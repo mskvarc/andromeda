@@ -2,7 +2,7 @@
 //! `ListRelationship` in its `entityList`, each a projected entity since the request's projection applies to them
 //! too, so a test checks them with the entity and identity matchers.
 
-use ngsi_ld::model::{Attribute, Completeness, Entity, OneOrMany, Output, Projected};
+use ngsi_ld::model::{Attribute, Completeness, Entity, EntityId, OneOrMany, Output, Projected};
 use std::iter;
 
 /// The linked entities an inline join nested at the end of `path`, a chain of Relationship names: the first hop is
@@ -50,12 +50,23 @@ pub fn chain_entity<'e, C: Completeness>(entity: &'e Entity<Output, C>, name: &'
     chain(entity, name).nth(depth.checked_sub(1)?)
 }
 
+/// The objects of the first instance of the Relationship `name` of `entity`, whether written alone or in an array;
+/// empty when the entity holds no such Relationship.
+#[must_use]
+pub fn relationship_objects<'e, C: Completeness>(entity: &'e Entity<Output, C>, name: &str) -> &'e [EntityId] {
+    if let Some(Attribute::Relationship(relationship)) = first_instance(entity, name) {
+        relationship.object().as_slice()
+    } else {
+        &[]
+    }
+}
+
 /// The first instance of the attribute `name` of `entity`.
 fn first_instance<'e, C: Completeness>(entity: &'e Entity<Output, C>, name: &str) -> Option<&'e Attribute<Output>> {
     entity
         .attributes
         .iter()
-        .find_map(|(candidate, instances)| (candidate.to_string() == name).then_some(instances.first()))
+        .find_map(|(candidate, instances)| (candidate.as_str() == name).then_some(instances.first()))
 }
 
 /// The linked entities the first instance of the attribute `name` of `entity` nests.
@@ -81,7 +92,7 @@ mod tests {
         attribute_matcher::any_attribute,
         entity_matcher::has_attribute,
         identity_matcher::has_id,
-        linked_entity::{chain_entity, chain_length, linked_entities, linked_entity_alone},
+        linked_entity::{chain_entity, chain_length, linked_entities, linked_entity_alone, relationship_objects},
         nth::nth,
     };
     use googletest::prelude::*;
@@ -113,6 +124,20 @@ mod tests {
         expect_that!(linked_entity_alone(&entity, &["linkedTo"]), eq(false));
         expect_that!(linked, len(eq(2)));
         verify_that!(linked, nth(0, has_id(&second)))
+    }
+
+    #[gtest]
+    fn the_objects_of_a_relationship_are_read_alone_or_in_an_array() -> Result<()> {
+        let entity = Entity::<Output>::parse(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","one":{"type":"Relationship","object":"urn:ngsi-ld:Building:1"},
+            "many":{"type":"Relationship","object":["urn:ngsi-ld:Building:2"]}}"#,
+            Lossless::Normalized,
+        )?;
+        let first: EntityId = "urn:ngsi-ld:Building:1".parse()?;
+        let second: EntityId = "urn:ngsi-ld:Building:2".parse()?;
+        expect_that!(relationship_objects(&entity, "one"), elements_are![eq(&first)]);
+        expect_that!(relationship_objects(&entity, "many"), elements_are![eq(&second)]);
+        verify_that!(relationship_objects(&entity, "absent"), is_empty())
     }
 
     #[gtest]

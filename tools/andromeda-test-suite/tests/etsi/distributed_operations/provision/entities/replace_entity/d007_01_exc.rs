@@ -1,5 +1,5 @@
-//! ETSI `D007_01_exc`: replacing an entity whose `speed` an exclusive registration holds sends the replacement to the
-//! context source once and leaves no `speed` on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.18).
+//! Replacing an entity whose `speed` an exclusive registration holds sends the replacement to the context source once
+//! and leaves no `speed` on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.18).
 
 use crate::{
     distributed_operations::{
@@ -8,8 +8,8 @@ use crate::{
         provision::entities::entity_sources::{Coverage, vehicle_id_registration},
         vehicle_payloads::vehicle_speed_parked2,
     },
-    suite_keywords::delete_entities,
-    suite_payloads::vehicle_parked,
+    entity_operations::delete_entities,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -23,15 +23,7 @@ use ngsi_ld::{
 /// Pins: Check that if one requests the Context Broker to replace an entity that matches an exclusive registration,
 /// the entity is replaced on the Context Source too
 /// Clause: 4.3.3, 4.3.6.3, 5.6.18
-/// Corrected: `fix(D007_01_exc)`: assert the replaced speed is absent locally (4.3.6.3)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the retrieval is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the replaced speed is absent locally (clause 4.3.6.3)
 #[gtest]
 #[tokio::test]
 async fn d007_01_exc_replace_entity() -> Result<()> {

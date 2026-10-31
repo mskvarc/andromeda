@@ -1,13 +1,12 @@
-//! ETSI `046_01`: a subscription notifies only while its status is active (clause 5.8.6).
+//! A subscription notifies only while its status is active (clause 5.8.6).
 
-use crate::suite_payloads::building_simple_attributes;
+use crate::building_payloads::building_simple_attributes;
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
     namespace::Namespace,
     notification_sink::NotificationSink,
     problem::answered,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
     wire::send_to,
@@ -30,10 +29,6 @@ use tokio::time::sleep;
 
 /// Pins: Check that a notification is only sent if and only if the status is active
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three and
-/// then requires the body to be JSON, which is stricter only where an escape leaves the keyword reading, and accepting,
-/// a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_01_01_check_that_a_notification_is_only_sent_if_status_is_active() -> Result<()> {
@@ -73,7 +68,7 @@ async fn e046_01_01_check_that_a_notification_is_only_sent_if_status_is_active()
     send_to(&as_list, &update, &format!("entities/{}/attrs/", building.id)).await.any_answer();
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));
     expect_that!(body.pointer("/data/0/airQualityLevel/value"), some(eq(&json!(5))));

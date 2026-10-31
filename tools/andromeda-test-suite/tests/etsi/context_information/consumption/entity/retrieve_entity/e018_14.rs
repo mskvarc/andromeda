@@ -1,7 +1,7 @@
-//! ETSI `018_14`: an entity whose Relationship targets an entity the broker does not hold is retrieved with that
-//! Relationship alone, inline or flat (clauses 5.7.1 and 4.5.23).
+//! An entity whose Relationship targets an entity the broker does not hold is retrieved with that Relationship alone,
+//! inline or flat (clauses 5.7.1 and 4.5.23).
 
-use crate::suite_keywords::create_entity;
+use crate::entity_operations::create_entity;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,
@@ -70,7 +70,7 @@ async fn e018_14_01_inline() -> Result<()> {
 
 /// Pins: Check that an entity can be retrieved asking for a non-existent linked entity
 /// Clause: 5.7.1, 4.5.23
-/// Corrected: `fix(018_14_02)`: flat linked representation is an array (4.5.23.3)
+/// Expected: the flat linked representation is an array (clause 4.5.23.3)
 #[gtest]
 #[tokio::test]
 async fn e018_14_02_flat() -> Result<()> {

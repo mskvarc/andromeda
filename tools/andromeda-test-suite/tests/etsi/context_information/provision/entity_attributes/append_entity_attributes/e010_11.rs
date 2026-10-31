@@ -1,7 +1,7 @@
-//! ETSI `010_11`: a `VocabProperty` whose `vocab` is a term is appended to a Vehicle that holds no attribute
-//! (clauses 5.6.3 and 4.5.20).
+//! A `VocabProperty` whose `vocab` is a term is appended to a Vehicle that holds no attribute (clauses 5.6.3 and
+//! 4.5.20).
 
-use crate::suite_keywords::{append_attributes, create_entity, delete_entities, ld_json_body_client, retrieve_entity_json};
+use crate::entity_operations::{append_attributes, create_entity, delete_entities, ld_json_body_client, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -15,7 +15,6 @@ const TERMS: [&str; 2] = ["Vehicle", "vocabProperty"];
 
 /// Pins: Check that you can append a `VocabProperty` property to an entity
 /// Clause: 5.6.3, 4.5.20
-/// Changed: the response body is also checked to be empty, which the Hurl file does not check
 #[gtest]
 #[tokio::test]
 async fn e010_11_01_append_a_vocab_property_property() -> Result<()> {

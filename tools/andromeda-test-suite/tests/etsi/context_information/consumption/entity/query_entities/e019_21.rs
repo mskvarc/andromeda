@@ -1,9 +1,9 @@
-//! ETSI `019_21`: Buildings linked to Cities are queried with an `omit` on the linking entity or on the linked entity,
-//! joined inline or flat (clauses 5.7.2, 4.5.23 and 4.21).
+//! Buildings linked to Cities are queried with an `omit` on the linking entity or on the linked entity, joined inline
+//! or flat (clauses 5.7.2, 4.5.23 and 4.21).
 
 use crate::{
-    suite_keywords::{create_street_linked_pairs, delete_linked_pairs},
-    suite_payloads::STREET_LINKED_TERMS,
+    linked_entity_fixtures::{create_street_linked_pairs, delete_linked_pairs},
+    linked_place_payloads::STREET_LINKED_TERMS,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -20,7 +20,7 @@ const PAIR: &str = "019-21";
 
 /// Pins: Check that entities can be queried with inline linked entity retrieval and omit on name
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Corrected: `fix(019_21)`: remove the omitted name from the Linked Cities too (5.7.2.5, 5.7.1.5)
+/// Expected: the omitted name is removed from the linked Cities too (clauses 5.7.2.5, 5.7.1.5)
 #[gtest]
 #[tokio::test]
 async fn e019_21_01_query_inline_with_omit_on_linking_entity() -> Result<()> {
@@ -84,7 +84,7 @@ async fn e019_21_01_query_inline_with_omit_on_linking_entity() -> Result<()> {
 
 /// Pins: Check that entities can be queried with flat linked entity retrieval and omit on name
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Corrected: `fix(019_21)`: remove the omitted name from the Linked Cities too (5.7.2.5, 5.7.1.5)
+/// Expected: the omitted name is removed from the linked Cities too (clauses 5.7.2.5, 5.7.1.5)
 #[gtest]
 #[tokio::test]
 async fn e019_21_02_query_flat_with_omit_on_linking_entity() -> Result<()> {

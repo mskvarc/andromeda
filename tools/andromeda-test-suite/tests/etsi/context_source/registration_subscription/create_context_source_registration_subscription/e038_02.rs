@@ -1,15 +1,15 @@
-//! ETSI `038_02`: a Context Source Registration Subscription created without an id is given one, named by the
-//! `Location` of the answer (clause 5.11.2).
+//! A Context Source Registration Subscription created without an id is given one, named by the `Location` of the answer
+//! (clause 5.11.2).
 
 use crate::{
-    suite_keywords::{
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{
         REGISTRATION_SUBSCRIPTION_STATE,
-        ld_json_body_client,
         registration_subscription_json,
         registration_subscription_request,
         without_members,
     },
-    suite_payloads::{building_registration_subscription, key_values_document},
+    subscription_payloads::{building_registration_subscription, key_values_document},
 };
 use andromeda_test_suite::{
     broker,
@@ -36,7 +36,7 @@ const NOTIFICATION_STATE: [&str; 6] = ["lastNotification", "lastSuccess", "lastF
 /// Pins: Check that one can create a context source registration subscription without providing an id and it will be
 /// automatically generated
 /// Clause: 5.11.2
-/// Corrected: fix(csrsub-jsonldcontext): compare csr-subscription create/update with jsonldcontext ignored (5.8.1.4)
+/// Expected: the created or updated registration subscription is compared with jsonldContext left out (clause 5.8.1.4)
 #[gtest]
 #[tokio::test]
 async fn e038_02_01_create_context_source_registration_subscription_without_an_id() -> Result<()> {

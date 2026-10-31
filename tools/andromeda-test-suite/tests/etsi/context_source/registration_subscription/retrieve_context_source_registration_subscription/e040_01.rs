@@ -1,17 +1,16 @@
-//! ETSI `040_01`: a Context Source Registration Subscription is retrieved with the members it was created with, and
-//! the `Link` field of the answer names the context it was asked in (clause 5.11.4).
+//! A Context Source Registration Subscription is retrieved with the members it was created with, and the `Link` field
+//! of the answer names the context it was asked in (clause 5.11.4).
 
 use crate::{
-    suite_keywords::{
+    entity_operations::{context_link, ld_json_body_client},
+    registration_subscription_operations::{
         REGISTRATION_SUBSCRIPTION_STATE,
-        context_link,
         create_registration_subscription,
         expect_absent_or_date,
         expect_absent_or_integer,
-        ld_json_body_client,
         without_members,
     },
-    suite_payloads::building_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{
     broker,
@@ -33,10 +32,7 @@ use serde_json::json;
 
 /// Pins: Check that one can retrieve a context source registration subscription
 /// Clause: 5.11.4
-/// Corrected: `fix(subscription-jsonldcontext)`: ignore jsonldcontext on retrieved subscriptions (5.8.1.4)
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause
-/// 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
+/// Expected: a retrieved subscription is compared with jsonldContext left out (clause 5.8.1.4)
 #[gtest]
 #[tokio::test]
 async fn e040_01_01_retrieve_context_source_registration_subscription() -> Result<()> {

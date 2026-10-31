@@ -1,4 +1,4 @@
-//! The ETSI common responses: media types, missing `Accept`, unavailable `@context`s and invalid parameters.
+//! The common responses: media types, missing `Accept`, unavailable `@context`s and invalid parameters.
 
 mod verify_get_without_accept;
 mod verify_invalid_parameters;

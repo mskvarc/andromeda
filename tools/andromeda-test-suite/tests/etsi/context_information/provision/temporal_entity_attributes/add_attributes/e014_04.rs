@@ -1,9 +1,11 @@
-//! ETSI `014_04`: instances are not added to a temporal representation of an entity with a body that is invalid or empty
-//! (clause 5.6.12).
+//! Instances are not added to a temporal representation of an entity with a body that is invalid or empty (clause
+//! 5.6.12).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, ld_json_body_client, post_empty, with_doubled_separator},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on, vehicle_speed_fuel_level_with_dataset},
+    entity_operations::ld_json_body_client,
+    temporal_operations::create_temporal_evolution,
+    unchecked_requests::{post_empty, with_doubled_separator},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_on, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, wire::api_uri};
 use googletest::prelude::*;

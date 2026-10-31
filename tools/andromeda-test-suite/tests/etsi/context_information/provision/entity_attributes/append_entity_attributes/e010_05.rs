@@ -1,9 +1,11 @@
-//! ETSI `010_05`: an append whose body is not JSON, because a member separator is doubled, is refused with 400
-//! `InvalidRequest` (clause 5.6.3).
+//! An append whose body is not JSON, because a member separator is doubled, is refused with 400 `InvalidRequest`
+//! (clause 5.6.3).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_sources, delete_entities, ld_json_body_client, with_doubled_separator},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_56},
+    entity_operations::{delete_entities, ld_json_body_client},
+    unchecked_requests::with_doubled_separator,
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_56},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;

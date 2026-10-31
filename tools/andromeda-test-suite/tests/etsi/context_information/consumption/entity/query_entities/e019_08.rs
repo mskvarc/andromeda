@@ -1,7 +1,7 @@
-//! ETSI `019_08`: entities are selected by an entity type selection expression: one type, the AND of two types, the OR of
-//! types, and expressions with two operators (clauses 4.17 and 5.7.2).
+//! Entities are selected by an entity type selection expression: one type, the AND of two types, the OR of types, and
+//! expressions with two operators (clauses 4.17 and 5.7.2).
 
-use crate::suite_keywords::{create_entity, delete_entities};
+use crate::entity_operations::{create_entity, delete_entities};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     namespace::Namespace,
@@ -14,7 +14,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{Entity, Input, Property, Value},
+    model::{Entity, Input, Property},
     query::SelectorType,
 };
 use serde_json::Value as Json;
@@ -42,7 +42,7 @@ fn building(namespace: &Namespace) -> Result<Entity<Input>> {
             "airQualityLevel",
             Property::builder(4).unit_code(UnitCode::C62).observed_at("2020-09-09T16:40:00.000Z".parse()?),
         )
-        .property("almostFull", Value::Boolean(false))
+        .property("almostFull", false)
         .build()?)
 }
 

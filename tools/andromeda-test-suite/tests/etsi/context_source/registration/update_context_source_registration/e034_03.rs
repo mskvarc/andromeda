@@ -1,9 +1,9 @@
-//! ETSI `034_03`: an update of a context source registration the broker does not hold is refused with 404 (clause
-//! 5.9.3).
+//! An update of a context source registration the broker does not hold is refused with 404 (clause 5.9.3).
 
 use crate::{
-    suite_keywords::{csource_endpoint, ld_json_body_client, update_registration_request},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_operations::{csource_endpoint, update_registration_request},
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -12,11 +12,8 @@ use ngsi_ld::{http::UncheckedDocument, model::ErrorType};
 
 /// Pins: Check that one cannot update a context source registration by id if the id is not known to the system
 /// Clause: 5.9.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause 4
-/// has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_03_01_update_a_context_source_registration_by_id_if_the_id_is_not_known_to_the_system() -> Result<()> {

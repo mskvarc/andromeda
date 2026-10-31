@@ -1,9 +1,8 @@
-//! ETSI `054_01`: an entity is replaced, and its `createdAt` system attribute keeps the value it had
-//! (clauses 5.6.18 and 6.5.3.3).
+//! An entity is replaced, and its `createdAt` system attribute keeps the value it had (clauses 5.6.18 and 6.5.3.3).
 
 use crate::{
-    suite_keywords::{create_entity_with_link, delete_entities, non_empty_member},
-    suite_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    building_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    entity_operations::{create_entity_with_link, delete_entities, non_empty_member},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

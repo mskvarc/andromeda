@@ -1,12 +1,11 @@
-//! ETSI `046_11`: the `timesSent` of a subscription counts its notifications, and the first notification sets it to 1
-//! (clause 5.8.6).
+//! The `timesSent` of a subscription counts its notifications, and the first notification sets it to 1 (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscription_created, teardown},
-    suite_keywords::once_delivery_recorded,
-    suite_payloads::building_simple_attributes,
+    registration_subscription_operations::once_delivery_recorded,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary, wire::json_body};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept},
@@ -18,13 +17,9 @@ use serde_json::json;
 
 /// Pins: The notification.timesSent member shall be incremented by one.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: the Retrieve Subscription after the notification is repeated every 250 ms for at most 10 s until its
-/// `notification` records the delivery (`lastNotification` present), then checked: clause 5.8.6 records the delivery
-/// once the endpoint's answer reaches the broker, which the endpoint's receipt of the notification precedes
+/// Timing: the Retrieve Subscription after the notification is repeated every 250 ms for at most 10 s until its
+/// `notification` records the delivery (`lastNotification` present): clause 5.8.6 records the delivery once the
+/// endpoint's answer reaches the broker, which the endpoint's receipt of the notification precedes
 #[gtest]
 #[tokio::test]
 async fn e046_11_01_check_that_times_sent_is_increased_by_one() -> Result<()> {
@@ -52,7 +47,7 @@ async fn e046_11_01_check_that_times_sent_is_increased_by_one() -> Result<()> {
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    robot_literal::read(&notification.body)?;
+    notification.json()?;
 
     let reader = broker.with_context(vocabulary.context())?.with_accept(Accept::new(NgsiLdMediaType::JsonLd));
     let retrieved = once_delivery_recorded(|| async { Ok(json_body(&reader.with_responses().subscriptions().retrieve(&id).send().await?)?) }).await?;

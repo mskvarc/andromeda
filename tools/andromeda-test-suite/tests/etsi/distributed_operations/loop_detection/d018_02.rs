@@ -1,5 +1,5 @@
-//! ETSI `D018_02`: a broker forwarding a create, an update, a delete, a replacement or a retrieval to an inclusive
-//! context source sends the source a `Via` header (clauses 4.3.3, 5.6.6 and 6.3.18).
+//! A broker forwarding a create, an update, a delete, a replacement or a retrieval to an inclusive context source sends
+//! the source a `Via` header (clauses 4.3.3, 5.6.6 and 6.3.18).
 
 use crate::{
     distributed_operations::{
@@ -8,8 +8,8 @@ use crate::{
         loop_detection::via_header::forwarded_via,
         vehicle_payloads::vehicle_parked2,
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
-    suite_payloads::vehicle_parked,
+    entity_operations::{create_entity_with_context_string, delete_entities},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -74,17 +74,9 @@ async fn torn_down(broker: &BrokerClient, namespace: &Namespace) -> Result<()> {
 
 /// Pins: Verify that the request contains the POST Via header when forwarding operations to the Context Source
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d018_02_01_check_post_via_header_forwarding_to_context_source() -> Result<()> {
@@ -112,17 +104,9 @@ async fn d018_02_01_check_post_via_header_forwarding_to_context_source() -> Resu
 
 /// Pins: Verify that the request contains the PATCH Via header when forwarding operations to the Context Source
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d018_02_02_check_update_via_header_forwarding_to_context_source() -> Result<()> {
@@ -147,17 +131,9 @@ async fn d018_02_02_check_update_via_header_forwarding_to_context_source() -> Re
 
 /// Pins: Verify that the request contains the DELETE Via header when forwarding operations to the Context Source
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d018_02_03_check_delete_via_header_forwarding_to_context_source() -> Result<()> {
@@ -175,17 +151,9 @@ async fn d018_02_03_check_delete_via_header_forwarding_to_context_source() -> Re
 
 /// Pins: Verify that the request contains the PUT Via header when forwarding operations to the Context Source
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d018_02_04_check_put_via_header_forwarding_to_context_source() -> Result<()> {
@@ -208,17 +176,9 @@ async fn d018_02_04_check_put_via_header_forwarding_to_context_source() -> Resul
 
 /// Pins: Verify that the request contains the GET Via header when forwarding operations to the Context Source
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d018_02_05_check_get_via_header_forwarding_to_context_source() -> Result<()> {

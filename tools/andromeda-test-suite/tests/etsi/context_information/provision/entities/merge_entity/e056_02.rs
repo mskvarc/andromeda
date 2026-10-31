@@ -1,9 +1,8 @@
-//! ETSI `056_02`: a merge whose target id is faulty, missing or not held by the broker is refused (clauses 5.6.17 and
-//! 6.5.3.4).
+//! A merge whose target id is faulty, missing or not held by the broker is refused (clauses 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{context_link, create_entity_with_link, delete_entities},
-    suite_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    building_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    entity_operations::{context_link, create_entity_with_link, delete_entities},
 };
 use andromeda_test_suite::{
     broker,

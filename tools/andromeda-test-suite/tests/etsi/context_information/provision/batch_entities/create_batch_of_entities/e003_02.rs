@@ -1,16 +1,10 @@
-//! ETSI `003_02`: a batch of two valid entities and one invalid entity is partly created, and the broker names
-//! the entity in error (clause 5.6.7).
+//! A batch of two valid entities and one invalid entity is partly created, and the broker names the entity in error
+//! (clause 5.6.7).
 
 use crate::{
-    suite_keywords::{
-        batch_create_partial,
-        create_entity_with_context_string,
-        delete_entities,
-        expect_partial_batch,
-        ld_json_body_client,
-        query_entities_json,
-    },
-    suite_payloads::bare_building,
+    batch_operations::{batch_create_partial, expect_partial_batch},
+    building_payloads::bare_building,
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

@@ -1,4 +1,4 @@
-//! The `Testing` entity the ETSI `@context` cases write to make the broker use a stored `@context`: its attributes
+//! The `Testing` entity the `@context` tests write to make the broker use a stored `@context`: its attributes
 //! `A1`, `A2` and `A3` are the terms of the cases' own term object.
 
 use andromeda_test_suite::{broker::BrokerClient, namespace::Namespace, teardown::AnyAnswer, wire};

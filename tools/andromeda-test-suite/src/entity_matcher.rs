@@ -2,10 +2,7 @@
 //! and the members its document holds. The attribute matchers take a projected entity too, whose `pick` or `omit`
 //! dropped its `id` or `type` (clause 4.21).
 
-use crate::{
-    attribute_matcher::{AttributeMatcher, Member},
-    attribute_reading::has_member,
-};
+use crate::{attribute_matcher::AttributeMatcher, attribute_member::Member, attribute_reading::has_member};
 use googletest::{
     description::Description,
     matcher::{Matcher, MatcherBase, MatcherResult},
@@ -65,7 +62,7 @@ pub fn lacks_attribute(name: &str) -> LacksAttribute {
 
 impl<C: Completeness> Matcher<&Entity<Output, C>> for LacksAttribute {
     fn matches(&self, actual: &Entity<Output, C>) -> MatcherResult {
-        actual.attributes.names().all(|name| name.to_string() != self.name).into()
+        actual.attributes.names().all(|name| name.as_str() != self.name).into()
     }
 
     fn describe(&self, result: MatcherResult) -> Description {
@@ -100,7 +97,7 @@ impl<C: Completeness> Matcher<&Entity<Output, C>> for HasInstance {
         actual
             .attributes
             .iter()
-            .filter(|(name, _)| name.to_string() == self.name)
+            .filter(|(name, _)| name.as_str() == self.name)
             .any(|(_, instances)| instances.iter().any(|instance| self.matcher.matches(instance).is_match()))
             .into()
     }
@@ -133,7 +130,7 @@ impl<C: Completeness> Matcher<&Entity<Output, C>> for HasInstances {
         actual
             .attributes
             .iter()
-            .any(|(name, instances)| name.to_string() == self.name && instances.len() == self.count)
+            .any(|(name, instances)| name.as_str() == self.name && instances.len() == self.count)
             .into()
     }
 
@@ -196,7 +193,7 @@ pub fn member_instances(entity: &Entity<Output>, name: &str, member: Member) -> 
     entity
         .attributes
         .iter()
-        .find(|(attribute, _)| attribute.to_string() == name)
+        .find(|(attribute, _)| attribute.as_str() == name)
         .map(|(_, instances)| instances.iter().filter(|instance| has_member(instance, instance.meta(), member)).count())
 }
 
@@ -223,7 +220,7 @@ impl<C: Completeness> Matcher<&Entity<Output, C>> for EveryInstance {
         actual
             .attributes
             .iter()
-            .find(|(name, _)| name.to_string() == self.name)
+            .find(|(name, _)| name.as_str() == self.name)
             .is_some_and(|(_, instances)| instances.iter().all(|instance| self.matcher.matches(instance).is_match()))
             .into()
     }
@@ -239,7 +236,8 @@ impl<C: Completeness> Matcher<&Entity<Output, C>> for EveryInstance {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_matcher::{Member, any_attribute, property, relationship},
+        attribute_matcher::{any_attribute, property, relationship},
+        attribute_member::Member,
         entity_matcher::{
             attribute_members,
             every_instance,

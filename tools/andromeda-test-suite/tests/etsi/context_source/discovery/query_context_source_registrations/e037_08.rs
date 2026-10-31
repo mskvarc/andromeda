@@ -1,9 +1,9 @@
-//! ETSI `037_08`: a query of context source registrations without a temporal query answers the registrations of
-//! latest information, trimmed to the matching `RegistrationInfo` (clause 5.10.2).
+//! A query of context source registrations without a temporal query answers the registrations of latest information,
+//! trimmed to the matching `RegistrationInfo` (clause 5.10.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint, delete_registrations},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    registration_operations::{create_registration, csource_endpoint, delete_registrations},
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -13,10 +13,9 @@ use serde_json::json;
 /// Pins: Check that one can query context source registrations. If no temporal query is present, only Context Source
 /// Registrations for Context Sources providing latest information are considered
 /// Clause: 5.10.2
-/// Corrected: fix(csr-discovery-trim): trim discovery coverage to matching registrationinfo (5.10.2.5)
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: discovery trims each registration's coverage to the matching `RegistrationInfo` (clause 5.10.2.5)
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_08_01_query_context_source_registration_without_temporal_query() -> Result<()> {

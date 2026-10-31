@@ -1,12 +1,12 @@
-//! ETSI `D003_01_red`: an append of attributes to an entity two redirect registrations match is sent to both context
-//! sources once and creates no entity on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.3).
+//! An append of attributes to an entity two redirect registrations match is sent to both context sources once and
+//! creates no entity on the broker (clauses 4.3.3, 4.3.6.3 and 5.6.3).
 
 use crate::{
     distributed_operations::{
         forwarding_source::{register, serve, source_endpoint, stub, stub_count, unregister},
         provision::entity_attributes::attribute_sources::{parked_by_john_doe_and_speed, vehicle_attribute_registration, vehicle_rule},
     },
-    suite_keywords::append_attributes,
+    entity_operations::append_attributes,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -20,15 +20,8 @@ use ngsi_ld::{
 /// Pins: Check that an entity attribute is appended and the redirect registration forwards the request to the Context
 /// Sources
 /// Clause: 4.3.3, 4.3.6.3, 5.6.3
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: providedBy stays out of the file vocabulary: the case reads it without a @context, so it expands under the
-/// core default vocabulary as in the Robot run
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
+/// Expected: providedBy stays out of the file vocabulary: the test reads it without a @context, so it expands under the
+/// core default vocabulary
 #[gtest]
 #[tokio::test]
 async fn d003_01_red_append_entity_attribute() -> Result<()> {

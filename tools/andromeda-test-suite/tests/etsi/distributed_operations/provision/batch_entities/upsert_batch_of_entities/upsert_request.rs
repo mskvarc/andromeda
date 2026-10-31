@@ -1,5 +1,5 @@
 //! The Batch Entity Upsert the upsert cases send: the entities posted to `/entityOperations/upsert` with the
-//! `options` value the ETSI keyword writes, `replace` included, which the typed operation leaves out as the default.
+//! `options` value written out, `replace` included, which the typed operation leaves out as the default.
 
 use andromeda_test_suite::{broker::BrokerClient, problem::answered, wire::send_to};
 use googletest::prelude::*;

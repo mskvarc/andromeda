@@ -1,9 +1,9 @@
-//! ETSI `037_05`: a query of context source registrations by type and idPattern answers the registrations whose
-//! `EntityInfo` matches, trimmed to the matching `RegistrationInfo`, and those that name no entities (clause 5.10.2).
+//! A query of context source registrations by type and idPattern answers the registrations whose `EntityInfo` matches,
+//! trimmed to the matching `RegistrationInfo`, and those that name no entities (clause 5.10.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint, delete_registrations},
-    suite_payloads::{VEHICLE_PARKING_TERMS, offstreet_pattern, vehicle_parking_registration},
+    registration_operations::{create_registration, csource_endpoint, delete_registrations},
+    registration_payloads::{VEHICLE_PARKING_TERMS, offstreet_pattern, vehicle_parking_registration},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -36,10 +36,9 @@ async fn downtown_parkings(client: &BrokerClient, vocabulary: &Vocabulary, names
 
 /// Pins: Check that one can query context source registrations matching `EntityInfo` of `RegistrationInfo`
 /// Clause: 5.10.2
-/// Corrected: fix(csr-discovery-trim): trim discovery coverage to matching registrationinfo (5.10.2.5)
-/// Changed: each idPattern, the query's included, is prefixed with the test's namespace
-/// (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: discovery trims each registration's coverage to the matching `RegistrationInfo` (clause 5.10.2.5)
+/// Isolation: each idPattern, the query's included, is prefixed with the test's namespace
+/// (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_05_01_registration_with_entity_info_matching_the_query() -> Result<()> {
@@ -79,8 +78,8 @@ async fn e037_05_01_registration_with_entity_info_matching_the_query() -> Result
 /// Tenant: private (the case registers a Context Source by its propertyNames alone, which matches every entity type
 /// (clause 5.12) and so every query of the shared tenant that names no attributes; clause 4.14 keeps each tenant's
 /// registrations its own)
-/// Changed: the query's idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`).
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: the query's idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own registrations
 #[gtest]
 #[tokio::test]
 async fn e037_05_02_registration_without_entity_info() -> Result<()> {

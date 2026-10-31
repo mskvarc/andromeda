@@ -1,9 +1,9 @@
-//! ETSI `019_12`: attribute instances are selected by their `datasetId`, alone or with an attribute name, and the
-//! default instance is selected with `@none` (clauses 4.5.5 and 5.7.2).
+//! Attribute instances are selected by their `datasetId`, alone or with an attribute name, and the default instance is
+//! selected with `@none` (clauses 4.5.5 and 5.7.2).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::dataset,
+    entity_operations::{create_entity, delete_entities},
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -63,8 +63,6 @@ async fn query_buildings(broker: &BrokerClient, vocabulary: &Vocabulary, attrs: 
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_01_filter_based_on_attrs_only() -> Result<()> {
@@ -93,8 +91,6 @@ async fn e019_12_01_filter_based_on_attrs_only() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_02_filter_based_on_dataset_id_only() -> Result<()> {
@@ -120,8 +116,6 @@ async fn e019_12_02_filter_based_on_dataset_id_only() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_03_filter_based_on_two_dataset_ids() -> Result<()> {
@@ -156,8 +150,6 @@ async fn e019_12_03_filter_based_on_two_dataset_ids() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_04_filter_based_on_default_instance() -> Result<()> {
@@ -183,8 +175,6 @@ async fn e019_12_04_filter_based_on_default_instance() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_05_filter_based_on_attrs_and_default_instance() -> Result<()> {
@@ -209,8 +199,6 @@ async fn e019_12_05_filter_based_on_attrs_and_default_instance() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_06_filter_based_on_attrs_and_dataset_id() -> Result<()> {
@@ -235,8 +223,6 @@ async fn e019_12_06_filter_based_on_attrs_and_dataset_id() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances based on datasetId.
 /// Clause: 4.5.5, 5.7.2
-/// Changed: the answer is compared as the list of the one Building the namespaced type matches, where the case reads
-/// its first element
 #[gtest]
 #[tokio::test]
 async fn e019_12_07_filter_based_on_attrs_and_dataset_id_with_no_match() -> Result<()> {

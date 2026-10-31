@@ -1,26 +1,21 @@
-//! ETSI `046_34`: a subscription with `showChanges` and the `attributeDeleted` trigger notifies a deleted Property,
-//! Relationship, `GeoProperty` or `LanguageProperty` as the NGSI-LD Null with its previous value (clauses 5.8.6 and
-//! 4.5.18).
+//! A subscription with `showChanges` and the `attributeDeleted` trigger notifies a deleted Property, Relationship,
+//! `GeoProperty` or `LanguageProperty` as the NGSI-LD Null with its previous value (clauses 5.8.6 and 4.5.18).
 
 use crate::{
+    building_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
     context_information::subscription::subscription_notification_behaviour::{
         change_case::{ContextForm, EntityChange, change_notification, show_changes_subscription, street_building_document},
         deletion_case::NGSI_LD_NULL,
         notification_case::{data_item, teardown},
     },
-    suite_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
 };
-use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, robot_literal};
+use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::subscription::{NotificationTrigger, SubscriptionId};
 use serde_json::{Value, json};
 
 /// Pins: Delete an attribute from entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_34_01_show_changes_for_deletion_of_property() -> Result<()> {
@@ -36,7 +31,7 @@ async fn e046_34_01_show_changes_for_deletion_of_property() -> Result<()> {
         EntityChange::DeleteAttribute(&"name".parse()?),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -49,10 +44,6 @@ async fn e046_34_01_show_changes_for_deletion_of_property() -> Result<()> {
 
 /// Pins: Delete an attribute from entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_34_02_show_changes_for_deletion_of_relationship() -> Result<()> {
@@ -68,7 +59,7 @@ async fn e046_34_02_show_changes_for_deletion_of_relationship() -> Result<()> {
         EntityChange::DeleteAttribute(&"locatedAt".parse()?),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -85,10 +76,6 @@ async fn e046_34_02_show_changes_for_deletion_of_relationship() -> Result<()> {
 
 /// Pins: Delete an attribute from entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_34_03_show_changes_for_deletion_of_geo_property() -> Result<()> {
@@ -104,7 +91,7 @@ async fn e046_34_03_show_changes_for_deletion_of_geo_property() -> Result<()> {
         EntityChange::DeleteAttribute(&"location".parse()?),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -121,10 +108,6 @@ async fn e046_34_03_show_changes_for_deletion_of_geo_property() -> Result<()> {
 
 /// Pins: Delete an attribute from entity and check the notification contains the previous value
 /// Clause: 5.8.6, 4.5.18
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_34_04_show_changes_for_deletion_of_language_property() -> Result<()> {
@@ -140,7 +123,7 @@ async fn e046_34_04_show_changes_for_deletion_of_language_property() -> Result<(
         EntityChange::DeleteAttribute(&"street".parse()?),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);

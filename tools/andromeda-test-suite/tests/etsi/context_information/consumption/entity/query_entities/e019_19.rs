@@ -1,8 +1,8 @@
-//! ETSI `019_19`: Buildings are queried with `orderBy` on an attribute, on `id`, on `createdAt`, on a sub-attribute or on
-//! a sub-attribute's `createdAt`, ascending or descending, on several keys, and on a complex ordering (clauses 5.7.2
-//! and 4.23).
+//! Buildings are queried with `orderBy` on an attribute, on `id`, on `createdAt`, on a sub-attribute or on a
+//! sub-attribute's `createdAt`, ascending or descending, on several keys, and on a complex ordering (clauses 5.7.2 and
+//! 4.23).
 
-use crate::suite_keywords::{BUILDING_TERMS, create_named_buildings, delete_named_buildings, expect_building_order};
+use crate::building_fixtures::{BUILDING_TERMS, create_named_buildings, delete_named_buildings, expect_building_order};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     namespace::Namespace,

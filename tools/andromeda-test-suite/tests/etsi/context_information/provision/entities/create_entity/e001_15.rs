@@ -1,7 +1,7 @@
-//! ETSI `001_15`: an entity with a `VocabProperty` holding one term, and one holding a list of terms, is created and
-//! retrieved with them (clauses 5.6.1 and 4.5.20).
+//! An entity with a `VocabProperty` holding one term, and one holding a list of terms, is created and retrieved with
+//! them (clauses 5.6.1 and 4.5.20).
 
-use crate::suite_keywords::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json};
+use crate::entity_operations::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Input, NgsiLdMediaType, VocabProperty, VocabTerm};
@@ -28,10 +28,6 @@ fn building_vocab_terms(namespace: &Namespace) -> Result<Entity<Input>> {
 
 /// Pins: Check that you can create an entity with a `VocabProperty` property
 /// Clause: 5.6.1, 4.5.20
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_15_01_entity_with_vocab_property_as_string() -> Result<()> {
@@ -58,10 +54,6 @@ async fn e001_15_01_entity_with_vocab_property_as_string() -> Result<()> {
 
 /// Pins: Check that you can create an entity with a `VocabProperty` property
 /// Clause: 5.6.1, 4.5.20
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_15_02_entity_with_vocab_property_as_array() -> Result<()> {

@@ -18,7 +18,7 @@ fn reduced(entity: &SimplifiedEntity, name: &str) -> Option<Value> {
     let value = entity
         .attributes
         .iter()
-        .find_map(|(candidate, value)| (candidate.to_string() == name).then_some(value))?;
+        .find_map(|(candidate, value)| (candidate.as_str() == name).then_some(value))?;
     reduction(value)
 }
 
@@ -105,7 +105,7 @@ pub fn lacks_value(name: &str) -> LacksValue {
 
 impl Matcher<&SimplifiedEntity> for LacksValue {
     fn matches(&self, actual: &SimplifiedEntity) -> MatcherResult {
-        actual.attributes.keys().all(|name| name.to_string() != self.name).into()
+        actual.attributes.keys().all(|name| name.as_str() != self.name).into()
     }
 
     fn describe(&self, result: MatcherResult) -> Description {

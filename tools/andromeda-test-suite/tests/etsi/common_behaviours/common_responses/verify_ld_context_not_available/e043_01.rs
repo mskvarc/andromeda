@@ -1,5 +1,4 @@
-//! ETSI `043_01`: a create whose `@context` cannot be retrieved is refused with 504 `LdContextNotAvailable` (clause
-//! 5.2.2).
+//! A create whose `@context` cannot be retrieved is refused with 504 `LdContextNotAvailable` (clause 5.2.2).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -33,7 +32,7 @@ fn unretrievable_context(namespace: &Namespace) -> Result<Context> {
     Ok(Context::Multiple(vec![ContextEntry::Reference(IriRefBuf::from(iri))]))
 }
 
-/// The client of `broker` sending `context` in the body, as the cases send the suite's unretrievable `@context`.
+/// The client of `broker` sending `context` in the body, as the tests send their unretrievable `@context`.
 fn in_body(broker: &BrokerClient, context: Context) -> Result<BrokerClient> {
     Ok(broker.with_context(context)?.with_context_delivery(ContextDelivery::LdJsonBody))
 }
@@ -51,7 +50,7 @@ fn non_empty(value: &Value) -> bool {
 /// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// entity)
 /// Clause: 5.2.2
-/// Corrected: fix(ldcontextnotavailable): ldcontextnotavailable is 504 not 503 (table 6.3.2-1)
+/// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
 /// Vocabulary: none (the @context under test is unretrievable by design)
 #[gtest]
 #[tokio::test]
@@ -71,7 +70,7 @@ async fn e043_01_01_create_entity() -> Result<()> {
 /// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// subscription)
 /// Clause: 5.2.2
-/// Corrected: fix(ldcontextnotavailable): ldcontextnotavailable is 504 not 503 (table 6.3.2-1)
+/// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
 /// Vocabulary: none (the @context under test is unretrievable by design)
 #[gtest]
 #[tokio::test]
@@ -99,7 +98,7 @@ async fn e043_01_02_create_subscription() -> Result<()> {
 /// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// Temporal Representation of Entities)
 /// Clause: 5.2.2
-/// Corrected: fix(ldcontextnotavailable): ldcontextnotavailable is 504 not 503 (table 6.3.2-1)
+/// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
 /// Vocabulary: none (the @context under test is unretrievable by design)
 #[gtest]
 #[tokio::test]
@@ -155,7 +154,7 @@ async fn e043_01_04_batch_entity_create() -> Result<()> {
 /// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// context source registration)
 /// Clause: 5.2.2
-/// Corrected: fix(ldcontextnotavailable): ldcontextnotavailable is 504 not 503 (table 6.3.2-1)
+/// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
 /// Vocabulary: none (the @context under test is unretrievable by design)
 #[gtest]
 #[tokio::test]

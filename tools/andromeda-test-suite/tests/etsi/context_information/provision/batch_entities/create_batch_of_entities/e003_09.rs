@@ -1,9 +1,9 @@
-//! ETSI `003_09`: a batch sent as `application/ld+json` with a `Link` header naming a context is refused as a whole
-//! (clause 6.3.5).
+//! A batch sent as `application/ld+json` with a `Link` header naming a context is refused as a whole (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{context_link, ld_json_body_client, refused},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{context_link, ld_json_body_client},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

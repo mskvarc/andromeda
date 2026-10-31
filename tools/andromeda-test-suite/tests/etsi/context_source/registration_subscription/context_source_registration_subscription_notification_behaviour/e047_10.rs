@@ -1,5 +1,4 @@
-//! ETSI `047_10`: a `temporalQ` on `observedAt` is matched against the `observationInterval` of a registration
-//! (clause 5.11.7).
+//! A `temporalQ` on `observedAt` is matched against the `observationInterval` of a registration (clause 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
@@ -7,9 +6,11 @@ use crate::{
         registered_any,
         teardown,
     },
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client},
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_subscription_operations::create_registration_subscription,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     query::{
@@ -23,10 +24,6 @@ use ngsi_ld::{
 /// Pins: Check if a context source registration subscription defines temporalQ member with timeproperty observedAt,
 /// the temporal query is matched against the observationInterval of matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_10_01_receive_csource_notification_for_matching_context_source_registrations_on_observation_interval() -> Result<()> {
@@ -57,7 +54,7 @@ async fn e047_10_01_receive_csource_notification_for_matching_context_source_reg
     let _registration = registered_any(&broker, &vocabulary, &registration).await?;
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_csource_notification(&body, &id, &registration_id, "newlyMatching");
 
     teardown(&broker, &registration_id, &id).await

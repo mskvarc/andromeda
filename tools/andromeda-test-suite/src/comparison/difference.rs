@@ -62,8 +62,8 @@ pub enum Discrepancy {
     /// No item of a list agrees with an expected one.
     #[error("holds no item agreeing with {0}")]
     Unpaired(Value),
-    /// More items are left unpaired by their hash than DeepDiff pairs member by member.
-    #[error("holds {0} items no expected item hash-pairs, more than DeepDiff pairs")]
+    /// More items are left unpaired by content than are paired member by member.
+    #[error("holds {0} items no expected item pairs with by content, more than are paired member by member")]
     BeyondPairingCutoff(usize),
     /// An `observedAt` names another instant.
     #[error("is {actual}, expected the instant {expected}")]

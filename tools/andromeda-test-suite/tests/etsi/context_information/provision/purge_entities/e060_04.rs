@@ -1,9 +1,9 @@
-//! ETSI `060_04`: a Purge Entities that drops an attribute removes it from the matching entities and keeps the entities
-//! (clauses 5.6.21 and 6.4.3.3).
+//! A Purge Entities that drops an attribute removes it from the matching entities and keeps the entities (clauses
+//! 5.6.21 and 6.4.3.3).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

@@ -1,18 +1,15 @@
-//! ETSI `058_02`: a broker publishes an MQTT notification at the quality of service the subscription's `notifierInfo`
-//! names (clause 5.8.6).
+//! A broker publishes an MQTT notification at the quality of service the subscription's `notifierInfo` names (clause
+//! 5.8.6).
 
-use crate::suite_keywords::{MqttConfiguration, MqttListener, MqttSetting, mqtt_notification};
+use crate::mqtt_notification::{MqttConfiguration, MqttListener, MqttSetting, mqtt_notification};
 use googletest::prelude::*;
 use rumqttc::v5::mqttbytes::QoS;
 
 /// Pins: Check that the broker supports different quality of service (qos)
 /// Clause: 5.8.6
-/// Changed: stricter than Robot, the message must have been received with QoS 0, the default of clause 7.2, Table
-/// 7.2-1, when notifierInfo names no MQTT-QoS; Robot's client subscribes at QoS 1, so it cannot tell QoS 0 from QoS 1
-/// and receives a QoS 2 message as QoS 1, and `MQTTLibrary` does not return the QoS at all; the observer subscribes at
-/// QoS 2, so it receives the QoS the message was published with, which `mosquitto_sub`'s %J record carries only for a
-/// JSON payload, so a payload that is not JSON, which the JSON object of clause 7.2 rules out, fails here where Robot
-/// only counts it
+/// Expected: the message arrives with QoS 0, the default of clause 7.2, Table 7.2-1, when notifierInfo names no
+/// MQTT-QoS; the observer subscribes at QoS 2, so it receives the QoS the message was published with, and records it
+/// only for a JSON payload, which clause 7.2 requires
 #[gtest]
 #[tokio::test]
 async fn e058_02_01_with_default_qos() -> Result<()> {
@@ -23,12 +20,9 @@ async fn e058_02_01_with_default_qos() -> Result<()> {
 
 /// Pins: Check that the broker supports different quality of service (qos)
 /// Clause: 5.8.6
-/// Changed: stricter than Robot, the message must have been received with QoS 1, the MQTT-QoS the subscription's
-/// notifierInfo names (clause 7.2, Table 7.2-1); Robot's client subscribes at QoS 1, so it cannot tell QoS 0 from QoS
-/// 1 and receives a QoS 2 message as QoS 1, and `MQTTLibrary` does not return the QoS at all; the observer subscribes
-/// at QoS 2, so it receives the QoS the message was published with, which `mosquitto_sub`'s %J record carries only for
-/// a JSON payload, so a payload that is not JSON, which the JSON object of clause 7.2 rules out, fails here where
-/// Robot only counts it
+/// Expected: the message arrives with QoS 1, the MQTT-QoS the subscription's notifierInfo names (clause 7.2, Table
+/// 7.2-1); the observer subscribes at QoS 2, so it receives the QoS the message was published with, and records it only
+/// for a JSON payload, which clause 7.2 requires
 #[gtest]
 #[tokio::test]
 async fn e058_02_02_with_qos_1() -> Result<()> {
@@ -46,12 +40,9 @@ async fn e058_02_02_with_qos_1() -> Result<()> {
 
 /// Pins: Check that the broker supports different quality of service (qos)
 /// Clause: 5.8.6
-/// Changed: stricter than Robot, the message must have been received with QoS 2, the MQTT-QoS the subscription's
-/// notifierInfo names (clause 7.2, Table 7.2-1); Robot's client subscribes at QoS 1, so it cannot tell QoS 0 from QoS
-/// 1 and receives a QoS 2 message as QoS 1, and `MQTTLibrary` does not return the QoS at all; the observer subscribes
-/// at QoS 2, so it receives the QoS the message was published with, which `mosquitto_sub`'s %J record carries only for
-/// a JSON payload, so a payload that is not JSON, which the JSON object of clause 7.2 rules out, fails here where
-/// Robot only counts it
+/// Expected: the message arrives with QoS 2, the MQTT-QoS the subscription's notifierInfo names (clause 7.2, Table
+/// 7.2-1); the observer subscribes at QoS 2, so it receives the QoS the message was published with, and records it only
+/// for a JSON payload, which clause 7.2 requires
 #[gtest]
 #[tokio::test]
 async fn e058_02_03_with_qos_2() -> Result<()> {

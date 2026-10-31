@@ -1,7 +1,8 @@
-//! ETSI `046_07`: the structure of a notification, the attributes it carries and the expansion of the URIs it is written
-//! with (clauses 5.8.6 and 5.3).
+//! The structure of a notification, the attributes it carries and the expansion of the URIs it is written with (clauses
+//! 5.8.6 and 5.3).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{
         INSTANT_PATTERN,
         air_quality_updated,
@@ -9,9 +10,8 @@ use crate::{
         subscribed,
         teardown,
     },
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use iri_rs::IriBuf;
 use ngsi_ld::{
@@ -32,10 +32,6 @@ fn expect_envelope(body: &Value, id: &SubscriptionId) {
 /// Pins: The structure of the notification message shall be as mandated by clause 5.3. Valid notification with attributes
 /// as stated above
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_07_01_check_notification_structure() -> Result<()> {
@@ -63,7 +59,7 @@ async fn e046_07_01_check_notification_structure() -> Result<()> {
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_envelope(&body, &id);
 
     teardown(&broker, &id, &building).await;
@@ -72,10 +68,6 @@ async fn e046_07_01_check_notification_structure() -> Result<()> {
 
 /// Pins: The structure of the notification message shall be as mandated by clause 5.3.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_07_02_check_correct_attributes_are_included() -> Result<()> {
@@ -103,7 +95,7 @@ async fn e046_07_02_check_correct_attributes_are_included() -> Result<()> {
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_envelope(&body, &id);
     expect_that!(body.pointer("/data/0"), some(predicate(Value::is_object)));
     expect_that!(body.pointer("/data/0/name"), none());
@@ -115,10 +107,6 @@ async fn e046_07_02_check_correct_attributes_are_included() -> Result<()> {
 
 /// Pins: The structure of the notification message shall be as mandated by clause 5.3.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_07_03_check_uri_expansion_is_observed() -> Result<()> {
@@ -147,7 +135,7 @@ async fn e046_07_03_check_uri_expansion_is_observed() -> Result<()> {
 
     air_quality_updated(&core, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_envelope(&body, &id);
     expect_that!(
         body.pointer("/data/0").and_then(|entity| entity.get(air_quality_level.as_str())),

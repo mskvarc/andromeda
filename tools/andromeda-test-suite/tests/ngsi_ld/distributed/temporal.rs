@@ -1,0 +1,37 @@
+//! The tests of `distributed/temporal`.
+
+mod n_fed_tmp_0001;
+mod n_fed_tmp_0002;
+mod n_fed_tmp_0003;
+mod n_fed_tmp_0004;
+mod n_fed_tmp_0005;
+mod n_fed_tmp_0006;
+mod n_fed_tmp_0007;
+mod n_fed_tmp_0008;
+mod n_fed_tmp_0009;
+mod n_fed_tmp_0010;
+mod n_fed_tmp_0011;
+mod n_fed_tmp_0012;
+mod n_fed_tmp_0013;
+mod n_fed_tmp_0014;
+mod n_fed_tmp_0015;
+mod n_fed_tmp_9005;
+mod n_fed_tmp_9006;
+mod n_fed_tmp_9007;
+mod n_fed_tmp_9008;
+mod n_fed_tmp_9010;
+mod n_fed_tmp_9011;
+mod n_fed_tmp_9012;
+mod n_fed_tmp_9013;
+mod n_fed_tmp_9014;
+mod n_fed_tmp_9015;
+mod n_fed_tmp_9016;
+mod n_fed_tmp_9017;
+mod n_fed_tmp_9018;
+mod n_fed_tmp_9019;
+mod n_fed_tmp_9022;
+mod n_fed_tmp_9023;
+mod n_fed_tmp_9027;
+mod n_fed_tmp_9028;
+mod o_fed_tmp_9020;
+mod o_fed_tmp_9021;

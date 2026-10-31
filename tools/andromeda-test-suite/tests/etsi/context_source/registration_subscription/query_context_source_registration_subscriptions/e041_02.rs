@@ -1,7 +1,6 @@
-//! ETSI `041_02`: a query with a `limit` answers at most that many Context Source Registration Subscriptions (clause
-//! 5.11.5).
+//! A query with a `limit` answers at most that many Context Source Registration Subscriptions (clause 5.11.5).
 
-use crate::suite_keywords::create_registration_subscription_triple;
+use crate::registration_subscription_operations::create_registration_subscription_triple;
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -12,9 +11,9 @@ use serde_json::{Value, json};
 /// the maximum number of subscriptions to be retrieved
 /// Clause: 5.11.5
 /// Tenant: private (Query Context Source Registration Subscriptions lists every context source registration
-/// subscription of the tenant, and the case compares the whole page with its own (DeepDiff over the list, or the
-/// number of subscriptions a limit lets through); in the shared tenant every other file's subscriptions are listed
-/// too, so only a tenant of its own keeps the comparison exact)
+/// subscription of the tenant, and the test compares the whole page with its own, or counts the subscriptions a limit
+/// lets through; in the shared tenant every other file's subscriptions are listed too, so only a tenant of its own
+/// keeps the comparison exact)
 #[gtest]
 #[tokio::test]
 async fn e041_02_01_query_one_subscription() -> Result<()> {
@@ -33,9 +32,9 @@ async fn e041_02_01_query_one_subscription() -> Result<()> {
 /// the maximum number of subscriptions to be retrieved
 /// Clause: 5.11.5
 /// Tenant: private (Query Context Source Registration Subscriptions lists every context source registration
-/// subscription of the tenant, and the case compares the whole page with its own (DeepDiff over the list, or the
-/// number of subscriptions a limit lets through); in the shared tenant every other file's subscriptions are listed
-/// too, so only a tenant of its own keeps the comparison exact)
+/// subscription of the tenant, and the test compares the whole page with its own, or counts the subscriptions a limit
+/// lets through; in the shared tenant every other file's subscriptions are listed too, so only a tenant of its own
+/// keeps the comparison exact)
 #[gtest]
 #[tokio::test]
 async fn e041_02_02_query_two_subscription() -> Result<()> {
@@ -52,9 +51,9 @@ async fn e041_02_02_query_two_subscription() -> Result<()> {
 /// the maximum number of subscriptions to be retrieved
 /// Clause: 5.11.5
 /// Tenant: private (Query Context Source Registration Subscriptions lists every context source registration
-/// subscription of the tenant, and the case compares the whole page with its own (DeepDiff over the list, or the
-/// number of subscriptions a limit lets through); in the shared tenant every other file's subscriptions are listed
-/// too, so only a tenant of its own keeps the comparison exact)
+/// subscription of the tenant, and the test compares the whole page with its own, or counts the subscriptions a limit
+/// lets through; in the shared tenant every other file's subscriptions are listed too, so only a tenant of its own
+/// keeps the comparison exact)
 #[gtest]
 #[tokio::test]
 async fn e041_02_03_query_all_subscriptions() -> Result<()> {

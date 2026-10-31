@@ -33,7 +33,7 @@ pub(crate) fn compare_system_timestamp(path: &DocumentPath, actual: &Value, out:
     }
 }
 
-/// Compares two numbers: by value and kind in a diff, by value in a hash.
+/// Compares two numbers: by value and kind member by member, by value when pairing list items.
 pub(crate) fn compare_numbers(path: &DocumentPath, actual: &Number, expected: &Number, mode: Mode, out: &mut Vec<Difference>) {
     let same_value = match (actual.as_i64(), expected.as_i64(), actual.as_u64(), expected.as_u64()) {
         (Some(actual), Some(expected), _, _) => actual == expected,

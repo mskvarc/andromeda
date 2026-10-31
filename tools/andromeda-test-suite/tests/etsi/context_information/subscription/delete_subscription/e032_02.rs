@@ -1,5 +1,5 @@
-//! ETSI `032_02`: a delete of a subscription identifier that no subscription holds is refused with 404 `ResourceNotFound`
-//! (clause 5.8.5).
+//! A delete of a subscription identifier that no subscription holds is refused with 404 `ResourceNotFound` (clause
+//! 5.8.5).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;

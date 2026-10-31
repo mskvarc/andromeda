@@ -21,8 +21,7 @@ use uuid::Uuid;
 /// The characters a token is made of after its leading letter.
 const TOKEN_CHARACTERS: &[u8; 36] = b"abcdefghijklmnopqrstuvwxyz0123456789";
 
-/// The characters a token holds after its leading letter: 36^12 tokens, so two of the suite's processes never draw
-/// the same one.
+/// The characters a token holds after its leading letter: 36^12 tokens, so two test processes never draw the same one.
 const TOKEN_TAIL_LENGTH: usize = 12;
 
 /// The bytes of a version 4 UUID that hold its version and variant bits.
@@ -30,8 +29,8 @@ const RESERVED_UUID_BYTES: [usize; 2] = [6, 8];
 
 /// Why a value built on the namespace is not valid.
 ///
-/// The token is lowercase letters and digits starting with a letter, valid in every position the suite places it;
-/// these errors name a base word or suffix the test supplied that is not.
+/// The token is lowercase letters and digits starting with a letter, valid in every position a test places it; these
+/// errors name a base word or suffix the test supplied that is not.
 #[derive(Debug, thiserror::Error)]
 pub enum NamespaceError {
     /// An identifier is not a URI.
@@ -98,8 +97,8 @@ impl Namespace {
         text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
     }
 
-    /// The URI `urn:ngsi-ld:<kind>:<token>-<suffix>` of the test where an operation takes a plain URI: the dataset
-    /// a Delete Attribute names (clause 6.7.3.2).
+    /// The URI `urn:ngsi-ld:<kind>:<token>-<suffix>` of the test where a plain URI is taken: a subscription id, or the
+    /// dataset an aggregation series is keyed by.
     ///
     /// # Errors
     ///

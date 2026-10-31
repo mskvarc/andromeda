@@ -1,14 +1,14 @@
-//! ETSI `046_10`: a notification is sent as JSON, with the suite's `@context` linked in a Link header and not in the body
-//! (clause 5.8.6).
+//! A notification is sent as JSON, with the test vocabulary linked in a Link header and not in the body (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscribed, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary, wire::header_values};
 use googletest::prelude::*;
+use http::header::LINK;
 use ngsi_ld::{
-    http::ContextDelivery,
+    http::{ContextDelivery, headers::Link},
     query::EntitySelector,
     subscription::{Endpoint, NotificationParams, Subscription, SubscriptionId},
 };
@@ -16,17 +16,6 @@ use serde_json::Value;
 
 /// Pins: The Notification shall be sent as JSON
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: Wait for notification hands the headers over as a plain dictionary (Convert To Dictionary of the received
-/// message), keyed by the field names exactly as the broker spelled them, so the keyword looks the name up
-/// case-sensitively; field names are case-insensitive (RFC 9110 clause 5.1), so the port checks the field whatever its
-/// case, through a WireMock request pattern, which matches names without regard to case
-/// Changed: Dictionary Should Contain Item reads Link from that dictionary, which holds only the first of several Link
-/// field lines; the port requires exactly one Link line with the expected value (WireMock hasExactly), the field value the
-/// keyword means, since RFC 9110 clause 5.3 makes several lines one comma-joined value
 #[gtest]
 #[tokio::test]
 async fn e046_10_01_check_that_the_notification_is_sent_as_json() -> Result<()> {
@@ -53,7 +42,7 @@ async fn e046_10_01_check_that_the_notification_is_sent_as_json() -> Result<()> 
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/data/0"), some(predicate(Value::is_object)));
     expect_that!(body.pointer("/data/0/@context"), none());
     // The sink keeps no logged date, so the body identifies the journal entry the wait returned.
@@ -61,12 +50,18 @@ async fn e046_10_01_check_that_the_notification_is_sent_as_json() -> Result<()> 
     let bodies = received.into_iter().map(|entry| entry.body).collect::<Vec<_>>();
     expect_that!(bodies, contains(eq(&notification.body)));
 
-    let expected_link = format!(
-        "<{}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
-        vocabulary.url().as_str()
+    let links = header_values(&notification.headers, &LINK)
+        .into_iter()
+        .map(|line| Ok(line.parse::<Link>()?))
+        .collect::<Result<Vec<_>>>()?;
+    let link_values = links.iter().flat_map(Link::values).collect::<Vec<_>>();
+    expect_that!(link_values.len(), eq(1));
+    let context_link = link_values.first().filter(|value| value.is_context_link());
+    expect_that!(context_link.map(|value| value.target().as_str()), some(eq(vocabulary.url().as_str())));
+    expect_that!(
+        context_link.and_then(|value| value.media_type()).map(ToString::to_string),
+        some(eq("application/ld+json"))
     );
-    let links: Vec<&str> = notification.headers.get_all("link").iter().filter_map(|value| value.to_str().ok()).collect();
-    expect_that!(links, eq(&vec![expected_link.as_str()]));
 
     teardown(&broker, &id, &building).await;
     Ok(())

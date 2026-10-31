@@ -13,6 +13,7 @@ use googletest::{
 };
 use ngsi_ld::model::{
     DateTime,
+    TemporalError,
     Value,
     evolution::{AggregatedKind, AggregatedTemporalEntity, AggregatedValue, AggregationMethod},
 };
@@ -26,6 +27,35 @@ pub struct PeriodMatcher {
     start: Option<DateTime>,
     /// The end of the period, when required.
     end: Option<DateTime>,
+    /// The digits the aggregate must be written with, when required.
+    digits: Option<Digits>,
+    /// The bounds the numeric aggregate must lie strictly between, when required.
+    between: Option<(f64, f64)>,
+    /// Whether the aggregate must be a string.
+    text: bool,
+}
+
+/// The lexical form a numeric aggregate must have.
+#[derive(Debug, Clone)]
+enum Digits {
+    /// Exactly this text.
+    Exactly(String),
+    /// A text starting with this one.
+    StartingWith(String),
+}
+
+impl Digits {
+    /// Whether `value` is a number written with these digits.
+    fn hold(&self, value: &Value) -> bool {
+        match (self, value) {
+            (Self::Exactly(text), Value::Number(number)) => number.as_str() == text,
+            (Self::StartingWith(prefix), Value::Number(number)) => number.as_str().starts_with(prefix.as_str()),
+            (
+                Self::Exactly(_) | Self::StartingWith(_),
+                Value::Boolean(_) | Value::Text(_) | Value::Array(_) | Value::Object(_) | Value::Typed(_) | Value::JsonNull,
+            ) => false,
+        }
+    }
 }
 
 /// A period of any value and bounds.
@@ -56,9 +86,50 @@ impl PeriodMatcher {
         PeriodMatcher { end: Some(end), ..self }
     }
 
+    /// Requires the aggregate to be a number written with exactly the digits `text`, which a comparison as a double
+    /// would not tell from a neighbour.
+    #[must_use]
+    pub fn digits(self, text: &str) -> PeriodMatcher {
+        PeriodMatcher {
+            digits: Some(Digits::Exactly(text.to_owned())),
+            ..self
+        }
+    }
+
+    /// Requires the aggregate to be a number strictly between `above` and `below`, for an aggregate (a standard
+    /// deviation) a double does not hold exactly.
+    #[must_use]
+    pub fn value_between(self, above: f64, below: f64) -> PeriodMatcher {
+        PeriodMatcher {
+            between: Some((above, below)),
+            ..self
+        }
+    }
+
+    /// Requires the aggregate to be a string, whichever one.
+    #[must_use]
+    pub fn text(self) -> PeriodMatcher {
+        PeriodMatcher { text: true, ..self }
+    }
+
+    /// Requires the aggregate to be a number whose digits start with `prefix`.
+    #[must_use]
+    pub fn digits_starting(self, prefix: &str) -> PeriodMatcher {
+        PeriodMatcher {
+            digits: Some(Digits::StartingWith(prefix.to_owned())),
+            ..self
+        }
+    }
+
     /// Whether `actual` meets every requirement.
     fn holds(&self, actual: &AggregatedValue) -> bool {
-        self.value.as_ref().is_none_or(|value| actual.value.equivalent(value))
+        (!self.text || matches!(actual.value, Value::Text(_)))
+            && self.between.is_none_or(|(above, below)| match &actual.value {
+                Value::Number(number) => number.as_f64() > above && number.as_f64() < below,
+                Value::Boolean(_) | Value::Text(_) | Value::Array(_) | Value::Object(_) | Value::Typed(_) | Value::JsonNull => false,
+            })
+            && self.digits.as_ref().is_none_or(|digits| digits.hold(&actual.value))
+            && self.value.as_ref().is_none_or(|value| actual.value.equivalent(value))
             && self.start.as_ref().is_none_or(|start| actual.start.equivalent(start))
             && self.end.as_ref().is_none_or(|end| actual.end.equivalent(end))
     }
@@ -77,12 +148,57 @@ impl Matcher<&AggregatedValue> for PeriodMatcher {
     }
 }
 
+/// Matches the periods of an aggregation that follow each other: period `i` holds `first + i` and runs from the
+/// instant `bounds[i]` to `bounds[i + 1]`, so the list holds one period fewer than there are bounds.
+#[derive(Debug, Clone, MatcherBase)]
+pub struct SuccessivePeriods {
+    /// The aggregate of the first period.
+    first: i64,
+    /// The instants that bound the periods, from the start of the first to the end of the last.
+    bounds: Vec<DateTime>,
+}
+
+/// The periods that follow each other over `bounds`, the first aggregating `first` and each next one more.
+///
+/// # Errors
+///
+/// Returns [`TemporalError`] when a bound is not an instant.
+pub fn successive_periods(first: i64, bounds: &[&str]) -> Result<SuccessivePeriods, TemporalError> {
+    Ok(SuccessivePeriods {
+        first,
+        bounds: bounds.iter().map(|bound| bound.parse()).collect::<Result<_, _>>()?,
+    })
+}
+
+impl Matcher<&[AggregatedValue]> for SuccessivePeriods {
+    fn matches(&self, actual: &[AggregatedValue]) -> MatcherResult {
+        (actual.len() + 1 == self.bounds.len()
+            && actual
+                .iter()
+                .zip(self.bounds.windows(2))
+                .zip(self.first..)
+                .all(|((period, bound), value)| match bound {
+                    [start, end] => period.value.equivalent(&Value::from(value)) && period.start.equivalent(start) && period.end.equivalent(end),
+                    [] | [_] | [_, _, _, ..] => false,
+                }))
+        .into()
+    }
+
+    fn describe(&self, result: MatcherResult) -> Description {
+        let bounds = self.bounds.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        match result {
+            MatcherResult::Match => format!("is the periods from {} over the bounds {bounds}", self.first).into(),
+            MatcherResult::NoMatch => format!("isn't the periods from {} over the bounds {bounds}", self.first).into(),
+        }
+    }
+}
+
 /// The periods `method` yields for the attribute `name` of `entity`.
 fn periods<'e>(entity: &'e AggregatedTemporalEntity, name: &str, method: AggregationMethod) -> Option<&'e [AggregatedValue]> {
     entity
         .attributes
         .iter()
-        .find_map(|(candidate, attribute)| (candidate.to_string() == name).then_some(attribute))
+        .find_map(|(candidate, attribute)| (candidate.as_str() == name).then_some(attribute))
         .and_then(|attribute| attribute.methods.get(&method))
         .map(Vec::as_slice)
 }
@@ -147,7 +263,7 @@ impl Matcher<&AggregatedTemporalEntity> for AggregatedAs {
         actual
             .attributes
             .iter()
-            .any(|(candidate, attribute)| candidate.to_string() == self.name && attribute.kind == self.kind)
+            .any(|(candidate, attribute)| candidate.as_str() == self.name && attribute.kind == self.kind)
             .into()
     }
 
@@ -162,7 +278,7 @@ impl Matcher<&AggregatedTemporalEntity> for AggregatedAs {
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregation_matcher::{aggregated_as, has_aggregate, period},
+        aggregation_matcher::{aggregated_as, has_aggregate, period, successive_periods},
         nth::nth,
     };
     use googletest::prelude::*;
@@ -174,6 +290,86 @@ mod tests {
             r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property",
             "sum":[[30,"2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"],[12.5,"2020-01-01T01:00:00Z","2020-01-01T02:00:00Z"]]}}"#,
         )?)
+    }
+
+    #[gtest]
+    fn the_digits_of_an_aggregate_are_matched_as_written() -> Result<()> {
+        let entity = AggregatedTemporalEntity::parse(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property",
+            "avg":[[0.150000000000000005,"2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"]]}}"#,
+        )?;
+        expect_that!(
+            &entity,
+            has_aggregate("speed", AggregationMethod::Avg, nth(0, period().digits("0.150000000000000005")))
+        );
+        expect_that!(
+            &entity,
+            has_aggregate("speed", AggregationMethod::Avg, nth(0, period().digits_starting("0.15000")))
+        );
+        expect_that!(&entity, not(has_aggregate("speed", AggregationMethod::Avg, nth(0, period().digits("0.15")))));
+        verify_that!(
+            &entity,
+            not(has_aggregate("speed", AggregationMethod::Avg, nth(0, period().digits_starting("0.2"))))
+        )
+    }
+
+    #[gtest]
+    fn a_number_is_matched_strictly_between_two_bounds() -> Result<()> {
+        let entity = AggregatedTemporalEntity::parse(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property",
+            "stddev":[[10.000000000000002,"2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"]]}}"#,
+        )?;
+        expect_that!(
+            &entity,
+            has_aggregate("speed", AggregationMethod::Stddev, nth(0, period().value_between(9.99, 10.01)))
+        );
+        verify_that!(
+            &entity,
+            not(has_aggregate("speed", AggregationMethod::Stddev, nth(0, period().value_between(10.01, 11.0))))
+        )
+    }
+
+    #[gtest]
+    fn an_aggregate_is_matched_as_a_string() -> Result<()> {
+        let entity = AggregatedTemporalEntity::parse(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","seen":{"type":"Property",
+            "min":[["2024-03-01","2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"]],
+            "max":[[3,"2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"]]}}"#,
+        )?;
+        expect_that!(&entity, has_aggregate("seen", AggregationMethod::Min, nth(0, period().text())));
+        verify_that!(&entity, not(has_aggregate("seen", AggregationMethod::Max, nth(0, period().text()))))
+    }
+
+    #[gtest]
+    fn periods_are_matched_as_a_chain_over_their_bounds() -> Result<()> {
+        let entity = AggregatedTemporalEntity::parse(
+            r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property",
+            "sum":[[30,"2020-01-01T00:00:00Z","2020-01-01T01:00:00Z"],[31,"2020-01-01T01:00:00Z","2020-01-01T02:00:00Z"]]}}"#,
+        )?;
+        expect_that!(
+            &entity,
+            has_aggregate(
+                "speed",
+                AggregationMethod::Sum,
+                successive_periods(30, &["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z"])?
+            )
+        );
+        expect_that!(
+            &entity,
+            not(has_aggregate(
+                "speed",
+                AggregationMethod::Sum,
+                successive_periods(30, &["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"])?
+            ))
+        );
+        verify_that!(
+            &entity,
+            not(has_aggregate(
+                "speed",
+                AggregationMethod::Sum,
+                successive_periods(31, &["2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z"])?
+            ))
+        )
     }
 
     #[gtest]

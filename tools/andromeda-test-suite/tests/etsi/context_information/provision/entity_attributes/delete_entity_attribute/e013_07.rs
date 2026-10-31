@@ -1,11 +1,11 @@
-//! ETSI `013_07`: a `VocabProperty` property is deleted from an entity (clauses 5.6.5 and 4.5.20).
+//! A `VocabProperty` property is deleted from an entity (clauses 5.6.5 and 4.5.20).
 
-use crate::suite_keywords::{answered_with, create_entity, delete_entities, naming_delete_all_false, retrieve_entity_json};
-use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
+use crate::entity_operations::{create_entity, delete_entities, retrieve_entity_json};
+use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::DeleteAttribute,
+    http::operation::InstanceSelection,
     model::{AttributeName, Entity, NgsiLdMediaType},
 };
 use serde_json::json;
@@ -15,8 +15,8 @@ const TERMS: [&str; 1] = ["Building"];
 
 /// Pins: Check that you can delete a `VocabProperty` property from an entity
 /// Clause: 5.6.5, 4.5.20
-/// Changed: vocabProperty stays out of the file vocabulary: the case reads it without a @context, so it expands under
-/// the core default vocabulary as in the Robot run
+/// Expected: vocabProperty stays out of the file vocabulary: the test reads it without a @context, so it expands under
+/// the core default vocabulary
 #[gtest]
 #[tokio::test]
 async fn e013_07_01_delete_a_vocab_property_property_from_an_entity() -> Result<()> {
@@ -32,8 +32,14 @@ async fn e013_07_01_delete_a_vocab_property_property_from_an_entity() -> Result<
     create_entity(&broker, &vocabulary, &building).await?;
     let vocab_property: AttributeName = "vocabProperty".parse()?;
 
-    let operation = DeleteAttribute::builder().id(&id).name(&vocab_property).build();
-    answered_with(&broker, naming_delete_all_false(&broker, &operation)?, StatusCode::NO_CONTENT).await?;
+    let answer = broker
+        .with_responses()
+        .entities()
+        .delete_attribute(&id, &vocab_property)
+        .instances(InstanceSelection::Selected(None))
+        .send()
+        .await;
+    verify_that!(&answer, answered(StatusCode::NO_CONTENT))?;
 
     let body = retrieve_entity_json(&broker.with_accept(NgsiLdMediaType::Json), &id).await?;
     expect_that!(

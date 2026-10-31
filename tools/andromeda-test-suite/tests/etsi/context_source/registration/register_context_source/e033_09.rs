@@ -1,9 +1,10 @@
-//! ETSI `033_09`: a registration sent as `application/ld+json` with its `@context` in the body and a JSON-LD `Link`
-//! header too is refused with 400 (clause 6.3.5).
+//! A registration sent as `application/ld+json` with its `@context` in the body and a JSON-LD `Link` header too is
+//! refused with 400 (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{context_link, ld_json_body_client, refused},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::{context_link, ld_json_body_client},
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -13,8 +14,8 @@ use ngsi_ld::{http::operation::RegisterContextSource, model::ErrorType};
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
 /// "application/ld+json" and a JSON-LD Link header is present in the incoming HTTP request
 /// Clause: 6.3.5
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_09_01_link_header_with_json_ld_content_type() -> Result<()> {

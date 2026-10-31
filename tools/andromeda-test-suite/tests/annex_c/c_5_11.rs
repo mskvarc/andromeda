@@ -19,8 +19,8 @@ fn attribute(id: &str, name: &str, types: &[String]) -> Value {
 /// Pins: Retrieve Details of Available Attributes answers one Attribute per attribute with the types using it, in any
 /// order, as C.5.11.3 prints
 /// Clause: C.5.11, 4.5.14, 5.7.9
-/// Corrected: complete-attribute-lists: the lists hold the `OffStreetParking` Attributes C.5.8 shows on the same
-/// Entities (5.7.8, 5.7.9)
+/// Expected: the lists hold the `OffStreetParking` Attributes clause C.5.8 shows on the same Entities (clauses 5.7.8,
+/// 5.7.9)
 /// Tenant: private (type and attribute discovery answers every type and attribute of the tenant, 5.7.5 to 5.7.10,
 /// which only a tenant holding exactly the four Entities this file creates can show)
 #[gtest]

@@ -1,10 +1,9 @@
-//! ETSI `020_12`: the temporal evolution of an entity with a `LanguageProperty` is retrieved in the normalized and
-//! in the simplified temporal representation, with the vocabulary named in the `Link` header (clauses 5.7.3, 4.5.7,
-//! 4.5.9 and 4.5.18).
+//! The temporal evolution of an entity with a `LanguageProperty` is retrieved in the normalized and in the simplified
+//! temporal representation, with the vocabulary named in the `Link` header (clauses 5.7.3, 4.5.7, 4.5.9 and 4.5.18).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::create_temporal_evolution;
+use crate::temporal_operations::create_temporal_evolution;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,
@@ -55,7 +54,7 @@ fn vehicle_with_street(namespace: &Namespace) -> Result<TemporalEntity<Input>> {
         .build()?)
 }
 
-/// Creates the case's Vehicle as its suite setup does, and answers the vocabulary it is stored under.
+/// Creates the test's Vehicle, and answers the vocabulary it is stored under.
 async fn created_vehicle(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     create_temporal_evolution(broker, namespace, &["Vehicle", "street"], &vehicle_with_street(namespace)?).await
 }

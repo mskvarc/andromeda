@@ -1,6 +1,6 @@
-//! ETSI `052_06`: after a subscription makes the broker download two remote `@context`s and create an
-//! `ImplicitlyCreated` one, a listing lists the downloads as `Cached`, the merged context as `ImplicitlyCreated`, and
-//! neither as `Hosted` (clauses 5.13.2.4 and 5.13.3).
+//! After a subscription makes the broker download two remote `@context`s and create an `ImplicitlyCreated` one, a
+//! listing lists the downloads as `Cached`, the merged context as `ImplicitlyCreated`, and neither as `Hosted` (clauses
+//! 5.13.2.4 and 5.13.3).
 
 use crate::jsonld_context::implicit_context::{ImplicitContext, ImplicitTeardown};
 use andromeda_test_suite::{
@@ -21,8 +21,8 @@ use ngsi_ld::{
 };
 use url::Url;
 
-/// Lists every stored context with `details` in the shared tenant, after the implicit setup: requires 200 only, the
-/// keyword checking nothing more when no kind is given.
+/// Lists every stored context with `details` in the shared tenant, after the implicit setup: requires 200 only, since
+/// with no kind given the listing holds every other test's entries too.
 async fn lists_every_kind(details: SummaryDetails) -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
@@ -119,20 +119,13 @@ async fn lists_the_implicit(details: SummaryDetails) -> Result<()> {
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_01_list_contexts_no_details_no_kind_an_implicitly_created_one() -> Result<()> {
@@ -141,28 +134,17 @@ async fn e052_06_01_list_contexts_no_details_no_kind_an_implicitly_created_one()
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the Hosted listing is required to be empty, where the keyword requires only that it does not list both
-/// Cached @contexts: the tenant is the file's own and nothing Hosted was added to it (clause 5.13.3.4), and an empty
-/// listing names neither @context in any spelling
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case checks that its Cached @contexts are not listed as Hosted, which only a tenant of its own,
-/// holding no other Hosted entry, lets the port assert exactly; the shared tenant's listing also stops at 1000 entries
-/// (defect D-25))
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: the Hosted listing is empty: the tenant is the file's own and nothing Hosted was added to it (clause
+/// 5.13.3.4)
+/// Tenant: private (the test checks that its Cached @contexts are not listed as Hosted, which only a tenant of its own,
+/// holding no other Hosted entry, lets it assert exactly; the shared tenant's listing also stops at 1000 entries)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_02_list_contexts_no_details_kind_hosted_an_implicitly_created_one() -> Result<()> {
@@ -171,30 +153,20 @@ async fn e052_06_02_list_contexts_no_details_kind_hosted_an_implicitly_created_o
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: a Cached @context is required to be listed by exactly the URL it was downloaded from (clause 5.13.3.1: "it
-/// shall be the original URL"), where the keyword accepts any URL ending with it
-/// Changed: the request that reads a Cached @context right after its download is retried until the delivery deadline (12 times
-/// 250 ms), the wait the suite itself gives a download to be recorded in `051_05` and `053_05`: Andromeda records a
-/// downloaded @context after the request that downloaded it
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: a Cached @context is listed by exactly the URL it was downloaded from (clause 5.13.3.1: "it shall be the
+/// original URL")
+/// Timing: the request that reads a Cached @context right after its download is retried until the delivery deadline (12
+/// times 250 ms): Andromeda records a downloaded @context after the request that downloaded it
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_03_list_contexts_no_details_kind_cached_an_implicitly_created_one() -> Result<()> {
@@ -203,27 +175,17 @@ async fn e052_06_03_list_contexts_no_details_kind_cached_an_implicitly_created_o
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_04_list_contexts_no_details_kind_implicitly_created_an_implicitly_created_one() -> Result<()> {
@@ -232,20 +194,13 @@ async fn e052_06_04_list_contexts_no_details_kind_implicitly_created_an_implicit
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_05_list_contexts_details_false_no_kind_an_implicitly_created_one() -> Result<()> {
@@ -254,28 +209,17 @@ async fn e052_06_05_list_contexts_details_false_no_kind_an_implicitly_created_on
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the Hosted listing is required to be empty, where the keyword requires only that it does not list both
-/// Cached @contexts: the tenant is the file's own and nothing Hosted was added to it (clause 5.13.3.4), and an empty
-/// listing names neither @context in any spelling
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case checks that its Cached @contexts are not listed as Hosted, which only a tenant of its own,
-/// holding no other Hosted entry, lets the port assert exactly; the shared tenant's listing also stops at 1000 entries
-/// (defect D-25))
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: the Hosted listing is empty: the tenant is the file's own and nothing Hosted was added to it (clause
+/// 5.13.3.4)
+/// Tenant: private (the test checks that its Cached @contexts are not listed as Hosted, which only a tenant of its own,
+/// holding no other Hosted entry, lets it assert exactly; the shared tenant's listing also stops at 1000 entries)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_06_list_contexts_details_false_kind_hosted_an_implicitly_created_one() -> Result<()> {
@@ -284,30 +228,20 @@ async fn e052_06_06_list_contexts_details_false_kind_hosted_an_implicitly_create
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: a Cached @context is required to be listed by exactly the URL it was downloaded from (clause 5.13.3.1: "it
-/// shall be the original URL"), where the keyword accepts any URL ending with it
-/// Changed: the request that reads a Cached @context right after its download is retried until the delivery deadline (12 times
-/// 250 ms), the wait the suite itself gives a download to be recorded in `051_05` and `053_05`: Andromeda records a
-/// downloaded @context after the request that downloaded it
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: a Cached @context is listed by exactly the URL it was downloaded from (clause 5.13.3.1: "it shall be the
+/// original URL")
+/// Timing: the request that reads a Cached @context right after its download is retried until the delivery deadline (12
+/// times 250 ms): Andromeda records a downloaded @context after the request that downloaded it
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_07_list_contexts_details_false_kind_cached_an_implicitly_created_one() -> Result<()> {
@@ -316,27 +250,17 @@ async fn e052_06_07_list_contexts_details_false_kind_cached_an_implicitly_create
 
 /// Pins: Check that one can list @contexts
 /// Clause: 5.13.3
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/`
-/// followed by their host and path, as application/ld+json documents mapping the terms the case uses to per-file
-/// IRIs
-/// Changed: the subscription id gets {{ns}} and its notification endpoint `http://a.b.c/123` becomes
-/// `{{mock_internal}}/notify/{{ns}}/1`, as the standing changes give; the case waits for no notification, and none is
-/// sent, no entity of its type T1 being written
-/// Changed: Check Context Response Body Containing numberOfHits value is handed a body that has no numberOfHits under
-/// the specification (a served @context document is the stored @context alone, clauses 5.13.1 and 5.13.4.4), so its
-/// check never applies; the port requires the member to be absent, which implies the check
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: a listed URL is compared as the broker lists it, where the keyword percent-decodes it first: clause
-/// 5.13.3.1 has a client use each listed URL as given
-/// Changed: the listing is required to be a JSON array (Table 6.29.3.2-2), where the keyword only parses and
-/// iterates it
-/// Tenant: private (the case looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the subscription id carries the namespace and its endpoint is the test's own notification path; no entity
+/// of type T1 is written, so no notification is sent
+/// Expected: a served @context document is the stored @context alone (clauses 5.13.1 and 5.13.4.4), so it carries no
+/// numberOfHits
+/// Expected: a listed URL is compared as the broker lists it: clause 5.13.3.1 has a client use each listed URL as given
+/// Tenant: private (the test looks its own @contexts up in a listing of the tenant, which in the shared tenant holds
 /// every other file's entries; Andromeda answers at most the first 1000 entries of a kind in identifier order and drops
-/// the rest (defect D-25), so the file's own entries are listed reliably only in a tenant of its own)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// the rest, so the file's own entries are listed reliably only in a tenant of its own)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e052_06_08_list_contexts_details_false_kind_implicitly_created_an_implicitly_created_one() -> Result<()> {

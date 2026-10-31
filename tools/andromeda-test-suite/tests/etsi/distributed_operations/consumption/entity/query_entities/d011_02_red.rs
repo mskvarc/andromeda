@@ -1,5 +1,5 @@
-//! ETSI `D011_02_red`: a query by type, by `GET /entities` or by `POST /entityOperations/query`, forwarded to a
-//! redirect context source answers the source's matching entity (clauses 4.3.3, 4.3.6.3 and 5.7.2).
+//! A query by type, by `GET /entities` or by `POST /entityOperations/query`, forwarded to a redirect context source
+//! answers the source's matching entity (clauses 4.3.3, 4.3.6.3 and 5.7.2).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -50,14 +50,7 @@ fn expect_source_vehicle(body: &Value, namespace: &Namespace) {
 /// Pins: Verify that when querying by entity type with a redirect registration that supports queryEntity, the request
 /// is forwarded to the Context Source and entities are retrieved correctly
 /// Clause: 4.3.3, 4.3.6.3, 5.7.2
-/// Corrected: `fix(D011-json)`: use application/json with the link context header, not ld+json (6.3.5)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D011_02_red_01`, with the case number after the mode; the file name moves it
-/// before the mode (d011-02-01-red), as in the other files of the area
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: the request is application/json with the @context in a Link header, not application/ld+json (clause 6.3.5)
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]
@@ -91,14 +84,7 @@ async fn d011_02_01_red_query_the_context_broker_with_type_with_query_entity() -
 /// Pins: Verify that when querying by entity type with a redirect registration that supports queryBatch, the request
 /// is forwarded to the Context Source and entities are retrieved correctly
 /// Clause: 4.3.3, 4.3.6.3, 5.7.2
-/// Corrected: `fix(D011-json)`: use application/json with the link context header, not ld+json (6.3.5)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the suite names this case `D011_02_red_02`, with the case number after the mode; the file name moves it
-/// before the mode (d011-02-02-red), as in the other files of the area
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: the request is application/json with the @context in a Link header, not application/ld+json (clause 6.3.5)
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

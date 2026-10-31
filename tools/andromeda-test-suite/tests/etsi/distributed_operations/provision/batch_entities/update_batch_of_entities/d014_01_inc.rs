@@ -1,5 +1,5 @@
-//! ETSI `D014_01_inc`: a batch update of two entities an inclusive registration matches is sent to the context source
-//! and overwrites the broker's `isParked` (clauses 4.3.3, 4.3.6.2 and 5.6.9).
+//! A batch update of two entities an inclusive registration matches is sent to the context source and overwrites the
+//! broker's `isParked` (clauses 4.3.3, 4.3.6.2 and 5.6.9).
 
 use crate::{
     distributed_operations::{
@@ -10,8 +10,8 @@ use crate::{
             update_batch_of_entities::update_request::update_vehicles,
         },
     },
-    suite_keywords::create_entity_with_context_string,
-    suite_payloads::vehicle_parked,
+    entity_operations::create_entity_with_context_string,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -22,17 +22,10 @@ use serde_json::json;
 /// Pins: Check that if one request the Context Broker to update a batch of entities that match an inclusive
 /// registration, they are updated on the Context Source too
 /// Clause: 4.3.3, 4.3.6.2, 5.6.9
-/// Corrected: `fix(D014_inc)`: assert the local isParked against the overwrite flag (5.6.9.4, 5.6.3.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: the query is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the local isParked follows the overwrite flag (clauses 5.6.9.4, 5.6.3.4)
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d014_01_inc_update_batch_entities_without_no_overwrite_option() -> Result<()> {

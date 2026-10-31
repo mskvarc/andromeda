@@ -1,5 +1,5 @@
-//! The ETSI `@context` cases: storing `@context`s at the broker, listing and serving them, and deleting or reloading
-//! them (clause 5.13).
+//! The `@context` tests: storing `@context`s at the broker, listing and serving them, and deleting or reloading them
+//! (clause 5.13).
 
 mod building_use;
 mod consumption;

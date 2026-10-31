@@ -1,7 +1,7 @@
-//! ETSI `020_24`: the temporal evolution of an entity whose relationship has several objects is retrieved, in
-//! normalized and in simplified temporal representation (clauses 5.7.3 and 4.5.9).
+//! The temporal evolution of an entity whose relationship has several objects is retrieved, in normalized and in
+//! simplified temporal representation (clauses 5.7.3 and 4.5.9).
 
-use crate::suite_keywords::create_temporal_evolution;
+use crate::temporal_operations::create_temporal_evolution;
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

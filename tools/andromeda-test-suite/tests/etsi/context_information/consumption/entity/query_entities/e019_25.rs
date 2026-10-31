@@ -1,9 +1,9 @@
-//! ETSI `019_25`: every entity of a tenant is queried with the `local` flag alone, without an entity type or a
-//! selection (clause 5.7.2).
+//! Every entity of a tenant is queried with the `local` flag alone, without an entity type or a selection (clause
+//! 5.7.2).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::bare_building,
+    building_payloads::bare_building,
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -18,8 +18,6 @@ const TERMS: [&str; 1] = ["Building"];
 /// Clause: 5.7.2
 /// Tenant: private (a query with local=true alone answers the first page of every entity of the tenant, which in the
 /// shared tenant need not hold this file's two entities)
-/// Changed: the response is compared as one list of the two Buildings, where the Hurl file checks each Building's `id`
-/// and `type` and that it has two members
 #[gtest]
 #[tokio::test]
 async fn e019_25_query_all_entities_with_local_flag() -> Result<()> {

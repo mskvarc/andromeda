@@ -1,7 +1,6 @@
-//! ETSI `001_02`: a create whose body is not a valid entity is refused with a problem of the type its defect calls for
-//! (clause 5.6.1).
+//! A create whose body is not a valid entity is refused with a problem of the type its defect calls for (clause 5.6.1).
 
-use crate::suite_keywords::{post_text, refused};
+use crate::unchecked_requests::{post_text, refused};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -26,8 +25,8 @@ async fn e001_02_01_invalid_json() -> Result<()> {
 
 /// Pins: Check that one cannot create an entity with an invalid request
 /// Clause: 5.6.1
-/// Corrected: `fix(001_02_02)`: empty json array is badrequestdata not invalidrequest (5.5.4)
-/// Vocabulary: none (the ETSI case references no @context)
+/// Expected: an empty JSON array is refused with `BadRequestData`, not `InvalidRequest` (clause 5.5.4)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_02_02_empty_json() -> Result<()> {
@@ -37,7 +36,7 @@ async fn e001_02_02_empty_json() -> Result<()> {
 
 /// Pins: Check that one cannot create an entity with an invalid request
 /// Clause: 5.6.1
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_02_03_entity_with_no_context() -> Result<()> {
@@ -54,7 +53,7 @@ async fn e001_02_03_entity_with_no_context() -> Result<()> {
 
 /// Pins: Check that one cannot create an entity with an invalid request
 /// Clause: 5.6.1
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_02_04_entity_with_invalid_type() -> Result<()> {

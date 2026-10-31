@@ -1,9 +1,11 @@
-//! ETSI `034_02`: a context source registration update is refused with 400 when the target is not a valid URI, when
-//! the body is not a registration, or when it removes the mandatory `information` (clause 5.9.3).
+//! A context source registration update is refused with 400 when the target is not a valid URI, when the body is not a
+//! registration, or when it removes the mandatory `information` (clause 5.9.3).
 
 use crate::{
-    suite_keywords::{csource_endpoint, ld_json_body_client, update_registration_request},
-    suite_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information, polygon},
+    entity_operations::ld_json_body_client,
+    geometry_payloads::polygon,
+    registration_operations::{csource_endpoint, update_registration_request},
+    registration_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -61,12 +63,8 @@ async fn torn_down(client: &BrokerClient, registration: &CSourceRegistration<Inp
 
 /// Pins: Check that one cannot update a context source registration under some conditions
 /// Clause: 5.9.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause 4
-/// has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_02_01_update_a_context_source_registration_by_id_if_the_id_is_not_a_valid_uri() -> Result<()> {
@@ -82,12 +80,8 @@ async fn e034_02_01_update_a_context_source_registration_by_id_if_the_id_is_not_
 
 /// Pins: Check that one cannot update a context source registration under some conditions
 /// Clause: 5.9.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause 4
-/// has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_02_02_update_a_context_source_registration_if_the_request_body_is_not_of_the_same_data_type() -> Result<()> {
@@ -103,15 +97,11 @@ async fn e034_02_02_update_a_context_source_registration_if_the_request_body_is_
 
 /// Pins: Check that one cannot update a context source registration under some conditions
 /// Clause: 5.9.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause 4
-/// has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
 /// Tenant: private (a broker that failed to refuse the request would hold a Context Source Registration whose
 /// information was removed, which matches every other file's queries in the shared tenant (clause 5.12) and would
 /// forward them; clause 4.14 keeps each tenant's registrations its own)
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_02_03_update_a_context_source_registration_if_one_attempts_to_remove_a_mandatory_property() -> Result<()> {

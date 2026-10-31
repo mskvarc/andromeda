@@ -1,10 +1,12 @@
-//! ETSI `012_02`: a partial attribute update is refused with 400 `BadRequestData` when its entity id is missing or not
-//! a URI, when its body names another attribute type, when its fragment is empty, and when its `datasetId` is the
-//! NGSI-LD Null (clause 5.6.4).
+//! A partial attribute update is refused with 400 `BadRequestData` when its entity id is missing or not a URI, when its
+//! body names another attribute type, when its fragment is empty, and when its `datasetId` is the NGSI-LD Null (clause
+//! 5.6.4).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_gps, delete_entities, ld_json_body_client, refused},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_56_patch},
+    entity_operations::{delete_entities, ld_json_body_client},
+    unchecked_requests::refused,
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_56_patch},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_gps,
 };
 use andromeda_test_suite::{
     broker,
@@ -28,7 +30,7 @@ async fn e012_02_01_make_a_partial_attribute_update_if_the_entity_id_is_not_pres
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
-    let change = Change::Set(speedometer_speed_56_patch(&namespace)?);
+    let change = Change::from(speedometer_speed_56_patch(&namespace)?);
     let operation = PartialAttributeUpdate::builder()
         .id(&id)
         .name(&speed)
@@ -52,7 +54,7 @@ async fn e012_02_02_make_a_partial_attribute_update_if_the_entity_id_is_not_a_va
     let client = ld_json_body_client(&broker, &vocabulary)?;
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
-    let change = Change::Set(speedometer_speed_56_patch(&namespace)?);
+    let change = Change::from(speedometer_speed_56_patch(&namespace)?);
     let operation = PartialAttributeUpdate::builder()
         .id(&id)
         .name(&speed)
@@ -77,7 +79,7 @@ async fn e012_02_03_make_a_partial_attribute_update_if_the_attribute_type_does_n
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
     let relationship = Attribute::from(Relationship::builder(namespace.urn("Entity", "01")?).build()?).into_patch();
-    let change = Change::Set(relationship);
+    let change = Change::from(relationship);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
     refused(&client, client.unchecked(&operation)?, ErrorType::BadRequestData).await?;
     delete_entities(&broker, &[&id]).await;
@@ -94,7 +96,7 @@ async fn e012_02_04_make_a_partial_attribute_update_if_the_entity_fragment_is_em
     create_vehicle_brand_parked_speed_gps(&broker, &namespace, &VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS).await?;
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
-    let change = Change::Set(speedometer_speed_56_patch(&namespace)?);
+    let change = Change::from(speedometer_speed_56_patch(&namespace)?);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
     let request = content_type(broker.unchecked(&operation)?.document_as_is(&UncheckedDocument::empty()), &APPLICATION_LD_JSON)?;
     refused(&broker, request, ErrorType::BadRequestData).await?;
@@ -115,7 +117,7 @@ async fn e012_02_05_partial_update_setting_dataset_id_to_null() -> Result<()> {
     let speed: AttributeName = "speed".parse()?;
     let attribute = Attribute::from(Property::builder(56).build()?).into_patch();
     let document = UncheckedDocument::try_from(attribute.render(Lossless::Normalized))?.set_text("datasetId", "urn:ngsi-ld:null");
-    let change = Change::Set(attribute);
+    let change = Change::from(attribute);
     let operation = PartialAttributeUpdate::builder().id(&id).name(&speed).attribute(&change).build();
     refused(&client, client.unchecked(&operation)?.document(&document), ErrorType::BadRequestData).await?;
     delete_entities(&broker, &[&id]).await;

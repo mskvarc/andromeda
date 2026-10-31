@@ -1,13 +1,12 @@
-//! ETSI `021_03`: the last four instances of each attribute of the temporal evolutions of the Vehicles of a context are
-//! queried after an instant (clause 5.7.4). A Vehicle with five instances keeps its four most recent ones, and a
-//! Vehicle
-//! with three keeps all of them.
+//! The last four instances of each attribute of the temporal evolutions of the Vehicles of a context are queried after
+//! an instant (clause 5.7.4). A Vehicle with five instances keeps its four most recent ones, and a Vehicle with three
+//! keeps all of them.
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
 use crate::{
-    suite_keywords::{create_temporal_entity, delete_temporal_entities},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_five_instances, vehicle_speed_fuel_level_on},
+    temporal_operations::{create_temporal_entity, delete_temporal_entities},
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_five_instances, vehicle_speed_fuel_level_on},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

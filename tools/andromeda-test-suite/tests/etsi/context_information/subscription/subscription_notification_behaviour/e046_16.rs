@@ -1,14 +1,14 @@
-//! ETSI `046_16`: a subscription whose entity type selection is the disjunction `Building|Tower` notifies the creation
-//! of an entity that matches it and only such a one (clauses 5.8.6 and 4.17).
+//! A subscription whose entity type selection is the disjunction `Building|Tower` notifies the creation of an entity
+//! that matches it and only such a one (clauses 5.8.6 and 4.17).
 
-use crate::suite_payloads::{building_simple_attributes, vehicle_parked};
+use crate::{building_payloads::building_simple_attributes, vehicle_entity_payloads::vehicle_parked};
 use andromeda_test_suite::{
-    broker::{self, BrokerClient},
+    broker,
+    broker::BrokerClient,
     cleanup::Cleanup,
     namespace::Namespace,
     notification_sink::NotificationSink,
     problem::answered,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
     wire::send_to,
@@ -61,11 +61,7 @@ async fn teardown(broker: &BrokerClient, subscription: &SubscriptionId, entity: 
 /// Pins: If a subscription defines an entity type selection query, a notification shall be sent whenever an entity
 /// matches the query.
 /// Clause: 5.8.6
-/// Corrected: fix(`046_16_01`, `046_16_02`): select building or tower with the disjunction the type selection grammar
-/// defines (4.17)
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal; the port
-/// refuses a backslash, a ''' and a final ' and then requires JSON, which is stricter only where an escape leaves the
-/// keyword reading, and accepting, a body other than the one sent
+/// Expected: building or tower is selected with the disjunction the type selection grammar defines (clause 4.17)
 #[gtest]
 #[tokio::test]
 async fn e046_16_01_check_that_a_notification_is_sent_with_entity_matching_the_entity_type_selection() -> Result<()> {
@@ -86,7 +82,7 @@ async fn e046_16_01_check_that_a_notification_is_sent_with_entity_matching_the_e
     create(&client, &building).await;
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(subscription.to_string()))));
     expect_that!(body.pointer("/data").and_then(|data| data.as_array()).map(Vec::len), some(gt(0)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));
@@ -97,9 +93,8 @@ async fn e046_16_01_check_that_a_notification_is_sent_with_entity_matching_the_e
 /// Pins: If a subscription defines an entity type selection query, a notification shall not be sent if the entity
 /// type does not match the query
 /// Clause: 5.8.6
-/// Corrected: fix(`046_16_01`, `046_16_02`): select building or tower with the disjunction the type selection grammar
-/// defines (4.17)
-/// Absence: Wait for no notification 5 s
+/// Expected: building or tower is selected with the disjunction the type selection grammar defines (clause 4.17)
+/// Absence: no notification within 5 s
 #[gtest]
 #[tokio::test]
 async fn e046_16_02_check_that_a_notification_is_not_sent_if_the_entity_type_does_not_match_the_entity_type_selection() -> Result<()> {

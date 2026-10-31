@@ -1,7 +1,8 @@
-//! ETSI `046_19`: a subscription's `datasetId` keeps in the notified entity only the attribute instances of that dataset
-//! (clauses 4.5.5 and 5.8.6).
+//! A subscription's `datasetId` keeps in the notified entity only the attribute instances of that dataset (clauses
+//! 4.5.5 and 5.8.6).
 
 use crate::{
+    building_payloads::building_named_in_datasets,
     context_information::subscription::subscription_notification_behaviour::notification_case::{
         attributes_updated,
         created,
@@ -9,14 +10,13 @@ use crate::{
         subscription_created,
         teardown,
     },
-    suite_payloads::{building_named_in_datasets, dataset},
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
     namespace::Namespace,
     notification_sink::NotificationSink,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
 };
@@ -31,10 +31,6 @@ use serde_json::json;
 
 /// Pins: If a subscription has a datasetId member instances should be filtered based on that datasetId.
 /// Clause: 4.5.5, 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_19_check_that_only_the_attribute_instances_that_match_the_dataset_id_member_are_included_in_the_entity_in_the_notification() -> Result<()> {
@@ -63,7 +59,7 @@ async fn e046_19_check_that_only_the_attribute_instances_that_match_the_dataset_
     attributes_updated(&as_list, &building.id, &french_name_update(&namespace)?).await.any_answer();
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));
     expect_that!(

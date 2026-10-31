@@ -10,8 +10,8 @@ use serde_json::json;
 /// Pins: Retrieve Available Attributes answers an `AttributeList` naming the attributes the supplied @context knows
 /// by short name and the rest by Fully Qualified Name, as C.5.10.3 prints
 /// Clause: C.5.10, 4.5.13, 5.7.8
-/// Corrected: complete-attribute-lists: the lists hold the `OffStreetParking` Attributes C.5.8 shows on the same
-/// Entities (5.7.8, 5.7.9)
+/// Expected: the lists hold the `OffStreetParking` Attributes clause C.5.8 shows on the same Entities (clauses 5.7.8,
+/// 5.7.9)
 /// Tenant: private (type and attribute discovery answers every type and attribute of the tenant, 5.7.5 to 5.7.10,
 /// which only a tenant holding exactly the four Entities this file creates can show)
 #[gtest]

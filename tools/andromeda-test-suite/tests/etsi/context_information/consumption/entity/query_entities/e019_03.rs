@@ -1,9 +1,9 @@
-//! ETSI `019_03`: a query whose ids, id pattern, attribute names, geometry property or minimal parameters are incorrect is
-//! refused with 400 `BadRequestData` (clause 5.7.2).
+//! A query whose ids, id pattern, attribute names, geometry property or minimal parameters are incorrect is refused
+//! with 400 `BadRequestData` (clause 5.7.2).
 
 use crate::{
-    suite_keywords::{context_link, create_entity, delete_entities},
-    suite_payloads::{bare_building, eiffel_tower_located},
+    building_payloads::{bare_building, eiffel_tower_located},
+    entity_operations::{context_link, create_entity, delete_entities},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary, wire::request_to};
 use googletest::prelude::*;
@@ -89,7 +89,7 @@ async fn e019_03_04_query_entities_when_the_request_has_a_wrong_geometry_propert
 
 /// Pins: Check that one cannot query entities if it has none of the minimal parameters
 /// Clause: 5.7.2
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e019_03_05_query_entities_without_minimal_parameters() -> Result<()> {

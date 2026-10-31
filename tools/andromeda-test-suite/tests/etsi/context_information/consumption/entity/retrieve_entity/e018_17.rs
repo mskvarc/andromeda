@@ -1,9 +1,9 @@
-//! ETSI `018_17`: an entity is retrieved with `pick` or `omit` on its attributes, on its core members, or on both
-//! (clauses 5.7.1 and 4.21).
+//! An entity is retrieved with `pick` or `omit` on its attributes, on its core members, or on both (clauses 5.7.1 and
+//! 4.21).
 
 use crate::{
-    suite_keywords::{OBSERVED_AT_WHOLE_SECOND, create_entity, delete_entities, observed_at},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{OBSERVED_AT_WHOLE_SECOND, create_entity, delete_entities, observed_at},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

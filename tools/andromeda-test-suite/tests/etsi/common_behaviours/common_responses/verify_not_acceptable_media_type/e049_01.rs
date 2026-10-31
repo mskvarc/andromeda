@@ -1,8 +1,8 @@
-//! ETSI `049_01`: a GET whose `Accept` field implies neither `application/json` nor `application/ld+json` is refused
-//! with 406 (clause 6.3.4).
+//! A GET whose `Accept` field implies neither `application/json` nor `application/ld+json` is refused with 406 (clause
+//! 6.3.4).
 //!
-//! The targets are written as the ETSI keywords write them and the `Accept` field is the case's subject, so each
-//! request is built by `request_to` rather than by an operation, which would write its own `Accept`.
+//! The targets are written as fixed paths and the `Accept` field is the test's subject, so each request is built by
+//! `request_to` rather than by an operation, which would write its own `Accept`.
 
 use andromeda_test_suite::{
     broker,
@@ -18,7 +18,7 @@ use ngsi_ld::{model::APPLICATION_JSON, subscription::SubscriptionId};
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /entities/{entityId})
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e049_01_01_get_entity() -> Result<()> {
@@ -35,7 +35,7 @@ async fn e049_01_01_get_entity() -> Result<()> {
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /subscriptions/{subscriptionId})
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e049_01_02_get_subscription() -> Result<()> {
@@ -53,7 +53,7 @@ async fn e049_01_02_get_subscription() -> Result<()> {
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /csourceRegistrations/)
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e049_01_03_get_csource_registrations() -> Result<()> {
@@ -66,7 +66,7 @@ async fn e049_01_03_get_csource_registrations() -> Result<()> {
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /csourceSubscriptions/)
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e049_01_04_get_csource_subscriptions() -> Result<()> {
@@ -79,7 +79,7 @@ async fn e049_01_04_get_csource_subscriptions() -> Result<()> {
 /// Pins: Verify throwing 406 HTTP status code (Not Acceptable Media Type) if the "Accept" header does not imply
 /// "application/json" nor "application/ld+json" (get /temporal/entities)
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e049_01_05_get_temporal_entities() -> Result<()> {

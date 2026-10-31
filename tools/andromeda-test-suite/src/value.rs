@@ -15,7 +15,7 @@ pub fn object<const N: usize>(members: [(&str, Value); N]) -> Value {
 pub fn from_json(json: &serde_json::Value) -> Option<Value> {
     Some(match json {
         serde_json::Value::Null => return None,
-        serde_json::Value::Bool(flag) => Value::Boolean(*flag),
+        serde_json::Value::Bool(flag) => Value::from(*flag),
         serde_json::Value::Number(number) => Value::Number(number.to_string().parse().ok()?),
         serde_json::Value::String(text) => Value::from(text.as_str()),
         serde_json::Value::Array(items) => Value::Array(items.iter().map(from_json).collect::<Option<Vec<_>>>()?),
@@ -52,7 +52,7 @@ mod tests {
             eq(&object([
                 ("year", Value::from(2024)),
                 ("marks", Value::from(vec![1, 2])),
-                ("ok", Value::Boolean(true))
+                ("ok", Value::from(true))
             ]))
         )
     }

@@ -1,10 +1,10 @@
-//! The keywords that read what a broker forwarded to the case's context source: `Wait for redirected request`, `Get
-//! Request Body` and `Get Request Url Params`, and the `@context` reading of an entity the broker answers with.
+//! Reading what a broker forwarded to the test's context source: the wait for a forwarded request, its body and its
+//! query parameters, and the `@context` reading of an entity the broker answers with.
 //!
-//! The suite's server keeps the 200 a wait replies by when the stub already answered the request, and answers the
-//! next request no stub matches with it: the wait queues that one reply on the source.
+//! A wait whose request a stub has already answered keeps its 200 reply for the next request no stub matches: the wait
+//! queues that one reply on the source.
 
-use andromeda_test_suite::{context_source::ContextSource, robot_literal};
+use andromeda_test_suite::context_source::ContextSource;
 use googletest::prelude::*;
 use http::StatusCode;
 use serde_json::Value;
@@ -13,8 +13,8 @@ use wiremock::{Mock, Request, ResponseTemplate, matchers::any};
 /// The priority of the queued reply: below every stub, above the source's answer to an unmatched request.
 const QUEUED_REPLY_PRIORITY: u8 = u8::MAX - 1;
 
-/// `Wait for redirected request`: waits until the source holds a request beyond the `taken` earlier waits took,
-/// queues the 200 reply for the next request no stub matches, and answers the last request the source holds.
+/// Waits until the source holds a request beyond the `taken` earlier waits took, queues the 200 reply for the next
+/// request no stub matches, and answers the last request the source holds.
 pub(crate) async fn wait_for_redirected(source: &ContextSource, taken: usize) -> Result<Request> {
     let request = wait_for_request(source, taken).await?;
     source
@@ -28,18 +28,18 @@ pub(crate) async fn wait_for_redirected(source: &ContextSource, taken: usize) ->
     Ok(request)
 }
 
-/// `Wait For Request`: waits until the source holds a request beyond the `taken` earlier waits took, and answers the
-/// last request the source holds.
+/// Waits until the source holds a request beyond the `taken` earlier waits took, and answers the last request the
+/// source holds.
 pub(crate) async fn wait_for_request(source: &ContextSource, taken: usize) -> Result<Request> {
     source.wait_for(taken + 1).await?.into_iter().last().or_fail()
 }
 
-/// `Get Request Body`: the forwarded body as the suite's keyword reads it.
+/// The forwarded body read as JSON.
 pub(crate) fn forwarded_body(request: &Request) -> Result<Value> {
-    Ok(robot_literal::read(&request.body)?)
+    Ok(request.body_json::<Value>()?)
 }
 
-/// `Get Request Url Params options`: every value of the `options` parameters of the forwarded request, in order.
+/// Every value of the `options` parameters of the forwarded request, in order.
 pub(crate) fn forwarded_options(request: &Request) -> Vec<String> {
     request
         .url

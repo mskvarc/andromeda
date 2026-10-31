@@ -1,5 +1,5 @@
-//! ETSI `D005_01_inc`: a partial update of the `speed` of an entity an inclusive registration matches is forwarded to
-//! the context source with the `speed` member and keeps the broker's entity (clauses 4.3.3, 4.3.6.2 and 5.6.4).
+//! A partial update of the `speed` of an entity an inclusive registration matches is forwarded to the context source
+//! with the `speed` member and keeps the broker's entity (clauses 4.3.3, 4.3.6.2 and 5.6.4).
 
 use crate::{
     distributed_operations::{
@@ -13,7 +13,7 @@ use crate::{
             wait_for_request,
         },
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities, ld_json_body_client, partial_update_document, retrieve_entity_json},
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, partial_update_document, retrieve_entity_json},
 };
 use andromeda_test_suite::{
     broker,
@@ -31,21 +31,7 @@ use ngsi_ld::{http::headers::Accept, model::AttributeName, query::Locality, regi
 /// Pins: Check that if one request the Context Broker to partially update an attribute whose id matches an inclusive
 /// registration, this is updated on the Context Source too
 /// Clause: 4.3.3, 4.3.6.2, 5.6.4
-/// Corrected: `fix(D005_01_inc)`: give the local entity the default speed the patch targets (5.6.4.4)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request hands over the most recent request the server holds; the port waits until the source
-/// holds a request earlier waits did not take and reads the last one, which is the one the case's action forwarded.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: Get Request Body is parsed as a Python `'''...'''` literal; the port refuses a backslash, a `'''` and a
-/// final `'` and then requires the body to be JSON.
-/// Changed: both retrievals are held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
-/// Defect: D-79: Andromeda forwards the partial update as {"type":"Property","value":{"speed":{...}}}, the client's
-/// speed Attribute nested inside a value member, so the forwarded body has no top-level speed member
+/// Expected: the local entity holds the default speed the patch targets (clause 5.6.4.4)
 #[gtest]
 #[tokio::test]
 async fn d005_01_inc_partial_partial_attribute_update() -> Result<()> {

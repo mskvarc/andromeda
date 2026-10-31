@@ -114,6 +114,9 @@ pub enum PayloadError {
     Document(#[from] DocumentError<ReadErrorKind<Infallible>>),
 }
 
+/// The maximum packet, in octets, a large observer announces: 64 MiB, as the large broker admits.
+const LARGE_PACKET: u32 = 64 * 1024 * 1024;
+
 /// An observer of one topic of one MQTT broker.
 #[derive(Debug)]
 pub struct MqttObserver {
@@ -133,8 +136,27 @@ impl MqttObserver {
     ///
     /// Returns [`ObserverError`] when the subscription is not acknowledged within ten seconds.
     pub async fn subscribe(host: &str, observer_port: u16, port: u16, topic: &str, client_id: &str) -> Result<MqttObserver, ObserverError> {
+        MqttObserver::open(host, observer_port, port, topic, client_id, None).await
+    }
+
+    /// As [`subscribe`](Self::subscribe), for a broker that admits messages of several MiB: the client announces a
+    /// maximum packet of 64 MiB, where an MQTT 5 client otherwise refuses a packet over 10 KiB.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObserverError`] when the subscription is not acknowledged within ten seconds.
+    pub async fn subscribe_large(host: &str, observer_port: u16, port: u16, topic: &str, client_id: &str) -> Result<MqttObserver, ObserverError> {
+        MqttObserver::open(host, observer_port, port, topic, client_id, Some(LARGE_PACKET)).await
+    }
+
+    /// Connects, subscribes to `<port>/<topic>` and waits for the acknowledgement; `packet_limit` is the maximum
+    /// packet the client announces, when it announces one.
+    async fn open(host: &str, observer_port: u16, port: u16, topic: &str, client_id: &str, packet_limit: Option<u32>) -> Result<MqttObserver, ObserverError> {
         let mut options = MqttOptions::new(client_id, host, observer_port);
         options.set_keep_alive(Duration::from_secs(30));
+        if let Some(limit) = packet_limit {
+            options.set_max_packet_size(Some(limit));
+        }
         let (client, mut event_loop) = AsyncClient::new(options, 64);
         let messages = Arc::new(RwLock::new(Vec::new()));
         let (acknowledged, subscribed) = oneshot::channel();

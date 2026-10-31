@@ -1,9 +1,9 @@
-//! ETSI `011_05`: an update replaces the scope of an entity that already has one, and adds no scope to an entity that has
-//! none (clauses 5.6.2 and 4.18).
+//! An update replaces the scope of an entity that already has one, and adds no scope to an entity that has none
+//! (clauses 5.6.2 and 4.18).
 
 use crate::{
-    suite_keywords::{create_entity_with_link, delete_entities, retrieve_entity_json, update_attributes},
-    suite_payloads::{company_unit_scope, vehicle_id_building, vehicle_id_building_with_scope},
+    building_payloads::{company_unit_scope, vehicle_id_building, vehicle_id_building_with_scope},
+    entity_operations::{create_entity_with_link, delete_entities, retrieve_entity_json, update_attributes},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

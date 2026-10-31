@@ -120,7 +120,7 @@ services:
   runner:
     image: andromeda-test-suite-runner:latest
     build:
-      context: ../base
+      context: ../runner
     profiles: ["runner"]
     depends_on:
       broker-1:

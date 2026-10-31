@@ -1,7 +1,7 @@
-//! ETSI `028_06`: a subscription created with a dataset identifier is retrieved with that identifier and its notification
-//! triggers (clauses 5.8.1 and 4.5.5).
+//! A subscription created with a dataset identifier is retrieved with that identifier and its notification triggers
+//! (clauses 5.8.1 and 4.5.5).
 
-use crate::{suite_keywords::ld_json_body_client, suite_payloads::dataset};
+use crate::{entity_operations::ld_json_body_client, vehicle_entity_payloads::dataset};
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
@@ -24,7 +24,7 @@ use serde_json::json;
 
 /// Pins: Check that one can create a subscription with a datasetId
 /// Clause: 5.8.1, 4.5.5
-/// Corrected: fix(subscription-jsonldcontext): ignore jsonldcontext on retrieved subscriptions (5.8.1.4)
+/// Expected: a retrieved subscription is compared with jsonldContext left out (clause 5.8.1.4)
 #[gtest]
 #[tokio::test]
 async fn e028_06_create_a_subscription_with_a_dataset_id() -> Result<()> {

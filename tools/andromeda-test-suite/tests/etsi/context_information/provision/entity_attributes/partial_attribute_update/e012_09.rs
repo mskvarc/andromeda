@@ -1,9 +1,10 @@
-//! ETSI `012_09`: a partial attribute update of a `VocabProperty` replaces its `vocab` and adds its `providedBy`
-//! Relationship, and keeps its `source` sub-attribute (clauses 5.6.4 and 4.5.20).
+//! A partial attribute update of a `VocabProperty` replaces its `vocab` and adds its `providedBy` Relationship, and
+//! keeps its `source` sub-attribute (clauses 5.6.4 and 4.5.20).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, ld_json_body_client, partial_update_request, retrieve_entity_json},
-    suite_payloads::{BUILDING_VOCAB_PROPERTY_TERMS, provided_by_john_doe},
+    building_payloads::BUILDING_VOCAB_PROPERTY_TERMS,
+    entity_operations::{create_entity, delete_entities, ld_json_body_client, partial_update_request, retrieve_entity_json},
+    vehicle_entity_payloads::provided_by_john_doe,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

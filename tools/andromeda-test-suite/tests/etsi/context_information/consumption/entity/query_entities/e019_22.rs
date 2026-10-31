@@ -1,9 +1,9 @@
-//! ETSI `019_22`: Buildings linked to Cities linked to Countries are queried with a `pick` on the linked entities,
-//! joined inline or flat, at one and at two levels (clauses 5.7.2, 4.5.23 and 4.21).
+//! Buildings linked to Cities linked to Countries are queried with a `pick` on the linked entities, joined inline or
+//! flat, at one and at two levels (clauses 5.7.2, 4.5.23 and 4.21).
 
 use crate::{
-    suite_keywords::{create_building_city_country_pairs, delete_building_city_country_pairs},
-    suite_payloads::PARIS_IN_FRANCE_TERMS,
+    linked_entity_fixtures::{create_building_city_country_pairs, delete_building_city_country_pairs},
+    linked_place_payloads::PARIS_IN_FRANCE_TERMS,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -38,7 +38,6 @@ async fn created(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabul
 
 /// Pins: Check that entities can be queried with inline join and pick on linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_22_01_query_inline_with_pick_on_linked_entity() -> Result<()> {
@@ -97,7 +96,6 @@ async fn e019_22_01_query_inline_with_pick_on_linked_entity() -> Result<()> {
 
 /// Pins: Check that entities can be queried with flat join and pick on linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_22_02_query_flat_with_pick_on_linked_entity() -> Result<()> {
@@ -150,7 +148,6 @@ async fn e019_22_02_query_flat_with_pick_on_linked_entity() -> Result<()> {
 
 /// Pins: Check that entities can be queried with inline join and pick on second level linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_22_03_query_inline_with_pick_on_second_level_linked_entity() -> Result<()> {
@@ -230,7 +227,6 @@ async fn e019_22_03_query_inline_with_pick_on_second_level_linked_entity() -> Re
 
 /// Pins: Check that entities can be queried with flat join and pick on second level linked entity
 /// Clause: 5.7.2, 4.5.23, 4.21
-/// Changed: the second Country is created with a 201 check, where the Hurl file accepts any answer to that creation
 #[gtest]
 #[tokio::test]
 async fn e019_22_04_query_flat_with_pick_on_second_level_linked_entity() -> Result<()> {

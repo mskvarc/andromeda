@@ -1,7 +1,7 @@
-//! ETSI `024_01`: an entity type that no entity of the tenant holds is not retrieved in its detailed representation
-//! when the request names it without a `@context` (clause 5.7.7).
+//! An entity type that no entity of the tenant holds is not retrieved in its detailed representation when the request
+//! names it without a `@context` (clause 5.7.7).
 
-use crate::{suite_keywords::create_entity_with_link, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

@@ -1,10 +1,7 @@
-//! ETSI `018_15`: an entity is retrieved with the `format` and `options` query parameters naming each representation,
-//! and with both together (clauses 5.7.1 and 6.3.7).
+//! An entity is retrieved with the `format` and `options` query parameters naming each representation, and with both
+//! together (clauses 5.7.1 and 6.3.7).
 
-use crate::{
-    suite_keywords::{create_entity, get_json},
-    suite_payloads::building_simple_attributes,
-};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity, unchecked_requests::json_answer};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::{ContextRule, matches_document},
@@ -13,7 +10,13 @@ use andromeda_test_suite::{
     vocabulary::Vocabulary,
 };
 use googletest::prelude::*;
-use ngsi_ld::model::{CORE_CONTEXT, EntityId};
+use ngsi_ld::{
+    http::{
+        headers::Accept,
+        operation::{Operation, RepresentationSpelling, RepresentationToken, RetrieveEntity, Simplified},
+    },
+    model::{CORE_CONTEXT, EntityId, Lossless, NgsiLdMediaType},
+};
 use serde_json::{Value, json};
 
 /// The terms of the case's `@context`.
@@ -63,6 +66,12 @@ async fn delete(broker: &BrokerClient, id: &EntityId) {
     broker.temporal().delete(id).send().await.any_answer();
 }
 
+/// The answer to `retrieve`, sent with `Accept: application/ld+json` and no `@context`: requires 200 and answers the
+/// body as JSON, which the cases compare whole with the document they expect, `@context` and expanded names included.
+async fn retrieved_json<O: Operation + Sync>(broker: &BrokerClient, retrieve: &O) -> Result<Value> {
+    json_answer(broker, broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd)).unchecked(retrieve)?).await
+}
+
 /// Pins: Check that one can retrieve with format query param having keyValues value
 /// Clause: 5.7.1, 6.3.7
 #[gtest]
@@ -72,7 +81,15 @@ async fn e018_15_01_retrieve_with_key_values_format() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?format=keyValues")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Simplified)
+            .spelling(RepresentationSpelling::default().key_values())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(key_values(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -90,7 +107,15 @@ async fn e018_15_02_retrieve_with_simplified_format() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?format=simplified")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Simplified)
+            .spelling(RepresentationSpelling::default())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(key_values(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -108,7 +133,15 @@ async fn e018_15_03_retrieve_with_normalized_format() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?format=normalized")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Lossless::Normalized)
+            .spelling(RepresentationSpelling::default().explicit_normalized())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(normalized(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -126,7 +159,15 @@ async fn e018_15_04_retrieve_with_key_values_options() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?options=keyValues")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Simplified)
+            .spelling(RepresentationSpelling::default().in_options().key_values())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(key_values(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -144,7 +185,15 @@ async fn e018_15_05_retrieve_with_simplified_options() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?options=simplified")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Simplified)
+            .spelling(RepresentationSpelling::default().in_options())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(key_values(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -162,7 +211,15 @@ async fn e018_15_06_retrieve_with_normalized_options() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?options=normalized")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Lossless::Normalized)
+            .spelling(RepresentationSpelling::default().in_options().explicit_normalized())
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(normalized(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)
@@ -180,7 +237,19 @@ async fn e018_15_07_retrieve_with_format_and_options() -> Result<()> {
     let broker = broker::front()?;
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let id = create_building(&broker, &vocabulary, &namespace).await?;
-    let body = get_json(&broker, &format!("entities/{id}?options=normalized&format=keyValues")).await?;
+    let body = retrieved_json(
+        &broker,
+        &RetrieveEntity::builder()
+            .id(&id)
+            .format(Simplified)
+            .spelling(
+                RepresentationSpelling::default()
+                    .key_values()
+                    .format_over_options(RepresentationToken::Normalized),
+            )
+            .build(),
+    )
+    .await?;
     expect_that!(
         &body,
         matches_document(key_values(&namespace)?).context_rule(ContextRule::AnyCoreContextVersion)

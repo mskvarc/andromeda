@@ -1,9 +1,10 @@
-//! ETSI `003_10`: a batch of three entities in which two share an id creates the two distinct entities and reports the
-//! repeated id in error (clauses 5.6.7 and 5.5.11).
+//! A batch of three entities in which two share an id creates the two distinct entities and reports the repeated id in
+//! error (clauses 5.6.7 and 5.5.11).
 
 use crate::{
-    suite_keywords::{batch_create_partial, delete_entities, expect_partial_batch, ld_json_body_client},
-    suite_payloads::bare_building,
+    batch_operations::{batch_create_partial, expect_partial_batch},
+    building_payloads::bare_building,
+    entity_operations::{delete_entities, ld_json_body_client},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

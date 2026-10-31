@@ -1,9 +1,8 @@
-//! ETSI `007_02`: a temporal representation of an entity is refused when its body is not valid JSON or is empty (clause
-//! 5.6.11).
+//! A temporal representation of an entity is refused when its body is not valid JSON or is empty (clause 5.6.11).
 
 use crate::{
-    suite_keywords::{post_empty, with_doubled_separator},
-    suite_payloads::vehicle_speed_fuel_level_on,
+    unchecked_requests::{post_empty, with_doubled_separator},
+    vehicle_evolution_payloads::vehicle_speed_fuel_level_on,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::api_uri};
 use googletest::prelude::*;
@@ -15,7 +14,7 @@ use ngsi_ld::{
 
 /// Pins: Check that one cannot create a temporal entity with an empty/invalid json/id
 /// Clause: 5.6.11
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e007_02_01_create_a_temporal_entity_with_an_invalid_json() -> Result<()> {
@@ -32,7 +31,7 @@ async fn e007_02_01_create_a_temporal_entity_with_an_invalid_json() -> Result<()
 
 /// Pins: Check that one cannot create a temporal entity with an empty/invalid json/id
 /// Clause: 5.6.11
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e007_02_02_create_a_temporal_entity_with_an_empty_json() -> Result<()> {

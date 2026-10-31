@@ -1,10 +1,10 @@
-//! ETSI `033_01`: a context source registration is created without a mode and operations, with an `exclusive` mode
-//! and operations, with a location or with an expiration date, and retrieved with the members it was created with
-//! (clause 5.9.2).
+//! A context source registration is created without a mode and operations, with an `exclusive` mode and operations,
+//! with a location or with an expiration date, and retrieved with the members it was created with (clause 5.9.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint},
-    suite_payloads::{VEHICLE_PARKING_TERMS, a456_information, offstreet_pattern, point, vehicle_parking_registration},
+    geometry_payloads::point,
+    registration_operations::{create_registration, csource_endpoint},
+    registration_payloads::{VEHICLE_PARKING_TERMS, a456_information, offstreet_pattern, vehicle_parking_registration},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -64,13 +64,8 @@ async fn case_source(namespace: &Namespace) -> Result<Url> {
 
 /// Pins: Check that one can create a context source registration with specific ID and expiration date
 /// Clause: 5.9.2
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the registration id
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_01_01_create_context_source_registration_without_mode_and_operation() -> Result<()> {
@@ -115,12 +110,7 @@ async fn e033_01_01_create_context_source_registration_without_mode_and_operatio
 
 /// Pins: Check that one can create a context source registration with specific ID and expiration date
 /// Clause: 5.9.2
-/// Corrected: `fix(033_01_02)`: exclusive registration names entities by id (4.3.6.3)
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the registration id
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: an exclusive registration names its entities by id (clause 4.3.6.3)
 #[gtest]
 #[tokio::test]
 async fn e033_01_02_create_context_source_registration_with_non_default_mode_and_operations() -> Result<()> {
@@ -180,11 +170,6 @@ async fn e033_01_02_create_context_source_registration_with_non_default_mode_and
 
 /// Pins: Check that one can create a context source registration with specific ID and expiration date
 /// Clause: 5.9.2
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the registration id
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e033_01_03_create_context_source_registration_with_location() -> Result<()> {
@@ -218,13 +203,8 @@ async fn e033_01_03_create_context_source_registration_with_location() -> Result
 
 /// Pins: Check that one can create a context source registration with specific ID and expiration date
 /// Clause: 5.9.2
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the registration id
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_01_04_create_context_source_registration_with_specific_date_expiration_date() -> Result<()> {

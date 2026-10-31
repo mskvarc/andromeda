@@ -1,0 +1,64 @@
+//! Negated pattern without a language needs no language string to match.
+
+use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, outcome::Done};
+use googletest::prelude::*;
+use ngsi_ld::{
+    http::headers::Accept,
+    model::{Entity, LanguageMap, LanguageProperty, ListProperty, NgsiLdMediaType, Value},
+    query::q,
+};
+
+/// Pins: q name!~="^Tu" matches only the entity none of whose language strings matches, not the entity one of them
+/// does and not a `ListProperty`
+/// Clause: 4.9
+/// Recorded: clause 4.9 gives a `LanguageProperty` with no language the target value of a value from any of its
+/// key-value pairs, and for the unequal operator says "no matching value found in any of the values"; it does not
+/// say the same of `notPatternOp`. The universal reading (the entity matches only when no value of the map is in
+/// L(R)) follows from `notPatternOp` being the negation of `patternOp` as unequal is of equal, whose no-language
+/// form clause 4.9 states that way. A `ListProperty` is no String target, so `notPatternOp` does not match it
+/// (clause 4.9, `notPatternOp`: a target value that is not a String is considered as not matching)
+#[gtest]
+#[tokio::test]
+async fn o_qry_qlg_0011_negated_pattern_without_a_language_needs_no_language_string_to_match() -> Result<()> {
+    let namespace = Namespace::fresh();
+    let broker = broker::front()?;
+    let building_door_id = namespace.urn("Building", "door")?;
+    let building_type = namespace.entity_type("Building")?;
+    let building_gate_id = namespace.urn("Building", "gate")?;
+    let building_list_id = namespace.urn("Building", "list")?;
+    let building_door = Entity::builder()
+        .id(building_door_id)
+        .entity_type(building_type.clone())
+        .language_property(
+            "name",
+            LanguageProperty::builder(LanguageMap::try_from_pairs([("en", "Door"), ("de", "Tuer")])?),
+        )
+        .build()?;
+    broker.entities().create(&building_door).send().await?.done()?;
+    let building_gate = Entity::builder()
+        .id(building_gate_id.clone())
+        .entity_type(building_type.clone())
+        .language_property(
+            "name",
+            LanguageProperty::builder(LanguageMap::try_from_pairs([("en", "Gate"), ("de", "Dach")])?),
+        )
+        .build()?;
+    broker.entities().create(&building_gate).send().await?.done()?;
+    let building_list = Entity::builder()
+        .id(building_list_id)
+        .entity_type(building_type.clone())
+        .list_property("name", ListProperty::builder(vec![Value::from("Tuer")]))
+        .build()?;
+    broker.entities().create(&building_list).send().await?.done()?;
+    let page = broker
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .entities()
+        .query()
+        .entity_type(&building_type)
+        .q(q::attr("name").not_matches("\"^Tu\""))
+        .send()
+        .await?;
+    expect_that!(page.items(), len(eq(1)));
+    expect_that!(page.items(), contains(has_id(&building_gate_id)));
+    Ok(())
+}

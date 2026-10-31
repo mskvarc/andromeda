@@ -1,9 +1,9 @@
-//! ETSI `005_05`: a batch update that names a new type for two entities adds the type to each of them (clauses 5.6.9
-//! and 4.16).
+//! A batch update that names a new type for two entities adds the type to each of them (clauses 5.6.9 and 4.16).
 
 use crate::{
-    suite_keywords::{create_entity_with_context_string, delete_entities, expect_batch_done, ld_json_body_client, query_entities_json},
-    suite_payloads::bare_building,
+    batch_operations::expect_batch_done,
+    building_payloads::bare_building,
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -12,9 +12,6 @@ use serde_json::json;
 
 /// Pins: Check that you can update types of entities in a batch update operation
 /// Clause: 5.6.9, 4.16
-/// Changed: the setup entities are created with 201 required, where the Hurl setup accepts any status.
-/// Changed: the `@context` of each retrieved entity is the vocabulary the request names, which the Hurl case also
-/// accepts as any versioned core `@context`.
 #[gtest]
 #[tokio::test]
 async fn e005_05_01_entity_with_new_type() -> Result<()> {

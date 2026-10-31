@@ -1,13 +1,15 @@
-//! ETSI `047_07`: a Context Source Registration Subscription that is paused or expired sends no csource notification
-//! (clause 5.11.7).
+//! A Context Source Registration Subscription that is paused or expired sends no csource notification (clause 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
         registered_any,
         teardown,
     },
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client},
-    suite_payloads::{building_registration, building_registration_subscription},
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_payloads::building_registration,
+    registration_subscription_operations::create_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -20,8 +22,9 @@ use std::time::Duration;
 /// Pins: Check that a cSourceNotification shall only be sent if and only if the status of the corresponding
 /// subscription is active, neither paused or expired
 /// Clause: 5.11.7
-/// Corrected: `fix(047_07)`: register a matching context source so the status check can fail (5.12, 5.8.6)
-/// Absence: Wait for no notification 5 s
+/// Expected: a matching context source is registered, so a wrong status in the notification fails the test (clauses
+/// 5.12, 5.8.6)
+/// Absence: no notification within 5 s
 #[gtest]
 #[tokio::test]
 async fn e047_07_01_paused_subscription() -> Result<()> {
@@ -31,8 +34,9 @@ async fn e047_07_01_paused_subscription() -> Result<()> {
 /// Pins: Check that a cSourceNotification shall only be sent if and only if the status of the corresponding
 /// subscription is active, neither paused or expired
 /// Clause: 5.11.7
-/// Corrected: `fix(047_07)`: register a matching context source so the status check can fail (5.12, 5.8.6)
-/// Absence: Wait for no notification 5 s
+/// Expected: a matching context source is registered, so a wrong status in the notification fails the test (clauses
+/// 5.12, 5.8.6)
+/// Absence: no notification within 5 s
 #[gtest]
 #[tokio::test]
 async fn e047_07_02_expired_subscription() -> Result<()> {

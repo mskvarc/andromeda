@@ -1,6 +1,6 @@
 name: test-suite-base
 
-# One broker over one database and two Mosquitto brokers, for the etsi and annex_c test targets. The tests run in
+# One broker over one database and three Mosquitto brokers, for the etsi, ngsi_ld and annex_c trees. The tests run in
 # the runner service on the same network and receive notifications and forwarded requests in servers of their own
 # process, so no service publishes a host port.
 
@@ -34,14 +34,21 @@ services:
     image: eclipse-mosquitto:2.1.2-alpine
     command: ["mosquitto", "-c", "/mosquitto/config/anonymous.conf"]
     volumes:
-      - ./mosquitto:/mosquitto/config:ro
+      - ../mosquitto:/mosquitto/config:ro
     healthcheck: *mosquitto-healthcheck
 
   mosquitto-auth:
     image: eclipse-mosquitto:2.1.2-alpine
     command: ["mosquitto", "-c", "/mosquitto/config/password.conf"]
     volumes:
-      - ./mosquitto:/mosquitto/config:ro
+      - ../mosquitto:/mosquitto/config:ro
+    healthcheck: *mosquitto-healthcheck
+
+  mosquitto-large:
+    image: eclipse-mosquitto:2.1.2-alpine
+    command: ["mosquitto", "-c", "/mosquitto/config/large.conf"]
+    volumes:
+      - ../mosquitto:/mosquitto/config:ro
     healthcheck: *mosquitto-healthcheck
 
   broker:
@@ -79,7 +86,7 @@ services:
   runner:
     image: andromeda-test-suite-runner:latest
     build:
-      context: .
+      context: ../runner
     profiles: ["runner"]
     depends_on:
       broker:
@@ -87,6 +94,8 @@ services:
       mosquitto:
         condition: service_healthy
       mosquitto-auth:
+        condition: service_healthy
+      mosquitto-large:
         condition: service_healthy
     env_file: runner.env
     working_dir: /andromeda/tools/andromeda-test-suite

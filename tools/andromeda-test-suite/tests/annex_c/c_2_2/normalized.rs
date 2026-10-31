@@ -35,7 +35,7 @@ async fn c_2_2_0001_the_normalized_vehicle_round_trips_as_printed() -> Result<()
 /// Pins: Retrieve Entity with join=inline answers the normalized Vehicle with each Relationship carrying the
 /// Entities it targets as C.2.2 prints it
 /// Clause: C.2.2, 4.5.1, 4.5.23, 5.7.1
-/// Corrected: inline-provided-by-type: providedBy keeps the type Relationship the inline example drops (4.5.3.2)
+/// Expected: providedBy keeps the type Relationship the inline example drops (clause 4.5.3.2)
 #[gtest]
 #[tokio::test]
 async fn c_2_2_0002_the_normalized_vehicle_with_inline_linked_entities() -> Result<()> {
@@ -67,8 +67,7 @@ async fn c_2_2_0002_the_normalized_vehicle_with_inline_linked_entities() -> Resu
 /// Pins: Retrieve Entity with join=flat answers the Vehicle and every Entity it targets as one flat array as C.2.2
 /// prints it
 /// Clause: C.2.2, 4.5.1, 4.5.23, 5.7.1
-/// Corrected: flattened-parking: the flattened `OffStreetParking` carries no Entity-level observedAt or providedBy
-/// (5.2.4)
+/// Expected: the flattened `OffStreetParking` carries no Entity-level observedAt or providedBy (clause 5.2.4)
 #[gtest]
 #[tokio::test]
 async fn c_2_2_0003_the_normalized_vehicle_with_flattened_linked_entities() -> Result<()> {
@@ -94,7 +93,7 @@ async fn c_2_2_0003_the_normalized_vehicle_with_flattened_linked_entities() -> R
 /// Pins: Retrieve Entity with lang=fr answers the normalized Vehicle with its `LanguageProperty` reduced to the
 /// French string as C.2.2 prints it
 /// Clause: C.2.2, 4.5.18, 4.15, 5.7.1
-/// Corrected: language-filter-object-type: isParked keeps the objectType the language-filtered example drops (4.15)
+/// Expected: isParked keeps the objectType the language-filtered example drops (clause 4.15)
 #[gtest]
 #[tokio::test]
 async fn c_2_2_0004_the_normalized_vehicle_with_a_language_filter() -> Result<()> {

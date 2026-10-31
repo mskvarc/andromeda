@@ -1,7 +1,9 @@
-//! ETSI `029_02`: an update of a subscription that no subscription holds is refused with 404 `ResourceNotFound`
-//! (clause 5.8.2).
+//! An update of a subscription that no subscription holds is refused with 404 `ResourceNotFound` (clause 5.8.2).
 
-use crate::suite_keywords::{key_values_fragment, not_found, update_subscription_request};
+use crate::{
+    subscription_operations::{key_values_fragment, update_subscription_request},
+    unchecked_requests::not_found,
+};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink};
 use googletest::prelude::*;
 use ngsi_ld::subscription::SubscriptionId;

@@ -1,9 +1,9 @@
-//! ETSI `018_19`: an entity is not retrieved when `pick` names no member the entity holds, or when `omit` names every
-//! member it holds (clauses 5.7.1 and 4.21).
+//! An entity is not retrieved when `pick` names no member the entity holds, or when `omit` names every member it holds
+//! (clauses 5.7.1 and 4.21).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

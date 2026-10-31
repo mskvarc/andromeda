@@ -1,10 +1,7 @@
-//! ETSI `023_01`: the detailed representation of every entity type the broker holds is listed, with the `@context` the
-//! request carries or without one (clause 5.7.6).
+//! The detailed representation of every entity type the broker holds is listed, with the `@context` the request carries
+//! or without one (clause 5.7.6).
 
-use crate::{
-    suite_keywords::create_entity_with_link,
-    suite_payloads::{building_simple_attributes, vehicle_parked},
-};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link, vehicle_entity_payloads::vehicle_parked};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
@@ -77,7 +74,7 @@ fn compacted_details(namespace: &Namespace) -> Result<Value> {
 
 /// Pins: Check that one can retrieve a list with a detailed representation of NGSI-LD entity types
 /// Clause: 5.7.6
-/// Corrected: `fix(019_02_04)`: correct the isparked context drift to the suite iri (5.5.7)
+/// Expected: isParked expands to the test vocabulary's IRI (clause 5.5.7)
 /// Tenant: private (the response lists every entity type of the tenant)
 #[gtest]
 #[tokio::test]

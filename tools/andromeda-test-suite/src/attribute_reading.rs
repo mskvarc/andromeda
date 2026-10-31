@@ -1,7 +1,7 @@
 //! What a matcher reads of one attribute instance through the typed model: the value its kind holds, its `unitCode`
 //! and `valueType`, whether an optional member is present, and a member inside a value by its path.
 
-use crate::{attribute_matcher::Member, geometry::geometry_value};
+use crate::{attribute_member::Member, geometry::geometry_value};
 use cefact_units::UnitCode;
 use ngsi_ld::model::{Attribute, AttributeMeta, Output, Value, VocabTerm};
 
@@ -60,6 +60,21 @@ pub(crate) fn has_member(attribute: &Attribute<Output>, meta: &AttributeMeta<Out
         Member::InstanceId => meta.output.instance_id.is_some(),
         Member::LanguageMap => matches!(attribute, Attribute::LanguageProperty(_)),
         Member::Lang => matches!(attribute, Attribute::Property(property) if property.output().lang.is_some()),
+        Member::Previous => has_previous(attribute),
+    }
+}
+
+/// Whether `attribute` carries the previous member of its kind.
+const fn has_previous(attribute: &Attribute<Output>) -> bool {
+    match attribute {
+        Attribute::Property(property) => property.output().previous_value.is_some(),
+        Attribute::GeoProperty(property) => property.output().previous_value.is_some(),
+        Attribute::LanguageProperty(property) => property.output().previous_language_map.is_some(),
+        Attribute::VocabProperty(property) => property.output().previous_vocab.is_some(),
+        Attribute::ListProperty(property) => property.output().previous_value_list.is_some(),
+        Attribute::JsonProperty(property) => property.output().previous_json.is_some(),
+        Attribute::Relationship(relationship) => relationship.output().previous_object.is_some(),
+        Attribute::ListRelationship(relationship) => relationship.output().previous_object_list.is_some(),
     }
 }
 
@@ -68,6 +83,6 @@ pub(crate) fn member_at<'v>(value: &'v Value, path: &[String]) -> Option<&'v Val
     path.iter().try_fold(value, |current, segment| match current {
         Value::Object(members) => members.get(segment),
         Value::Array(items) => segment.parse::<usize>().ok().and_then(|index| items.get(index)),
-        Value::Boolean(_) | Value::Number(_) | Value::Text(_) | Value::Typed(_) => None,
+        Value::Boolean(_) | Value::Number(_) | Value::Text(_) | Value::Typed(_) | Value::JsonNull => None,
     })
 }

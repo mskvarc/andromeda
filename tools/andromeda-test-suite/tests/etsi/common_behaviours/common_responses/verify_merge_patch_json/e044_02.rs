@@ -1,5 +1,4 @@
-//! ETSI `044_02`: a PATCH of a subscription is accepted with `application/merge-patch+json` as its Content-Type
-//! (clause 6.3.4).
+//! A PATCH of a subscription is accepted with `application/merge-patch+json` as its Content-Type (clause 6.3.4).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -22,7 +21,7 @@ use ngsi_ld::{
     subscription::{Endpoint, NotificationParams, Subscription, SubscriptionFragment, SubscriptionId},
 };
 
-/// The client of `broker` sending `vocabulary` in the body, as the create case sends the suite's `@context`.
+/// The client of `broker` sending `vocabulary` in the body, as the create test sends the test vocabulary.
 fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClient> {
     Ok(broker
         .with_context(vocabulary.context_list())?
@@ -31,7 +30,7 @@ fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClien
 
 /// Pins: Verify that PATCH HTTP requests can be done with "application/merge-patch+json" as Content-Type
 /// Clause: 6.3.4
-/// Changed: the fragment omits the `type` member the Hurl body sends, since a subscription fragment carries no type.
+/// Expected: the fragment omits `type`, which a subscription fragment does not carry
 #[gtest]
 #[tokio::test]
 async fn e044_02_01_patch_subscription() -> Result<()> {

@@ -1,5 +1,5 @@
-//! ETSI `D011_02_inc`: a query by type with `local=true` answers no entity of the inclusive context source and sends
-//! it no request (clauses 4.3.3, 4.3.6.2, 5.7.2 and 6.3.18).
+//! A query by type with `local=true` answers no entity of the inclusive context source and sends it no request (clauses
+//! 4.3.3, 4.3.6.2, 5.7.2 and 6.3.18).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -13,12 +13,6 @@ use serde_json::json;
 
 /// Pins: Check that if one queries with the local flag, no entity from Context Source gets returned
 /// Clause: 4.3.3, 4.3.6.2, 5.7.2, 6.3.18
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

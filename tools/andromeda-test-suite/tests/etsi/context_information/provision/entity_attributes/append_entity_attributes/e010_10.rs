@@ -1,9 +1,9 @@
-//! ETSI `010_10`: a `JsonProperty` is appended to an entity, and its `json` keeps the members it was written with,
-//! including a JSON `null` (clauses 5.6.3 and 4.5.24).
+//! A `JsonProperty` is appended to an entity, and its `json` keeps the members it was written with, including a JSON
+//! `null` (clauses 5.6.3 and 4.5.24).
 
 use crate::{
-    suite_keywords::{append_attributes, create_entity, delete_entities, ld_json_body_client, retrieve_entity_json},
-    suite_payloads::vehicle_brand_parked_speed_sources,
+    entity_operations::{append_attributes, create_entity, delete_entities, ld_json_body_client, retrieve_entity_json},
+    vehicle_entity_payloads::vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -21,7 +21,6 @@ const JSON_PROPERTY: &str = r#"{"id":"some-id","type":"some-type","null":null,"a
 
 /// Pins: Check that you can append a `JsonProperty` property to an entity
 /// Clause: 5.6.3, 4.5.24
-/// Changed: the response body is also checked to be empty, which the Hurl file does not check
 #[gtest]
 #[tokio::test]
 async fn e010_10_01_append_a_json_property() -> Result<()> {

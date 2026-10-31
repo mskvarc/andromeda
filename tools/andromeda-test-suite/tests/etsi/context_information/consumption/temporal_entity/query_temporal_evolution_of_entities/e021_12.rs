@@ -1,7 +1,7 @@
-//! ETSI `021_12`: a temporal evolution query that names neither an entity type nor an identifier is refused with 400
-//! `BadRequestData` and a non-empty title (clause 5.7.4).
+//! A temporal evolution query that names neither an entity type nor an identifier is refused with 400 `BadRequestData`
+//! and a non-empty title (clause 5.7.4).
 
-use crate::suite_keywords::{create_vehicle_speed_fuel_level, delete_temporal_entities, refused};
+use crate::{temporal_operations::delete_temporal_entities, unchecked_requests::refused, vehicle_fixtures::create_vehicle_speed_fuel_level};
 use andromeda_test_suite::{broker, namespace::Namespace, wire::request_to};
 use googletest::prelude::*;
 use http::Method;

@@ -1,12 +1,12 @@
-//! ETSI `046_15`: a subscription with a `throttling` member sends no notification before the throttling has elapsed (clause
-//! 5.8.6).
+//! A subscription with a `throttling` member sends no notification before the throttling has elapsed (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, teardown},
-    suite_keywords::{create_subscription_document, simplified_notification},
-    suite_payloads::{building_simple_attributes, key_values_document},
+    subscription_operations::{create_subscription_document, simplified_notification},
+    subscription_payloads::key_values_document,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -19,11 +19,7 @@ use tokio::time::sleep;
 /// Pins: If a Subscription defines a throttling member, a Notification shall not be sent if the throttling specified (in seconds)
 /// has not elapsed yet.
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Absence: Wait for no notification 5 s
+/// Absence: no notification within 5 s
 #[gtest]
 #[tokio::test]
 async fn e046_15_01_check_that_a_notification_is_not_sent_if_the_throttling_has_not_elapsed_yet() -> Result<()> {
@@ -52,7 +48,7 @@ async fn e046_15_01_check_that_a_notification_is_not_sent_if_the_throttling_has_
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    robot_literal::read(&notification.body)?;
+    notification.json()?;
 
     air_quality_updated(&as_list, &building).await?;
     let total = sink.count_after(1, Duration::from_secs(5)).await?;

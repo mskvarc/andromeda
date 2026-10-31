@@ -1,11 +1,11 @@
-//! ETSI `020_05`: the last N instances of each attribute of a temporal evolution are retrieved, N below the number of
-//! instances and N at least the number of instances (clause 5.7.3).
+//! The last N instances of each attribute of a temporal evolution are retrieved, N below the number of instances and N
+//! at least the number of instances (clause 5.7.3).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
 use crate::{
-    suite_keywords::create_temporal_evolution,
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_five_instances},
+    temporal_operations::create_temporal_evolution,
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_five_instances},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -21,7 +21,7 @@ use http::StatusCode;
 use ngsi_ld::{http::headers::Accept, model::EntityId};
 use serde_json::{Value, json};
 
-/// Creates the case's Vehicle as its suite setup does, and answers the vocabulary it is stored under.
+/// Creates the test's Vehicle, and answers the vocabulary it is stored under.
 async fn created_vehicle(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     create_temporal_evolution(broker, namespace, &VEHICLE_SPEED_FUEL_TERMS, &vehicle_five_instances(namespace, 1)?).await
 }

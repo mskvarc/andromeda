@@ -1,9 +1,9 @@
-//! ETSI `033_03`: a context source registration whose id another registration already holds is refused with 409
-//! (clause 5.9.2).
+//! A context source registration whose id another registration already holds is refused with 409 (clause 5.9.2).
 
 use crate::{
-    suite_keywords::{ld_json_body_client, send_registration},
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_operations::send_registration,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -12,11 +12,8 @@ use ngsi_ld::model::ErrorType;
 
 /// Pins: Check that one cannot create a context source registration that already exists
 /// Clause: 5.9.2
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the second create is held to the 409 `AlreadyExists` the spec gives an id another registration holds, not
-/// only to a 409 with a title.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_03_01_create_a_context_source_registration_that_already_exists() -> Result<()> {

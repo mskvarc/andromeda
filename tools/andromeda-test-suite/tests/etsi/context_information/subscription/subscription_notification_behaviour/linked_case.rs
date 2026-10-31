@@ -1,10 +1,9 @@
-//! The steps the linked entity notification cases of the ETSI `046_23` to `046_30` Robot runs share: a Building
-//! located at the City Paris, a subscription that joins the City into its notifications, and the `name` update that
-//! triggers one.
+//! The steps the linked entity notification tests share: a Building located at the City Paris, a subscription that
+//! joins the City into its notifications, and the `name` update that triggers one.
 
 use crate::{
     context_information::subscription::subscription_notification_behaviour::change_case::{ContextForm, EntityChange, change_notification},
-    suite_keywords::delete_entities,
+    entity_operations::delete_entities,
 };
 use andromeda_test_suite::{broker::BrokerClient, cleanup::Cleanup, namespace::Namespace, notification_sink::ReceivedNotification, teardown::AnyAnswer};
 use googletest::prelude::*;

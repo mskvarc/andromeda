@@ -1,9 +1,9 @@
-//! ETSI `017_03`: an attribute instance is not deleted when its entity, attribute or instance is not found (clause
-//! 5.6.15).
+//! An attribute instance is not deleted when its entity, attribute or instance is not found (clause 5.6.15).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_sys_attrs_json},
-    suite_payloads::vehicle_speed_fuel_level_with_dataset,
+    temporal_operations::{create_temporal_evolution, first_speed_instance_id, retrieve_temporal_sys_attrs_json},
+    vehicle_evolution_payloads::vehicle_speed_fuel_level_with_dataset,
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, teardown::AnyAnswer};
 use googletest::prelude::*;

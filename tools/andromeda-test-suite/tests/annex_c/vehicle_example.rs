@@ -83,14 +83,14 @@ pub(crate) fn linked_entities(namespace: &Namespace) -> Result<Vec<Entity<Input>
 /// one is given.
 pub(crate) fn vehicle(namespace: &Namespace, tyre_unit: Option<UnitCode>) -> Result<Entity<Input>> {
     let is_parked = Relationship::builder(namespace.urn("OffStreetParking", "Downtown1")?)
-        .object_type(namespace.entity_type("OffStreetParking")?)
+        .object_type(VocabTerm::from(&namespace.entity_type("OffStreetParking")?))
         .observed_at("2017-07-29T12:00:04Z".parse::<DateTime>()?)
         .relationship("providedBy", namespace.urn("Person", "Bob")?);
     let tyre_tread_depths = ListProperty::builder(vec![Value::from(300), Value::from(300), Value::from(120), Value::from(6)])
         .value_type("Integer".parse::<VocabTerm>()?)
         .maybe_unit_code(tyre_unit);
-    let passengers =
-        Relationship::builder(vec![namespace.urn("Person", "Alice")?, namespace.urn("Person", "Bob")?]).object_type(namespace.entity_type("Person")?);
+    let passengers = Relationship::builder(vec![namespace.urn("Person", "Alice")?, namespace.urn("Person", "Bob")?])
+        .object_type(VocabTerm::from(&namespace.entity_type("Person")?));
     let route: Vec<EntityId> = vec![
         namespace.urn("City", "Antwerp")?,
         namespace.urn("City", "Rotterdam")?,
@@ -105,7 +105,10 @@ pub(crate) fn vehicle(namespace: &Namespace, tyre_unit: Option<UnitCode>) -> Res
         .vocab_property("category", "non-commercial")
         .list_property("tyreTreadDepths", tyre_tread_depths)
         .relationship("passengers", passengers)
-        .list_relationship("route", ListRelationship::builder(route).object_type(namespace.entity_type("City")?))
+        .list_relationship(
+            "route",
+            ListRelationship::builder(route).object_type(VocabTerm::from(&namespace.entity_type("City")?)),
+        )
         .build()?)
 }
 

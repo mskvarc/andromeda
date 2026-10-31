@@ -1,9 +1,10 @@
-//! ETSI `003_06`: a batch sent as `application/json` whose entity carries a JSON-LD `@context` is refused for
-//! that entity (clause 6.3.5).
+//! A batch sent as `application/json` whose entity carries a JSON-LD `@context` is refused for that entity (clause
+//! 6.3.5).
 
 use crate::{
-    suite_keywords::{expect_bad_request_entity, ld_json_body_client, partial_batch_answer},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::{expect_bad_request_entity, partial_batch_answer},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::ld_json_body_client,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary, wire::content_type};
 use googletest::prelude::*;

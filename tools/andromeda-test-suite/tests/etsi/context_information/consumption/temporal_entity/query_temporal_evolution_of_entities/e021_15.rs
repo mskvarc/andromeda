@@ -1,8 +1,11 @@
-//! ETSI `021_15`: the temporal evolutions of the Vehicles are queried by a temporal relation, with `lastN` or without,
-//! in normalized or in simplified temporal representation. Each answer is partial content whose `Content-Range` names
-//! the time range the body covers, and the instances of the body lie within that range (clauses 5.7.4 and 6.3.10).
+//! The temporal evolutions of the Vehicles are queried by a temporal relation, with `lastN` or without, in normalized
+//! or in simplified temporal representation. Each answer is partial content whose `Content-Range` names the time range
+//! the body covers, and the instances of the body lie within that range (clauses 5.7.4 and 6.3.10).
 
-use crate::suite_keywords::{ContentRangeText, InstantForm, content_range, create_vehicle_twenty_pair, delete_vehicle_twenty_pair, instants};
+use crate::{
+    temporal_operations::{ContentRangeText, InstantForm, content_range, instants},
+    vehicle_fixtures::{create_vehicle_twenty_pair, delete_vehicle_twenty_pair},
+};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     namespace::Namespace,
@@ -73,11 +76,9 @@ fn normalized_request(client: &BrokerClient, relation: TemporalQueryBuilder) -> 
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_01_retrieve_the_entity_with_last_n_and_timerel_before() -> Result<()> {
@@ -110,11 +111,9 @@ async fn e021_15_01_retrieve_the_entity_with_last_n_and_timerel_before() -> Resu
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_02_retrieve_the_entity_with_last_n_and_timerel_between() -> Result<()> {
@@ -146,11 +145,9 @@ async fn e021_15_02_retrieve_the_entity_with_last_n_and_timerel_between() -> Res
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_03_retrieve_the_entity_with_last_n_and_timerel_after() -> Result<()> {
@@ -183,11 +180,9 @@ async fn e021_15_03_retrieve_the_entity_with_last_n_and_timerel_after() -> Resul
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_04_retrieve_the_entity_with_timerel_before() -> Result<()> {
@@ -214,11 +209,9 @@ async fn e021_15_04_retrieve_the_entity_with_timerel_before() -> Result<()> {
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_05_retrieve_the_entity_with_timerel_between() -> Result<()> {
@@ -248,11 +241,9 @@ async fn e021_15_05_retrieve_the_entity_with_timerel_between() -> Result<()> {
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_06_retrieve_the_entity_with_timerel_after() -> Result<()> {
@@ -279,11 +270,9 @@ async fn e021_15_06_retrieve_the_entity_with_timerel_after() -> Result<()> {
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_07_retrieve_the_entity_with_temporal_values_and_timerel_after() -> Result<()> {
@@ -315,11 +304,9 @@ async fn e021_15_07_retrieve_the_entity_with_temporal_values_and_timerel_after()
 
 /// Pins: Check temporal pagination behavior on multiple entity endpoint
 /// Clause: 5.7.4, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
-/// Changed: the Content-Range bounds compare with the body's instants as text, RFC 9535 string order in a filter: exact
-/// when header and body write instants in the same form, stricter than Robot's Convert Date normalisation otherwise;
-/// each bound must also read as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`), where Convert Date takes any
-/// timestamp it can parse
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
+/// Expected: the Content-Range bounds equal the body's instants as text (RFC 9535 string order in a filter), and each
+/// bound reads as an NGSI-LD `DateTime` (`YYYY-MM-DDThh:mm:ss[.fraction]Z`)
 #[gtest]
 #[tokio::test]
 async fn e021_15_08_retrieve_the_entity_with_temporal_values_last_n_and_timerel_between() -> Result<()> {

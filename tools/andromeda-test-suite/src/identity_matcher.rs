@@ -61,6 +61,14 @@ impl Identified for TemporalEntity<Output> {
     }
 }
 
+impl Identified for TemporalEntity<Output, Projected> {
+    type Id = EntityId;
+
+    fn identifier(&self) -> Option<&EntityId> {
+        self.id.as_ref()
+    }
+}
+
 impl Identified for SimplifiedTemporalEntity {
     type Id = EntityId;
 

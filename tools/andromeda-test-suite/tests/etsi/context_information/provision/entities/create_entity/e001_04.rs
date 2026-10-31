@@ -1,9 +1,9 @@
-//! ETSI `001_04`: an entity created with a `Link` header naming its `@context` and `application/json` is retrieved with
-//! or without that context, and keeps the attribute the context names (clause 6.3.5).
+//! An entity created with a `Link` header naming its `@context` and `application/json` is retrieved with or without
+//! that context, and keeps the attribute the context names (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{create_entity_with_link, delete_entities, non_empty_member, retrieve_entity_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity_with_link, delete_entities, non_empty_member, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -11,8 +11,6 @@ use ngsi_ld::http::headers::Accept;
 
 /// Pins: Check that the @context is obtained from a Link Header if the Content-Type header is "application/json"
 /// Clause: 6.3.5
-/// Changed: the create is required to answer 201, where the Hurl line accepts any status; the retrieval that follows
-/// reads the entity the create made
 #[gtest]
 #[tokio::test]
 async fn e001_04_01_link_header_with_json_content_type_retrieved_with_context() -> Result<()> {
@@ -30,8 +28,6 @@ async fn e001_04_01_link_header_with_json_content_type_retrieved_with_context() 
 
 /// Pins: Check that the @context is obtained from a Link Header if the Content-Type header is "application/json"
 /// Clause: 6.3.5
-/// Changed: the create is required to answer 201, where the Hurl line accepts any status; the retrieval that follows
-/// reads the entity the create made
 #[gtest]
 #[tokio::test]
 async fn e001_04_02_link_header_with_json_content_type_retrieved_without_context() -> Result<()> {

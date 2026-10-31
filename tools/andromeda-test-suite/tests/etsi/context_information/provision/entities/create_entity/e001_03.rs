@@ -1,9 +1,9 @@
-//! ETSI `001_03`: a create whose identifier an entity already holds is refused with 409 `AlreadyExists`, and the entity
-//! the broker holds is the one created first (clause 5.6.1).
+//! A create whose identifier an entity already holds is refused with 409 `AlreadyExists`, and the entity the broker
+//! holds is the one created first (clause 5.6.1).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, ld_json_body_client, send_create_entity},
-    suite_payloads::bare_building,
+    building_payloads::bare_building,
+    entity_operations::{create_entity, delete_entities, ld_json_body_client, send_create_entity},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

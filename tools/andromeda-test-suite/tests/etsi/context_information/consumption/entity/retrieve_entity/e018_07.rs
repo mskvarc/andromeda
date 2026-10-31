@@ -1,7 +1,7 @@
-//! ETSI `018_07`: a `lang` filter reduces a `LanguageProperty` to the language it names, or to the value of its first
-//! preferred language, in the normalized and the simplified representation (clauses 5.7.1 and 4.15).
+//! A `lang` filter reduces a `LanguageProperty` to the language it names, or to the value of its first preferred
+//! language, in the normalized and the simplified representation (clauses 5.7.1 and 4.15).
 
-use crate::suite_keywords::create_entity;
+use crate::entity_operations::create_entity;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,

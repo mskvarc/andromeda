@@ -1,9 +1,10 @@
-//! ETSI `019_07`: with `count=true` the `NGSILD-Results-Count` header states the total number of matching entities
-//! (clauses 5.7.2 and 6.3.13).
+//! With `count=true` the `NGSILD-Results-Count` header states the total number of matching entities (clauses 5.7.2 and
+//! 6.3.13).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, results_count},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes, pisa_tower},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes, pisa_tower},
+    entity_operations::{create_entity, delete_entities},
+    unchecked_requests::results_count,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

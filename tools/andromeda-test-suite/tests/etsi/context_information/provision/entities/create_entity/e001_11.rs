@@ -1,9 +1,8 @@
-//! ETSI `001_11`: an entity with one scope, and one with many scopes, is created and retrieved with its scope
-//! (clause 4.18).
+//! An entity with one scope, and one with many scopes, is created and retrieved with its scope (clause 4.18).
 
 use crate::{
-    suite_keywords::{create_entity_plain, delete_entities, expect_created, retrieve_entity_json},
-    suite_payloads::{building_with_many_scopes, building_with_one_scope},
+    building_payloads::{building_with_many_scopes, building_with_one_scope},
+    entity_operations::{create_entity_plain, delete_entities, expect_created, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
@@ -12,11 +11,7 @@ use serde_json::json;
 
 /// Pins: Check that one can create an entity with one or more scopes
 /// Clause: 4.18
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_11_01_entity_with_one_scope() -> Result<()> {
@@ -40,11 +35,7 @@ async fn e001_11_01_entity_with_one_scope() -> Result<()> {
 
 /// Pins: Check that one can create an entity with one or more scopes
 /// Clause: 4.18
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e001_11_02_entity_with_many_scopes() -> Result<()> {

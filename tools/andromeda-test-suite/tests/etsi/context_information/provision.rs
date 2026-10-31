@@ -1,4 +1,4 @@
-//! The ETSI provision cases: creating and changing the entities the broker holds (clause 5.6).
+//! The provision tests: creating and changing the entities the broker holds (clause 5.6).
 
 mod batch_entities;
 mod entities;

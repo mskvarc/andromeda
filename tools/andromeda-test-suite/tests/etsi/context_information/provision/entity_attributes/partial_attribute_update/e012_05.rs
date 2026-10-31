@@ -1,7 +1,10 @@
-//! ETSI `012_05`: an attribute is deleted by a partial attribute update whose body is the NGSI-LD Null in the shape of
-//! its kind, and the other attributes of the entity are kept (clauses 5.6.4 and 6.7.3.1).
+//! An attribute is deleted by a partial attribute update whose body is the NGSI-LD Null in the shape of its kind, and
+//! the other attributes of the entity are kept (clauses 5.6.4 and 6.7.3.1).
 
-use crate::suite_keywords::{create_building_located_street_geo, delete_entities, ld_json_body_client, partial_update, retrieve_entity_json};
+use crate::{
+    building_fixtures::create_building_located_street_geo,
+    entity_operations::{delete_entities, ld_json_body_client, partial_update, retrieve_entity_json},
+};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::model::{AttributeKind, AttributeName, Change, InstanceDeletion, Lossless, NgsiLdMediaType};

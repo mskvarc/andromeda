@@ -1,5 +1,5 @@
 //! The exact wire form of requests and answers, for a test whose subject is the representation itself: a request
-//! target written as the ETSI keyword writes it, and the header fields of an answer.
+//! target written exactly as given, and the header fields of an answer.
 
 use bytes::Bytes;
 use http::{
@@ -33,6 +33,9 @@ pub enum WireError {
     /// The client refused to build the request it starts from.
     #[error("the request could not be built")]
     Request(#[source] RequestError),
+    /// A media type cannot be written as a header field.
+    #[error("a media type cannot be written as a header field")]
+    MediaType(#[source] InvalidHeaderValue),
 }
 
 /// The URI of `path` (a path with its query, relative to the API root) on the broker `client` speaks to, written
@@ -63,8 +66,8 @@ pub fn request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Met
         .remove_header(&CONTENT_TYPE))
 }
 
-/// Sends `operation` to `path` (relative to the API root) instead of the target the operation writes, as an ETSI
-/// keyword sends it with a trailing `/` (`POST /entities/`), and answers with the response as received.
+/// Sends `operation` to `path` (relative to the API root) instead of the target the operation writes, for a target
+/// such as one with a trailing `/` (`POST /entities/`), and answers with the response as received.
 ///
 /// # Errors
 ///
@@ -91,6 +94,13 @@ pub fn content_type(request: UncheckedRequest, media_type: &MediaType<'_>) -> Re
     Ok(request
         .remove_header(&CONTENT_TYPE)
         .append_header(CONTENT_TYPE, HeaderValue::try_from(media_type.to_string())?))
+}
+
+/// `request` with its `Accept` replaced by `media_range`, written as given: a test of content negotiation names a
+/// media range, a list with weights or a media type the typed operations never accept.
+#[must_use]
+pub fn accept(request: UncheckedRequest, media_range: &'static str) -> UncheckedRequest {
+    request.remove_header(&ACCEPT).append_header(ACCEPT, HeaderValue::from_static(media_range))
 }
 
 /// The body of `received` as a JSON tree, for an exact comparison or a read of one member.
@@ -132,13 +142,25 @@ pub fn vary(headers: &HeaderMap) -> Vec<HeaderName> {
 
 #[cfg(test)]
 mod tests {
-    use crate::wire::{header_value, header_values, vary};
+    use crate::{
+        broker::client_at,
+        wire::{accept, header_value, header_values, vary},
+    };
     use googletest::prelude::*;
     use http::{
         HeaderMap,
         HeaderValue,
         header::{ACCEPT, ACCEPT_LANGUAGE, LINK, VARY},
     };
+    use ngsi_ld::http::operation::RetrieveEntityTypes;
+    use url::Url;
+
+    #[gtest]
+    fn accept_replaces_every_value_the_operation_wrote() -> Result<()> {
+        let client = client_at(Url::parse("http://broker.test/ngsi-ld/v1/")?)?;
+        let request = accept(client.unchecked(&RetrieveEntityTypes::builder().build())?, "text/*");
+        verify_that!(header_values(request.as_request().headers(), &ACCEPT), elements_are![eq(&"text/*")])
+    }
 
     #[gtest]
     fn vary_lists_the_field_names_of_every_line() {

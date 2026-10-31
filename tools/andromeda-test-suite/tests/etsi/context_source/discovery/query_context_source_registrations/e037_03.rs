@@ -1,7 +1,7 @@
-//! ETSI `037_03`: a query of context source registrations is refused with 400 when an entity id is not a URI or the
-//! query, geoquery or temporal query is not valid (clause 5.10.2).
+//! A query of context source registrations is refused with 400 when an entity id is not a URI or the query, geoquery or
+//! temporal query is not valid (clause 5.10.2).
 
-use crate::suite_keywords::refused_registration_query;
+use crate::registration_operations::refused_registration_query;
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 

@@ -1,9 +1,11 @@
-//! ETSI `019_10`: entities are selected by a geoquery over their `location` (`georel` equals, near, within, disjoint,
-//! contains and intersects), and the `NGSILD-Results-Count` header states how many match (clauses 5.7.2 and 4.10).
+//! Entities are selected by a geoquery over their `location` (`georel` equals, near, within, disjoint, contains and
+//! intersects), and the `NGSILD-Results-Count` header states how many match (clauses 5.7.2 and 4.10).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, results_count},
-    suite_payloads::{eiffel_tower_located, point},
+    building_payloads::eiffel_tower_located,
+    entity_operations::{create_entity, delete_entities},
+    geometry_payloads::point,
+    unchecked_requests::results_count,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

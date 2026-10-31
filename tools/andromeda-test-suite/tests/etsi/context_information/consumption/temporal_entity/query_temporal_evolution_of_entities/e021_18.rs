@@ -1,11 +1,12 @@
-//! ETSI `021_18`: the temporal evolution of a Vehicle is queried with its attribute instances selected by `datasetId`,
-//! alone or with an attribute name, and the default instance selected with `@none` (clauses 4.5.5 and 5.7.4). Each
-//! answer holds the selected instances grouped by their `datasetId`, in the simplified temporal representation, and an
-//! attribute none of whose instances is selected is absent from the answer.
+//! The temporal evolution of a Vehicle is queried with its attribute instances selected by `datasetId`, alone or with
+//! an attribute name, and the default instance selected with `@none` (clauses 4.5.5 and 5.7.4). Each answer holds the
+//! selected instances grouped by their `datasetId`, in the simplified temporal representation, and an attribute none of
+//! whose instances is selected is absent from the answer.
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, delete_temporal_entities},
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, dataset},
+    temporal_operations::{create_temporal_evolution, delete_temporal_entities},
+    vehicle_entity_payloads::dataset,
+    vehicle_evolution_payloads::VEHICLE_SPEED_FUEL_TERMS,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -331,8 +332,8 @@ async fn e021_18_06_filter_based_on_attrs_and_dataset_id() -> Result<()> {
 
 /// Pins: Check that one can filter attribute instances of a temporal entity based on datasetId.
 /// Clause: 4.5.5, 5.7.4
-/// Corrected: `fix(021_18_07)`: expect the Vehicle without attributes when no selected instance carries the
-/// datasetId (5.7.4.4)
+/// Expected: the Vehicle is answered without attributes when no selected instance carries the datasetId (clause
+/// 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_18_07_filter_based_on_attrs_and_dataset_id_with_no_match() -> Result<()> {

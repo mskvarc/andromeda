@@ -1,9 +1,10 @@
-//! ETSI `010_08`: a `GeoProperty` `observationSpace` holding a Point is appended to a Building that holds no attribute
-//! (clauses 5.6.3 and 4.7).
+//! A `GeoProperty` `observationSpace` holding a Point is appended to a Building that holds no attribute (clauses 5.6.3
+//! and 4.7).
 
 use crate::{
-    suite_keywords::{append_attributes, create_entity, delete_entities, retrieve_entity_json},
-    suite_payloads::{bare_building, point},
+    building_payloads::bare_building,
+    entity_operations::{append_attributes, create_entity, delete_entities, retrieve_entity_json},
+    geometry_payloads::point,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

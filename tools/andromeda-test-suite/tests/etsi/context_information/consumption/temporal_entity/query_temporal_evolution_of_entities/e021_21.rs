@@ -1,9 +1,8 @@
-//! ETSI `021_21`: the temporal evolutions of the Vehicles and the Bus of a context are queried with `pick` and
-//! `omit`, over their attributes and over their core members (clauses 5.7.4 and 4.2.1). Each answer is compared as
-//! one document: the `instanceId` a broker adds is allowed below the root, and the root's members are counted
-//! exactly.
+//! The temporal evolutions of the Vehicles and the Bus of a context are queried with `pick` and `omit`, over their
+//! attributes and over their core members (clauses 5.7.4 and 4.2.1). Each answer is compared as one document: the
+//! `instanceId` a broker adds is allowed below the root, and the root's members are counted exactly.
 
-use crate::suite_keywords::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
+use crate::vehicle_fixtures::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -32,7 +31,7 @@ async fn e021_21_01_query_with_pick_on_attributes() -> Result<()> {
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .pick(projection::attributes(["speed"]).build()?)
         .send()
         .await;
@@ -85,7 +84,7 @@ async fn e021_21_02_query_with_omit_on_attributes() -> Result<()> {
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .omit(projection::attributes(["speed"]).build()?)
         .send()
         .await;
@@ -144,7 +143,7 @@ async fn e021_21_03_query_with_pick_on_non_core_members() -> Result<()> {
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .pick(projection::member(EntityMember::Id).build()?)
         .send()
         .await;
@@ -179,7 +178,7 @@ async fn e021_21_04_query_with_omit_on_non_core_members() -> Result<()> {
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .omit(projection::member(EntityMember::Type).build()?)
         .send()
         .await;
@@ -250,7 +249,7 @@ async fn e021_21_05_query_with_pick_on_attributes_and_core_members() -> Result<(
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .pick(projection::member(EntityMember::Id).attribute("speed").build()?)
         .send()
         .await;
@@ -306,7 +305,7 @@ async fn e021_21_06_query_with_omit_on_attributes_and_core_members() -> Result<(
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Bus").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Bus").or("Vehicle"))
         .omit(projection::member(EntityMember::Type).attribute("speed").build()?)
         .send()
         .await;

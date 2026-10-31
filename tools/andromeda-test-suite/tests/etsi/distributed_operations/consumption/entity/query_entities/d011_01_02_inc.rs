@@ -1,5 +1,5 @@
-//! ETSI `D011_01_02_inc`: a query by type and an attribute no entity holds answers no entity, though an inclusive
-//! context source is registered for the type (clauses 4.3.3, 4.3.6.2 and 5.7.2).
+//! A query by type and an attribute no entity holds answers no entity, though an inclusive context source is registered
+//! for the type (clauses 4.3.3, 4.3.6.2 and 5.7.2).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -14,11 +14,6 @@ use serde_json::json;
 /// Pins: Check that if one queries for type and an attribute that is missing, no entity gets returned. Contrast with
 /// `D011_01_04`, where a local entity also exists but also lacks the queried attribute.
 /// Clause: 4.3.3, 4.3.6.2, 5.7.2
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 /// Tenant: private (a type-only registration matches every request of the tenant that names no entity type, clause
 /// 5.12)
 #[gtest]

@@ -1,9 +1,11 @@
-//! The steps the notification cases of the ETSI `046` Robot runs share: the Building that is created, the subscription that
-//! watches it, the `airQualityLevel` update that triggers the notification, and the teardown.
+//! The steps the notification tests share: the Building that is created, the subscription that watches it, the
+//! `airQualityLevel` update that triggers the notification, and the teardown.
 
 use crate::{
-    suite_keywords::{create_subscription_document, delete_entities, send_create_entity, simplified_notification},
-    suite_payloads::{dataset, key_values_document_reporting},
+    entity_operations::{delete_entities, send_create_entity},
+    subscription_operations::{create_subscription_document, simplified_notification},
+    subscription_payloads::key_values_document_reporting,
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{
     broker::BrokerClient,
@@ -29,8 +31,8 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// The text pattern of the Hurl `matches` lines that check a notification or subscription instant: a date and a time in
-/// UTC, with a fraction of any length or none.
+/// The text pattern of a notification or subscription instant: a date and a time in UTC, with a fraction of any length
+/// or none.
 pub(crate) const INSTANT_PATTERN: &str = r"^(([1-9][0-9]{3}|0[1-9][0-9]{2}|00[1-9][0-9]|000[1-9])-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|(0[469]|11)-(0[1-9]|[12][0-9]|30)|02-(0[1-9]|1[0-9]|2[0-8]))|([0-9]{2}(0[48]|[2468][048]|[13579][26])|(0[48]|[2468][048]|[13579][26])00)-02-29)T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.,][0-9]+Z|Z$)";
 
 /// A system timestamp of an expected document: the comparison accepts any well-formed date there, whatever this
@@ -80,8 +82,8 @@ pub(crate) fn french_name_update(namespace: &Namespace) -> Result<EntityFragment
         .build()?)
 }
 
-/// `Update Attributes` of `fragment` on `id`, sent with `client` to `entities/<id>/attrs/` as the ETSI keyword writes
-/// it, answering the broker's response whatever its status.
+/// `Update Attributes` of `fragment` on `id`, sent with `client` to `entities/<id>/attrs/` with its trailing `/`,
+/// answering the broker's response whatever its status.
 pub(crate) async fn attributes_updated(client: &BrokerClient, id: &EntityId, fragment: &EntityFragment) -> Result<Response<Bytes>, ClientError<ReqwestError>> {
     let update = UpdateAttributes::builder().id(id).fragment(fragment).build();
     send_to(client, &update, &format!("entities/{id}/attrs/")).await
@@ -121,7 +123,7 @@ pub(crate) async fn teardown(broker: &BrokerClient, id: &SubscriptionId, buildin
     delete_entities(broker, &[&building.id]).await;
 }
 
-/// The item of the notification's `data` whose `id` is `id`, as the ETSI keyword selects it.
+/// The item of the notification's `data` whose `id` is `id`.
 pub(crate) fn data_item<'a>(body: &'a Value, id: &EntityId) -> Option<&'a Value> {
     let id = id.to_string();
     body.get("data")?

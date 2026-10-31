@@ -1,12 +1,12 @@
-//! ETSI `D004_01_red`: an update of an entity two redirect registrations hold is forwarded to both context sources
-//! (clauses 4.3.3, 4.3.6.3 and 5.6.2).
+//! An update of an entity two redirect registrations hold is forwarded to both context sources (clauses 4.3.3, 4.3.6.3
+//! and 5.6.2).
 
 use crate::{
     distributed_operations::{
         forwarding_source::{register, serve, source_endpoint, stub, stub_count, unregister},
         provision::entity_attributes::attribute_sources::{vehicle_attribute_registration, vehicle_rule},
     },
-    suite_keywords::update_attributes,
+    entity_operations::update_attributes,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -16,13 +16,6 @@ use ngsi_ld::{http::ContextDelivery, model::EntityFragment, registration::Regist
 /// Pins: Check that if one request the Context Broker to update an entity that matches an inclusive registration, this
 /// is updated on the Context Source too
 /// Clause: 4.3.3, 4.3.6.3, 5.6.2
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
 #[gtest]
 #[tokio::test]
 async fn d004_01_red_query_the_context_broker_with_type() -> Result<()> {

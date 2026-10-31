@@ -1,7 +1,7 @@
-//! ETSI `026_01`: the detailed representation of every attribute the broker holds is listed, with the `@context` the
-//! request carries or without one (clause 5.7.9).
+//! The detailed representation of every attribute the broker holds is listed, with the `@context` the request carries
+//! or without one (clause 5.7.9).
 
-use crate::{suite_keywords::create_entity_with_link, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,

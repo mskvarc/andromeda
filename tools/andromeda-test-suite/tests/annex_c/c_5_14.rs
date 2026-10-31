@@ -18,7 +18,6 @@ use serde_json::json;
 /// Pins: Query Temporal Evolution of Entities with aggrMethods=max,avg over PT4M periods answers the aggregated speed
 /// of B9211 as C.5.14 prints
 /// Clause: C.5.14, 4.5.19, 6.3.12, 5.7.4
-/// Defect: D-81
 #[gtest]
 #[tokio::test]
 async fn c_5_14_0001_the_aggregated_speed_evolution() -> Result<()> {

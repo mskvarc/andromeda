@@ -1,15 +1,13 @@
-//! Dates as the ETSI suite reads them: the `NGSILD_DATE` form a date-valued member must take, and the instant an
-//! `observedAt` stands for.
+//! Dates in the `NGSILD_DATE` form a date-valued member must take, and the instant an `observedAt` stands for.
 //!
-//! The suite's `parse_ngsild_date` reads `YYYY-MM-DDTHH:MM:SS`, an optional fraction after `.` or `,`, and `Z`, keeping
-//! six fraction digits; two `observedAt` values are the same instant when they agree on those.
+//! A date reads `YYYY-MM-DDTHH:MM:SS`, an optional fraction after `.` or `,`, and `Z`, keeping six fraction digits; two
+//! `observedAt` values are the same instant when they agree on those.
 
 use chrono::NaiveDateTime;
 use regex::Regex;
 use std::{iter, sync::LazyLock};
 
-/// The dates the suite's `parse_ngsild_date` accepts, as the Hurl port's `NGSILD_DATE` pattern spells them: a valid
-/// calendar date (leap years included), a time, and `Z` at the end or after a fraction.
+/// The `NGSILD_DATE` form: a valid calendar date (leap years included), a time, and `Z` at the end or after a fraction.
 static NGSILD_DATE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new(concat!(
         r"^(([1-9][0-9]{3}|0[1-9][0-9]{2}|00[1-9][0-9]|000[1-9])-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|",
@@ -21,7 +19,7 @@ static NGSILD_DATE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
 /// The instant form `observedAt` takes: the seconds, an optional fraction after `.` or `,`, and `Z`.
 static INSTANT: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:[.,](\d+))?Z$"));
 
-/// Whether `text` is a date the suite reads.
+/// Whether `text` is a date in the `NGSILD_DATE` form.
 #[must_use]
 pub fn is_ngsild_date(text: &str) -> bool {
     NGSILD_DATE.as_ref().is_ok_and(|pattern| pattern.is_match(text))
@@ -37,7 +35,7 @@ pub fn instant(text: &str) -> Option<(NaiveDateTime, u32)> {
     Some((seconds, micros))
 }
 
-/// Whether `left` and `right` are the same instant, as the suite compares two `observedAt` values.
+/// Whether `left` and `right` are the same instant, to the microsecond.
 #[must_use]
 pub fn same_instant(left: &str, right: &str) -> bool {
     matches!((instant(left), instant(right)), (Some(left), Some(right)) if left == right)

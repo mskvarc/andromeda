@@ -1,8 +1,9 @@
-//! ETSI `006_01`: a batch of two entities is deleted by its ids, and the broker no longer retrieves them (clause 5.6.10).
+//! A batch of two entities is deleted by its ids, and the broker no longer retrieves them (clause 5.6.10).
 
 use crate::{
-    suite_keywords::{create_entity_with_context_string, expect_batch_done, query_entities_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::expect_batch_done,
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity_with_context_string, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

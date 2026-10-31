@@ -1,7 +1,10 @@
-//! ETSI `021_16`: the temporal evolutions of the Vehicles are queried by a POST whose `Query` body names the entity type
-//! and the temporal relation, and the answer is paginated as partial content (clauses 5.7.3 and 6.3.10).
+//! The temporal evolutions of the Vehicles are queried by a POST whose `Query` body names the entity type and the
+//! temporal relation, and the answer is paginated as partial content (clauses 5.7.3 and 6.3.10).
 
-use crate::suite_keywords::{content_range, create_vehicle_twenty_pair, delete_vehicle_twenty_pair};
+use crate::{
+    temporal_operations::content_range,
+    vehicle_fixtures::{create_vehicle_twenty_pair, delete_vehicle_twenty_pair},
+};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -12,7 +15,7 @@ use ngsi_ld::{
 
 /// Pins: Check that temporal pagination is triggered on the post temporal query
 /// Clause: 5.7.3, 6.3.10
-/// Corrected: fix(content-range): temporal content-range unit is datetime (6.3.10)
+/// Expected: the Content-Range unit of a temporal answer is date-time (clause 6.3.10)
 #[gtest]
 #[tokio::test]
 async fn e021_16_01_retrieve_the_entities_via_post() -> Result<()> {

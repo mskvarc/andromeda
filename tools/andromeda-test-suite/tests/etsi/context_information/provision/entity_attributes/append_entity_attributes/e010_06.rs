@@ -1,7 +1,9 @@
-//! ETSI `010_06`: a `LanguageProperty` is appended to an entity, and its `languageMap` is kept as written (clauses
-//! 5.6.3 and 4.5.18).
+//! A `LanguageProperty` is appended to an entity, and its `languageMap` is kept as written (clauses 5.6.3 and 4.5.18).
 
-use crate::suite_keywords::{append_attributes, create_vehicle_brand_parked_speed_sources, delete_entities, ld_json_body_client, retrieve_entity_json};
+use crate::{
+    entity_operations::{append_attributes, delete_entities, ld_json_body_client, retrieve_entity_json},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
+};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::{

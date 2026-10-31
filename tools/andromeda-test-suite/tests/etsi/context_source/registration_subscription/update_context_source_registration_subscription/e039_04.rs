@@ -1,9 +1,10 @@
-//! ETSI `039_04`: an update whose fragment breaks the data types or restrictions of clause 5.2.12 is refused with 400
-//! `BadRequestData` (clause 5.11.3).
+//! An update whose fragment breaks the data types or restrictions of clause 5.2.12 is refused with 400 `BadRequestData`
+//! (clause 5.11.3).
 
 use crate::{
-    suite_keywords::{create_registration_subscription, ld_json_body_client, update_registration_subscription_request},
-    suite_payloads::{building_registration_subscription, key_values_notification},
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{create_registration_subscription, update_registration_subscription_request},
+    subscription_payloads::{building_registration_subscription, key_values_notification},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;

@@ -1,13 +1,14 @@
-//! ETSI `019_01`: several entities are queried by their ids, their types, an id pattern, attribute names, a geoquery and
-//! scope expressions (clause 5.7.2).
+//! Several entities are queried by their ids, their types, an id pattern, attribute names, a geoquery and scope
+//! expressions (clause 5.7.2).
 //!
-//! Each expectation compares the whole answer as the suite's `Compare Dictionaries Ignoring Keys` does: the
-//! `instanceId` the case's exclude pattern hides is allowed below the root, and the `@context` of a response may be any
-//! versioned core `@context`, alone or as a one-element list.
+//! Each expectation compares the whole answer exactly: the `instanceId` the expectation hides is allowed below the
+//! root, and the `@context` of a response may be any versioned core `@context`, alone or as a one-element list.
 
 use crate::{
-    suite_keywords::{OBSERVED_AT_WHOLE_SECOND, create_entity, create_entity_with_link, delete_entities},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes, eiffel_tower_located, offstreet_parking, point, vehicle_parked},
+    building_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes, eiffel_tower_located},
+    entity_operations::{OBSERVED_AT_WHOLE_SECOND, create_entity, create_entity_with_link, delete_entities},
+    geometry_payloads::point,
+    vehicle_entity_payloads::{offstreet_parking, vehicle_parked},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -114,10 +115,9 @@ async fn e019_01_01_query_several_entities_based_on_ids() -> Result<()> {
 
 /// Pins: Check that one can query several entities based on the entities types
 /// Clause: 5.7.2
-/// Corrected: `fix(019_01_02)`: key the query-by-type expectations by expanded iris (5.5.7)
-/// Changed: providedBy, availableSpotNumber, totalSpotNumber stay out of the file vocabulary: the case reads them without
-/// a @context, so they expand under the core default vocabulary as in the Robot run
-/// Changed: observedAt is compared as written, where the case matches the whole-second pattern
+/// Expected: the query-by-type expectations are keyed by expanded IRIs (clause 5.5.7)
+/// Expected: providedBy, availableSpotNumber, totalSpotNumber stay out of the file vocabulary: the test reads them
+/// without a @context, so they expand under the core default vocabulary
 #[gtest]
 #[tokio::test]
 async fn e019_01_02_query_several_entities_based_on_the_entities_types() -> Result<()> {
@@ -301,8 +301,7 @@ async fn e019_01_05_query_several_entities_based_on_a_geoquery() -> Result<()> {
 
 /// Pins: Check that one can query several entities based on scopes
 /// Clause: 4.19
-/// Corrected: `fix(019_01_06)`: parenthesise the scope conjunction the scope query grammar requires (4.19)
-/// Changed: the body is read as the list of entities the query answers, where the case also accepts one bare object
+/// Expected: the scope conjunction is parenthesised as the scope query grammar requires (clause 4.19)
 #[gtest]
 #[tokio::test]
 async fn e019_01_06_query_with_and_scope() -> Result<()> {
@@ -353,7 +352,6 @@ async fn e019_01_06_query_with_full_scope() -> Result<()> {
 
 /// Pins: Check that one can query several entities based on scopes
 /// Clause: 4.19
-/// Changed: the body is read as the list of entities the query answers, where the case also accepts one bare object
 #[gtest]
 #[tokio::test]
 async fn e019_01_06_query_with_hash_matching() -> Result<()> {

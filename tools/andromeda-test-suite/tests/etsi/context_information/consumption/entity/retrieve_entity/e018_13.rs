@@ -1,9 +1,9 @@
-//! ETSI `018_13`: an entity is retrieved with two levels of linked entities, inline or flat, in the normalized and the
-//! simplified representation (clauses 5.7.1 and 4.5.23).
+//! An entity is retrieved with two levels of linked entities, inline or flat, in the normalized and the simplified
+//! representation (clauses 5.7.1 and 4.5.23).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, json_answer},
-    suite_payloads::building_located_at,
+    entity_operations::{create_entity, delete_entities},
+    linked_place_payloads::building_located_at,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -11,13 +11,16 @@ use andromeda_test_suite::{
     namespace::Namespace,
     problem::answered,
     vocabulary::Vocabulary,
-    wire::{json_body, request_to},
+    wire::json_body,
 };
 use googletest::prelude::*;
-use http::{Method, StatusCode};
+use http::StatusCode;
 use ngsi_ld::{
-    http::operation::InlineJoin,
-    model::{Entity, EntityTypeName, Input, Relationship},
+    http::{
+        headers::Accept,
+        operation::{InlineJoin, RepresentationSpelling},
+    },
+    model::{Entity, Input, NgsiLdMediaType, Relationship, VocabTerm},
 };
 use serde_json::{Value, json};
 use std::num::NonZeroU32;
@@ -27,7 +30,7 @@ const TERMS: [&str; 4] = ["Building", "locatedAt", "City", "Country"];
 
 /// The City `urn:ngsi-ld:City:<ns>-Paris`, located at the Country `urn:ngsi-ld:Country:<ns>-France`.
 fn city_located_in_france(namespace: &Namespace) -> Result<Entity<Input>> {
-    let located_at = Relationship::builder(namespace.urn("Country", "France")?).object_type("Country".parse::<EntityTypeName>()?);
+    let located_at = Relationship::builder(namespace.urn("Country", "France")?).object_type("Country".parse::<VocabTerm>()?);
     Ok(Entity::builder()
         .id(namespace.urn("City", "Paris")?)
         .entity_type("City")
@@ -130,7 +133,7 @@ async fn create_linked(broker: &BrokerClient, vocabulary: &Vocabulary, namespace
 /// Pins: Check that an entity can be retrieved with two levels linked entities in different join types and
 /// representations
 /// Clause: 5.7.1, 4.5.23
-/// Corrected: fix(linked-objecttype): linked-entity retrieval expectations carry objecttype (table 5.2.6-1)
+/// Expected: linked-entity retrieval answers carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e018_13_01_inline_normalized() -> Result<()> {
@@ -162,7 +165,7 @@ async fn e018_13_01_inline_normalized() -> Result<()> {
 /// Pins: Check that an entity can be retrieved with two levels linked entities in different join types and
 /// representations
 /// Clause: 5.7.1, 4.5.23
-/// Corrected: fix(linked-objecttype): linked-entity retrieval expectations carry objecttype (table 5.2.6-1)
+/// Expected: linked-entity retrieval answers carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e018_13_02_flat_normalized() -> Result<()> {
@@ -201,8 +204,18 @@ async fn e018_13_03_inline_simplified() -> Result<()> {
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let building = create_linked(&broker, &vocabulary, &namespace).await?;
     let client = broker.with_context(vocabulary.context())?;
-    let path = format!("entities/{}?options=keyValues&join=inline&joinLevel=2", building.id);
-    let body = json_answer(&client, request_to(&client, Method::GET, &path)?).await?;
+    let received = client
+        .with_responses()
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .entities()
+        .retrieve_simplified(&building.id)
+        .join(InlineJoin::Inline)
+        .join_level(NonZeroU32::try_from(2)?)
+        .spelling(RepresentationSpelling::default().in_options().key_values())
+        .send()
+        .await;
+    verify_that!(&received, answered(StatusCode::OK))?;
+    let body = json_body(&received?)?;
     expect_that!(&body, matches_document(inline_simplified(&namespace)).hiding("instanceId"));
     let ids = [
         namespace.urn("Building", "018-13")?,
@@ -224,8 +237,17 @@ async fn e018_13_04_flat_simplified() -> Result<()> {
     let vocabulary = Vocabulary::register(&broker, &namespace, &TERMS).await?;
     let building = create_linked(&broker, &vocabulary, &namespace).await?;
     let client = broker.with_context(vocabulary.context())?;
-    let path = format!("entities/{}?options=keyValues&join=flat&joinLevel=2", building.id);
-    let body = json_answer(&client, request_to(&client, Method::GET, &path)?).await?;
+    let received = client
+        .with_responses()
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .entities()
+        .retrieve_flattened_simplified(&building.id)
+        .join_level(NonZeroU32::try_from(2)?)
+        .spelling(RepresentationSpelling::default().in_options().key_values())
+        .send()
+        .await;
+    verify_that!(&received, answered(StatusCode::OK))?;
+    let body = json_body(&received?)?;
     expect_that!(&body, matches_document(flat_simplified(&namespace)).hiding("instanceId"));
     let ids = [
         namespace.urn("Building", "018-13")?,

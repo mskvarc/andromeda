@@ -1,9 +1,9 @@
-//! ETSI `016_03`: an attribute instance is not modified when its entity, attribute or instance is not found (clause
-//! 5.6.14).
+//! An attribute instance is not modified when its entity, attribute or instance is not found (clause 5.6.14).
 
 use crate::{
-    suite_keywords::{create_temporal_evolution, create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_sys_attrs_json},
-    suite_payloads::{replacement_speed_instance, vehicle_speed_fuel_level_with_dataset},
+    temporal_operations::{create_temporal_evolution, first_speed_instance_id, retrieve_temporal_sys_attrs_json},
+    vehicle_evolution_payloads::{replacement_speed_instance, vehicle_speed_fuel_level_with_dataset},
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, teardown::AnyAnswer};
 use googletest::prelude::*;
@@ -13,7 +13,8 @@ use ngsi_ld::model::{AttributeName, InstanceId, NgsiLdMediaType};
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not found
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_03_01_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_entity_with_given_id_is_not_found() -> Result<()> {
@@ -42,7 +43,8 @@ async fn e016_03_01_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not found
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_03_02_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_target_attribute_is_not_found() -> Result<()> {
@@ -76,7 +78,8 @@ async fn e016_03_02_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not found
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_03_03_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_target_attribute_instance_is_not_found() -> Result<()> {

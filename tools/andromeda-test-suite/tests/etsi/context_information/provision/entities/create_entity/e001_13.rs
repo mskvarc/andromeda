@@ -1,9 +1,8 @@
-//! ETSI `001_13`: an entity with an `operationSpace` `GeoProperty` polygon is created and retrieved with it
-//! (clauses 5.6.1 and 4.7).
+//! An entity with an `operationSpace` `GeoProperty` polygon is created and retrieved with it (clauses 5.6.1 and 4.7).
 
 use crate::{
-    suite_keywords::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json},
-    suite_payloads::polygon,
+    entity_operations::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json},
+    geometry_payloads::polygon,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -25,10 +24,6 @@ fn building_operation_space(namespace: &Namespace) -> Result<Entity<Input>> {
 
 /// Pins: Check that one can create an entity with operationSpace geospatial Property
 /// Clause: 5.6.1, 4.7
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_13_operation_space_geoproperty() -> Result<()> {

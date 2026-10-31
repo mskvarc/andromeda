@@ -1,7 +1,7 @@
-//! ETSI `056_08`: a `LanguageProperty` is removed by a Merge Entity whose languageMap holds the NGSI-LD Null, and its
-//! languageMap entries are merged, replaced and removed one by one (clauses 5.6.17, 6.5.3.4 and 4.5.18).
+//! A `LanguageProperty` is removed by a Merge Entity whose languageMap holds the NGSI-LD Null, and its languageMap
+//! entries are merged, replaced and removed one by one (clauses 5.6.17, 6.5.3.4 and 4.5.18).
 
-use crate::suite_keywords::{create_entity, delete_entities, merge_entity, retrieve_entity_json};
+use crate::entity_operations::{create_entity, delete_entities, merge_entity, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -27,7 +27,6 @@ fn building_with_street(namespace: &Namespace) -> Result<Entity<Input>> {
 
 /// Pins: Check that `LanguageProperty` entries can be merged and removed via NGSI-LD Null
 /// Clause: 5.6.17, 6.5.3.4, 4.5.18
-/// Changed: the body is compared as one exact document, where the Hurl file checks its members one by one
 #[gtest]
 #[tokio::test]
 async fn e056_08_01_remove_language_map_property() -> Result<()> {
@@ -58,7 +57,6 @@ async fn e056_08_01_remove_language_map_property() -> Result<()> {
 
 /// Pins: Check that `LanguageProperty` entries can be merged and removed via NGSI-LD Null
 /// Clause: 5.6.17, 6.5.3.4, 4.5.18
-/// Changed: the body is compared as one exact document, where the Hurl file checks its members one by one
 #[gtest]
 #[tokio::test]
 async fn e056_08_02_merge_language_map_property_entries() -> Result<()> {

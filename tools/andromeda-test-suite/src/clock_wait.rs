@@ -1,6 +1,5 @@
-//! Waiting for the runner's clock to pass a Unix second: a Hurl test reads a clock stub answering the current second
-//! moved by an offset, then polls the unmoved stub until it answers a later second, which is a wait of that offset
-//! on the host clock both share.
+//! Waiting for the runner's clock to pass a Unix second. The runner and the broker share the host clock, so the wait is
+//! one on the broker's clock too.
 
 use chrono::{DateTime, Utc};
 use std::time::Duration;

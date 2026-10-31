@@ -1,14 +1,10 @@
-//! ETSI `039_05`: an update whose body is not a JSON document is refused with 400 `InvalidRequest` (clause 5.11.3).
+//! An update whose body is not a JSON document is refused with 400 `InvalidRequest` (clause 5.11.3).
 
 use crate::{
-    suite_keywords::{
-        ld_json_body_client,
-        registration_notification_fragment,
-        registration_subscription_request,
-        update_registration_subscription_request,
-        with_doubled_separator,
-    },
-    suite_payloads::{building_registration_subscription, key_values_document},
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{registration_notification_fragment, registration_subscription_request, update_registration_subscription_request},
+    subscription_payloads::{building_registration_subscription, key_values_document},
+    unchecked_requests::with_doubled_separator,
 };
 use andromeda_test_suite::{
     broker,

@@ -1,5 +1,5 @@
-//! ETSI `030_02`: a retrieve of a subscription identifier that no subscription holds is refused with 404
-//! `ResourceNotFound` (clause 5.8.3).
+//! A retrieve of a subscription identifier that no subscription holds is refused with 404 `ResourceNotFound` (clause
+//! 5.8.3).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;

@@ -1,7 +1,6 @@
-//! ETSI `010_12`: an appended attribute whose value is the NGSI-LD Null is refused with 400 `BadRequestData`
-//! (clause 5.6.3).
+//! An appended attribute whose value is the NGSI-LD Null is refused with 400 `BadRequestData` (clause 5.6.3).
 
-use crate::suite_keywords::{create_entity, delete_entities, ld_json_body_client};
+use crate::entity_operations::{create_entity, delete_entities, ld_json_body_client};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

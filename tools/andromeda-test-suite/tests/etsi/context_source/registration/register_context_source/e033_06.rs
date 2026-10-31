@@ -1,9 +1,8 @@
-//! ETSI `033_06`: a registration whose `application/json` body carries an `@context` is refused with 400 (clause
-//! 6.3.5).
+//! A registration whose `application/json` body carries an `@context` is refused with 400 (clause 6.3.5).
 
 use crate::{
-    suite_keywords::refused,
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -23,8 +22,8 @@ use ngsi_ld::{
 /// Pins: Check that an HTTP error response of type `BadRequestData` is raised if the Content-Type header is
 /// "application/json" and the request payload body (as JSON) contains a "@context" term
 /// Clause: 6.3.5
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_06_01_payload_context_with_json_content_type() -> Result<()> {

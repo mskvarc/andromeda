@@ -1,9 +1,9 @@
-//! ETSI `010_07`: a scope appended to an entity is added beside its scopes when overwriting is disabled, and replaces
-//! them when overwriting is enabled (clauses 5.6.3 and 4.18).
+//! A scope appended to an entity is added beside its scopes when overwriting is disabled, and replaces them when
+//! overwriting is enabled (clauses 5.6.3 and 4.18).
 
 use crate::{
-    suite_keywords::{append_attributes, create_entity_with_link, delete_entities, retrieve_entity_json},
-    suite_payloads::company_unit_scope,
+    building_payloads::company_unit_scope,
+    entity_operations::{append_attributes, create_entity_with_link, delete_entities, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

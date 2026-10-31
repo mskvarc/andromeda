@@ -1,7 +1,6 @@
-//! ETSI `018_03`: an entity is not retrieved when its identifier, or an attribute asked for, is unknown to the system
-//! (clause 5.7.1).
+//! An entity is not retrieved when its identifier, or an attribute asked for, is unknown to the system (clause 5.7.1).
 
-use crate::{suite_keywords::create_entity, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity};
 use andromeda_test_suite::{
     broker::{self},
     namespace::Namespace,
@@ -18,7 +17,7 @@ const TERMS: [&str; 5] = ["Building", "name", "subCategory", "airQualityLevel", 
 
 /// Pins: Check that one cannot get an entity if the entity id is not known to the system
 /// Clause: 5.7.1
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e018_03_01_get_an_entity_if_the_entity_id_is_not_known_to_the_system() -> Result<()> {

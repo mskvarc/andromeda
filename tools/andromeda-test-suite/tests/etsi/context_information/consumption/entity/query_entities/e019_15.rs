@@ -1,7 +1,7 @@
-//! ETSI `019_15`: Buildings are queried with their linked City joined flat, with the system attributes of every entity
-//! in the answer (clauses 5.7.2 and 4.5.23).
+//! Buildings are queried with their linked City joined flat, with the system attributes of every entity in the answer
+//! (clauses 5.7.2 and 4.5.23).
 
-use crate::suite_keywords::{create_linked_pairs, delete_linked_pairs};
+use crate::linked_entity_fixtures::{create_linked_pairs, delete_linked_pairs};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -20,7 +20,6 @@ const PAIR: &str = "019-12";
 
 /// Pins: Check that entities can be queried with a flat linked entity with sysAttrs
 /// Clause: 5.7.2, 4.5.23
-/// Changed: the whole answer is compared, where the Hurl file checks the `createdAt` of the entities only
 #[gtest]
 #[tokio::test]
 async fn e019_15_01_query_entities_with_flat_linked_entities_and_sys_attrs() -> Result<()> {

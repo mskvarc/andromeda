@@ -2,7 +2,7 @@
 //!
 //! Each test starts its own sink on a port of its own, so nothing another test triggers ever reaches it. The sink
 //! answers every `POST` under `/notify/` with 200 and keeps every request it receives, in arrival order; a test reads
-//! the k-th notification of one endpoint, oldest first, as the ETSI notification keywords return them. A sink may
+//! the k-th notification of one endpoint, oldest first. A sink may
 //! start refusing connections, as a notification server that has not started yet does.
 
 use crate::{
@@ -15,8 +15,9 @@ use bytes::Bytes;
 use http::HeaderMap;
 use ngsi_ld::{
     http::ResponseHead,
-    model::{DocumentError, Entity, Lossless, Output, SimplifiedEntity},
+    model::{DocumentError, Entity, Lossless, Output, Projected, SimplifiedEntity},
     registration::{CSourceNotification, Problem},
+    snapshot::{Problem as SnapshotProblem, SnapshotNotification},
     subscription::{Notification, ReadErrorKind},
 };
 use std::{
@@ -56,6 +57,9 @@ pub enum NotificationError {
     /// The text is not a context source notification.
     #[error(transparent)]
     Registrations(#[from] DocumentError<ReadErrorKind<Problem>>),
+    /// The text is not a snapshot notification.
+    #[error(transparent)]
+    Snapshot(#[from] DocumentError<ReadErrorKind<SnapshotProblem>>),
 }
 
 /// A notification as the sink received it.
@@ -93,6 +97,16 @@ impl ReceivedNotification {
         Ok(Notification::<Vec<Entity<Output>>>::parse(str::from_utf8(&self.body)?, form)?)
     }
 
+    /// The body read as a notification of entities a `pick` or `omit` may have reduced (clause 4.21), whose `id` and
+    /// `type` may be missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError`] when the body is not such a notification.
+    pub fn projected_entities(&self, form: Lossless) -> Result<Notification<Vec<Entity<Output, Projected>>>, NotificationError> {
+        Ok(Notification::<Vec<Entity<Output, Projected>>>::parse(str::from_utf8(&self.body)?, form)?)
+    }
+
     /// The body read as a context source notification (clause 5.3.2): the registrations a Context Source
     /// Registration Subscription reports.
     ///
@@ -101,6 +115,15 @@ impl ReceivedNotification {
     /// Returns [`NotificationError`] when the body is not such a notification.
     pub fn registrations(&self) -> Result<CSourceNotification, NotificationError> {
         Ok(CSourceNotification::parse(str::from_utf8(&self.body)?)?)
+    }
+
+    /// The body read as a Snapshot Notification (clause 5.3.4): the terminal status of a Snapshot with an endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationError`] when the body is not such a notification.
+    pub fn snapshot(&self) -> Result<SnapshotNotification, NotificationError> {
+        Ok(SnapshotNotification::parse(str::from_utf8(&self.body)?)?)
     }
 
     /// The body read as a notification of entities in simplified representation (clause 5.3.1).
@@ -353,6 +376,7 @@ mod tests {
         http::headers::ContentType,
         model::{Lossless, NgsiLdMediaType},
         registration::TriggerReason,
+        snapshot::SettledStatus,
     };
     use wiremock::ResponseTemplate;
 
@@ -391,6 +415,17 @@ mod tests {
     }
 
     #[gtest]
+    fn a_snapshot_notification_reads_its_snapshot_and_status() -> Result<()> {
+        let notification = received(concat!(
+            r#"{"id":"urn:ngsi-ld:Notification:1","type":"SnapshotNotification","expiresAt":"2030-01-01T00:00:00Z","#,
+            r#""notifiedAt":"2024-05-01T10:05:00Z","snapshotId":"urn:ngsi-ld:Snapshot:1","snapshotPriority":5,"snapshotStatus":"failure"}"#
+        ))
+        .snapshot()?;
+        expect_that!(notification.snapshot_id().as_str(), eq("urn:ngsi-ld:Snapshot:1"));
+        verify_that!(notification.status(), eq(SettledStatus::Failure))
+    }
+
+    #[gtest]
     fn an_entity_notification_is_not_a_context_source_notification() -> Result<()> {
         let notification = received(concat!(
             r#"{"id":"urn:ngsi-ld:Notification:1","type":"Notification","subscriptionId":"urn:ngsi-ld:Subscription:1","#,
@@ -398,6 +433,18 @@ mod tests {
         ));
         expect_that!(notification.entities(Lossless::Normalized)?.data().as_slice(), len(eq(1)));
         verify_that!(notification.registrations().is_err(), eq(true))
+    }
+
+    #[gtest]
+    fn a_projected_entity_notification_reads_an_entity_without_id_or_type() -> Result<()> {
+        let notification = received(concat!(
+            r#"{"id":"urn:ngsi-ld:Notification:1","type":"Notification","subscriptionId":"urn:ngsi-ld:Subscription:1","#,
+            r#""notifiedAt":"2024-01-01T00:00:00Z","data":[{"name":{"type":"Property","value":"x"}}]}"#
+        ))
+        .projected_entities(Lossless::Normalized)?;
+        let entity = notification.data().first().or_fail()?;
+        expect_that!(entity.id, none());
+        verify_that!(entity.entity_type, none())
     }
 
     #[gtest]

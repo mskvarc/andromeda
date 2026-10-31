@@ -1,6 +1,8 @@
-//! A condition on the body of a request a test's server received, the way a stub mapping's `bodyPatterns` states
-//! one: text the body holds or does not hold, or a `JSONPath` query that selects something from it as JSON. A test
-//! reads what its server received through these to pick out the requests it is about.
+//! A condition on the body of a request a test's server received: text the body holds or does not hold, or a
+//! `JSONPath` query that selects something from it as JSON. A test picks out the requests it is about with these.
+//!
+//! The queries are lenient where IETF RFC 9535 is strict: a filter applies to an object as to an array holding it
+//! alone, so a condition written for a batch of entities also picks out an entity sent alone.
 
 use serde_json_path::JsonPath;
 use wiremock::{Match, Request};
@@ -15,8 +17,8 @@ pub enum BodyPattern {
     /// The body is JSON and the query selects at least one node of it.
     Selects(JsonPath),
     /// The body is JSON and the filter query, starting with a filter, selects a node from one of the nodes the first
-    /// query selects. A stub mapping's `JSONPath` applies a filter to an object as to an array holding it, at any
-    /// depth, which RFC 9535 does not: `$.label[?(@.type == 'Property')]` selects the `label` object itself.
+    /// query selects, an object read as the array holding it alone: `$.label` and `$[?(@.type == 'Property')]`
+    /// select the `label` object itself.
     SelectsBelow(JsonPath, JsonPath),
 }
 
@@ -35,9 +37,8 @@ impl BodyPattern {
     }
 }
 
-/// Whether `query` selects a node of `json`. A stub mapping's `JSONPath` applies a filter at the root to a root
-/// object as to an array holding it (`$[?(@.id == 'x')]` selects an entity posted alone), which RFC 9535 does not, so
-/// a root object is also queried as that array.
+/// Whether `query` selects a node of `json`, a root object also queried as the array holding it alone, so that
+/// `$[?(@.id == 'x')]` selects an entity posted alone.
 fn selects(query: &JsonPath, json: serde_json::Value) -> bool {
     if !query.query(&json).is_empty() {
         return true;

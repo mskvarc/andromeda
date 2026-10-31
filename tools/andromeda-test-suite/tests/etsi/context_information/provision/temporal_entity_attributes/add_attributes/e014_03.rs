@@ -1,6 +1,6 @@
-//! ETSI `014_03`: instances are not added to a temporal representation of an entity that does not exist (clause 5.6.12).
+//! Instances are not added to a temporal representation of an entity that does not exist (clause 5.6.12).
 
-use crate::{suite_keywords::ld_json_body_client, suite_payloads::added_attribute_instances};
+use crate::{entity_operations::ld_json_body_client, vehicle_evolution_payloads::added_attribute_instances};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

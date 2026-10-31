@@ -1,13 +1,13 @@
-//! ETSI `004_07`: a batch upsert in which two of three entities share an id creates each id once, the later instance
-//! of the shared id being applied after the first (clauses 5.5.11 and 5.6.8).
+//! A batch upsert in which two of three entities share an id creates each id once, the later instance of the shared id
+//! being applied after the first (clauses 5.5.11 and 5.6.8).
 
 use crate::{
-    suite_keywords::{delete_entities, expect_upsert_created, ld_json_body_client},
-    suite_payloads::bare_building,
+    batch_operations::expect_upsert_created,
+    building_payloads::bare_building,
+    entity_operations::{delete_entities, ld_json_body_client},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
-use ngsi_ld::http::operation::UpsertMode;
 
 /// Pins: Check that one can upsert a batch of where two have the same id
 /// Clause: 5.6.8, 5.5.11
@@ -22,7 +22,6 @@ async fn e004_07_01_upsert_a_batch_of_three_valid_entities_where_two_have_the_sa
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_upsert_created(answer, &[&namespace.urn("Building", 1)?, &namespace.urn("Building", 2)?])?;

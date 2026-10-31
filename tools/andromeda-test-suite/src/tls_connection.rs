@@ -27,7 +27,7 @@ use std::{
 use tokio::net::lookup_host;
 use url::Url;
 
-/// The longest a request may take, as for every client of the suite.
+/// The longest a request may take, as for every test client.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The HTTP versions a client offers in ALPN.

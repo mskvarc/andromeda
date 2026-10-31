@@ -1,5 +1,5 @@
-//! ETSI `053_01`: a hosted `@context` is served, with no `details` or `details=false`, as the document that was added,
-//! in `application/json` (clause 5.13.4).
+//! A hosted `@context` is served, with no `details` or `details=false`, as the document that was added, in
+//! `application/json` (clause 5.13.4).
 
 use crate::jsonld_context::stored_contexts::{add_context, attribute_terms};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire};
@@ -42,10 +42,7 @@ async fn serves_the_added_context(details: SummaryDetails) -> Result<()> {
 
 /// Pins: Check that one can serve a @context with details equal to empty or false
 /// Clause: 5.13.4
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e053_01_01_serve_a_context_without_details() -> Result<()> {
@@ -54,10 +51,7 @@ async fn e053_01_01_serve_a_context_without_details() -> Result<()> {
 
 /// Pins: Check that one can serve a @context with details equal to empty or false
 /// Clause: 5.13.4
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e053_01_02_serve_a_context_with_details_equal_to_false() -> Result<()> {

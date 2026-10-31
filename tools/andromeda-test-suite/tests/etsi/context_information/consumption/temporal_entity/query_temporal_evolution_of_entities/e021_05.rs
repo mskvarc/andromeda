@@ -1,11 +1,11 @@
-//! ETSI `021_05`: the temporal evolutions of the entities of one type are queried, and only the Bus of the setup is
-//! answered for the Bus type (clause 5.7.4).
+//! The temporal evolutions of the entities of one type are queried, and only the Bus of the setup is answered for the
+//! Bus type (clause 5.7.4).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
 use crate::{
-    suite_keywords::{create_temporal_entity, delete_temporal_entities},
-    suite_payloads::{bus_speed_fuel_level, vehicle_speed_fuel_level_on},
+    temporal_operations::{create_temporal_entity, delete_temporal_entities},
+    vehicle_evolution_payloads::{bus_speed_fuel_level, vehicle_speed_fuel_level_on},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

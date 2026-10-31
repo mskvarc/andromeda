@@ -1,9 +1,8 @@
-//! ETSI `013_01`: an attribute of an entity is deleted, its default instance, one dataset or every instance
-//! (clause 5.6.5).
+//! An attribute of an entity is deleted, its default instance, one dataset or every instance (clause 5.6.5).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, naming_delete_all_false, retrieve_entity_json},
-    suite_payloads::dataset,
+    entity_operations::{create_entity, delete_entities, retrieve_entity_json},
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -15,7 +14,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::{DeleteAttribute, InstanceSelection},
+    http::operation::InstanceSelection,
     model::{AttributeName, Entity, Input, NgsiLdMediaType, Property, Value},
 };
 use serde_json::json;
@@ -46,7 +45,7 @@ fn vehicle_speed_sources(namespace: &Namespace) -> Result<Entity<Input>> {
         .build()?)
 }
 
-/// The suite setup of the deletion cases: registers `Vehicle`, `speed` and `source`, and creates the Vehicle of
+/// The setup of the deletion tests: registers `Vehicle`, `speed` and `source`, and creates the Vehicle of
 /// [`vehicle_speed_sources`] in their context, answering the vocabulary.
 async fn create_vehicle_speed_sources(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     let vocabulary = Vocabulary::register(broker, namespace, &TERMS).await?;
@@ -99,10 +98,15 @@ async fn e013_01_01_delete_an_attribute_with_the_default_instance() -> Result<()
     let speed: AttributeName = "speed".parse()?;
     let client = broker.with_context(vocabulary.context())?;
 
-    let operation = DeleteAttribute::builder().id(&id).name(&speed).build();
-    let deleted = client.send_unchecked(naming_delete_all_false(&client, &operation)?).await;
+    let deleted = client
+        .with_responses()
+        .entities()
+        .delete_attribute(&id, &speed)
+        .instances(InstanceSelection::Selected(None))
+        .send()
+        .await;
     verify_that!(&deleted, answered(StatusCode::NO_CONTENT))?;
-    expect_that!(deleted?.body().len(), eq(0));
+    expect_that!(deleted?.body.len(), eq(0));
 
     let body = retrieve_entity_json(&client.with_accept(NgsiLdMediaType::JsonLd), &id).await?;
     expect_that!(
@@ -131,15 +135,16 @@ async fn e013_01_02_delete_an_attribute_with_a_specific_dataset_id() -> Result<(
     let speed: AttributeName = "speed".parse()?;
     let client = broker.with_context(vocabulary.context())?;
 
-    let gps = namespace.urn("Dataset", "gps")?;
-    let operation = DeleteAttribute::builder()
-        .id(&id)
-        .name(&speed)
-        .instances(InstanceSelection::Dataset(gps.as_uri()))
-        .build();
-    let deleted = client.send_unchecked(naming_delete_all_false(&client, &operation)?).await;
+    let gps = namespace.dataset_id("Dataset", "gps")?;
+    let deleted = client
+        .with_responses()
+        .entities()
+        .delete_attribute(&id, &speed)
+        .instances(InstanceSelection::Selected(Some(&gps)))
+        .send()
+        .await;
     verify_that!(&deleted, answered(StatusCode::NO_CONTENT))?;
-    expect_that!(deleted?.body().len(), eq(0));
+    expect_that!(deleted?.body.len(), eq(0));
 
     let body = retrieve_entity_json(&client.with_accept(NgsiLdMediaType::JsonLd), &id).await?;
     expect_that!(

@@ -1,28 +1,15 @@
-//! The steps the deletion notification cases of the ETSI `046_21` and `046_22` Robot runs share: a subscription created
-//! while its endpoint does not serve yet, then the deletion of an entity or of an attribute that notifies it.
+//! The steps the deletion notification tests share: a subscription created while its endpoint does not serve yet, then
+//! the deletion of an entity or of an attribute that notifies it.
 
 use crate::{
+    building_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo, building_named_in_datasets, eiffel_tower_located},
     context_information::subscription::subscription_notification_behaviour::{
         change_case::street_building_document,
         notification_case::{attributes_updated, subscription_created},
     },
-    suite_keywords::{
-        create_entity,
-        create_entity_with_context_string,
-        create_subscription_document,
-        ld_json_body_client,
-        merge_entity,
-        partial_update,
-        simplified_notification,
-    },
-    suite_payloads::{
-        BUILDING_LOCATED_STREET_TERMS,
-        building_located_street_geo,
-        building_named_in_datasets,
-        eiffel_tower_located,
-        key_values_document,
-        key_values_document_reporting,
-    },
+    entity_operations::{create_entity, create_entity_with_context_string, ld_json_body_client, merge_entity, partial_update},
+    subscription_operations::{create_subscription_document, simplified_notification},
+    subscription_payloads::{key_values_document, key_values_document_reporting},
 };
 use andromeda_test_suite::{
     broker,
@@ -193,7 +180,7 @@ pub(crate) fn street_building_after_deletion(namespace: &Namespace, deleted: Str
 pub(crate) enum NotifiedAs {
     /// `normalized`.
     Normalized,
-    /// `keyValues`, the spelling the ETSI cases write.
+    /// `keyValues`, the spelling these tests write.
     KeyValues,
 }
 

@@ -1,11 +1,10 @@
-//! ETSI `021_13`: the temporal evolutions of the entities are queried through the entityOperations binding, a POST
-//! whose `Query` body names the entity types and the temporal query (clause 5.7.4). The Bus of the setup is answered
-//! for no case, since the Bus is never named and the Vehicle of the instant alone is selected.
+//! The temporal evolutions of the entities are queried through the entityOperations binding, a POST whose `Query` body
+//! names the entity types and the temporal query (clause 5.7.4). The Bus of the setup is answered for no case, since
+//! the Bus is never named and the Vehicle of the instant alone is selected.
 //!
-//! The answers are compared with the case's expectations as the suite's `Compare Dictionaries Ignoring Keys` makes
-//! them.
+//! The answers are compared exactly with the test's expectations.
 
-use crate::suite_keywords::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
+use crate::vehicle_fixtures::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -166,7 +165,7 @@ async fn e021_13_04_after_two_entities() -> Result<()> {
         .with_responses()
         .temporal()
         .query(temporal_query::after("2020-08-02T12:05:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Vehicle").or("Bus").build()?)
+        .entity_type(type_selection::entity_type("Vehicle").or("Bus"))
         .method(QueryMethod::Post)
         .send()
         .await;

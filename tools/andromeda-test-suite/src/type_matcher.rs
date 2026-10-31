@@ -7,7 +7,7 @@ use googletest::{
     description::Description,
     matcher::{Matcher, MatcherBase, MatcherResult},
 };
-use ngsi_ld::model::{Entity, EntityTypeName, OneOrMany, Output, Projected, evolution::TemporalEntity};
+use ngsi_ld::model::{Entity, EntityTypeName, OneOrMany, Output, Projected, SimplifiedEntity, evolution::TemporalEntity};
 use std::fmt::Debug;
 
 /// A resource that names its entity types.
@@ -26,6 +26,12 @@ impl Typed for Entity<Output> {
 impl Typed for Entity<Output, Projected> {
     fn entity_types(&self) -> Option<&OneOrMany<EntityTypeName>> {
         self.entity_type.as_ref()
+    }
+}
+
+impl Typed for SimplifiedEntity {
+    fn entity_types(&self) -> Option<&OneOrMany<EntityTypeName>> {
+        Some(&self.entity_type)
     }
 }
 
@@ -106,7 +112,7 @@ impl<R: Typed + Debug> Matcher<&R> for TypePresence {
 mod tests {
     use crate::type_matcher::{any_type, has_type, lists_type, no_type, type_count};
     use googletest::prelude::*;
-    use ngsi_ld::model::{Entity, EntityTypeName, Lossless, OneOrMany, Output, Projected};
+    use ngsi_ld::model::{Entity, EntityTypeName, Lossless, OneOrMany, Output, Projected, SimplifiedEntity};
 
     /// An entity of `types`, as a broker answers it.
     fn entity(types: OneOrMany<EntityTypeName>) -> Result<Entity<Output>> {
@@ -132,6 +138,14 @@ mod tests {
         expect_that!(&listed, type_count(2));
         expect_that!(&listed, lists_type(&"Car".parse()?));
         verify_that!(&listed, not(type_count(1)))
+    }
+
+    #[gtest]
+    fn a_simplified_entity_is_matched_by_its_type() -> Result<()> {
+        let vehicle: EntityTypeName = "Vehicle".parse()?;
+        let simplified = SimplifiedEntity::parse(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle"}"#)?;
+        expect_that!(&simplified, has_type(&vehicle));
+        verify_that!(&simplified, not(lists_type(&vehicle)))
     }
 
     #[gtest]

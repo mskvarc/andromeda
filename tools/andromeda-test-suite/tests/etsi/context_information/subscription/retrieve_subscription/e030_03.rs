@@ -1,9 +1,6 @@
-//! ETSI `030_03`: a subscription is retrieved with the members it was created with, in the key-value form (clause 5.8.3).
+//! A subscription is retrieved with the members it was created with, in the key-value form (clause 5.8.3).
 
-use crate::{
-    suite_keywords::{create_subscription_document, ld_json_body_client},
-    suite_payloads::key_values_document,
-};
+use crate::{entity_operations::ld_json_body_client, subscription_operations::create_subscription_document, subscription_payloads::key_values_document};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,

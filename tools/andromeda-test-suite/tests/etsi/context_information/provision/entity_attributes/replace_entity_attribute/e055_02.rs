@@ -1,9 +1,10 @@
-//! ETSI `055_02`: a multi-instance entity attribute is replaced, and the `createdAt` of its first instance keeps the value
-//! it had (clauses 5.6.19 and 6.7.3.3).
+//! A multi-instance entity attribute is replaced, and the `createdAt` of its first instance keeps the value it had
+//! (clauses 5.6.19 and 6.7.3.3).
 
 use crate::{
-    suite_keywords::{create_vehicle_parked_speed_sources, delete_entities, retrieve_entity_sys_attrs_json},
-    suite_payloads::{VEHICLE_PARKED_SPEED_SOURCE_TERMS, gps_speed_dataset},
+    entity_operations::{delete_entities, retrieve_entity_sys_attrs_json},
+    vehicle_entity_payloads::{VEHICLE_PARKED_SPEED_SOURCE_TERMS, gps_speed_dataset},
+    vehicle_fixtures::create_vehicle_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered};
 use googletest::prelude::*;

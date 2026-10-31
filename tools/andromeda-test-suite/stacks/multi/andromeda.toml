@@ -1,0 +1,5 @@
+# The deployment member every broker of this stack reports in /info/sourceIdentity (Table 5.2.40-1). A table is set
+# in a configuration file only.
+
+[federation.identity.extras]
+deployment = "multi"

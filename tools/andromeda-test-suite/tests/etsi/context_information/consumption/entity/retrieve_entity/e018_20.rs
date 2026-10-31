@@ -1,10 +1,7 @@
-//! ETSI `018_20`: an entity is retrieved with a `pick` on a linked entity, and on a second level linked entity, joined
-//! inline or flat (clauses 5.7.1, 4.5.23 and 4.21).
+//! An entity is retrieved with a `pick` on a linked entity, and on a second level linked entity, joined inline or flat
+//! (clauses 5.7.1, 4.5.23 and 4.21).
 
-use crate::{
-    suite_keywords::{create_paris_in_france, delete_entities},
-    suite_payloads::PARIS_IN_FRANCE_TERMS,
-};
+use crate::{entity_operations::delete_entities, linked_entity_fixtures::create_paris_in_france, linked_place_payloads::PARIS_IN_FRANCE_TERMS};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

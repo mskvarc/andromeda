@@ -1,9 +1,11 @@
-//! ETSI `016_02`: an attribute instance is not modified by a request whose entity id, instance id or attribute name is
-//! invalid or missing (clause 5.6.14).
+//! An attribute instance is not modified by a request whose entity id, instance id or attribute name is invalid or
+//! missing (clause 5.6.14).
 
 use crate::{
-    suite_keywords::{answered_with, create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_sys_attrs_json},
-    suite_payloads::replacement_speed_instance,
+    temporal_operations::{first_speed_instance_id, retrieve_temporal_sys_attrs_json},
+    unchecked_requests::answered_with,
+    vehicle_evolution_payloads::replacement_speed_instance,
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
 };
 use andromeda_test_suite::{broker, broker::BrokerClient, namespace::Namespace, teardown::AnyAnswer, wire::api_uri};
 use googletest::prelude::*;
@@ -36,7 +38,8 @@ async fn refused_modification(
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_02_01_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_entity_id_is_not_valid() -> Result<()> {
@@ -66,7 +69,8 @@ async fn e016_02_01_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_02_02_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_entity_id_is_not_present() -> Result<()> {
@@ -96,7 +100,8 @@ async fn e016_02_02_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_02_03_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_instance_id_is_not_valid() -> Result<()> {
@@ -126,7 +131,8 @@ async fn e016_02_03_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_02_04_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_instance_id_is_not_present() -> Result<()> {
@@ -156,7 +162,8 @@ async fn e016_02_04_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
 #[gtest]
 #[tokio::test]
 async fn e016_02_05_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_attribute_name_is_not_a_valid_name() -> Result<()> {
@@ -186,8 +193,9 @@ async fn e016_02_05_modify_attribute_instance_in_temporal_representation_of_an_e
 /// Pins: Check that one cannot partially modify attribute instance in temporal representation of an entity if the
 /// EntityId/AttributeId/InstanceId is not right
 /// Clause: 5.6.14
-/// Corrected: fix(016): send the `EntityTemporal` Fragment 5.6.14 defines, not a bare instance (5.6.14.3)
-/// Corrected: `fix(016_02_06)`: empty attribute name is badrequestdata not 405 (5.6.14.4)
+/// Expected: the request body is the `EntityTemporal` Fragment clause 5.6.14 defines, not a bare instance (clause
+/// 5.6.14.3)
+/// Expected: an empty attribute name is refused with `BadRequestData`, not 405 (clause 5.6.14.4)
 #[gtest]
 #[tokio::test]
 async fn e016_02_06_modify_attribute_instance_in_temporal_representation_of_an_entity_if_the_attribute_name_is_not_present() -> Result<()> {

@@ -1,9 +1,10 @@
-//! ETSI `001_06`: a create sent as `application/json` whose body carries an `@context` member is refused with 400
-//! `BadRequestData` (clause 6.3.5).
+//! A create sent as `application/json` whose body carries an `@context` member is refused with 400 `BadRequestData`
+//! (clause 6.3.5).
 
 use crate::{
-    suite_keywords::{ld_json_body_client, refused},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::ld_json_body_client,
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{
     broker,

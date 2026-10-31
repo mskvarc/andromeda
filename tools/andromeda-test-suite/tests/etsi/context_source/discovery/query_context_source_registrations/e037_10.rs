@@ -1,7 +1,10 @@
-//! ETSI `037_10`: a query of context source registrations narrowed by entity ids alone is refused as too wide, and
-//! one with an NGSI-LD query answers the registration whose Context Source Properties match (clause 5.10.2).
+//! A query of context source registrations narrowed by entity ids alone is refused as too wide, and one with an NGSI-LD
+//! query answers the registration whose Context Source Properties match (clause 5.10.2).
 
-use crate::suite_keywords::{context_link, create_discovery_registrations, create_registration, delete_registrations};
+use crate::{
+    entity_operations::context_link,
+    registration_operations::{create_discovery_registrations, create_registration, delete_registrations},
+};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     cleanup::Cleanup,
@@ -56,10 +59,9 @@ async fn created(client: &BrokerClient, namespace: &Namespace) -> Result<(Vocabu
 
 /// Pins: A discovery query narrowed only by an entity id list is too wide (clause 5.10.2.4).
 /// Clause: 5.10.2
-/// Corrected: `fix(037_10_01)`: id-only discovery is too wide and rejected (5.10.2.4)
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: an id-only discovery is too wide and refused (clause 5.10.2.4)
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_10_01_with_list_of_entity_ids() -> Result<()> {
@@ -81,17 +83,15 @@ async fn e037_10_01_with_list_of_entity_ids() -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the conditions specified by the context
 /// source query match the respective Context Source Properties
 /// Clause: 5.10.2
-/// Corrected: `fix(037_10_02)`: csr discovery omits the unstored location and inlines no @context (table 5.2.9-1,
-/// 6.3.6)
+/// Expected: registration discovery omits the unstored location and inlines no @context (Table 5.2.9-1, clause 6.3.6)
 /// Tenant: private (the case queries registrations by an NGSI-LD query, whose attributes clause 5.10.2.4 matches as a
 /// list of attribute names alone, with no entity type; clause 5.10.2.4 matches every registration of the tenant whose
 /// `RegistrationInfo` names that attribute or names no attribute at all ("If no Properties or Relationships are
 /// specified in the `RegistrationInfo`, the Attribute names are considered matching"), so in the shared tenant other
 /// files' registrations of entities alone are listed beside the case's own and the exact count fails; clause 4.14
 /// keeps each tenant's registrations its own)
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_10_02_with_ngsi_ld_query() -> Result<()> {

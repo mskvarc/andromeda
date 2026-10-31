@@ -1,0 +1,198 @@
+name: test-suite-multi
+
+# Seven broker identities, each over its own PostgreSQL server, for the distributed tree. A tenant is a database of
+# its own, so the identities never share a server: two of them could otherwise name the same tenant database. The
+# tests run in the runner service on the same network and reach every broker by its network name, which is also what
+# a registration endpoint names; no service publishes a host port.
+
+x-postgres: &postgres
+  image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-test-suite-postgres:latest}
+  command: ["postgres", "-c", "max_connections=200"]
+  shm_size: 1gb
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 40
+
+x-broker: &broker
+  image: ${ANDROMEDA_IMAGE:-andromeda-test-suite:latest}
+  restart: unless-stopped
+  # /info/sourceIdentity carries a deployment-specific member (Table 5.2.40-1), a table the configuration file alone
+  # sets.
+  command: ["--configuration", "/etc/andromeda/andromeda.toml"]
+  volumes:
+    - ./andromeda.toml:/etc/andromeda/andromeda.toml:ro
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+    start_period: 5s
+
+x-broker-environment: &broker-environment
+  ANDROMEDA__SERVER__HOST: "0.0.0.0"
+  ANDROMEDA__OBSERVABILITY__LOG__LEVEL: "info"
+  ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
+  ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "recorded"
+  ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
+  ANDROMEDA__DATABASE__MAX_CONNECTIONS: "24"
+  ANDROMEDA__TENANCY__DATABASES__MAX_CONNECTIONS: "4"
+  ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "12"
+
+services:
+  postgres-a:
+    <<: *postgres
+  postgres-b:
+    <<: *postgres
+  postgres-c:
+    <<: *postgres
+  postgres-d:
+    <<: *postgres
+  postgres-e:
+    <<: *postgres
+  postgres-f:
+    <<: *postgres
+  postgres-g:
+    <<: *postgres
+  postgres-bounded:
+    <<: *postgres
+    profiles: ["bounded"]
+
+  broker-a:
+    <<: *broker
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1061"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-a:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-a"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-a:1061"
+
+  broker-b:
+    <<: *broker
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1062"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-b:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-b"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-b"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-b:1062"
+
+  broker-c:
+    <<: *broker
+    depends_on:
+      postgres-c:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1063"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-c:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-c"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-c"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-c:1063"
+
+  broker-d:
+    <<: *broker
+    depends_on:
+      postgres-d:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1064"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-d:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-d"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-d"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-d:1064"
+
+  # broker-e runs the temporal_linked_retrieval extension, which admits a q
+  # hop on the temporal operations; every other identity runs the spec alone.
+  broker-e:
+    <<: *broker
+    depends_on:
+      postgres-e:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1065"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-e:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-e"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-e"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-e:1065"
+      ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL__MODE: "enabled"
+
+  # broker-f runs the language-ranges level of q_target_languages and is the front broker of the files that negotiate it with the sources a read reaches; broker-a stays on the spec alone.
+  broker-f:
+    <<: *broker
+    depends_on:
+      postgres-f:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1066"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-f:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-f"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-f"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-f:1066"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-ranges"
+
+  # broker-g runs the same level, so a read reaching it from broker-f negotiates range filtering on both.
+  broker-g:
+    <<: *broker
+    depends_on:
+      postgres-g:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1067"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-g:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-g"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-g"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-g:1067"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-ranges"
+
+  # broker-bounded gathers at most 5 distinct entities and 15 source rows for one forwarded query, so a test can reach either bound with a handful of entities.
+  # It starts only with `--profile bounded`, because a broker image older than the `federation.forwarding` section refuses to start with it.
+  broker-bounded:
+    <<: *broker
+    profiles: ["bounded"]
+    depends_on:
+      postgres-bounded:
+        condition: service_healthy
+    environment:
+      <<: *broker-environment
+      ANDROMEDA__SERVER__PORT: "1068"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-bounded:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-bounded"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-bounded"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-bounded:1068"
+      ANDROMEDA__FEDERATION__FORWARDING__MAX_QUERY_ENTITIES: "5"
+      ANDROMEDA__FEDERATION__FORWARDING__MAX_QUERY_SOURCE_ROWS: "15"
+
+  runner:
+    image: andromeda-test-suite-runner:latest
+    build:
+      context: ../runner
+    profiles: ["runner"]
+    env_file: runner.env
+    working_dir: /andromeda/tools/andromeda-test-suite
+    volumes:
+      - ../../../..:/andromeda:ro
+      - target:/andromeda/target
+      - registry:/usr/local/cargo/registry
+
+volumes:
+  target:
+    name: test-suite-target
+  registry:
+    name: test-suite-cargo-registry

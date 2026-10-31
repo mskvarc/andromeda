@@ -5,8 +5,7 @@ use andromeda_test_suite::context_source::ContextSource;
 use googletest::prelude::*;
 use http::header::VIA;
 
-/// `Wait For Request` then `Get Request Headers`: waits until the source holds `count` requests and answers the `Via`
-/// of the last, when it carries one.
+/// Waits until the source holds `count` requests and answers the `Via` of the last, when it carries one.
 pub(crate) async fn forwarded_via_after(source: &ContextSource, count: usize) -> Result<Option<String>> {
     let received = source.wait_for(count).await?;
     Ok(received

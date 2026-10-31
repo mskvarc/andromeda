@@ -1,11 +1,8 @@
-//! ETSI `028_07`: a create-subscription request whose `jsonldContext` is not a retrievable context is refused, with 400
+//! A create-subscription request whose `jsonldContext` is not a retrievable context is refused, with 400
 //! `BadRequestData` when the value is not an IRI and 504 `LdContextNotAvailable` when it names an unreachable document
 //! (clauses 5.8.1 and 6.3.2).
 
-use crate::{
-    suite_keywords::{ld_json_body_client, refused},
-    suite_payloads::building_subscription,
-};
+use crate::{entity_operations::ld_json_body_client, subscription_payloads::building_subscription, unchecked_requests::refused};
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
@@ -44,7 +41,7 @@ async fn e028_07_01_subscription_with_invalid_jsonld_context() -> Result<()> {
 
 /// Pins: Check that one cannot create a subscription with invalid or unavailable jsonldContext
 /// Clause: 5.8.1
-/// Corrected: fix(ldcontextnotavailable): ldcontextnotavailable is 504 not 503 (table 6.3.2-1)
+/// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
 #[gtest]
 #[tokio::test]
 async fn e028_07_02_subscription_with_unavailable_jsonld_context() -> Result<()> {

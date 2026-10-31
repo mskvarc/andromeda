@@ -1,5 +1,5 @@
-//! ETSI `D002_01_red`: deleting two entities, each matched by its own redirect registration, deletes each on the
-//! context source of its registration (clauses 4.3.3, 4.3.6.3 and 5.6.6).
+//! Deleting two entities, each matched by its own redirect registration, deletes each on the context source of its
+//! registration (clauses 4.3.3, 4.3.6.3 and 5.6.6).
 
 use crate::{
     distributed_operations::{
@@ -7,8 +7,8 @@ use crate::{
         forwarding_source::{register, serve, source_endpoint, source_path, stub, stub_count, unregister},
         provision::entities::entity_sources::{REDIRECTION, vehicle_id_registration},
     },
-    suite_keywords::create_entity_with_context_string,
-    suite_payloads::vehicle_parked,
+    entity_operations::create_entity_with_context_string,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -18,13 +18,6 @@ use ngsi_ld::registration::RegistrationMode;
 /// Pins: Verify that, when one has a redirect registration on a Context Broker, one is able to delete entities on
 /// both Context Sources
 /// Clause: 4.3.3, 4.3.6.3, 5.6.6
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
 #[gtest]
 #[tokio::test]
 async fn d002_01_red_delete_entities_on_both_context_sources() -> Result<()> {

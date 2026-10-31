@@ -1,5 +1,5 @@
-//! ETSI `059_01`: an operation sent with the undefined parameter `invalidParams=invalidValue` is refused with 400
-//! `InvalidRequest` (clause 6.3.20).
+//! An operation sent with the undefined parameter `invalidParams=invalidValue` is refused with 400 `InvalidRequest`
+//! (clause 6.3.20).
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -17,6 +17,7 @@ use ngsi_ld::model::{APPLICATION_LD_JSON, ErrorType};
 /// Sends `method` to `path` as the case does, with `Content-Type: application/ld+json` and `body`, and checks the
 /// refusal: 400 with the problem type `InvalidRequest`.
 async fn refused(client: &BrokerClient, method: Method, path: &str, body: Option<String>) -> Result<()> {
+    // No operation writes an undefined parameter or a body that is one JSON string, so the request is sent as written.
     let request = content_type(request_to(client, method, path)?, &APPLICATION_LD_JSON)?;
     let request = match body {
         Some(text) => request.body(Bytes::from(text)),
@@ -26,8 +27,8 @@ async fn refused(client: &BrokerClient, method: Method, path: &str, body: Option
     verify_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest))
 }
 
-/// The text of the suite's `entities/building-minimal.json` for `urn:ngsi-ld:Building:<ns>-1`, as the one JSON string
-/// RequestsLibrary sends when `json=` is given the file's text.
+/// The minimal Building `urn:ngsi-ld:Building:<ns>-1` as text, encoded as one JSON string: the body the create tests
+/// send beside the invalid parameter.
 fn building_minimal(namespace: &Namespace) -> Result<String> {
     let text = format!("{{\n    \"id\": \"{}\",\n    \"type\": \"Building\"\n}}", namespace.urn("Building", 1)?);
     Ok(serde_json::to_string(&text)?)
@@ -35,9 +36,7 @@ fn building_minimal(namespace: &Namespace) -> Result<String> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.6.1, 6.3.20
-/// Changed: the suite posts the text of entities/building-minimal.json as one JSON string (RequestsLibrary json= with
-/// a str), so the body is that string, kept as sent
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_01_create_entity() -> Result<()> {
@@ -54,7 +53,7 @@ async fn e059_01_01_create_entity() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.7.2, 6.3.20
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_02_query_entities() -> Result<()> {
@@ -63,9 +62,7 @@ async fn e059_01_02_query_entities() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.6.11, 6.3.20
-/// Changed: the suite posts the text of entities/building-minimal.json as one JSON string (RequestsLibrary json= with
-/// a str), so the body is that string, kept as sent
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_03_create_temporal_entity() -> Result<()> {
@@ -82,7 +79,7 @@ async fn e059_01_03_create_temporal_entity() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.7.2, 6.3.20
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_04_query_temporal_entities() -> Result<()> {
@@ -97,7 +94,7 @@ async fn e059_01_04_query_temporal_entities() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.7.5, 6.3.20
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_05_retrieve_entity_types() -> Result<()> {
@@ -106,8 +103,6 @@ async fn e059_01_05_retrieve_entity_types() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.8.1, 6.3.20
-/// Changed: the suite posts the text of subscriptions/subscription.jsonld as one JSON string (RequestsLibrary json=
-/// with a str), so the body is that string, kept as sent
 #[gtest]
 #[tokio::test]
 async fn e059_01_06_create_subscription() -> Result<()> {
@@ -132,7 +127,7 @@ async fn e059_01_06_create_subscription() -> Result<()> {
 
 /// Pins: Check that sending an invalid parameter returns a 400 invalidRequest
 /// Clause: 5.8.1, 6.3.20
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_07_query_subscriptions() -> Result<()> {
@@ -143,7 +138,7 @@ async fn e059_01_07_query_subscriptions() -> Result<()> {
 /// Clause: 5.6.21, 6.4.3.3
 /// Tenant: private (the purge names no type, so a broker that failed to refuse it would delete every entity of the
 /// shared tenant)
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e059_01_08_purge_entities() -> Result<()> {

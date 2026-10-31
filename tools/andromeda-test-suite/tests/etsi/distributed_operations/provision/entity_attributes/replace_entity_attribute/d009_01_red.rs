@@ -1,5 +1,5 @@
-//! ETSI `D009_01_red`: a replacement of the `speed` of an entity two redirect registrations match is forwarded to
-//! each context source once, and the broker answers a `speed` of 99 (clauses 4.3.3, 4.3.6.3, 5.6.19 and 6.3.18).
+//! A replacement of the `speed` of an entity two redirect registrations match is forwarded to each context source once,
+//! and the broker answers a `speed` of 99 (clauses 4.3.3, 4.3.6.3, 5.6.19 and 6.3.18).
 
 use crate::{
     distributed_operations::{
@@ -7,7 +7,7 @@ use crate::{
         forwarding_source::{register, serve, source_endpoint, source_path, stub, stub_count, unregister, vehicle_retrieval_rule},
         provision::entity_attributes::attribute_sources::{replace_speed, speed_99_reply, vehicle_attribute_registration, vehicle_rule},
     },
-    suite_keywords::retrieve_entity_json,
+    entity_operations::retrieve_entity_json,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -19,17 +19,8 @@ use wiremock::{Mock, ResponseTemplate};
 /// Pins: Check that one can replace an existing entity attribute, the changes will be forwarded to the Context Sources
 /// thanks to the redirect registrations
 /// Clause: 4.3.3, 4.3.6.3, 5.6.19, 6.3.18
-/// Corrected: `fix(D009_01_red)`: distinct registration id, replace body, both sources stubbed (5.6.19)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the case's teardown never stops the context source; the test's source goes when the test ends, which no
-/// request of the case can observe.
-/// Changed: the retrieval is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
+/// Expected: the registration id is distinct, the body is an attribute replacement, and both sources answer (clause
+/// 5.6.19)
 #[gtest]
 #[tokio::test]
 async fn d009_01_red_replace_entity_attribute() -> Result<()> {
@@ -53,7 +44,7 @@ async fn d009_01_red_replace_entity_attribute() -> Result<()> {
     let source = serve(source).await?;
     let id = namespace.urn("Vehicle", 1)?;
     for below in ["/broker1", "/broker2"] {
-        // The suite's stub answers the created id as bare text, which no JSON reply writes.
+        // The source answers the created id as bare text, which no JSON reply writes.
         let created = ForkRule::resource(Method::POST, &source_path(&namespace, &format!("{below}/ngsi-ld/v1/entities")));
         let reply = ResponseTemplate::new(StatusCode::CREATED).set_body_string(id.to_string());
         source.mount(Mock::given(created).respond_with(reply)).await?;

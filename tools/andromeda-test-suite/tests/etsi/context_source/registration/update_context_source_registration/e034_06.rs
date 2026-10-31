@@ -1,9 +1,11 @@
-//! ETSI `034_06`: an update of a context source registration whose target names no id is refused with 405 (clause
-//! 5.9.3).
+//! An update of a context source registration whose target names no id is refused with 405 (clause 5.9.3).
 
 use crate::{
-    suite_keywords::{answered_with, csource_endpoint, ld_json_body_client, update_registration_request},
-    suite_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information, polygon},
+    entity_operations::ld_json_body_client,
+    geometry_payloads::polygon,
+    registration_operations::{csource_endpoint, update_registration_request},
+    registration_payloads::{VEHICLE_PARKING_TERMS, a456_information, parking_information},
+    unchecked_requests::answered_with,
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::api_uri};
 use googletest::prelude::*;
@@ -15,12 +17,8 @@ use ngsi_ld::{
 
 /// Pins: Check that one cannot update a context source registration under some conditions
 /// Clause: 5.9.3
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112 clause 4
-/// has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code the
-/// phrase names
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e034_06_01_update_a_context_source_registration_by_id_if_the_id_is_not_present() -> Result<()> {

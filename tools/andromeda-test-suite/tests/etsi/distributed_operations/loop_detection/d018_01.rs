@@ -1,5 +1,5 @@
-//! ETSI `D018_01`: a request whose `Via` header already names the broker, as the broker's own forwarded request does,
-//! is refused as a loop (clauses 4.3.3, 5.6.6 and 6.3.18).
+//! A request whose `Via` header already names the broker, as the broker's own forwarded request does, is refused as a
+//! loop (clauses 4.3.3, 5.6.6 and 6.3.18).
 
 use crate::{
     distributed_operations::{
@@ -7,8 +7,8 @@ use crate::{
         forwarding_source::{register, serve, source_endpoint, source_path, stub, unregister, vehicle_registration},
         loop_detection::via_header::forwarded_via,
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
-    suite_payloads::vehicle_parked,
+    entity_operations::{create_entity_with_context_string, delete_entities},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -17,15 +17,7 @@ use ngsi_ld::{http::operation::DeleteEntity, registration::RegistrationMode};
 
 /// Pins: Verify that a loop is detected when the Via header contains the broker's identifier.
 /// Clause: 4.3.3, 5.6.6, 6.3.18
-/// Corrected: `fix(D018_01)`: make the registration redirect so the via loopback is 508 (6.3.17)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request reads the last request the source received once it holds one.
-/// Changed: Get Request Headers reads the field without regard to case (RFC 9110 clause 5.1).
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the registration is a redirect one, so the Via loop back answers 508 (clause 6.3.17)
 #[gtest]
 #[tokio::test]
 async fn d018_01_loop_detection_with_via_header() -> Result<()> {

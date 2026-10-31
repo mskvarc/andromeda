@@ -1,9 +1,8 @@
-//! ETSI `035_01`: a context source registration is deleted by its id, after which it is no longer retrieved (clause
-//! 5.9.4).
+//! A context source registration is deleted by its id, after which it is no longer retrieved (clause 5.9.4).
 
 use crate::{
-    suite_keywords::ld_json_body_client,
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -12,8 +11,8 @@ use ngsi_ld::http::headers::Accept;
 
 /// Pins: Check that one can delete a context source registration by id
 /// Clause: 5.9.4
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e035_01_01_delete_a_context_source_registration_by_id() -> Result<()> {

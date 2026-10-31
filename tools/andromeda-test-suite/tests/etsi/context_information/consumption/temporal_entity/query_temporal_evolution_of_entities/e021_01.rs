@@ -1,10 +1,10 @@
-//! ETSI `021_01`: the temporal evolutions of the Vehicles of a context are queried after, before and between two
-//! instants (clause 5.7.4). The Bus of the setup is never selected, since each query names the Vehicle type.
+//! The temporal evolutions of the Vehicles of a context are queried after, before and between two instants (clause
+//! 5.7.4). The Bus of the setup is never selected, since each query names the Vehicle type.
 //!
-//! The answers are compared with the case's expectations as the suite's `Compare Dictionaries Ignoring Keys` makes
-//! them: the `instanceId` a broker adds is allowed below the root, and the root's members are counted exactly.
+//! The answers are compared exactly with the test's expectations: the `instanceId` a broker adds is allowed below the
+//! root, and the root's members are counted exactly.
 
-use crate::suite_keywords::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
+use crate::vehicle_fixtures::{create_vehicle_pair_and_bus, delete_vehicle_pair_and_bus};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

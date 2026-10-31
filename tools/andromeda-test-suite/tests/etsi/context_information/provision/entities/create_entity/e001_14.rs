@@ -1,7 +1,7 @@
-//! ETSI `001_14`: an entity with a `JsonProperty` whose `json` is an object, and one whose `json` is an array of
-//! objects, is created and retrieved with that JSON as written (clauses 5.6.1 and 4.5.24).
+//! An entity with a `JsonProperty` whose `json` is an object, and one whose `json` is an array of objects, is created
+//! and retrieved with that JSON as written (clauses 5.6.1 and 4.5.24).
 
-use crate::suite_keywords::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json};
+use crate::entity_operations::{create_entity_answer, delete_entities, expect_created, retrieve_entity_json};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Input, NgsiLdMediaType};
@@ -33,10 +33,6 @@ fn building_json_array(namespace: &Namespace) -> Result<Entity<Input>> {
 
 /// Pins: Check that you can create an entity with a `JsonProperty` property
 /// Clause: 5.6.1, 4.5.24
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_14_01_entity_with_json_property_as_object() -> Result<()> {
@@ -66,10 +62,6 @@ async fn e001_14_01_entity_with_json_property_as_object() -> Result<()> {
 
 /// Pins: Check that you can create an entity with a `JsonProperty` property
 /// Clause: 5.6.1, 4.5.24
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary
-/// holds a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the entity id
 #[gtest]
 #[tokio::test]
 async fn e001_14_02_entity_with_json_property_as_array() -> Result<()> {

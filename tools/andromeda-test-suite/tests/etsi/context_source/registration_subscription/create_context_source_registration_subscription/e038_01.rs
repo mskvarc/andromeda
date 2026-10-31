@@ -1,17 +1,17 @@
-//! ETSI `038_01`: a minimal Context Source Registration Subscription is created and retrieved with the members it was
-//! created with (clause 5.11.2).
+//! A minimal Context Source Registration Subscription is created and retrieved with the members it was created with
+//! (clause 5.11.2).
 
 use crate::{
-    suite_keywords::{
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{
         REGISTRATION_SUBSCRIPTION_STATE,
         expect_absent_or_date,
         expect_absent_or_integer,
         expect_registration_subscription_created,
-        ld_json_body_client,
         registration_subscription_json,
         without_members,
     },
-    suite_payloads::building_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{
     broker,
@@ -30,11 +30,7 @@ use serde_json::json;
 
 /// Pins: Check that one can create a minimal context source registration subscription
 /// Clause: 5.11.2
-/// Corrected: fix(csrsub-jsonldcontext): compare csr-subscription create/update with jsonldcontext ignored (5.8.1.4)
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the subscription id
+/// Expected: the created or updated registration subscription is compared with jsonldContext left out (clause 5.8.1.4)
 #[gtest]
 #[tokio::test]
 async fn e038_01_01_create_context_source_registration_subscription() -> Result<()> {

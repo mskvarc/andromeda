@@ -1,0 +1,33 @@
+//! The tests of `batch/update`.
+
+mod n_bat_upd_0001;
+mod n_bat_upd_0002;
+mod n_bat_upd_0003;
+mod n_bat_upd_0005;
+mod n_bat_upd_0008;
+mod n_bat_upd_0009;
+mod n_bat_upd_0010;
+mod n_bat_upd_2001;
+mod n_bat_upd_2701;
+mod n_bat_upd_2702;
+mod n_bat_upd_2703;
+mod n_bat_upd_2704;
+mod n_bat_upd_9001;
+mod n_bat_upd_9002;
+mod n_bat_upd_9005;
+mod n_bat_upd_9006;
+mod n_bat_upd_9007;
+mod n_bat_upd_9008;
+mod n_bat_upd_9009;
+mod n_bat_upd_9011;
+mod n_bat_upd_9012;
+mod n_bat_upd_9013;
+mod n_bat_upd_9014;
+mod o_bat_upd_0004;
+mod o_bat_upd_0006;
+mod o_bat_upd_0007;
+mod o_bat_upd_2301;
+mod o_bat_upd_2700;
+mod o_bat_upd_9003;
+mod o_bat_upd_9004;
+mod o_bat_upd_9010;

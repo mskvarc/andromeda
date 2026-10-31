@@ -1,0 +1,29 @@
+//! The tests of `common_behaviour/prefer`.
+
+mod n_cmn_prf_0001;
+mod n_cmn_prf_0002;
+mod n_cmn_prf_0003;
+mod n_cmn_prf_0004;
+mod n_cmn_prf_0009;
+mod n_cmn_prf_0010;
+mod n_cmn_prf_0011;
+mod n_cmn_prf_0012;
+mod n_cmn_prf_2301;
+mod n_cmn_prf_2302;
+mod n_cmn_prf_2303;
+mod n_cmn_prf_2304;
+mod n_cmn_prf_2305;
+mod n_cmn_prf_9001;
+mod n_cmn_prf_9002;
+mod n_cmn_prf_9003;
+mod n_cmn_prf_9004;
+mod n_cmn_prf_9005;
+mod n_cmn_prf_9006;
+mod n_cmn_prf_9008;
+mod n_cmn_prf_9010;
+mod n_cmn_prf_9011;
+mod o_cmn_prf_0005;
+mod o_cmn_prf_0006;
+mod o_cmn_prf_0007;
+mod o_cmn_prf_9007;
+mod o_cmn_prf_9009;

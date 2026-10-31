@@ -1,17 +1,11 @@
-//! ETSI `005_03`: a batch of fragments updates two existing entities and names one absent entity, which the broker
-//! reports in error while it updates the others (clause 5.6.9).
+//! A batch of fragments updates two existing entities and names one absent entity, which the broker reports in error
+//! while it updates the others (clause 5.6.9).
 
 use crate::{
-    suite_keywords::{
-        create_entity_with_context_string,
-        delete_entities,
-        expect_partial_batch,
-        ld_json_body_client,
-        partial_batch_outcome,
-        query_entities_json,
-        weather_building_json,
-    },
-    suite_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, building_simple_attributes, building_with_weather_sensor},
+    batch_operations::{expect_partial_batch, partial_batch_outcome},
+    building_documents::weather_building_json,
+    building_payloads::{BUILDING_AIR_QUALITY_WEATHER_TERMS, building_simple_attributes, building_with_weather_sensor},
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

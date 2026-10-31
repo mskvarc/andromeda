@@ -1,8 +1,8 @@
-//! ETSI `021_24`: a temporal query that names identifiers and a time, but neither a type, nor attributes, nor a `q`,
-//! nor a geoquery, and is not local, is refused with `BadRequestData` (clause 5.7.4). The typed query refuses such a
-//! request before sending it, so the request is written on the wire.
+//! A temporal query that names identifiers and a time, but neither a type, nor attributes, nor a `q`, nor a geoquery,
+//! and is not local, is refused with `BadRequestData` (clause 5.7.4). The typed query refuses such a request before
+//! sending it, so the request is written on the wire.
 
-use crate::suite_keywords::refused_get;
+use crate::unchecked_requests::refused_get;
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
 

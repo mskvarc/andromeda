@@ -1,4 +1,4 @@
-//! `Create initial ImplicitlyCreated @context`: a subscription whose `@context` lists two remote documents, which the
+//! A subscription whose `@context` lists two remote documents, which the
 //! broker downloads as `Cached` contexts and merges into an `ImplicitlyCreated` one (clauses 5.13.1 and 5.13.2.4).
 //!
 //! The remote documents are served by the case's own server, so the cache entries they make are the case's alone.
@@ -26,10 +26,10 @@ use ngsi_ld::{
 use serde_json::Value;
 use url::Url;
 
-/// The path the suite's test `@context` is served at.
+/// The path the test `@context` is served at.
 const TEST_CONTEXT: &str = "fiware.github.io/NGSI-LD_TestSuite/ldContext/testContext.jsonld";
 
-/// The path the suite's smart data models `@context` is served at.
+/// The path the smart data models `@context` is served at.
 const SMART_DATA_MODELS: &str = "smartdatamodels.org/context.jsonld";
 
 /// The two remote documents the broker downloads, and the subscription whose `@context` names them.
@@ -102,7 +102,7 @@ impl ImplicitSubscription {
         Ok((ImplicitContext { setup: self, url, id }, body))
     }
 
-    /// `Delete Initial @context Data`: deletes the subscription, the two `Cached` contexts and `implicit` when given,
+    /// Deletes the subscription, the two `Cached` contexts and `implicit` when given,
     /// whatever the broker answers, then stops serving the remote documents.
     pub(crate) async fn delete(self, client: &BrokerClient, implicit: Option<&ContextId>) -> Result<()> {
         client.subscriptions().delete(&self.subscription).send().await.any_answer();
@@ -154,7 +154,7 @@ impl ImplicitContext {
         Ok(())
     }
 
-    /// `Delete Initial @context Data`: deletes the subscription, the two `Cached` contexts and, when `implicit` says
+    /// Deletes the subscription, the two `Cached` contexts and, when `implicit` says
     /// so,
     /// the `ImplicitlyCreated` one, whatever the broker answers, then stops serving the remote documents.
     pub(crate) async fn delete(self, client: &BrokerClient, implicit: ImplicitTeardown) -> Result<()> {

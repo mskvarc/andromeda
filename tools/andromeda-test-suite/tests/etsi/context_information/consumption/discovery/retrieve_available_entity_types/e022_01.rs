@@ -1,10 +1,6 @@
-//! ETSI `022_01`: the entity types the broker holds are listed, with the `@context` the request carries or without one
-//! (clause 5.7.5).
+//! The entity types the broker holds are listed, with the `@context` the request carries or without one (clause 5.7.5).
 
-use crate::{
-    suite_keywords::create_entity_with_link,
-    suite_payloads::{building_simple_attributes, vehicle_parked},
-};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link, vehicle_entity_payloads::vehicle_parked};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
@@ -34,8 +30,8 @@ const TERMS: [&str; 9] = [
 
 /// Pins: Check that one can retrieve a list of NGSI-LD entity types
 /// Clause: 5.7.5
-/// Changed: the suite ignores the list's id, so the port bounds the member count at 3 (id, type, typeList) instead of
-/// fixing it
+/// Expected: the list's id is the broker's choice, so the member count is bounded at 3 (id, type, typeList) rather than
+/// fixed
 /// Tenant: private (the response lists every entity type of the tenant)
 #[gtest]
 #[tokio::test]
@@ -69,8 +65,8 @@ async fn e022_01_01_without_json_ld_context() -> Result<()> {
 
 /// Pins: Check that one can retrieve a list of NGSI-LD entity types
 /// Clause: 5.7.5
-/// Changed: the suite ignores the list's id, so the port bounds the member count at 3 (id, type, typeList) instead of
-/// fixing it
+/// Expected: the list's id is the broker's choice, so the member count is bounded at 3 (id, type, typeList) rather than
+/// fixed
 /// Tenant: private (the response lists every entity type of the tenant)
 #[gtest]
 #[tokio::test]

@@ -1,7 +1,7 @@
-//! ETSI `027_02`: an attribute named with its short name or with its expanded name is retrieved in its detailed
-//! representation (clause 5.7.10).
+//! An attribute named with its short name or with its expanded name is retrieved in its detailed representation (clause
+//! 5.7.10).
 
-use crate::{suite_keywords::create_entity_with_link, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity_with_link};
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,

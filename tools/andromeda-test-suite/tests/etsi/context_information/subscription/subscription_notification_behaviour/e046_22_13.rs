@@ -1,17 +1,16 @@
-//! ETSI `046_22_13`: deleting an entity notifies a normalized subscription with `sysAttrs` watching one of its
-//! attributes with the `attributeDeleted` trigger, the entity reported with its system timestamps only (clause 5.8.6).
+//! Deleting an entity notifies a normalized subscription with `sysAttrs` watching one of its attributes with the
+//! `attributeDeleted` trigger, the entity reported with its system timestamps only (clause 5.8.6).
 
 use crate::{
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
     context_information::subscription::subscription_notification_behaviour::notification_case::{ANY_SYSTEM_TIME, subscription_created, teardown},
-    suite_keywords::{create_entity, ld_json_body_client},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity, ld_json_body_client},
 };
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
     namespace::Namespace,
     notification_sink::NotificationSink,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
 };
@@ -25,13 +24,7 @@ use serde_json::{Value, json};
 
 /// Pins: Delete an entity with a matching attribute and check the received notification
 /// Clause: 5.8.6
-/// Corrected: fix(`046_22`): entity-deletion notification carries only deletedat (5.8.6)
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: The `length` check requires `$.data` to be an array, which a notification always carries; the Hurl line also
-/// accepts a string or an object of that length
+/// Expected: an entity-deletion notification carries only deletedAt (clause 5.8.6)
 #[gtest]
 #[tokio::test]
 async fn e046_22_13_check_that_a_notification_is_sent_with_matching_entity() -> Result<()> {
@@ -64,7 +57,7 @@ async fn e046_22_13_check_that_a_notification_is_sent_with_matching_entity() -> 
     broker.temporal().delete(&building.id).send().await.any_answer();
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));

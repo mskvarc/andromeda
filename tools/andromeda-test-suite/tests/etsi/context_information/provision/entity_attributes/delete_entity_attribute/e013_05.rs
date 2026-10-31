@@ -1,14 +1,14 @@
-//! ETSI `013_05`: an `observationSpace` geospatial Property is deleted from an entity (clauses 5.6.5 and 4.7).
+//! An `observationSpace` geospatial Property is deleted from an entity (clauses 5.6.5 and 4.7).
 
 use crate::{
-    suite_keywords::{create_entity_with_context_string, delete_entities, naming_delete_all_false, retrieve_entity_json},
-    suite_payloads::point,
+    entity_operations::{create_entity_with_context_string, delete_entities, retrieve_entity_json},
+    geometry_payloads::point,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::DeleteAttribute},
+    http::{headers::Accept, operation::InstanceSelection},
     model::{AttributeName, Entity},
 };
 use serde_json::json;
@@ -33,10 +33,15 @@ async fn e013_05_delete_an_observation_space_geospatial_property_from_an_entity(
     create_entity_with_context_string(&broker, &vocabulary, &building).await?;
     let observation_space: AttributeName = "observationSpace".parse()?;
 
-    let operation = DeleteAttribute::builder().id(&id).name(&observation_space).build();
-    let deleted = broker.send_unchecked(naming_delete_all_false(&broker, &operation)?).await;
+    let deleted = broker
+        .with_responses()
+        .entities()
+        .delete_attribute(&id, &observation_space)
+        .instances(InstanceSelection::Selected(None))
+        .send()
+        .await;
     verify_that!(&deleted, answered(StatusCode::NO_CONTENT))?;
-    expect_that!(deleted?.body().len(), eq(0));
+    expect_that!(deleted?.body.len(), eq(0));
 
     let client = broker.with_context(vocabulary.context())?.with_accept(Accept::any());
     let body = retrieve_entity_json(&client, &id).await?;

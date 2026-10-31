@@ -1,9 +1,9 @@
-//! ETSI `038_05`: a Context Source Registration Subscription created with an `expiresAt` is expired once it is due
-//! (clause 5.11.2).
+//! A Context Source Registration Subscription created with an `expiresAt` is expired once it is due (clause 5.11.2).
 
 use crate::{
-    suite_keywords::{expect_registration_subscription_created, ld_json_body_client, registration_subscription_json},
-    suite_payloads::building_registration_subscription,
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::{expect_registration_subscription_created, registration_subscription_json},
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, teardown::AnyAnswer, vocabulary::Vocabulary};
 use chrono::{TimeDelta, Utc};
@@ -19,11 +19,6 @@ use tokio::time::sleep;
 /// Pins: Check that one can create a context source registration subscription with an expiresAt member and when it is
 /// due the status of the subscription changes to "expired"
 /// Clause: 5.11.2
-/// Corrected: `fix(038_05)`: import the datetime library the case relies on
-/// Changed: Check Response Headers Containing URI set to checks Location only when the response header dictionary holds
-/// a key spelled exactly `Location`, which a broker sending a lower-case `location` (valid per RFC 9110, and what
-/// Andromeda sends) never satisfies; Hurl matches header names without regard to case and cannot make an assertion
-/// conditional, so the port requires a Location header that contains the subscription id
 #[gtest]
 #[tokio::test]
 async fn e038_05_01_create_context_source_registration_subscription_with_expires_at_member() -> Result<()> {

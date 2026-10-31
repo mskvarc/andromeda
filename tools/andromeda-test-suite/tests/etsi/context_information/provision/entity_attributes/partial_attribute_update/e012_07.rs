@@ -1,9 +1,10 @@
-//! ETSI `012_07`: a partial attribute update deletes the default instance of an attribute, the one with no `datasetId`,
-//! with the NGSI-LD Null in the shape of its kind, and keeps the other instances (clauses 5.6.4 and 6.7.3.1).
+//! A partial attribute update deletes the default instance of an attribute, the one with no `datasetId`, with the
+//! NGSI-LD Null in the shape of its kind, and keeps the other instances (clauses 5.6.4 and 6.7.3.1).
 
 use crate::{
-    suite_keywords::{create_building_instances, delete_entities, ld_json_body_client, partial_update, retrieve_entity_json},
-    suite_payloads::district_paris_08,
+    building_fixtures::create_building_instances,
+    entity_operations::{delete_entities, ld_json_body_client, partial_update, retrieve_entity_json},
+    linked_place_payloads::district_paris_08,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;

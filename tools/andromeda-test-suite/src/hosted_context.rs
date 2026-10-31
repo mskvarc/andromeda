@@ -45,6 +45,9 @@ pub struct HostedContext {
     pub id: ContextId,
     /// The URL the broker serves it at, as the brokers of the stack reach it.
     pub url: Url,
+    /// The reference to it as the broker wrote it, relative to the broker's origin for Add @context's `Location`
+    /// and the listed URL's path for a listed context.
+    pub location: String,
 }
 
 impl HostedContext {
@@ -68,7 +71,11 @@ impl HostedContext {
             .join(location.as_str())
             // clone: the answer keeps its location; the error owns its own copy
             .map_err(|error| HostedContextError::Location(location.clone(), error))?;
-        Ok(HostedContext { id, url })
+        Ok(HostedContext {
+            id,
+            url,
+            location: location.as_str().to_owned(),
+        })
     }
 
     /// The stored context of the one URL of `listed` holding `text`, as List @contexts names it (clause 6.29.3.2):
@@ -94,7 +101,23 @@ impl HostedContext {
             .and_then(|segment| segment.parse::<ContextId>().ok())
             .ok_or_else(|| HostedContextError::NotStored(url.clone()))?;
         // The listing keeps its URLs; the stored context owns its own copy.
-        Ok(HostedContext { id, url: url.clone() })
+        Ok(HostedContext {
+            id,
+            url: url.clone(),
+            location: url.path().to_owned(),
+        })
+    }
+
+    /// The `@context` entry referencing the stored context by its `location`, as written: a reference relative to the
+    /// broker's origin when the broker answered one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostedContextError::NotAnIri`] when the location is not an IRI reference.
+    pub fn relative_entry(&self) -> Result<ContextEntry, HostedContextError> {
+        IriRefBuf::new(self.location.clone())
+            .map(ContextEntry::Reference)
+            .map_err(|_| HostedContextError::NotAnIri(self.url.clone()))
     }
 
     /// The `@context` entry referencing the stored context by its served URL.

@@ -1,16 +1,17 @@
-//! ETSI `056_01`: an entity is merged with a fragment that changes its attributes, adds a relationship or a
-//! multi-valued relationship, or holds nothing (clauses 5.6.17 and 6.5.3.4).
+//! An entity is merged with a fragment that changes its attributes, adds a relationship or a multi-valued relationship,
+//! or holds nothing (clauses 5.6.17 and 6.5.3.4).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, ld_json_body_client, merge_entity, retrieve_entity_json},
-    suite_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, bare_building, building_located_in_paris, building_simple_attributes},
+    building_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities, ld_json_body_client, merge_entity, retrieve_entity_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use cefact_units::UnitCode;
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
-    model::{Entity, Input, NgsiLdMediaType, Property, Relationship, Value},
+    model::{Entity, Input, NgsiLdMediaType, Property, Relationship},
 };
 use serde_json::json;
 
@@ -26,7 +27,7 @@ fn updated_building(namespace: &Namespace) -> Result<Entity<Input>> {
             "airQualityLevel",
             Property::builder(6).unit_code(UnitCode::C62).observed_at("2020-10-10T16:40:00.000Z".parse()?),
         )
-        .property("almostFull", Value::Boolean(true))
+        .property("almostFull", true)
         .build()?)
 }
 

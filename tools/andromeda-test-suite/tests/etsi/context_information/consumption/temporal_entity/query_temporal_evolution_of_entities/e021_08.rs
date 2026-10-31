@@ -1,9 +1,9 @@
-//! ETSI `021_08`: the temporal evolutions of the entities matching an NGSI-LD query on `speed` are queried (clause
-//! 5.7.4). Both Vehicles of the setup hold a speed above 90, and each answer carries every instance of the entity.
+//! The temporal evolutions of the entities matching an NGSI-LD query on `speed` are queried (clause 5.7.4). Both
+//! Vehicles of the setup hold a speed above 90, and each answer carries every instance of the entity.
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::{create_vehicle_pair, delete_vehicle_pair};
+use crate::vehicle_fixtures::{create_vehicle_pair, delete_vehicle_pair};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

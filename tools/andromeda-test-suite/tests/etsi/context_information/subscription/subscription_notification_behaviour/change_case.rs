@@ -1,10 +1,10 @@
-//! The steps the ETSI `046` cases share whose notification endpoint starts serving only after their subscription
+//! The steps the notification tests share whose notification endpoint starts serving only after their subscription
 //! exists: the entities they create, the subscription, the one change that triggers the notification, and the wait
 //! for it.
 
 use crate::{
     context_information::subscription::subscription_notification_behaviour::notification_case::{attributes_updated, subscription_created},
-    suite_keywords::{answered_with, create_entity, create_entity_with_context_string, ld_json_body_client, naming_delete_all_false},
+    entity_operations::{create_entity, create_entity_with_context_string, ld_json_body_client},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -18,7 +18,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{ContextDelivery, operation::DeleteAttribute},
+    http::{ContextDelivery, operation::InstanceSelection},
     model::{AttributeName, Entity, EntityFragment, EntityId, Input},
     query::EntitySelector,
     subscription::{ChangeReporting, Endpoint, NotificationParams, NotificationTrigger, Subscription, SubscriptionId},
@@ -83,8 +83,14 @@ pub(crate) async fn change_notification(
         }
         EntityChange::DeleteAttribute(name) => {
             let as_link = broker.with_context(vocabulary.context())?;
-            let deletion = DeleteAttribute::builder().id(changed()?).name(name).build();
-            answered_with(&as_link, naming_delete_all_false(&as_link, &deletion)?, StatusCode::NO_CONTENT).await?;
+            let answer = as_link
+                .with_responses()
+                .entities()
+                .delete_attribute(changed()?, name)
+                .instances(InstanceSelection::Selected(None))
+                .send()
+                .await;
+            verify_that!(&answer, answered(StatusCode::NO_CONTENT))?;
         }
         EntityChange::DeleteEntity => {
             broker.entities().delete(changed()?).send().await?;

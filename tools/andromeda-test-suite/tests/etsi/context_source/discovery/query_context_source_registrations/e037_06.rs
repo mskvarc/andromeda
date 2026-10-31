@@ -1,9 +1,9 @@
-//! ETSI `037_06`: a query of context source registrations by type answers the registration whose property and
-//! relationship names match the attributes it names, or every one of the type when it names none (clause 5.10.2).
+//! A query of context source registrations by type answers the registration whose property and relationship names match
+//! the attributes it names, or every one of the type when it names none (clause 5.10.2).
 
 use crate::{
-    suite_keywords::{building_registration_json, create_registration, csource_endpoint, delete_registrations},
-    suite_payloads::building_registration,
+    registration_operations::{building_registration_json, create_registration, csource_endpoint, delete_registrations},
+    registration_payloads::building_registration,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -46,7 +46,6 @@ async fn queried(attrs: &[&str]) -> Result<()> {
 /// Pins: Check that one can query context source registrations matching property and relationship names of
 /// `RegistrationInfo`
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_06_01_query_with_matching_properties_and_relationships() -> Result<()> {
@@ -56,7 +55,6 @@ async fn e037_06_01_query_with_matching_properties_and_relationships() -> Result
 /// Pins: Check that one can query context source registrations matching property and relationship names of
 /// `RegistrationInfo`
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_06_02_query_without_properties_and_relationships() -> Result<()> {

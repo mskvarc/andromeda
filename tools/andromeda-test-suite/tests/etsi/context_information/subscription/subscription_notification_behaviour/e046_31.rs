@@ -1,14 +1,15 @@
-//! ETSI `046_31`: a subscription with `showChanges` notifies an updated Property, Relationship, `GeoProperty` or
-//! `LanguageProperty` with its previous value beside the current one (clauses 5.8.6 and 4.5.18).
+//! A subscription with `showChanges` notifies an updated Property, Relationship, `GeoProperty` or `LanguageProperty`
+//! with its previous value beside the current one (clauses 5.8.6 and 4.5.18).
 
 use crate::{
+    building_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo},
     context_information::subscription::subscription_notification_behaviour::{
         change_case::{ContextForm, EntityChange, change_notification, show_changes_subscription, street_building_document},
         notification_case::{data_item, teardown},
     },
-    suite_payloads::{BUILDING_LOCATED_STREET_TERMS, building_located_street_geo, point},
+    geometry_payloads::point,
 };
-use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, robot_literal};
+use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{EntityFragment, Relationship},
@@ -18,10 +19,6 @@ use serde_json::{Value, json};
 
 /// Pins: Update an attribute in entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_31_01_show_changes_for_an_update_of_property() -> Result<()> {
@@ -38,7 +35,7 @@ async fn e046_31_01_show_changes_for_an_update_of_property() -> Result<()> {
         EntityChange::UpdateAttributes(&fragment, ContextForm::List),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -51,10 +48,6 @@ async fn e046_31_01_show_changes_for_an_update_of_property() -> Result<()> {
 
 /// Pins: Update an attribute in entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_31_02_show_changes_for_an_update_of_relationship() -> Result<()> {
@@ -73,7 +66,7 @@ async fn e046_31_02_show_changes_for_an_update_of_relationship() -> Result<()> {
         EntityChange::UpdateAttributes(&fragment, ContextForm::List),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -90,10 +83,6 @@ async fn e046_31_02_show_changes_for_an_update_of_relationship() -> Result<()> {
 
 /// Pins: Update an attribute in entity and check the notification contains the previous value
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_31_03_show_changes_for_an_update_of_geo_property() -> Result<()> {
@@ -110,7 +99,7 @@ async fn e046_31_03_show_changes_for_an_update_of_geo_property() -> Result<()> {
         EntityChange::UpdateAttributes(&fragment, ContextForm::List),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);
@@ -127,10 +116,6 @@ async fn e046_31_03_show_changes_for_an_update_of_geo_property() -> Result<()> {
 
 /// Pins: Update an attribute in entity and check the notification contains the previous value
 /// Clause: 5.8.6, 4.5.18
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_31_04_show_changes_for_an_update_of_language_property() -> Result<()> {
@@ -149,7 +134,7 @@ async fn e046_31_04_show_changes_for_an_update_of_language_property() -> Result<
         EntityChange::UpdateAttributes(&fragment, ContextForm::List),
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(1)));
     let mut expected = street_building_document(&namespace);

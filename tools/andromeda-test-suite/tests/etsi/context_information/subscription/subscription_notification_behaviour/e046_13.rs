@@ -1,7 +1,8 @@
-//! ETSI `046_13`: a notification the endpoint cannot receive sets `notification.status` to `failed` and records the instant in
+//! A notification the endpoint cannot receive sets `notification.status` to `failed` and records the instant in
 //! `notification.lastFailure` (clause 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{
         INSTANT_PATTERN,
         air_quality_updated,
@@ -9,7 +10,6 @@ use crate::{
         subscription_created,
         teardown,
     },
-    suite_payloads::building_simple_attributes,
 };
 use andromeda_test_suite::{
     broker,
@@ -31,11 +31,9 @@ use serde_json::{Value, json};
 /// Pins: If the response to the notification request is different than 200 OK then implementations shall: Update
 /// notification.lastFailure with a timestamp representing the current date and time, update notification.status to "failed"
 /// Clause: 5.8.6
-/// Changed: Create Subscription sends the material's endpoint `http://localhost:1111/notify` as it is, where nothing listens in
-/// the Robot run, so every notification fails; the standing substitution would send it to WireMock, which answers 200, so the
-/// port names `{{unreachable_origin}}/notify`, where nothing listens either
-/// Changed: Sleep 10s, then one Retrieve Subscription, becomes that Retrieve Subscription repeated every 250 ms until the delivery deadline
-/// until its assertions hold: the case waits for the broker to record the failed notification, which the retrieval itself observes
+/// Expected: the notification endpoint is on the unreachable origin, where nothing listens, so every notification fails
+/// Timing: the Retrieve Subscription is repeated every 250 ms until the delivery deadline until its assertions hold:
+/// the broker records the failed notification some time after it attempts it
 #[gtest]
 #[tokio::test]
 async fn e046_13_01_check_that_last_failure_and_status_are_updated_if_a_notification_could_not_be_sent() -> Result<()> {

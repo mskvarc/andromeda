@@ -1,9 +1,9 @@
-//! ETSI `019_20`: Buildings linked to Cities are queried with a `pick` on the linking entity or on the linked entity,
-//! joined inline or flat (clauses 5.7.2, 4.5.23 and 4.21).
+//! Buildings linked to Cities are queried with a `pick` on the linking entity or on the linked entity, joined inline or
+//! flat (clauses 5.7.2, 4.5.23 and 4.21).
 
 use crate::{
-    suite_keywords::{create_street_linked_pairs, delete_linked_pairs},
-    suite_payloads::STREET_LINKED_TERMS,
+    linked_entity_fixtures::{create_street_linked_pairs, delete_linked_pairs},
+    linked_place_payloads::STREET_LINKED_TERMS,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;

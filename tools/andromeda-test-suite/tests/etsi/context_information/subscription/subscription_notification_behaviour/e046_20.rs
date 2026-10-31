@@ -1,7 +1,7 @@
-//! ETSI `046_20`: a subscription's `jsonldContext` is the `@context` its notifications are compacted with (clause
-//! 5.8.6).
+//! A subscription's `jsonldContext` is the `@context` its notifications are compacted with (clause 5.8.6).
 
 use crate::{
+    building_payloads::bare_building,
     context_information::subscription::subscription_notification_behaviour::notification_case::{
         attributes_updated,
         created,
@@ -9,14 +9,12 @@ use crate::{
         subscription_created,
         teardown,
     },
-    suite_payloads::bare_building,
 };
 use andromeda_test_suite::{
     broker,
     comparison::matches_document,
     namespace::Namespace,
     notification_sink::NotificationSink,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
 };
@@ -31,10 +29,6 @@ use serde_json::json;
 
 /// Pins: If a subscription has a jsonldContext member then it should be used when sending notifications
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e046_20_check_that_jsonld_context_member_in_subscription_is_used_when_sending_notifcations() -> Result<()> {
@@ -63,7 +57,7 @@ async fn e046_20_check_that_jsonld_context_member_in_subscription_is_used_when_s
     attributes_updated(&as_list, &building.id, &french_name_update(&namespace)?).await.any_answer();
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));
     let name = namespace.expanded_term("name")?;

@@ -1,5 +1,5 @@
-//! ETSI `051_08`: deleting the core `@context`, with no `reload` or `reload=false`, is refused with 404
-//! `ResourceNotFound`, the core `@context` being no stored context (clause 5.13.5).
+//! Deleting the core `@context`, with no `reload` or `reload=false`, is refused with 404 `ResourceNotFound`, the core
+//! `@context` being no stored context (clause 5.13.5).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
@@ -22,14 +22,11 @@ async fn refused_core_deletion(deletion: ContextDeletion) -> Result<()> {
 
 /// Pins: Check that one gets an error when try to delete the core @context
 /// Clause: 5.13.5
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the core @context URL is no stored identifier, so 5.13.5.4 answers `ResourceNotFound` rather than the
-/// `BadRequestData` a stored non-Cached entry earns
+/// Expected: the core @context URL is no stored identifier, so clause 5.13.5.4 answers `ResourceNotFound` rather than
+/// the `BadRequestData` a stored non-Cached entry earns
 /// Tenant: private (the case deletes the core @context, which every file relies on; a broker that failed to refuse it
 /// would remove or replace it in the shared tenant)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e051_08_01_delete_a_core_contexts_and_return_an_error_with_no_reload() -> Result<()> {
@@ -38,14 +35,11 @@ async fn e051_08_01_delete_a_core_contexts_and_return_an_error_with_no_reload() 
 
 /// Pins: Check that one gets an error when try to delete the core @context
 /// Clause: 5.13.5
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Changed: the core @context URL is no stored identifier, so 5.13.5.4 answers `ResourceNotFound` rather than the
-/// `BadRequestData` a stored non-Cached entry earns
+/// Expected: the core @context URL is no stored identifier, so clause 5.13.5.4 answers `ResourceNotFound` rather than
+/// the `BadRequestData` a stored non-Cached entry earns
 /// Tenant: private (the case deletes the core @context, which every file relies on; a broker that failed to refuse it
 /// would remove or replace it in the shared tenant)
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e051_08_02_delete_a_core_contexts_and_return_an_error_with_reload_set_to_false() -> Result<()> {

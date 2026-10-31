@@ -1,10 +1,10 @@
-//! The `@context` of an ETSI test: every term the test uses mapped to an IRI of its own namespace.
+//! The `@context` of a test: every term the test uses mapped to an IRI of its own namespace.
 //!
-//! The ETSI material fixes its term names (`Building`, `speed`), and a shared term would expand to a shared IRI. Each
-//! test therefore stores a context of the suite's compound shape, a term object followed by the versioned core
-//! `@context`, mapping each term to `https://test.andromeda/<token>/<term>`. A broker appends the core `@context` to
-//! a user `@context` that lacks it, so the core reference is part of the stored document: a body that echoes the
-//! context then echoes the stored URL alone, as it does for the suite's compound document.
+//! The conformance tests use fixed term names (`Building`, `speed`), and a shared term would expand to a shared IRI.
+//! Each test therefore stores a compound context, a term object followed by the versioned core `@context`, mapping each
+//! term to `https://test.andromeda/<token>/<term>`. A broker appends the core `@context` to a user `@context` that
+//! lacks it, so the core reference is part of the stored document: a body that echoes the context then echoes the
+//! stored URL alone.
 
 use crate::{
     broker::BrokerClient,
@@ -106,8 +106,7 @@ impl Vocabulary {
         Context::from(self.url.clone())
     }
 
-    /// The vocabulary as the `@context` of a request written as a one-element list, as the suite's payload files
-    /// write `"@context": ["<url>"]`.
+    /// The vocabulary as the `@context` of a request written as a one-element list, `"@context": ["<url>"]`.
     #[must_use]
     pub fn context_list(&self) -> Context {
         // The context owns its reference; the vocabulary keeps its URL for later requests.

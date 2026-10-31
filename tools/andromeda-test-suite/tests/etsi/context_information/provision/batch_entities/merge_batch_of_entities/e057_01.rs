@@ -1,17 +1,12 @@
-//! ETSI `057_01`: a batch of fragments is merged into two existing entities, and the broker retrieves the merged
-//! entities (clause 5.6.17).
+//! A batch of fragments is merged into two existing entities, and the broker retrieves the merged entities (clause
+//! 5.6.17).
 
 use crate::{
-    suite_keywords::{
-        create_entity_with_context_string,
-        delete_entities,
-        expect_batch_done,
-        ld_json_body_client,
-        located_building_json,
-        query_entities_json,
-        simple_building_json,
-    },
-    suite_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, building_located_in_paris, building_simple_attributes, pisa_tower},
+    batch_operations::expect_batch_done,
+    building_documents::{located_building_json, simple_building_json},
+    building_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, building_simple_attributes, pisa_tower},
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -51,9 +46,6 @@ fn partially_merged_building_json(namespace: &Namespace, n: u32, context: &str) 
 
 /// Pins: Check that you can merge a batch of entities
 /// Clause: 5.6.17
-/// Changed: the setup entities are created with 201 required, where the Hurl setup accepts any status.
-/// Changed: the `@context` of each retrieved entity is the vocabulary the request names, which the Hurl case also
-/// accepts as any versioned core `@context`.
 #[gtest]
 #[tokio::test]
 async fn e057_01_01_merge_an_empty_entity() -> Result<()> {
@@ -90,9 +82,6 @@ async fn e057_01_01_merge_an_empty_entity() -> Result<()> {
 
 /// Pins: Check that you can merge a batch of entities
 /// Clause: 5.6.17
-/// Changed: the setup entities are created with 201 required, where the Hurl setup accepts any status.
-/// Changed: the `@context` of each retrieved entity is the vocabulary the request names, which the Hurl case also
-/// accepts as any versioned core `@context`.
 #[gtest]
 #[tokio::test]
 async fn e057_01_02_merge_simple_properties() -> Result<()> {
@@ -122,9 +111,6 @@ async fn e057_01_02_merge_simple_properties() -> Result<()> {
 
 /// Pins: Check that you can merge a batch of entities
 /// Clause: 5.6.17
-/// Changed: the setup entities are created with 201 required, where the Hurl setup accepts any status.
-/// Changed: the `@context` of each retrieved entity is the vocabulary the request names, which the Hurl case also
-/// accepts as any versioned core `@context`.
 #[gtest]
 #[tokio::test]
 async fn e057_01_03_merge_simple_relationship() -> Result<()> {
@@ -161,9 +147,6 @@ async fn e057_01_03_merge_simple_relationship() -> Result<()> {
 
 /// Pins: Check that you can merge a batch of entities
 /// Clause: 5.6.17
-/// Changed: the setup entities are created with 201 required, where the Hurl setup accepts any status.
-/// Changed: the `@context` of each retrieved entity is the vocabulary the request names, which the Hurl case also
-/// accepts as any versioned core `@context`.
 #[gtest]
 #[tokio::test]
 async fn e057_01_04_merge_property_with_partial_data() -> Result<()> {

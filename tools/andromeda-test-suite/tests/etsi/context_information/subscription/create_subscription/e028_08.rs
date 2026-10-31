@@ -1,7 +1,7 @@
-//! ETSI `028_08`: a create-subscription request whose notification names `pick`, `omit` and `attributes` in combinations the
+//! A create-subscription request whose notification names `pick`, `omit` and `attributes` in combinations the
 //! specification does not allow is refused with 400 `BadRequestData` (clauses 4.21 and 5.8.1).
 
-use crate::{suite_keywords::refused, suite_payloads::building_subscription};
+use crate::{subscription_payloads::building_subscription, unchecked_requests::refused};
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -30,8 +30,6 @@ async fn refused_notification(namespace: &Namespace, members: &str) -> Result<()
 
 /// Pins: Check that one cannot create a subscription with with invalid pick / omit / attrs parameters
 /// Clause: 5.8.1, 4.21
-/// Defect: D-80: Andromeda admits a member named in both pick and omit instead of refusing it with `BadRequestData`; a
-/// subscription whose notification has pick ["id"] and omit ["id"] is created with 201
 #[gtest]
 #[tokio::test]
 async fn e028_08_01_subscription_with_same_entity_member_in_pick_and_omit() -> Result<()> {

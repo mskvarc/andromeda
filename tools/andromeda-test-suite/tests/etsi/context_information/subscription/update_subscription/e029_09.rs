@@ -1,7 +1,6 @@
-//! ETSI `029_09`: an update that sets `isActive` to false pauses a subscription, whose status then reads `paused`
-//! (clause 5.8.2).
+//! An update that sets `isActive` to false pauses a subscription, whose status then reads `paused` (clause 5.8.2).
 
-use crate::suite_keywords::{create_timed_building_subscription, expect_batch_done, ld_json_body_client};
+use crate::{batch_operations::expect_batch_done, entity_operations::ld_json_body_client, subscription_operations::create_timed_building_subscription};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, teardown::AnyAnswer, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use ngsi_ld::subscription::{Activation, SubscriptionFragment, SubscriptionId};

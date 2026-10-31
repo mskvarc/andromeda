@@ -1,6 +1,5 @@
-//! ETSI `021_20`: a temporal evolution query whose `format` or `options` value the specification does not define, or
-//! which carries one such value beside valid ones, is refused with 400 `InvalidRequest` (clauses 5.7.3, 6.3.12 and
-//! 6.3.20).
+//! A temporal evolution query whose `format` or `options` value the specification does not define, or which carries one
+//! such value beside valid ones, is refused with 400 `InvalidRequest` (clauses 5.7.3, 6.3.12 and 6.3.20).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary, wire::request_to};
 use googletest::prelude::*;

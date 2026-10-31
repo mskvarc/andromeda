@@ -1,9 +1,10 @@
-//! ETSI `019_11`: several entities are queried with a geoquery whose geometry is a Polygon or a Point, and the
-//! `NGSILD-Results-Count` header states how many match (clauses 5.7.2 and 4.10).
+//! Several entities are queried with a geoquery whose geometry is a Polygon or a Point, and the `NGSILD-Results-Count`
+//! header states how many match (clauses 5.7.2 and 4.10).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, results_count},
-    suite_payloads::{point, polygon},
+    entity_operations::{create_entity, delete_entities},
+    geometry_payloads::{point, polygon},
+    unchecked_requests::results_count,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

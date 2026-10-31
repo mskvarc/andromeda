@@ -122,7 +122,7 @@ impl LevelShortfall {
 fn single<'a>(attributes: &'a Attributes<Output>, name: &str) -> Result<&'a Attribute<Output>, LevelShortfall> {
     let instances = attributes
         .iter()
-        .find_map(|(candidate, instances)| (candidate.to_string() == name).then_some(instances))
+        .find_map(|(candidate, instances)| (candidate.as_str() == name).then_some(instances))
         .ok_or(LevelShortfall::Absent)?;
     if instances.len() == 1 {
         Ok(instances.first())

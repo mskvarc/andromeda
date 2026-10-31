@@ -1,6 +1,6 @@
-//! ETSI `018_04`: an entity is retrieved in the simplified representation (clause 6.3.7).
+//! An entity is retrieved in the simplified representation (clause 6.3.7).
 
-use crate::{suite_keywords::create_entity, suite_payloads::building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity};
 use andromeda_test_suite::{
     broker::{self},
     comparison::{ContextRule, matches_document},

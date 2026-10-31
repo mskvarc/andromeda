@@ -1,9 +1,9 @@
-//! ETSI `033_10`: a registration whose body is no registration at all, or whose expiration date is not a date, is
-//! refused with 400 (clause 5.9.2).
+//! A registration whose body is no registration at all, or whose expiration date is not a date, is refused with 400
+//! (clause 5.9.2).
 
 use crate::{
-    suite_keywords::ld_json_body_client,
-    suite_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
+    entity_operations::ld_json_body_client,
+    registration_payloads::{VEHICLE_PARKING_TERMS, vehicle_parking_registration},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -36,10 +36,8 @@ async fn refused_without_location(broker: &BrokerClient, request: UncheckedReque
 
 /// Pins: Check that one cannot create a context source with invalid content
 /// Clause: 5.9.2
-/// Changed: Check Response Headers Containing URI set to on the 400 answer checks Location only when the header
-/// dictionary holds a key spelled exactly `Location`, and then that it contains the registration id; Hurl cannot make
-/// an assertion conditional, and a request that creates nothing has no resource for a Location to name (RFC 9110
-/// clause 10.2.2), so the port requires the answer to carry no Location, which the keyword also accepts
+/// Expected: the 400 answer carries no Location: a request that creates nothing has no resource for a Location to name
+/// (RFC 9110 clause 10.2.2)
 /// Tenant: private (a broker that failed to refuse the request would hold a Context Source Registration without
 /// information, which matches every other file's queries in the shared tenant (clause 5.12) and would forward them;
 /// clause 4.14 keeps each tenant's registrations its own)
@@ -66,12 +64,10 @@ async fn e033_10_01_different_data_structure_than_csource_registration() -> Resu
 
 /// Pins: Check that one cannot create a context source with invalid content
 /// Clause: 5.9.2
-/// Changed: Check Response Headers Containing URI set to on the 400 answer checks Location only when the header
-/// dictionary holds a key spelled exactly `Location`, and then that it contains the registration id; Hurl cannot make
-/// an assertion conditional, and a request that creates nothing has no resource for a Location to name (RFC 9110
-/// clause 10.2.2), so the port requires the answer to carry no Location, which the keyword also accepts
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
+/// Expected: the 400 answer carries no Location: a request that creates nothing has no resource for a Location to name
+/// (RFC 9110 clause 10.2.2)
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e033_10_02_create_a_context_source_registration_with_a_date_in_the_past() -> Result<()> {

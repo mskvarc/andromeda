@@ -1,9 +1,9 @@
-//! ETSI `028_02`: a create-subscription request whose body is not JSON, or is an empty object, is refused with 400
-//! (clause 5.8.1).
+//! A create-subscription request whose body is not JSON, or is an empty object, is refused with 400 (clause 5.8.1).
 
 use crate::{
-    suite_keywords::{ld_json_body_client, refused, with_doubled_separator},
-    suite_payloads::building_subscription,
+    entity_operations::ld_json_body_client,
+    subscription_payloads::building_subscription,
+    unchecked_requests::{refused, with_doubled_separator},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;

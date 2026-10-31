@@ -37,10 +37,9 @@ fn without_context(item: &Value) -> Value {
 /// Pins: Query Entities with limit=2 over three Vehicles answers two simplified Vehicles and a next pointer whose
 /// page holds the third alone, whichever pointer form 5.5.9 lets the broker choose
 /// Clause: C.5.4, 5.5.9, 5.7.2, 6.3.10
-/// Corrected: selected-attribute: the Vehicles hold only brandName, the one Attribute the printed answer shows for a
-/// request without attrs (5.7.2)
-/// Corrected: third-vehicle: a third Vehicle exists for the next pointer to lead to, and the page members are not
-/// named (5.7.2)
+/// Expected: the Vehicles hold only brandName, the one Attribute the printed answer shows for a request without attrs
+/// (clause 5.7.2)
+/// Expected: a third Vehicle exists for the next pointer to lead to, and the page members are not named (clause 5.7.2)
 #[gtest]
 #[tokio::test]
 async fn c_5_4_0001_the_first_page_of_two_points_to_the_third_vehicle() -> Result<()> {

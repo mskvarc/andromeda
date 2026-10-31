@@ -1,8 +1,8 @@
-//! ETSI `021_22`: the temporal evolutions of the Vehicles, the Bus and the Buildings are queried with `pick` and `omit`
-//! beside `attrs`, or with a member named in both `pick` and `omit`. Each query is refused with `BadRequestData`
-//! (clauses 5.7.4 and 4.2.1).
+//! The temporal evolutions of the Vehicles, the Bus and the Buildings are queried with `pick` and `omit` beside
+//! `attrs`, or with a member named in both `pick` and `omit`. Each query is refused with `BadRequestData` (clauses
+//! 5.7.4 and 4.2.1).
 
-use crate::suite_keywords::{create_vehicle_pair_and_bus_in, delete_vehicle_pair_and_bus};
+use crate::vehicle_fixtures::{create_vehicle_pair_and_bus_in, delete_vehicle_pair_and_bus};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     namespace::Namespace,
@@ -30,8 +30,6 @@ async fn create_setup(broker: &BrokerClient, namespace: &Namespace) -> Result<Vo
 
 /// Pins: Check that a `BadRequestDataException` is returned if an entity member is present in pick and omit
 /// Clause: 5.7.4, 4.2.1
-/// Defect: D-80: Andromeda admits a member named in both pick and omit instead of refusing it with `BadRequestData`;
-/// GET temporal/entities?pick=speed&omit=speed answers 200 []
 #[gtest]
 #[tokio::test]
 async fn e021_22_01_retrieve_with_same_entity_member_in_pick_and_omit() -> Result<()> {
@@ -45,7 +43,7 @@ async fn e021_22_01_retrieve_with_same_entity_member_in_pick_and_omit() -> Resul
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Building").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Building").or("Vehicle"))
         .pick(projection::attributes(["speed"]).build()?)
         .omit(projection::attributes(["speed"]).build()?)
         .send()
@@ -71,7 +69,7 @@ async fn e021_22_02_retrieve_with_pick_and_attrs() -> Result<()> {
         .with_responses()
         .temporal()
         .query_projected(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Building").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Building").or("Vehicle"))
         .attrs(vec!["fuelLevel".parse()?])
         .pick(projection::attributes(["speed"]).build()?)
         .send()
@@ -97,7 +95,7 @@ async fn e021_22_03_retrieve_with_omit_and_attrs() -> Result<()> {
         .with_responses()
         .temporal()
         .query(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(type_selection::entity_type("Building").or("Vehicle").build()?)
+        .entity_type(type_selection::entity_type("Building").or("Vehicle"))
         .attrs(vec!["fuelLevel".parse()?])
         .omit(projection::attributes(["speed"]).build()?)
         .send()

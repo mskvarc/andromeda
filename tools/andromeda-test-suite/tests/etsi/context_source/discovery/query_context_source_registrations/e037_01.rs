@@ -1,9 +1,9 @@
-//! ETSI `037_01`: context source registrations are queried by a list of entity types or by a list of attribute names
-//! alone (clause 5.10.2).
+//! Context source registrations are queried by a list of entity types or by a list of attribute names alone (clause
+//! 5.10.2).
 
 use crate::{
-    suite_keywords::{building_registration_json, create_discovery_registrations, delete_registrations},
-    suite_payloads::VEHICLE_PARKING_BUILDING_TERMS,
+    registration_operations::{building_registration_json, create_discovery_registrations, delete_registrations},
+    registration_payloads::VEHICLE_PARKING_BUILDING_TERMS,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, wire::json_body};
 use googletest::prelude::*;
@@ -14,9 +14,8 @@ use serde_json::json;
 /// Pins: Check that one can query context source registrations if at least one of list of Entity Types or list of
 /// Attribute names is present
 /// Clause: 5.10.2
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_01_01_with_list_of_entity_types() -> Result<()> {
@@ -50,9 +49,8 @@ async fn e037_01_01_with_list_of_entity_types() -> Result<()> {
 /// at all ("If no Properties or Relationships are specified in the `RegistrationInfo`, the Attribute names are
 /// considered matching"), so in the shared tenant other files' registrations of entities alone are listed beside the
 /// case's own and the exact count fails; clause 4.14 keeps each tenant's registrations its own)
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_01_02_with_list_of_attribute_names() -> Result<()> {

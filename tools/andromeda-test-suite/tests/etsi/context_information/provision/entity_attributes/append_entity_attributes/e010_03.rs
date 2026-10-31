@@ -1,9 +1,8 @@
-//! ETSI `010_03`: an append to an entity id the system does not hold is refused with 404 `ResourceNotFound`
-//! (clause 5.6.3).
+//! An append to an entity id the system does not hold is refused with 404 `ResourceNotFound` (clause 5.6.3).
 
 use crate::{
-    suite_keywords::{delete_entities, ld_json_body_client},
-    suite_payloads::speed_and_added_attribute,
+    entity_operations::{delete_entities, ld_json_body_client},
+    vehicle_entity_payloads::speed_and_added_attribute,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

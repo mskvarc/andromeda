@@ -1,12 +1,12 @@
-//! ETSI `047_15`: a Context Source Registration Subscription with a `geoQ` that names no `geoproperty` is matched
-//! against the `location` of a registration (clause 5.11.7).
+//! A Context Source Registration Subscription with a `geoQ` that names no `geoproperty` is matched against the
+//! `location` of a registration (clause 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
         located_building_registration,
         notified_of_source,
     },
-    suite_payloads::point,
+    geometry_payloads::point,
 };
 use andromeda_test_suite::{namespace::Namespace, notification_sink::NotificationSink};
 use googletest::prelude::*;
@@ -18,10 +18,6 @@ use ngsi_ld::{
 /// Pins: Check if a context source registrations subscription does not define a geoproperty in the geoQ member, a
 /// `CsourceNotification` will be triggered from matching context source registrations with a matching location member
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_15_01_receive_csource_notification_for_matching_context_source_registrations_on_location_as_default() -> Result<()> {

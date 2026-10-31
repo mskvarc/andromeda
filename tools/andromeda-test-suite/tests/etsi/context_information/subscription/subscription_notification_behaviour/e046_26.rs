@@ -1,14 +1,14 @@
-//! ETSI `046_26`: a subscription with a `flat` join and `attributes` notifies the Building and the City it links to
-//! with the selected attributes only (clauses 4.5.23 and 5.8.6).
+//! A subscription with a `flat` join and `attributes` notifies the Building and the City it links to with the selected
+//! attributes only (clauses 4.5.23 and 5.8.6).
 
 use crate::{
     context_information::subscription::subscription_notification_behaviour::{
         linked_case::{eiffel_tower, linked_notification, linked_teardown},
         notification_case::data_item,
     },
-    suite_payloads::city_paris_in_france,
+    linked_place_payloads::city_paris_in_france,
 };
-use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, robot_literal};
+use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::{
     query::Join,
@@ -18,11 +18,7 @@ use serde_json::{Value, json};
 
 /// Pins: Create an attribute in linking entity and check the notification contains linked entity with selected attributes
 /// Clause: 4.5.23, 5.8.6
-/// Corrected: fix(`046_26_01`, `046_30_01`): reduce the Linked City to the notified attributes too (5.2.14, 5.8.6)
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
+/// Expected: the linked City is reduced to the notified attributes too (clauses 5.2.14, 5.8.6)
 #[gtest]
 #[tokio::test]
 async fn e046_26_01_check_that_a_notification_is_sent_with_flat_linked_entity_and_selected_attributes() -> Result<()> {
@@ -44,7 +40,7 @@ async fn e046_26_01_check_that_a_notification_is_sent_with_flat_linked_entity_an
         },
     )
     .await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     let paris = namespace.urn("City", "Paris")?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(eq(2)));

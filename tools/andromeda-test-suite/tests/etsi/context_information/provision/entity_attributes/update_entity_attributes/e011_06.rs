@@ -1,9 +1,9 @@
-//! ETSI `011_06`: an update appends the types it names to an entity: one type, two types, a type the entity already holds,
-//! and a type beside one it holds (clauses 5.6.2 and 4.16).
+//! An update appends the types it names to an entity: one type, two types, a type the entity already holds, and a type
+//! beside one it holds (clauses 5.6.2 and 4.16).
 
 use crate::{
-    suite_keywords::{create_entity_with_link, delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
-    suite_payloads::vehicle_id_building,
+    building_payloads::vehicle_id_building,
+    entity_operations::{create_entity_with_link, delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

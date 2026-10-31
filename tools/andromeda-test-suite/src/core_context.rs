@@ -11,7 +11,7 @@ use url::Url;
 /// Why the core `@context` cannot be named.
 #[derive(Debug, thiserror::Error)]
 pub enum CoreContextError {
-    /// The suite configuration is missing or invalid.
+    /// The test configuration is missing or invalid.
     #[error(transparent)]
     Config(#[from] ConfigError),
     /// The configured URL is not an IRI.

@@ -1,7 +1,6 @@
-//! ETSI `033_08`: a registration sent as `application/ld+json` whose body carries no `@context` is refused with 400
-//! (clause 6.3.5).
+//! A registration sent as `application/ld+json` whose body carries no `@context` is refused with 400 (clause 6.3.5).
 
-use crate::suite_keywords::refused;
+use crate::unchecked_requests::refused;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     cleanup::Cleanup,
@@ -23,7 +22,7 @@ use ngsi_ld::{
 /// vocabulary, where any other file that names Building without a @context shares it; a broker that failed to refuse it
 /// would hold a registration that captures and forwards that file's queries (clause 5.12), and clause 4.14 keeps each
 /// tenant's registrations its own)
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e033_08_01_no_context_with_json_ld_content_type() -> Result<()> {

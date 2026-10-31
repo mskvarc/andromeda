@@ -1,11 +1,11 @@
-//! ETSI `046_14`: a notification is sent as JSON-LD when the endpoint accepts `application/ld+json`, with no `Link` header
-//! (clause 5.8.6).
+//! A notification is sent as JSON-LD when the endpoint accepts `application/ld+json`, with no `Link` header (clause
+//! 5.8.6).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscribed, teardown},
-    suite_payloads::building_simple_attributes,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -16,14 +16,6 @@ use ngsi_ld::{
 
 /// Pins: The Notification content shall be JSON-LD when endpoint.accept is set to 'application/ld+json'
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: Wait for notification hands the headers over as a plain dictionary (Convert To Dictionary of the received
-/// message), keyed by the field names exactly as the broker spelled them, so the keyword looks the name up
-/// case-sensitively; field names are case-insensitive (RFC 9110 clause 5.1), so the port checks the field whatever its
-/// case, through a WireMock request pattern, which matches names without regard to case
 #[gtest]
 #[tokio::test]
 async fn e046_14_01_check_that_a_notification_is_sent_as_json_ld() -> Result<()> {
@@ -50,7 +42,7 @@ async fn e046_14_01_check_that_a_notification_is_sent_as_json_ld() -> Result<()>
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/data/0/@context"), some(anything()));
 
     let received = sink.received(1).await?;

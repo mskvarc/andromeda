@@ -1,8 +1,9 @@
-//! ETSI `011_02`: an update is refused with 400 `BadRequestData` when its entity id is missing or is not a URI (clause 5.6.2).
+//! An update is refused with 400 `BadRequestData` when its entity id is missing or is not a URI (clause 5.6.2).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_gps, delete_entities, ld_json_body_client},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_99_fragment},
+    entity_operations::{delete_entities, ld_json_body_client},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, speedometer_speed_99_fragment},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_gps,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::send_to};
 use googletest::prelude::*;

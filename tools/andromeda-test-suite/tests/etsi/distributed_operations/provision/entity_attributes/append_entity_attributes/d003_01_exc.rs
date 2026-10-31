@@ -1,13 +1,13 @@
-//! ETSI `D003_01_exc`: an append of attributes to an entity whose `speed` an exclusive registration holds sends the
-//! `speed` to the context source and keeps it off the broker (clauses 4.3.3, 4.3.6.3 and 5.6.3).
+//! An append of attributes to an entity whose `speed` an exclusive registration holds sends the `speed` to the context
+//! source and keeps it off the broker (clauses 4.3.3, 4.3.6.3 and 5.6.3).
 
 use crate::{
     distributed_operations::{
         forwarding_source::{create_entity_locally, register, serve, source_endpoint, stub, stub_count, unregister},
         provision::entity_attributes::attribute_sources::{parked_by_john_doe_and_speed, vehicle_attribute_registration, vehicle_rule},
     },
-    suite_keywords::{append_attributes, delete_entities, ld_json_body_client},
-    suite_payloads::vehicle_parked,
+    entity_operations::{append_attributes, delete_entities, ld_json_body_client},
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -21,17 +21,9 @@ use ngsi_ld::{
 /// Pins: Check that an entity attribute is appended and the exclusive registration forwards the request to the Context
 /// Source
 /// Clause: 4.3.3, 4.3.6.3, 5.6.3
-/// Corrected: `fix(D003_exc)`: send the append with the suite context so speed matches the registration (6.3.5, 5.12)
-/// Corrected: `fix(D003_01_exc)`: import the consumption resource and assert speed absence (4.3.6.3)
-/// Corrected: `fix(D003_inc)`: make the append and retrieves share the suite context (6.3.5)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the local retrieval is held to a 200, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the append is sent with the test vocabulary, so speed matches the registration (clauses 6.3.5, 5.12)
+/// Expected: speed is absent (clause 4.3.6.3)
+/// Expected: the append and the retrievals share the test vocabulary (clause 6.3.5)
 #[gtest]
 #[tokio::test]
 async fn d003_01_exc_append_entity_attribute() -> Result<()> {

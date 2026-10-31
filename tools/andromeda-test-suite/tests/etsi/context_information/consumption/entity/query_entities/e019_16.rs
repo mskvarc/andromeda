@@ -1,9 +1,9 @@
-//! ETSI `019_16`: Buildings, Cities and Countries linked over two levels are queried with the linked entities joined
-//! inline or flat, in the normalized and the simplified representation (clauses 5.7.2 and 4.5.23).
+//! Buildings, Cities and Countries linked over two levels are queried with the linked entities joined inline or flat,
+//! in the normalized and the simplified representation (clauses 5.7.2 and 4.5.23).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities},
-    suite_payloads::{building_located_at_city, city_located_in_country, country},
+    entity_operations::{create_entity, delete_entities},
+    linked_place_payloads::{building_located_at_city, city_located_in_country, country},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -74,7 +74,7 @@ async fn delete_chains(broker: &BrokerClient, namespace: &Namespace) -> Result<(
 
 /// Pins: Check that entities can be queried with two levels linked entities in different join types and representations
 /// Clause: 5.7.2, 4.5.23
-/// Corrected: fix(linked-objecttype): linked-entity retrieval expectations carry objecttype (table 5.2.6-1)
+/// Expected: linked-entity retrieval answers carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e019_16_01_query_inline_normalized() -> Result<()> {
@@ -145,7 +145,7 @@ async fn e019_16_01_query_inline_normalized() -> Result<()> {
 
 /// Pins: Check that entities can be queried with two levels linked entities in different join types and representations
 /// Clause: 5.7.2, 4.5.23
-/// Corrected: fix(linked-objecttype): linked-entity retrieval expectations carry objecttype (table 5.2.6-1)
+/// Expected: linked-entity retrieval answers carry objectType (Table 5.2.6-1)
 #[gtest]
 #[tokio::test]
 async fn e019_16_02_query_flat_normalized() -> Result<()> {

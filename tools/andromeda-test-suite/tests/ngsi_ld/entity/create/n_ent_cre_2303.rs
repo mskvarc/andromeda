@@ -1,0 +1,70 @@
+//! A date time and a time value with a comma fraction are accepted.
+
+use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done};
+use googletest::prelude::*;
+use ngsi_ld::{
+    http::headers::Accept,
+    model::{Attribute, CoreDatatype, Entity, NgsiLdMediaType, Property, TypedValue, Value},
+};
+
+/// Pins: Create Entity accepts a `DateTime` value and a Time value whose seconds fraction is separated by a comma,
+/// and reads both back as the same instants
+/// Clause: 4.6.3, 5.6.1
+#[gtest]
+#[tokio::test]
+async fn n_ent_cre_2303_a_date_time_and_a_time_value_with_a_comma_fraction_are_accepted() -> Result<()> {
+    let namespace = Namespace::fresh();
+    let broker = broker::front()?;
+    let vehicle_id = namespace.urn("Vehicle", 1)?;
+    let vehicle_type = namespace.entity_type("Vehicle")?;
+    let vehicle = Entity::builder()
+        .id(vehicle_id.clone())
+        .entity_type(vehicle_type)
+        .property(
+            "serviceDate",
+            Property::builder(Value::Typed(TypedValue::try_new(CoreDatatype::DateTime, "2024-01-01T00:00:00,5Z")?)),
+        )
+        .property(
+            "openingTime",
+            Property::builder(Value::Typed(TypedValue::try_new(CoreDatatype::Time, "10:00:00,5Z")?)),
+        )
+        .build()?;
+    broker.entities().create(&vehicle).send().await?.done()?;
+    let retrieved = broker
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .entities()
+        .retrieve(&vehicle_id)
+        .send()
+        .await?;
+    let entity = retrieved.body();
+    let typed = |name: &str| {
+        entity
+            .attributes
+            .iter()
+            .find(|(candidate, _)| candidate.as_str() == name)
+            .and_then(|(_, instances)| match instances.first() {
+                Attribute::Property(property) => match property.value() {
+                    // The plain JSON representation reads the typed value back as an object with `type` and `@value`.
+                    Value::Object(members) => match (members.get("type"), members.get("@value")) {
+                        (Some(Value::Text(datatype)), Some(Value::Text(lexical))) => Some((datatype.as_str(), lexical.as_str())),
+                        _ => None,
+                    },
+                    Value::Boolean(_) | Value::Number(_) | Value::Text(_) | Value::Typed(_) | Value::Array(_) | Value::JsonNull => None,
+                },
+                Attribute::GeoProperty(_)
+                | Attribute::LanguageProperty(_)
+                | Attribute::VocabProperty(_)
+                | Attribute::ListProperty(_)
+                | Attribute::JsonProperty(_)
+                | Attribute::Relationship(_)
+                | Attribute::ListRelationship(_) => None,
+            })
+    };
+    let (service_datatype, service_lexical) = typed("serviceDate").or_fail()?;
+    expect_that!(service_datatype, eq("DateTime"));
+    expect_that!(service_lexical, matches_regex(r"^2024-01-01T00:00:00[.,]50*Z$"));
+    let (opening_datatype, opening_lexical) = typed("openingTime").or_fail()?;
+    expect_that!(opening_datatype, eq("Time"));
+    expect_that!(opening_lexical, matches_regex(r"^10:00:00[.,]50*Z$"));
+    Ok(())
+}

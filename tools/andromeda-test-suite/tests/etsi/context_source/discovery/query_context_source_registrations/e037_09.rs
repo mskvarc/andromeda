@@ -1,7 +1,7 @@
-//! ETSI `037_09`: a query of context source registrations with a temporal query is matched against the
-//! registration's `observationInterval` or `managementInterval` (clause 5.10.2).
+//! A query of context source registrations with a temporal query is matched against the registration's
+//! `observationInterval` or `managementInterval` (clause 5.10.2).
 
-use crate::suite_keywords::{create_registration, csource_endpoint, delete_registrations};
+use crate::registration_operations::{create_registration, csource_endpoint, delete_registrations};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -78,7 +78,6 @@ async fn queried(member: IntervalMember, time_property: Option<TemporalProperty>
 /// Pins: Check that one can query context source registrations. If present, the temporal query is matched against the
 /// observationInterval or the managementInterval
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_09_01_observation_interval_with_observed_at() -> Result<()> {
@@ -88,7 +87,6 @@ async fn e037_09_01_observation_interval_with_observed_at() -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the temporal query is matched against the
 /// observationInterval or the managementInterval
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_09_02_observation_interval_without_timeproperty() -> Result<()> {
@@ -98,7 +96,6 @@ async fn e037_09_02_observation_interval_without_timeproperty() -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the temporal query is matched against the
 /// observationInterval or the managementInterval
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_09_03_management_interval_with_created_at() -> Result<()> {
@@ -108,7 +105,6 @@ async fn e037_09_03_management_interval_with_created_at() -> Result<()> {
 /// Pins: Check that one can query context source registrations. If present, the temporal query is matched against the
 /// observationInterval or the managementInterval
 /// Clause: 5.10.2
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
 #[gtest]
 #[tokio::test]
 async fn e037_09_04_management_interval_with_modified_at() -> Result<()> {

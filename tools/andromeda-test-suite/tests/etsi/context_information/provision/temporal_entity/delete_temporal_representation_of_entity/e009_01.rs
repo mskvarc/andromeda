@@ -1,9 +1,9 @@
-//! ETSI `009_01`: a temporal representation of an entity with simple temporal properties is deleted, and it is no longer
-//! retrieved (clause 5.6.16).
+//! A temporal representation of an entity with simple temporal properties is deleted, and it is no longer retrieved
+//! (clause 5.6.16).
 
 use crate::{
-    suite_keywords::create_temporal_evolution,
-    suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
+    temporal_operations::create_temporal_evolution,
+    vehicle_evolution_payloads::{VEHICLE_SPEED_FUEL_TERMS, vehicle_speed_fuel_level_with_dataset},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered};
 use googletest::prelude::*;

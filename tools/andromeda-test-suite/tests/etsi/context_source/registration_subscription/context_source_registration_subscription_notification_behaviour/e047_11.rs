@@ -1,14 +1,16 @@
-//! ETSI `047_11`: a `temporalQ` on `createdAt` or `modifiedAt` is matched against the `managementInterval` of a
-//! registration (clause 5.11.7).
+//! A `temporalQ` on `createdAt` or `modifiedAt` is matched against the `managementInterval` of a registration (clause
+//! 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
         expect_csource_notification,
         registered,
     },
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client},
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_subscription_operations::create_registration_subscription,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, teardown::AnyAnswer, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     query::{
@@ -22,10 +24,6 @@ use ngsi_ld::{
 /// Pins: Check if a context source registration subscription defines temporalQ member with timeproperty createdAt or
 /// modifiedAt, the temporal query is matched against the managementInterval of matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_11_01_created_at() -> Result<()> {
@@ -35,10 +33,6 @@ async fn e047_11_01_created_at() -> Result<()> {
 /// Pins: Check if a context source registration subscription defines temporalQ member with timeproperty createdAt or
 /// modifiedAt, the temporal query is matched against the managementInterval of matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_11_02_modified_at() -> Result<()> {
@@ -73,7 +67,7 @@ async fn matched_on_management_interval(property: TemporalProperty) -> Result<()
     let _registration = registered(&broker, &vocabulary, &registration).await?;
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_csource_notification(&body, &id, &registration_id, "newlyMatching");
 
     broker.registration_subscriptions().delete(&id).send().await.any_answer();

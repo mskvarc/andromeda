@@ -16,16 +16,16 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 figment2 = { version = "0.11.5", features = ["env"] }
 googletest = "0.14.3"
 http = "1.5.0"
-indexmap = "2.14.2"
+indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["static", "serde"] }
 mediatype = "0.23.0"
-ngsi-ld = { version = "1.1.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
+ngsi-ld = { version = "1.3.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["http2", "rustls"] }
 rumqttc = { version = "0.25.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde_json = { version = "1.0.154", features = ["raw_value"] }
 serde_json_path = "0.7.2"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
@@ -38,6 +38,302 @@ x509-parser = "0.18.1"
 [[test]]
 name = "etsi"
 path = "tests/etsi/main.rs"
+
+[[test]]
+name = "ngsi_ld_attribute"
+path = "tests/ngsi_ld/attribute/main.rs"
+
+[[test]]
+name = "ngsi_ld_batch"
+path = "tests/ngsi_ld/batch/main.rs"
+
+[[test]]
+name = "ngsi_ld_common_behaviour"
+path = "tests/ngsi_ld/common_behaviour/main.rs"
+
+[[test]]
+name = "ngsi_ld_discovery"
+path = "tests/ngsi_ld/discovery/main.rs"
+
+[[test]]
+name = "ngsi_ld_distributed"
+path = "tests/ngsi_ld/distributed/main.rs"
+
+[[test]]
+name = "ngsi_ld_entity"
+path = "tests/ngsi_ld/entity/main.rs"
+
+[[test]]
+name = "ngsi_ld_entity_map"
+path = "tests/ngsi_ld/entity_map/main.rs"
+
+[[test]]
+name = "ngsi_ld_jsonld_context"
+path = "tests/ngsi_ld/jsonld_context/main.rs"
+
+[[test]]
+name = "ngsi_ld_linked_entity"
+path = "tests/ngsi_ld/linked_entity/main.rs"
+
+[[test]]
+name = "ngsi_ld_notification"
+path = "tests/ngsi_ld/notification/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_entity"
+path = "tests/ngsi_ld/query/entity/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_entity_type"
+path = "tests/ngsi_ld/query/entity_type/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_format"
+path = "tests/ngsi_ld/query/format/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_geo"
+path = "tests/ngsi_ld/query/geo/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_language"
+path = "tests/ngsi_ld/query/language/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_order"
+path = "tests/ngsi_ld/query/order/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_pagination"
+path = "tests/ngsi_ld/query/pagination/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_projection"
+path = "tests/ngsi_ld/query/projection/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_q_language"
+path = "tests/ngsi_ld/query/q_language/main.rs"
+
+[[test]]
+name = "ngsi_ld_query_scope"
+path = "tests/ngsi_ld/query/scope/main.rs"
+
+[[test]]
+name = "ngsi_ld_registration"
+path = "tests/ngsi_ld/registration/main.rs"
+
+[[test]]
+name = "ngsi_ld_registration_subscription"
+path = "tests/ngsi_ld/registration_subscription/main.rs"
+
+[[test]]
+name = "ngsi_ld_snapshot"
+path = "tests/ngsi_ld/snapshot/main.rs"
+
+[[test]]
+name = "ngsi_ld_source_identity"
+path = "tests/ngsi_ld/source_identity/main.rs"
+
+[[test]]
+name = "ngsi_ld_subscription"
+path = "tests/ngsi_ld/subscription/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_add_attribute"
+path = "tests/ngsi_ld/temporal/add_attribute/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_aggregation"
+path = "tests/ngsi_ld/temporal/aggregation/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_core_write_history"
+path = "tests/ngsi_ld/temporal/core_write_history/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_delete"
+path = "tests/ngsi_ld/temporal/delete/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_delete_attribute"
+path = "tests/ngsi_ld/temporal/delete_attribute/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_delete_instance"
+path = "tests/ngsi_ld/temporal/delete_instance/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_modify_instance"
+path = "tests/ngsi_ld/temporal/modify_instance/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_query"
+path = "tests/ngsi_ld/temporal/query/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_representation"
+path = "tests/ngsi_ld/temporal/representation/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_retrieve"
+path = "tests/ngsi_ld/temporal/retrieve/main.rs"
+
+[[test]]
+name = "ngsi_ld_temporal_upsert"
+path = "tests/ngsi_ld/temporal/upsert/main.rs"
+
+[[test]]
+name = "ngsi_ld_tenancy"
+path = "tests/ngsi_ld/tenancy/main.rs"
+
+[[test]]
+name = "andromeda_attribute"
+path = "tests/andromeda/attribute/main.rs"
+
+[[test]]
+name = "andromeda_batch"
+path = "tests/andromeda/batch/main.rs"
+
+[[test]]
+name = "andromeda_common_behaviour"
+path = "tests/andromeda/common_behaviour/main.rs"
+
+[[test]]
+name = "andromeda_distributed"
+path = "tests/andromeda/distributed/main.rs"
+
+[[test]]
+name = "andromeda_entity"
+path = "tests/andromeda/entity/main.rs"
+
+[[test]]
+name = "andromeda_entity_map"
+path = "tests/andromeda/entity_map/main.rs"
+
+[[test]]
+name = "andromeda_extension"
+path = "tests/andromeda/extension/main.rs"
+
+[[test]]
+name = "andromeda_jsonld_context"
+path = "tests/andromeda/jsonld_context/main.rs"
+
+[[test]]
+name = "andromeda_limit"
+path = "tests/andromeda/limit/main.rs"
+
+[[test]]
+name = "andromeda_linked_entity"
+path = "tests/andromeda/linked_entity/main.rs"
+
+[[test]]
+name = "andromeda_management"
+path = "tests/andromeda/management/main.rs"
+
+[[test]]
+name = "andromeda_notification"
+path = "tests/andromeda/notification/main.rs"
+
+[[test]]
+name = "andromeda_observability"
+path = "tests/andromeda/observability/main.rs"
+
+[[test]]
+name = "andromeda_query"
+path = "tests/andromeda/query/main.rs"
+
+[[test]]
+name = "andromeda_registration"
+path = "tests/andromeda/registration/main.rs"
+
+[[test]]
+name = "andromeda_registration_subscription"
+path = "tests/andromeda/registration_subscription/main.rs"
+
+[[test]]
+name = "andromeda_snapshot"
+path = "tests/andromeda/snapshot/main.rs"
+
+[[test]]
+name = "andromeda_source_identity"
+path = "tests/andromeda/source_identity/main.rs"
+
+[[test]]
+name = "andromeda_subscription"
+path = "tests/andromeda/subscription/main.rs"
+
+[[test]]
+name = "andromeda_temporal"
+path = "tests/andromeda/temporal/main.rs"
+
+[[test]]
+name = "andromeda_transport"
+path = "tests/andromeda/transport/main.rs"
+
+[[test]]
+name = "distributed_attribute"
+path = "tests/distributed/attribute/main.rs"
+
+[[test]]
+name = "distributed_batch"
+path = "tests/distributed/batch/main.rs"
+
+[[test]]
+name = "distributed_common_behaviour"
+path = "tests/distributed/common_behaviour/main.rs"
+
+[[test]]
+name = "distributed_distributed"
+path = "tests/distributed/distributed/main.rs"
+
+[[test]]
+name = "distributed_entity"
+path = "tests/distributed/entity/main.rs"
+
+[[test]]
+name = "distributed_entity_map"
+path = "tests/distributed/entity_map/main.rs"
+
+[[test]]
+name = "distributed_linked_entity"
+path = "tests/distributed/linked_entity/main.rs"
+
+[[test]]
+name = "distributed_notification"
+path = "tests/distributed/notification/main.rs"
+
+[[test]]
+name = "distributed_query"
+path = "tests/distributed/query/main.rs"
+
+[[test]]
+name = "distributed_registration"
+path = "tests/distributed/registration/main.rs"
+
+[[test]]
+name = "distributed_registration_subscription"
+path = "tests/distributed/registration_subscription/main.rs"
+
+[[test]]
+name = "distributed_snapshot"
+path = "tests/distributed/snapshot/main.rs"
+
+[[test]]
+name = "distributed_source_identity"
+path = "tests/distributed/source_identity/main.rs"
+
+[[test]]
+name = "distributed_subscription"
+path = "tests/distributed/subscription/main.rs"
+
+[[test]]
+name = "distributed_temporal"
+path = "tests/distributed/temporal/main.rs"
+
+[[test]]
+name = "distributed_tenancy"
+path = "tests/distributed/tenancy/main.rs"
 
 [[test]]
 name = "annex_c"

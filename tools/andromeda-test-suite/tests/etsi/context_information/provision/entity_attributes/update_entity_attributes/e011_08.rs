@@ -1,9 +1,11 @@
-//! ETSI `011_08`: an update deletes the instance of an attribute that names one dataset, by writing the NGSI-LD Null in the
-//! shape of the attribute's kind with that `datasetId`, and keeps the other instance (clauses 5.6.2 and 6.6.3.2).
+//! An update deletes the instance of an attribute that names one dataset, by writing the NGSI-LD Null in the shape of
+//! the attribute's kind with that `datasetId`, and keeps the other instance (clauses 5.6.2 and 6.6.3.2).
 
 use crate::{
-    suite_keywords::{create_building_instances, delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
-    suite_payloads::{dataset, district_paris_08},
+    building_fixtures::create_building_instances,
+    entity_operations::{delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
+    linked_place_payloads::district_paris_08,
+    vehicle_entity_payloads::dataset,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;

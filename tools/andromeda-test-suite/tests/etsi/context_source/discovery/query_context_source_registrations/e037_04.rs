@@ -1,9 +1,9 @@
-//! ETSI `037_04`: a query of context source registrations sent without a JSON-LD context resolves its terms against
-//! the core context and answers the registration with its terms expanded (clause 5.10.2).
+//! A query of context source registrations sent without a JSON-LD context resolves its terms against the core context
+//! and answers the registration with its terms expanded (clause 5.10.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint, delete_registrations},
-    suite_payloads::building_registration,
+    registration_operations::{create_registration, csource_endpoint, delete_registrations},
+    registration_payloads::building_registration,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -14,9 +14,8 @@ use serde_json::json;
 /// Pins: Check that one can query context source registrations. If a JSON-LD context is not provided, then all the
 /// query terms shall be resolved against the default JSON-LD @context
 /// Clause: 5.10.2
-/// Changed: locatedAt stays out of the file vocabulary: the case reads it without a @context, so it expands under the
-/// core default vocabulary as in the Robot run
-/// Changed: the teardown delete is held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: locatedAt stays out of the file vocabulary: the test reads it without a @context, so it expands under the
+/// core default vocabulary
 #[gtest]
 #[tokio::test]
 async fn e037_04_01_query_context_source_registrations_without_context() -> Result<()> {

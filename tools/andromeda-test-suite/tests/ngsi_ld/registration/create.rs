@@ -1,0 +1,37 @@
+//! The tests of `registration/create`.
+
+mod n_csr_cre_0002;
+mod n_csr_cre_0004;
+mod n_csr_cre_0005;
+mod n_csr_cre_0006;
+mod n_csr_cre_0007;
+mod n_csr_cre_0008;
+mod n_csr_cre_0009;
+mod n_csr_cre_0010;
+mod n_csr_cre_0011;
+mod n_csr_cre_0012;
+mod n_csr_cre_0013;
+mod n_csr_cre_0014;
+mod n_csr_cre_0015;
+mod n_csr_cre_0016;
+mod n_csr_cre_0017;
+mod n_csr_cre_0018;
+mod n_csr_cre_0019;
+mod n_csr_cre_0020;
+mod n_csr_cre_0021;
+mod n_csr_cre_0022;
+mod n_csr_cre_2001;
+mod n_csr_cre_7606;
+mod n_csr_cre_7607;
+mod n_csr_cre_7608;
+mod n_csr_cre_7609;
+mod n_csr_cre_7610;
+mod n_csr_cre_7611;
+mod n_csr_cre_9001;
+mod n_csr_cre_9002;
+mod n_csr_cre_9005;
+mod n_csr_cre_9006;
+mod o_csr_cre_0001;
+mod o_csr_cre_2301;
+mod o_csr_cre_9003;
+mod o_csr_cre_9004;

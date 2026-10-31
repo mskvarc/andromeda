@@ -1,0 +1,30 @@
+//! The tests of `entity_map/query`.
+
+mod n_map_qen_0001;
+mod n_map_qen_0005;
+mod n_map_qen_0006;
+mod n_map_qen_0007;
+mod n_map_qen_0008;
+mod n_map_qen_0009;
+mod n_map_qen_0010;
+mod n_map_qen_0011;
+mod n_map_qen_0012;
+mod n_map_qen_0013;
+mod n_map_qen_0014;
+mod n_map_qen_3001;
+mod n_map_qen_3010;
+mod n_map_qen_3030;
+mod n_map_qen_3080;
+mod n_map_qen_9001;
+mod n_map_qen_9002;
+mod n_map_qen_9003;
+mod n_map_qen_9005;
+mod n_map_qen_9006;
+mod n_map_qen_9007;
+mod n_map_qen_9008;
+mod n_map_qen_9009;
+mod n_map_qen_9010;
+mod o_map_qen_0002;
+mod o_map_qen_0003;
+mod o_map_qen_0004;
+mod o_map_qen_9004;

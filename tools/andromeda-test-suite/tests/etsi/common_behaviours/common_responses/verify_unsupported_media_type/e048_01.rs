@@ -1,6 +1,6 @@
-//! ETSI `048_01`: every write endpoint refuses a body sent as `application/xml` with 415 (clause 6.3.4).
+//! Every write endpoint refuses a body sent as `application/xml` with 415 (clause 6.3.4).
 
-use crate::suite_payloads::{VEHICLE_SPEED_FUEL_TERMS, building_simple_attributes};
+use crate::{building_payloads::building_simple_attributes, vehicle_evolution_payloads::VEHICLE_SPEED_FUEL_TERMS};
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     cleanup::Cleanup,
@@ -26,7 +26,7 @@ use ngsi_ld::{
 /// The media type every case sends its body as.
 const XML: MediaType<'static> = media_type!(APPLICATION / XML);
 
-/// The client of `broker` sending `vocabulary` in the body, as the cases send the suite's `@context`.
+/// The client of `broker` sending `vocabulary` in the body, as the tests send the test vocabulary.
 fn in_body(broker: &BrokerClient, vocabulary: &Vocabulary) -> Result<BrokerClient> {
     Ok(broker.with_context(vocabulary.context())?.with_context_delivery(ContextDelivery::LdJsonBody))
 }
@@ -55,7 +55,7 @@ async fn e048_01_01_patch_entity_attribute() -> Result<()> {
 /// Pins: Verify throwing 415 HTTP status code (Unsupported Media Type) if "Content-Type" header is not
 /// "application/json" or "application/ld+json" (patch /subscriptions/{subscriptionId})
 /// Clause: 6.3.4
-/// Vocabulary: none (the ETSI case references the core @context, not the suite's)
+/// Vocabulary: none (the test references the core @context only)
 #[gtest]
 #[tokio::test]
 async fn e048_01_02_patch_subscription() -> Result<()> {

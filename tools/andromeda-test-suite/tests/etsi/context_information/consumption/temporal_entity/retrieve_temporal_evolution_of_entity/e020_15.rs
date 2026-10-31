@@ -1,9 +1,9 @@
-//! ETSI `020_15`: the temporal evolution of an entity with a `JsonProperty` is retrieved in the normalized and in the
-//! simplified temporal representation (clauses 5.7.3, 4.5.7 and 4.5.9).
+//! The temporal evolution of an entity with a `JsonProperty` is retrieved in the normalized and in the simplified
+//! temporal representation (clauses 5.7.3, 4.5.7 and 4.5.9).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::create_temporal_evolution;
+use crate::temporal_operations::create_temporal_evolution;
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
     comparison::matches_document,
@@ -35,16 +35,13 @@ fn vehicle_with_json_speeds(namespace: &Namespace) -> Result<TemporalEntity<Inpu
     Ok(builder.build()?)
 }
 
-/// Creates the case's Vehicle as its suite setup does, and answers the vocabulary it is stored under.
+/// Creates the test's Vehicle, and answers the vocabulary it is stored under.
 async fn created_vehicle(broker: &BrokerClient, namespace: &Namespace) -> Result<Vocabulary> {
     create_temporal_evolution(broker, namespace, &["Vehicle", "speed"], &vehicle_with_json_speeds(namespace)?).await
 }
 
 /// Pins: Check that you can retrieve the temporal evolution of an entity with a JSON property
 /// Clause: 5.7.3, 4.5.7
-/// Changed: the setup requires 201 Created for the evolution, where the suite accepts any answer to that request
-/// Changed: every speed instance's json value must be an integer, where the suite's float check excludes the instance
-/// it names and so checks nothing
 #[gtest]
 #[tokio::test]
 async fn e020_15_01_retrieve_the_normalized_temporal_representation_of_an_entity_with_a_json_property() -> Result<()> {
@@ -86,7 +83,6 @@ async fn e020_15_01_retrieve_the_normalized_temporal_representation_of_an_entity
 
 /// Pins: Check that you can retrieve the temporal evolution of an entity with a JSON property
 /// Clause: 5.7.3, 4.5.9
-/// Changed: the setup requires 201 Created for the evolution, where the suite accepts any answer to that request
 #[gtest]
 #[tokio::test]
 async fn e020_15_02_retrieve_the_simplified_temporal_representation_of_an_entity_with_a_json_property() -> Result<()> {

@@ -1,9 +1,11 @@
-//! ETSI `004_06`: a batch upsert whose body is not JSON is refused with 400, and one whose entity holds a null Property is
-//! answered 207 with that entity in error (clause 5.6.8).
+//! A batch upsert whose body is not JSON is refused with 400, and one whose entity holds a null Property is answered
+//! 207 with that entity in error (clause 5.6.8).
 
 use crate::{
-    suite_keywords::{expect_bad_request_entity, ld_json_body_client, partial_batch_answer, refused, with_doubled_separator},
-    suite_payloads::bare_building,
+    batch_operations::{expect_bad_request_entity, partial_batch_answer},
+    building_payloads::bare_building,
+    entity_operations::ld_json_body_client,
+    unchecked_requests::{refused, with_doubled_separator},
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

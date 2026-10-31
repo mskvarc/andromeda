@@ -1,9 +1,8 @@
-//! ETSI `054_02`: a replace whose target id is faulty, missing or not held by the broker is refused (clauses 5.6.18 and
-//! 6.5.3.3).
+//! A replace whose target id is faulty, missing or not held by the broker is refused (clauses 5.6.18 and 6.5.3.3).
 
 use crate::{
-    suite_keywords::{context_link, create_entity_with_link, delete_entities},
-    suite_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    building_payloads::{BUILDING_REPLACE_TERMS, building_simple_attributes, pisa_tower_located_at_pisa},
+    entity_operations::{context_link, create_entity_with_link, delete_entities},
 };
 use andromeda_test_suite::{
     broker,

@@ -1,9 +1,10 @@
-//! ETSI `006_02`: a batch naming one existing and one absent entity deletes the existing one and reports the absent one
-//! in error (clause 5.6.10).
+//! A batch naming one existing and one absent entity deletes the existing one and reports the absent one in error
+//! (clause 5.6.10).
 
 use crate::{
-    suite_keywords::{create_entity_with_context_string, expect_partial_batch, partial_batch_outcome, query_entities_json},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    batch_operations::{expect_partial_batch, partial_batch_outcome},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity_with_context_string, query_entities_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

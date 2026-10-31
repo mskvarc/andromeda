@@ -1,5 +1,5 @@
-//! ETSI `D006_01_inc`: a deletion of the default `speed` instance of an entity an inclusive registration matches is
-//! forwarded to the context source and leaves the broker's other `speed` instance (clauses 4.3.3, 4.3.6.2 and 5.6.5).
+//! A deletion of the default `speed` instance of an entity an inclusive registration matches is forwarded to the
+//! context source and leaves the broker's other `speed` instance (clauses 4.3.3, 4.3.6.2 and 5.6.5).
 
 use crate::{
     distributed_operations::{
@@ -13,7 +13,7 @@ use crate::{
             wait_for_request,
         },
     },
-    suite_keywords::{create_entity_with_context_string, delete_entities},
+    entity_operations::{create_entity_with_context_string, delete_entities},
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, problem::answered, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -23,15 +23,6 @@ use ngsi_ld::{http::headers::Accept, query::Locality, registration::Registration
 /// Pins: Verify that, when one has an inclusive registration on a Context Broker with redirectionOps, one is able to
 /// delete entities attributes on a Context Source too
 /// Clause: 4.3.3, 4.3.6.2, 5.6.5
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Wait For Request hands over the most recent request the server holds; the port waits until the source
-/// holds a request earlier waits did not take and reads the last one, which is the one the case's action forwarded.
-/// Changed: the local retrieval is held to a 200, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
 #[gtest]
 #[tokio::test]
 async fn d006_01_inc_delete_entity_attributes() -> Result<()> {

@@ -1,9 +1,10 @@
-//! ETSI `010_02`: an append whose path names no entity id, or an id that is not a URI, is refused with 400
-//! `BadRequestData` (clause 5.6.3).
+//! An append whose path names no entity id, or an id that is not a URI, is refused with 400 `BadRequestData` (clause
+//! 5.6.3).
 
 use crate::{
-    suite_keywords::{create_vehicle_brand_parked_speed_sources, delete_entities, ld_json_body_client},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    entity_operations::{delete_entities, ld_json_body_client},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::send_to};
 use googletest::prelude::*;

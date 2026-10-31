@@ -1,9 +1,11 @@
-//! ETSI `037_11`: a query of context source registrations is paged by `limit` and `offset`, with the `prev` and
-//! `next` links of clause 5.5.9 (clause 5.10.2).
+//! A query of context source registrations is paged by `limit` and `offset`, with the `prev` and `next` links of clause
+//! 5.5.9 (clause 5.10.2).
 
 use crate::{
-    suite_keywords::{create_registration, csource_endpoint, delete_registrations, expect_page_links, page_link},
-    suite_payloads::{VEHICLE_PARKING_BUILDING_TERMS, building_registration, point, vehicle_parking_registration},
+    geometry_payloads::point,
+    pagination_links::{expect_page_links, page_link},
+    registration_operations::{create_registration, csource_endpoint, delete_registrations},
+    registration_payloads::{VEHICLE_PARKING_BUILDING_TERMS, building_registration, vehicle_parking_registration},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -73,18 +75,10 @@ fn registration_types(body: &Bytes) -> Result<Vec<Value>> {
 /// Pins: Check that one can query context source registrations with providing page and limit parameters, pagination
 /// logic shall be in place as mandated by clause 5.5.9.
 /// Clause: 5.10.2
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest with the expected prev and next links as a multiset; the port requires at most one Link field line, which
-/// a broker sending its link-values on several Link lines (RFC 9110 clause 5.3, RFC 8288 clause 3) fails
-/// Changed: the Link field may not contain a backslash or `'''` nor end with `'`, as the keyword's Python literal
-/// reads it
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_11_01_query_first_registration() -> Result<()> {
@@ -107,18 +101,10 @@ async fn e037_11_01_query_first_registration() -> Result<()> {
 /// Pins: Check that one can query context source registrations with providing page and limit parameters, pagination
 /// logic shall be in place as mandated by clause 5.5.9.
 /// Clause: 5.10.2
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest with the expected prev and next links as a multiset; the port requires at most one Link field line, which
-/// a broker sending its link-values on several Link lines (RFC 9110 clause 5.3, RFC 8288 clause 3) fails
-/// Changed: the Link field may not contain a backslash or `'''` nor end with `'`, as the keyword's Python literal
-/// reads it
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_11_02_query_last_registration() -> Result<()> {
@@ -141,18 +127,10 @@ async fn e037_11_02_query_last_registration() -> Result<()> {
 /// Pins: Check that one can query context source registrations with providing page and limit parameters, pagination
 /// logic shall be in place as mandated by clause 5.5.9.
 /// Clause: 5.10.2
-/// Corrected: `fix(031_02, 037_11, 041_03)`: compare page links by their limit and offset only (6.3.10, 5.5.9.2)
-/// Corrected: `fix(037_11)`: retarget csr pagination to real pages and check only spec relations (5.5.9)
-/// Changed: Check Pagination Prev And Next Headers reads the Link field as RequestsLibrary hands it over, every field
-/// line joined with ", ", splits it on commas, drops the blank items and those holding rel="first", rel="last" or
-/// json-ld#context, reduces the query of each remaining Link Target to its limit and offset parameters, and compares
-/// the rest with the expected prev and next links as a multiset; the port requires at most one Link field line, which
-/// a broker sending its link-values on several Link lines (RFC 9110 clause 5.3, RFC 8288 clause 3) fails
-/// Changed: the Link field may not contain a backslash or `'''` nor end with `'`, as the keyword's Python literal
-/// reads it
-/// Changed: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it matches
-/// only the test's own entities.
-/// Changed: the teardown deletes are held to the 204 a deleted registration answers, not only to a status below 400.
+/// Expected: page links compare by their limit and offset only (clauses 6.3.10, 5.5.9.2)
+/// Expected: the pagination links target real pages, and only the relations clause 5.5.9 defines are checked
+/// Isolation: each idPattern is prefixed with the test's namespace (`urn:ngsi-ld:OffStreetParking:<ns>-`), so it
+/// matches only the test's own entities
 #[gtest]
 #[tokio::test]
 async fn e037_11_03_query_all_registrations() -> Result<()> {

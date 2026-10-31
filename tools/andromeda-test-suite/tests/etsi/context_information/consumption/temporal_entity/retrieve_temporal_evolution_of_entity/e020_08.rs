@@ -1,7 +1,7 @@
-//! ETSI `020_08`: the temporal evolution of an entity is refused with 404 `ResourceNotFound` when the attribute
-//! asked for is one the vocabulary names but the entity does not hold (clause 5.7.3).
+//! The temporal evolution of an entity is refused with 404 `ResourceNotFound` when the attribute asked for is one the
+//! vocabulary names but the entity does not hold (clause 5.7.3).
 
-use crate::{suite_keywords::create_temporal_entity, suite_payloads::vehicle_speed_fuel_level};
+use crate::{temporal_operations::create_temporal_entity, vehicle_evolution_payloads::vehicle_speed_fuel_level};
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

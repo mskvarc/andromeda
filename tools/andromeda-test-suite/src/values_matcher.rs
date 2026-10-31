@@ -84,7 +84,7 @@ impl<'e, M: for<'a> Matcher<&'a [TemporalValue<Value>]>> Matcher<&'e SimplifiedT
         let pairs = actual
             .attributes
             .iter()
-            .find_map(|(candidate, values)| (candidate.to_string() == self.name).then_some(values));
+            .find_map(|(candidate, values)| (candidate.as_str() == self.name).then_some(values));
         match pairs {
             Some(TemporalValues::Property(pairs)) => self.matcher.matches(pairs.as_slice()),
             Some(

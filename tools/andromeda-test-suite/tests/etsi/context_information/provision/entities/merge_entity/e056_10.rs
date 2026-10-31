@@ -1,9 +1,9 @@
-//! ETSI `056_10`: keys inside a `JsonProperty` `json` object are removed when a Merge Entity sets them to the NGSI-LD Null
-//! (clauses 5.6.17, 6.5.3.4 and 4.5.24).
+//! Keys inside a `JsonProperty` `json` object are removed when a Merge Entity sets them to the NGSI-LD Null (clauses
+//! 5.6.17, 6.5.3.4 and 4.5.24).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
-    suite_payloads::building_with_json_property,
+    building_payloads::building_with_json_property,
+    entity_operations::{create_entity, delete_entities, merge_entity, retrieve_entity_json},
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -21,7 +21,6 @@ const JSON_MERGE: &str = r#"{"anythingElse":"urn:ngsi-ld:null"}"#;
 
 /// Pins: Check that keys inside a `JsonProperty` json object are removed when set to NGSI-LD Null
 /// Clause: 5.6.17, 6.5.3.4, 4.5.24
-/// Changed: the body is compared as one exact document, where the Hurl file checks its members one by one
 #[gtest]
 #[tokio::test]
 async fn e056_10_01_remove_key_from_json_property_object() -> Result<()> {

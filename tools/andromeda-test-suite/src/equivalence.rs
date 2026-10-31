@@ -93,6 +93,7 @@ impl Equivalent for Value {
             Value::Array(left) => matches!(other, Value::Array(right) if left.equivalent(right)),
             Value::Object(left) => matches!(other, Value::Object(right) if left.equivalent(right)),
             Value::Typed(left) => matches!(other, Value::Typed(right) if left.equivalent(right)),
+            Value::JsonNull => matches!(other, Value::JsonNull),
         }
     }
 }

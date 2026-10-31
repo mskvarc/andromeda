@@ -1,7 +1,6 @@
-//! ETSI `029_11`: an update whose `expiresAt` refers to a `DateTime` in the past is refused with 400 `BadRequestData`
-//! (clause 5.8.2).
+//! An update whose `expiresAt` refers to a `DateTime` in the past is refused with 400 `BadRequestData` (clause 5.8.2).
 
-use crate::suite_keywords::{create_timed_building_subscription, ld_json_body_client};
+use crate::{entity_operations::ld_json_body_client, subscription_operations::create_timed_building_subscription};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

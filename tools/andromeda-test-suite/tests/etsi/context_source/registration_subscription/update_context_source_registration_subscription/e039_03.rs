@@ -1,7 +1,7 @@
-//! ETSI `039_03`: an update of a subscription identifier that no Context Source Registration Subscription holds is
-//! refused with 404 `ResourceNotFound` (clause 5.11.3).
+//! An update of a subscription identifier that no Context Source Registration Subscription holds is refused with 404
+//! `ResourceNotFound` (clause 5.11.3).
 
-use crate::suite_keywords::{registration_notification_fragment, update_registration_subscription_request};
+use crate::registration_subscription_operations::{registration_notification_fragment, update_registration_subscription_request};
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

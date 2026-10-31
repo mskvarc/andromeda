@@ -1,5 +1,5 @@
-//! ETSI `D016_01_inc`: a batch merge of two entities an inclusive registration matches is sent to the context source
-//! and merges the `speed` on the broker as well (clauses 4.3.3, 4.3.6.2 and 5.6.20).
+//! A batch merge of two entities an inclusive registration matches is sent to the context source and merges the `speed`
+//! on the broker as well (clauses 4.3.3, 4.3.6.2 and 5.6.20).
 
 use crate::{
     distributed_operations::{
@@ -11,7 +11,7 @@ use crate::{
         },
         vehicle_payloads::vehicle_parked2,
     },
-    suite_keywords::create_entity_with_context_string,
+    entity_operations::create_entity_with_context_string,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary, wire::json_body};
 use googletest::prelude::*;
@@ -21,18 +21,10 @@ use ngsi_ld::model::NgsiLdMediaType;
 /// Pins: Check that if one requests the Context Broker to merge a batch of entities that match an inclusive
 /// registration, they are merged on the Context Source too.
 /// Clause: 4.3.3, 4.3.6.2, 5.6.20
-/// Corrected: `fix(D016_01_inc)`: assert the merged speed on the returned entity (4.3.6.2)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the query is held to a success status, where the case reads the body of any status.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the returned entity carries the merged speed (clause 4.3.6.2)
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d016_01_inc_merge_batch_entities_on_both_context_broker_and_context_source() -> Result<()> {

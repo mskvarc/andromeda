@@ -1,9 +1,9 @@
-//! ETSI `018_12`: an entity whose Relationship targets a linked entity is retrieved with that entity flat, and with the
-//! system attributes of both entities (clauses 5.7.1 and 4.5.23).
+//! An entity whose Relationship targets a linked entity is retrieved with that entity flat, and with the system
+//! attributes of both entities (clauses 5.7.1 and 4.5.23).
 
 use crate::{
-    suite_keywords::create_entity,
-    suite_payloads::{building_located_at, city_paris},
+    entity_operations::create_entity,
+    linked_place_payloads::{building_located_at, city_paris},
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

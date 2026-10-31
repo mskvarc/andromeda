@@ -1,9 +1,9 @@
-//! ETSI `020_02`: the temporal evolution of an entity is retrieved with the vocabulary named in the `Link` header, so
-//! its terms come back compacted (clause 5.7.3).
+//! The temporal evolution of an entity is retrieved with the vocabulary named in the `Link` header, so its terms come
+//! back compacted (clause 5.7.3).
 //!
-//! The answer is compared with the case's expectation as the suite's `Compare Dictionaries Ignoring Keys` makes it.
+//! The answer is compared exactly with the test's expectation.
 
-use crate::suite_keywords::create_vehicle_speed_fuel_level;
+use crate::vehicle_fixtures::create_vehicle_speed_fuel_level;
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;

@@ -103,8 +103,7 @@ async fn c_2_2_0007_the_concise_vehicle_with_flattened_linked_entities() -> Resu
 /// Pins: Retrieve Entity with format=concise and lang=fr answers the concise Vehicle with its `LanguageProperty`
 /// reduced to the French string as C.2.2 prints it
 /// Clause: C.2.2, 4.5.18, 4.15, 5.7.1
-/// Corrected: concise-language-filter-object: passengers keeps object where the example prints the
-/// `ListRelationship` objectList (4.5.22)
+/// Expected: passengers keeps object where the example prints the `ListRelationship` objectList (clause 4.5.22)
 #[gtest]
 #[tokio::test]
 async fn c_2_2_0008_the_concise_vehicle_with_a_language_filter() -> Result<()> {

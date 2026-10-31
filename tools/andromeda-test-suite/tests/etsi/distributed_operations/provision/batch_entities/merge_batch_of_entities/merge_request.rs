@@ -1,7 +1,7 @@
 //! The Batch Entity Merge the merge cases send, of the Vehicles `-1` and `-2` as
 //! [`vehicle_speed_parked2_by_bob`] writes them, and the merged Vehicles a source answers a query with.
 
-use crate::{distributed_operations::vehicle_payloads::vehicle_speed_parked2_by_bob, suite_keywords::ld_json_body_client};
+use crate::{distributed_operations::vehicle_payloads::vehicle_speed_parked2_by_bob, entity_operations::ld_json_body_client};
 use andromeda_test_suite::{broker::BrokerClient, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

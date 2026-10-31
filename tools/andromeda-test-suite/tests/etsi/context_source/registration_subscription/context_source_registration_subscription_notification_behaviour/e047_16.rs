@@ -1,17 +1,18 @@
-//! ETSI `047_16`: an update of the `entities` of a Context Source Registration Subscription notifies every
-//! registration that matches it now (clause 5.11.7).
+//! An update of the `entities` of a Context Source Registration Subscription notifies every registration that matches
+//! it now (clause 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::registered,
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client},
-    suite_payloads::building_registration_subscription,
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_subscription_operations::create_registration_subscription,
+    subscription_payloads::building_registration_subscription,
 };
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
     ngsild_date::is_ngsild_date,
     notification_sink::NotificationSink,
-    robot_literal,
     teardown::AnyAnswer,
     vocabulary::Vocabulary,
 };
@@ -26,10 +27,6 @@ use serde_json::{Value, json};
 /// Pins: Check if one updates a context source registration subscription, a `CsourceNotification` will be sent with
 /// all currently matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_16_01_match_first_context_source_registration() -> Result<()> {
@@ -43,10 +40,6 @@ async fn e047_16_01_match_first_context_source_registration() -> Result<()> {
 /// Pins: Check if one updates a context source registration subscription, a `CsourceNotification` will be sent with
 /// all currently matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_16_02_match_second_context_source_registration() -> Result<()> {
@@ -60,10 +53,6 @@ async fn e047_16_02_match_second_context_source_registration() -> Result<()> {
 /// Pins: Check if one updates a context source registration subscription, a `CsourceNotification` will be sent with
 /// all currently matching context source registrations
 /// Clause: 5.11.7
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
 #[gtest]
 #[tokio::test]
 async fn e047_16_03_match_both_context_source_registrations() -> Result<()> {
@@ -117,7 +106,7 @@ async fn matched(types: &[&str], check: impl FnOnce(&Value, [&RegistrationId; 2]
         .any_answer();
 
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/type"), some(eq(&json!("ContextSourceNotification"))));
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/notifiedAt").and_then(Value::as_str).map(is_ngsild_date), some(eq(true)));

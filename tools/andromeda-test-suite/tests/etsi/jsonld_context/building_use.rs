@@ -2,7 +2,7 @@
 //! case's namespace, and a Building created in the hosted context makes the broker download and cache them (clauses
 //! 5.13.2 and 5.13.3).
 
-use crate::suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes};
+use crate::building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes};
 use andromeda_test_suite::{broker::BrokerClient, namespace::Namespace, remote_context::RemoteContexts, teardown::AnyAnswer, wire};
 use googletest::prelude::*;
 use iri_rs::{IriBuf, IriRefBuf};

@@ -1,9 +1,11 @@
-//! ETSI `055_03`: an attribute is not replaced when its entity id, attribute name or entity is invalid or not found
-//! (clauses 5.6.19 and 6.7.3.3).
+//! An attribute is not replaced when its entity id, attribute name or entity is invalid or not found (clauses 5.6.19
+//! and 6.7.3.3).
 
 use crate::{
-    suite_keywords::{answered_with, create_vehicle_parked_speed_sources, delete_entities},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, VEHICLE_PARKED_SPEED_SOURCE_TERMS, is_parked_downtown2},
+    entity_operations::delete_entities,
+    unchecked_requests::answered_with,
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, VEHICLE_PARKED_SPEED_SOURCE_TERMS, is_parked_downtown2},
+    vehicle_fixtures::create_vehicle_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, problem::answered, wire::api_uri};
 use googletest::prelude::*;

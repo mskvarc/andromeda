@@ -1,6 +1,6 @@
 //! The Batch Entity Update the update cases send, and the fragments it carries for the Vehicles `-1` and `-2`.
 
-use crate::suite_keywords::ld_json_body_client;
+use crate::entity_operations::ld_json_body_client;
 use andromeda_test_suite::{broker::BrokerClient, namespace::Namespace, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;

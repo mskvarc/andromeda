@@ -1,35 +1,23 @@
-//! ETSI `004_03`: a batch upsert of entities that all exist replaces each of them, with the scope or the types the batch
-//! carries (clauses 4.16, 4.18 and 5.6.8).
+//! A batch upsert of entities that all exist replaces each of them, with the scope or the types the batch carries
+//! (clauses 4.16, 4.18 and 5.6.8).
 
 use crate::{
-    suite_keywords::{
-        bare_building_json,
-        bare_located_building_json,
-        create_entity_with_context_string,
-        delete_entities,
-        expect_batch_done,
-        ld_json_body_client,
-        query_entities_json,
-        simple_building_json,
-        typed_building_json,
-        weather_building_json,
-    },
-    suite_payloads::{
+    batch_operations::expect_batch_done,
+    building_documents::{bare_building_json, bare_located_building_json, simple_building_json, typed_building_json, weather_building_json},
+    building_payloads::{
         BUILDING_AIR_QUALITY_WEATHER_TERMS,
         BUILDING_SIMPLE_TERMS,
         bare_building,
-        building_located_in_paris,
         building_of_types,
         building_simple_attributes,
         building_with_weather_sensor,
     },
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
-use ngsi_ld::{
-    http::operation::UpsertMode,
-    model::{Entity, Input, NgsiLdMediaType},
-};
+use ngsi_ld::model::{Entity, Input, NgsiLdMediaType};
 use serde_json::json;
 
 /// The Building `urn:ngsi-ld:Building:<ns>-<n>` scoped to `/Madrid/Gardens/ParqueNorte`.
@@ -56,7 +44,6 @@ async fn e004_03_01_entity_with_simple_properties() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;
@@ -90,7 +77,6 @@ async fn e004_03_02_entity_with_simple_relationships() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;
@@ -124,7 +110,6 @@ async fn e004_03_03_entity_with_relationships_properties() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;
@@ -158,7 +143,6 @@ async fn e004_03_04_entity_with_scope() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;
@@ -194,7 +178,6 @@ async fn e004_03_05_entity_with_types() -> Result<()> {
         .with_responses()
         .entities()
         .batch_upsert(&entities)
-        .mode(UpsertMode::Replace)
         .send()
         .await;
     expect_batch_done(answer)?;

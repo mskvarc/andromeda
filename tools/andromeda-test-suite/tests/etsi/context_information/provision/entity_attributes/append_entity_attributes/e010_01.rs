@@ -1,9 +1,10 @@
-//! ETSI `010_01`: attributes are appended to an entity, a new attribute beside those it holds, and a `speed` instance
-//! with a `datasetId` the entity does not hold yet (clause 5.6.3).
+//! Attributes are appended to an entity, a new attribute beside those it holds, and a `speed` instance with a
+//! `datasetId` the entity does not hold yet (clause 5.6.3).
 
 use crate::{
-    suite_keywords::{append_attributes, create_vehicle_brand_parked_speed_sources, delete_entities, ld_json_body_client, retrieve_entity_json},
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    entity_operations::{append_attributes, delete_entities, ld_json_body_client, retrieve_entity_json},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_ADDED_TERMS, speed_and_added_attribute},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;

@@ -1,9 +1,10 @@
-//! ETSI `011_09`: an update deletes the default instance of an attribute, the one with no `datasetId`, by writing the
-//! NGSI-LD Null in the shape of the attribute's kind, and keeps the other instances (clauses 5.6.2 and 6.6.3.2).
+//! An update deletes the default instance of an attribute, the one with no `datasetId`, by writing the NGSI-LD Null in
+//! the shape of the attribute's kind, and keeps the other instances (clauses 5.6.2 and 6.6.3.2).
 
 use crate::{
-    suite_keywords::{create_building_instances, delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
-    suite_payloads::district_paris_08,
+    building_fixtures::create_building_instances,
+    entity_operations::{delete_entities, ld_json_body_client, retrieve_entity_json, update_attributes},
+    linked_place_payloads::district_paris_08,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;

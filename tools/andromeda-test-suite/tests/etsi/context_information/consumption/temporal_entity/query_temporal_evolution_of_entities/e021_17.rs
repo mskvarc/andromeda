@@ -1,10 +1,9 @@
-//! ETSI `021_17`: the temporal evolutions of the Vehicles are queried in aggregated temporal representation, one aggregate
-//! method or several, per hour or per day, for every attribute or for one of them (clauses 5.7.3 and 4.5.19).
+//! The temporal evolutions of the Vehicles are queried in aggregated temporal representation, one aggregate method or
+//! several, per hour or per day, for every attribute or for one of them (clauses 5.7.3 and 4.5.19).
 //!
-//! The aggregated arrays are compared with the case's expectations as the suite's `Compare Dictionaries Ignoring Keys`
-//! makes them.
+//! The aggregated arrays are compared exactly with the test's expectations.
 
-use crate::suite_keywords::create_vehicle_speed_fuel_level;
+use crate::vehicle_fixtures::create_vehicle_speed_fuel_level;
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer, wire::json_body};
 use googletest::prelude::*;
 use http::StatusCode;
@@ -13,9 +12,6 @@ use serde_json::json;
 
 /// Pins: Check that one can retrieve the temporal evolution of entities with the aggregated temporal representation
 /// Clause: 5.7.3, 4.5.19
-/// Defect: D-81: Andromeda answers a triple for every period of the time range, those holding no instance with a null
-/// value, and an open after range runs from timeAt, so the method arrays hold thousands of triples where the case
-/// expects only the periods holding instances
 #[gtest]
 #[tokio::test]
 async fn e021_17_01_one_aggregate_method_aggregated_by_one_hour_duration() -> Result<()> {
@@ -60,9 +56,6 @@ async fn e021_17_01_one_aggregate_method_aggregated_by_one_hour_duration() -> Re
 
 /// Pins: Check that one can retrieve the temporal evolution of entities with the aggregated temporal representation
 /// Clause: 5.7.3, 4.5.19
-/// Defect: D-81: Andromeda answers a triple for every period of the time range, those holding no instance with a null
-/// value, and an open after range runs from timeAt, so the method arrays hold thousands of triples where the case
-/// expects only the periods holding instances
 #[gtest]
 #[tokio::test]
 async fn e021_17_02_one_aggregate_method_aggregated_by_one_hour_duration_asking_for_one_attribute() -> Result<()> {
@@ -107,9 +100,6 @@ async fn e021_17_02_one_aggregate_method_aggregated_by_one_hour_duration_asking_
 
 /// Pins: Check that one can retrieve the temporal evolution of entities with the aggregated temporal representation
 /// Clause: 5.7.3, 4.5.19
-/// Defect: D-81: Andromeda answers a triple for every period of the time range, those holding no instance with a null
-/// value, and an open after range runs from timeAt, so the method arrays hold thousands of triples where the case
-/// expects only the periods holding instances
 #[gtest]
 #[tokio::test]
 async fn e021_17_03_multiple_aggregate_methods_aggregated_by_one_hour_duration() -> Result<()> {
@@ -166,9 +156,6 @@ async fn e021_17_03_multiple_aggregate_methods_aggregated_by_one_hour_duration()
 
 /// Pins: Check that one can retrieve the temporal evolution of entities with the aggregated temporal representation
 /// Clause: 5.7.3, 4.5.19
-/// Defect: D-81: Andromeda answers a triple for every period of the time range, those holding no instance with a null
-/// value, and an open after range runs from timeAt, so the method arrays hold thousands of triples where the case
-/// expects only the periods holding instances
 #[gtest]
 #[tokio::test]
 async fn e021_17_04_multiple_aggregate_methods_aggregated_by_one_day_duration() -> Result<()> {

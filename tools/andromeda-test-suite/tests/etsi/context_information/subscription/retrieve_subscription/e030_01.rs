@@ -1,6 +1,6 @@
-//! ETSI `030_01`: a retrieve whose identifier is not a valid URI is refused with 400 `BadRequestData` (clause 5.8.3).
+//! A retrieve whose identifier is not a valid URI is refused with 400 `BadRequestData` (clause 5.8.3).
 
-use crate::suite_keywords::refused_get;
+use crate::unchecked_requests::refused_get;
 use andromeda_test_suite::broker;
 use googletest::prelude::*;
 

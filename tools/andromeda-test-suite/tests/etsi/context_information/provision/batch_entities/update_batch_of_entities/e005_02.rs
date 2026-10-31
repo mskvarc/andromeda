@@ -1,18 +1,13 @@
-//! ETSI `005_02`: a batch of fragments with `options=noOverwrite` keeps the existing attributes of the entities, adds new
-//! ones, and reports the update of an existing attribute in 207 (clause 5.6.9).
+//! A batch of fragments with `options=noOverwrite` keeps the existing attributes of the entities, adds new ones, and
+//! reports the update of an existing attribute in 207 (clause 5.6.9).
 
 use crate::{
-    suite_keywords::{
-        create_entity_with_context_string,
-        delete_entities,
-        expect_batch_done,
-        ld_json_body_client,
-        located_building_json,
-        partial_batch_outcome,
-        query_entities_json,
-        simple_building_json,
-    },
-    suite_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, building_located_in_paris, building_simple_attributes, point},
+    batch_operations::{expect_batch_done, partial_batch_outcome},
+    building_documents::{located_building_json, simple_building_json},
+    building_payloads::{BUILDING_REPLACE_TERMS, BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, query_entities_json},
+    geometry_payloads::point,
+    linked_place_payloads::building_located_in_paris,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

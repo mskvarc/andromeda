@@ -1,9 +1,10 @@
-//! ETSI `038_09`: a Context Source Registration Subscription whose `expiresAt` is past is refused with 400
-//! `BadRequestData` (clause 5.11.2).
+//! A Context Source Registration Subscription whose `expiresAt` is past is refused with 400 `BadRequestData` (clause
+//! 5.11.2).
 
 use crate::{
-    suite_keywords::{ld_json_body_client, registration_subscription_request},
-    suite_payloads::{building_registration_subscription, key_values_document},
+    entity_operations::ld_json_body_client,
+    registration_subscription_operations::registration_subscription_request,
+    subscription_payloads::{building_registration_subscription, key_values_document},
 };
 use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;

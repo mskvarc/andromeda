@@ -1,8 +1,10 @@
-//! ETSI `032_03`: a subscription is deleted with no content in the answer, and is not retrieved afterwards (clause 5.8.5).
+//! A subscription is deleted with no content in the answer, and is not retrieved afterwards (clause 5.8.5).
 
 use crate::{
-    suite_keywords::{create_subscription_document, expect_batch_done, ld_json_body_client},
-    suite_payloads::key_values_document,
+    batch_operations::expect_batch_done,
+    entity_operations::ld_json_body_client,
+    subscription_operations::create_subscription_document,
+    subscription_payloads::key_values_document,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, problem::answered, vocabulary::Vocabulary};
 use googletest::prelude::*;

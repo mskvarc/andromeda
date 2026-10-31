@@ -1,13 +1,11 @@
-//! ETSI `018_01`: an entity is retrieved by its identifier, whole or reduced to the attributes asked for (clause
-//! 5.7.1).
+//! An entity is retrieved by its identifier, whole or reduced to the attributes asked for (clause 5.7.1).
 //!
-//! The answer is compared with the case's expectation file as the suite's `Compare Dictionaries Ignoring Keys` does:
-//! the `instanceId` the case's exclude pattern hides is allowed in every attribute, and the `@context` may be any
-//! versioned core `@context`, alone or as a one-element list.
+//! The answer is compared exactly with the test's expectation file: the `instanceId` the expectation hides is allowed
+//! in every attribute, and the `@context` may be any versioned core `@context`, alone or as a one-element list.
 
 use crate::{
-    suite_keywords::create_entity,
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
+    entity_operations::create_entity,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
@@ -23,7 +21,7 @@ use http::StatusCode;
 use ngsi_ld::model::{AttributeName, Entity, Input, NgsiLdMediaType};
 use serde_json::{Value, json};
 
-/// Creates the case's building as the suite setup does, and answers it.
+/// Creates the test's building, and answers it.
 async fn created_building(broker: &BrokerClient, namespace: &Namespace) -> Result<Entity<Input>> {
     let vocabulary = Vocabulary::register(broker, namespace, &BUILDING_SIMPLE_TERMS).await?;
     let building = building_simple_attributes(namespace, 1)?;

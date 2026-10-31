@@ -1,5 +1,5 @@
-//! ETSI `D014_01_exc`: a batch update of two broker entities, whose `speed` an exclusive registration holds, is sent
-//! to the context source (clauses 4.3.3, 4.3.6.3 and 5.6.9).
+//! A batch update of two broker entities, whose `speed` an exclusive registration holds, is sent to the context source
+//! (clauses 4.3.3, 4.3.6.3 and 5.6.9).
 
 use crate::{
     distributed_operations::{
@@ -10,7 +10,7 @@ use crate::{
             update_batch_of_entities::update_request::update_vehicles,
         },
     },
-    suite_payloads::vehicle_parked,
+    vehicle_entity_payloads::vehicle_parked,
 };
 use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -20,15 +20,9 @@ use ngsi_ld::http::operation::Overwrite;
 /// Pins: Check that if one request the Context Broker to update a batch of entities that match a redirect
 /// registration, they are updated on the Context Source
 /// Clause: 4.3.3, 4.3.6.3, 5.6.9
-/// Corrected: `fix(D014_15_exc)`: exclusive batch by id with no local covered attribute (4.3.6.3, 5.9.2.4)
-/// Corrected: `fix(D012_01_exc)`: exclusive batch registration names entities by id (4.3.6.3)
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown delete of the registration is held to the 204 a deleted registration answers, not only to a
-/// status below 400.
+/// Expected: the exclusive batch registration names the entity by id and no covered attribute is held locally (clauses
+/// 4.3.6.3, 5.9.2.4)
+/// Expected: an exclusive registration names its entities by id (clause 4.3.6.3)
 #[gtest]
 #[tokio::test]
 async fn d014_01_exc_update_batch_entities_without_no_overwrite_option() -> Result<()> {

@@ -1,8 +1,9 @@
-//! ETSI `054_04`: a replace whose attribute value is the NGSI-LD Null is refused with `BadRequestData` (clause 5.6.18).
+//! A replace whose attribute value is the NGSI-LD Null is refused with `BadRequestData` (clause 5.6.18).
 
 use crate::{
-    suite_keywords::{create_entity, delete_entities, refused},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes},
+    building_payloads::{BUILDING_SIMPLE_TERMS, bare_building, building_simple_attributes},
+    entity_operations::{create_entity, delete_entities},
+    unchecked_requests::refused,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

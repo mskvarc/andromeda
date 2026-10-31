@@ -1,5 +1,5 @@
-//! ETSI `050_01`: a `@context` added as a term object or as a list of remote URLs is stored as `Hosted`, answered with
-//! 201, an empty body and a `Location` (clause 5.13.2).
+//! A `@context` added as a term object or as a list of remote URLs is stored as `Hosted`, answered with 201, an empty
+//! body and a `Location` (clause 5.13.2).
 
 use crate::jsonld_context::stored_contexts::{add_hosted_context, attribute_terms, delete_own_contexts};
 use andromeda_test_suite::{broker, namespace::Namespace, remote_context::RemoteContexts};
@@ -9,14 +9,9 @@ use ngsi_ld::model::{Context, ContextEntry};
 
 /// Pins: Check that one can add a @context
 /// Clause: 5.13.2
-/// Changed: Delete Initial @context lists every @context of the tenant and deletes all but the core one, which in the
-/// shared tenant would delete every other file's @contexts; the teardown still lists them and deletes only this file's
-/// own (those it added and those its requests had downloaded), all the keyword deletes in a broker that holds nothing
-/// else
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the teardown lists the tenant's @contexts and deletes only this file's own (those it added and those its
+/// requests downloaded); in the shared tenant the other @contexts belong to other files
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e050_01_01_add_a_valid_hosted_context_from_key_value() -> Result<()> {
@@ -28,17 +23,11 @@ async fn e050_01_01_add_a_valid_hosted_context_from_key_value() -> Result<()> {
 
 /// Pins: Check that one can add a @context
 /// Clause: 5.13.2
-/// Changed: the remote @contexts the case names are served per file by WireMock stubs,
-/// `{{mock_internal}}/contexts/{{ns}}/` followed by their host and path, as application/ld+json documents mapping the
-/// terms the case uses to per-file IRIs
-/// Changed: Delete Initial @context lists every @context of the tenant and deletes all but the core one, which in the
-/// shared tenant would delete every other file's @contexts; the teardown still lists them and deletes only this file's
-/// own (those it added and those its requests had downloaded), all the keyword deletes in a broker that holds nothing
-/// else
-/// Changed: Check Response Reason set to compares the HTTP/1.1 reason phrase, which Hurl cannot read; RFC 9112
-/// clause 4 has a client ignore it and HTTP/2 carries none (RFC 9113 clause 8.3.2), so the port checks the status code
-/// the phrase names
-/// Vocabulary: none (the case is about @context storage itself and references no suite @context)
+/// Isolation: the remote @contexts are served per file under the mock origin, at `contexts/<ns>/` followed by their
+/// host and path, as application/ld+json documents mapping the terms the test uses to per-file IRIs
+/// Isolation: the teardown lists the tenant's @contexts and deletes only this file's own (those it added and those its
+/// requests downloaded); in the shared tenant the other @contexts belong to other files
+/// Vocabulary: none (the test is about @context storage itself and needs no vocabulary)
 #[gtest]
 #[tokio::test]
 async fn e050_01_02_add_a_valid_cached_context_from_uri() -> Result<()> {

@@ -1,9 +1,10 @@
-//! ETSI `010_09`: a `GeoProperty` `operationSpace` holding a Polygon is appended to a Building that holds no attribute
-//! (clauses 5.6.3 and 4.7).
+//! A `GeoProperty` `operationSpace` holding a Polygon is appended to a Building that holds no attribute (clauses 5.6.3
+//! and 4.7).
 
 use crate::{
-    suite_keywords::{append_attributes, create_entity, delete_entities, retrieve_entity_json},
-    suite_payloads::{bare_building, polygon},
+    building_payloads::bare_building,
+    entity_operations::{append_attributes, create_entity, delete_entities, retrieve_entity_json},
+    geometry_payloads::polygon,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, vocabulary::Vocabulary};
 use googletest::prelude::*;

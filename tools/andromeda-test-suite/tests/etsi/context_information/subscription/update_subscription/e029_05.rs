@@ -1,9 +1,10 @@
-//! ETSI `029_05`: an update that names an entity type by its term expands the term to its IRI through the `@context`
-//! the update carries, and the stored subscription keeps the expansion (clause 5.8.2).
+//! An update that names an entity type by its term expands the term to its IRI through the `@context` the update
+//! carries, and the stored subscription keeps the expansion (clause 5.8.2).
 
 use crate::{
-    suite_keywords::{create_timed_building_subscription, ld_json_body_client, subscription_updated, update_subscription_request},
-    suite_payloads::key_values_notification,
+    entity_operations::ld_json_body_client,
+    subscription_operations::{create_timed_building_subscription, subscription_updated, update_subscription_request},
+    subscription_payloads::key_values_notification,
 };
 use andromeda_test_suite::{
     broker::{self, BrokerClient},

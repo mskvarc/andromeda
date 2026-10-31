@@ -1,4 +1,4 @@
-//! The place of a value in a compared document, written as a JSON path the way the suite's DeepDiff reports name it.
+//! The place of a value in a compared document, written as a JSON path.
 
 use std::fmt;
 
@@ -48,7 +48,7 @@ impl DocumentPath {
     }
 }
 
-// Hand-written: the steps are written in the JSON path syntax of the suite's reports.
+// Hand-written: the steps are written in JSON path syntax.
 impl fmt::Display for DocumentPath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("$")?;

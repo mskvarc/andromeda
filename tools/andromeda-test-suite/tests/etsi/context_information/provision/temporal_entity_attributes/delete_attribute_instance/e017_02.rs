@@ -1,7 +1,11 @@
-//! ETSI `017_02`: an attribute instance is not deleted by a request whose entity id, instance id or attribute name
-//! is invalid or missing (clause 5.6.15).
+//! An attribute instance is not deleted by a request whose entity id, instance id or attribute name is invalid or
+//! missing (clause 5.6.15).
 
-use crate::suite_keywords::{answered_with, create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_sys_attrs_json};
+use crate::{
+    temporal_operations::{first_speed_instance_id, retrieve_temporal_sys_attrs_json},
+    unchecked_requests::answered_with,
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
+};
 use andromeda_test_suite::{broker, broker::BrokerClient, namespace::Namespace, teardown::AnyAnswer, wire::request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};

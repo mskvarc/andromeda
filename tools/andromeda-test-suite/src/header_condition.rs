@@ -14,8 +14,8 @@ pub enum HeaderCondition {
     Is(HeaderName, String),
     /// One line of the field holds the text.
     Contains(HeaderName, String),
-    /// The field is one line, which the pattern matches whole, as a stub mapping's `hasExactly` with one `matches`
-    /// states; built by [`HeaderCondition::exactly`], which anchors the pattern.
+    /// The field is one line, which the pattern matches whole; built by [`HeaderCondition::exactly`], which anchors
+    /// the pattern.
     Exactly(HeaderName, Regex),
     /// The request carries no such field.
     Absent(HeaderName),

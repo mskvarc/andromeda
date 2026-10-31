@@ -1,7 +1,7 @@
-//! ETSI `018_09`: an entity with a geospatial Property named `operationSpace`, a Polygon, is retrieved in the
-//! simplified and the normalized representation (clauses 5.7.1 and 4.7).
+//! An entity with a geospatial Property named `operationSpace`, a Polygon, is retrieved in the simplified and the
+//! normalized representation (clauses 5.7.1 and 4.7).
 
-use crate::{suite_keywords::create_entity, suite_payloads::polygon};
+use crate::{entity_operations::create_entity, geometry_payloads::polygon};
 use andromeda_test_suite::{
     broker::{self},
     comparison::matches_document,
@@ -38,8 +38,7 @@ fn ring_coordinates() -> Value {
 
 /// Pins: Check that an entity with operationSpace geospatial Property can be retrieved
 /// Clause: 5.7.1, 4.7
-/// Changed: the Hurl check reads the ring's five positions as the set of its four corners, a repeated corner
-/// allowed; the comparison matches the ring as the case stored it, with the repeated corner counted
+/// Expected: the ring is compared as stored, its repeated closing corner counted
 #[gtest]
 #[tokio::test]
 async fn e018_09_01_simplified() -> Result<()> {
@@ -71,8 +70,7 @@ async fn e018_09_01_simplified() -> Result<()> {
 
 /// Pins: Check that an entity with operationSpace geospatial Property can be retrieved
 /// Clause: 5.7.1, 4.7
-/// Changed: the Hurl check reads the ring's five positions as the set of its four corners, a repeated corner
-/// allowed; the comparison matches the ring as the case stored it, with the repeated corner counted
+/// Expected: the ring is compared as stored, its repeated closing corner counted
 #[gtest]
 #[tokio::test]
 async fn e018_09_02_normalized() -> Result<()> {

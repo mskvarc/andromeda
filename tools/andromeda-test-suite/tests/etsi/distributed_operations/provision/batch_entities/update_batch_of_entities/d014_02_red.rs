@@ -1,5 +1,5 @@
-//! ETSI `D014_02_red`: a batch update with `noOverwrite` of two entities two redirect registrations match is sent to
-//! both context sources once, with the option (clauses 4.3.3, 4.3.6.3 and 5.6.9).
+//! A batch update with `noOverwrite` of two entities two redirect registrations match is sent to both context sources
+//! once, with the option (clauses 4.3.3, 4.3.6.3 and 5.6.9).
 
 use crate::distributed_operations::{
     fork_rule::ForkRule,
@@ -15,20 +15,9 @@ use ngsi_ld::{http::operation::Overwrite, registration::RegistrationMode};
 /// Pins: Check that if one request the Context Broker to update a batch of entities that match a redirect
 /// registration, they are updated on the Context Source
 /// Clause: 4.3.3, 4.3.6.3, 5.6.9
-/// Changed: the context source is the test's own server in place of the suite's HTTP control server: the registration
-/// names its address, each Set Stub Reply is a stub matched in the order it was set by the server's rule (case,
-/// trailing slashes, the query tokens, the attrs and urn rules), and a request no stub matches is answered 502 after
-/// 5 s where the server closes the connection.
-/// Changed: the registration's idPattern urn:ngsi-ld:Vehicle:* becomes `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that
-/// names no entity type matches a registration on the id alone (clause 5.12), so the pattern as written would draw
-/// every other test's requests on a Vehicle id into this test's source.
-/// Changed: Wait For Request hands over the most recent request the server holds; the port waits until the source
-/// holds a request earlier waits did not take and reads the last one, which is the one the case's action forwarded.
-/// Changed: Wait for redirected request replies 200 to a request the stub has already answered, so the server keeps
-/// that reply for the next request no stub matches; the port queues it on the source as one reply of 200 and no body.
-/// Changed: Get Stub Count counts the requests of the source the stub's rule matches.
-/// Changed: the teardown deletes of the registrations are held to the 204 a deleted registration answers, not only to
-/// a status below 400.
+/// Isolation: the registration's idPattern is `urn:ngsi-ld:Vehicle:<ns>-.*`: a request that names no entity type
+/// matches a registration on the id alone (clause 5.12), so a pattern without the namespace would draw every other
+/// test's requests on a Vehicle id into this test's source
 #[gtest]
 #[tokio::test]
 async fn d014_02_red_update_batch_entities_with_no_overwrite_option() -> Result<()> {

@@ -1,6 +1,9 @@
-//! ETSI `017_01`: an attribute instance is deleted from a temporal representation of an entity (clause 5.6.15).
+//! An attribute instance is deleted from a temporal representation of an entity (clause 5.6.15).
 
-use crate::suite_keywords::{create_vehicle_speed_fuel_level_with_dataset, first_speed_instance_id, retrieve_temporal_json};
+use crate::{
+    temporal_operations::{first_speed_instance_id, retrieve_temporal_json},
+    vehicle_fixtures::create_vehicle_speed_fuel_level_with_dataset,
+};
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace, problem::answered, teardown::AnyAnswer};
 use googletest::prelude::*;
 use http::StatusCode;

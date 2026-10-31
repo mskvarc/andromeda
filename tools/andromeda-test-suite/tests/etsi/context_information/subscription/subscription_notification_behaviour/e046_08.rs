@@ -1,12 +1,13 @@
-//! ETSI `046_08`: a subscription without `notification.attributes` notifies every attribute of the entity, in the normalized
-//! and in the keyValues format (clauses 5.8.6 and 5.3.1).
+//! A subscription without `notification.attributes` notifies every attribute of the entity, in the normalized and in
+//! the keyValues format (clauses 5.8.6 and 5.3.1).
 
 use crate::{
+    building_payloads::building_simple_attributes,
     context_information::subscription::subscription_notification_behaviour::notification_case::{air_quality_updated, created, subscribed, teardown},
-    suite_keywords::{create_subscription_document, simplified_notification},
-    suite_payloads::{building_simple_attributes, key_values_document},
+    subscription_operations::{create_subscription_document, simplified_notification},
+    subscription_payloads::key_values_document,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::ContextDelivery,
@@ -22,12 +23,6 @@ use tokio::time::sleep;
 /// notification.attributes member of a Subscription means that all Entity Attributes shall be included. All attributes are
 /// included
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: The non-empty `$.data` is required to be an array, which the normalized notification always carries; the Hurl
-/// line also accepts an object or a string
 #[gtest]
 #[tokio::test]
 async fn e046_08_01_check_that_a_notification_is_sent_with_all_attributes() -> Result<()> {
@@ -55,7 +50,7 @@ async fn e046_08_01_check_that_a_notification_is_sent_with_all_attributes() -> R
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(gt(0)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));
@@ -71,12 +66,6 @@ async fn e046_08_01_check_that_a_notification_is_sent_with_all_attributes() -> R
 /// Pins: The structure of the notification message shall be as mandated by clause 5.3.1. The absence of the
 /// notification.attributes member of a Subscription means that all Entity Attributes shall be included
 /// Clause: 5.8.6
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a backslash
-/// in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not contains
-/// "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only where an
-/// escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: The non-empty `$.data` is required to be an array, which the normalized notification always carries; the Hurl
-/// line also accepts an object or a string
 #[gtest]
 #[tokio::test]
 async fn e046_08_02_check_that_a_notification_is_sent_with_all_attributes_in_simplified_format() -> Result<()> {
@@ -105,7 +94,7 @@ async fn e046_08_02_check_that_a_notification_is_sent_with_all_attributes_in_sim
 
     air_quality_updated(&as_list, &building).await?;
     let notification = sink.wait_for(1, 1).await?;
-    let body = robot_literal::read(&notification.body)?;
+    let body = notification.json()?;
     expect_that!(body.pointer("/subscriptionId"), some(eq(&json!(id.to_string()))));
     expect_that!(body.pointer("/data").and_then(Value::as_array).map(Vec::len), some(gt(0)));
     expect_that!(body.pointer("/data/0/id"), some(eq(&json!(building.id.to_string()))));

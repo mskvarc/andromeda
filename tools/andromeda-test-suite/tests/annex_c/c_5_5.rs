@@ -66,8 +66,7 @@ async fn c_5_5_0001_the_speed_evolution_of_the_vehicle_not_a_mercedes() -> Resul
 /// Pins: Query Temporal Evolution of Entities with attrs=speed,brandName answers only the speed instances as C.5.5
 /// EXAMPLE 2 prints, the one brandName instance lying before the window
 /// Clause: C.5.5, 4.5.7, 4.11, 5.7.4
-/// Corrected: brand-name-evolution: brandName is observed once, before the window, so that it has no evolution
-/// inside it (5.6.11)
+/// Expected: brandName is observed once, before the window, so that it has no evolution inside it (clause 5.6.11)
 #[gtest]
 #[tokio::test]
 async fn c_5_5_0002_the_brand_name_outside_the_window_adds_nothing() -> Result<()> {

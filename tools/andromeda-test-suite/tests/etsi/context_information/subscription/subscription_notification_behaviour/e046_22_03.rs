@@ -1,9 +1,11 @@
-//! ETSI `046_22_03`: deleting an attribute the subscription does not watch sends no notification (clause 5.8.6).
+//! Deleting an attribute the subscription does not watch sends no notification (clause 5.8.6).
 
 use crate::{
+    building_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes},
     context_information::subscription::subscription_notification_behaviour::notification_case::teardown,
-    suite_keywords::{create_entity, create_subscription_document, ld_json_body_client, simplified_notification},
-    suite_payloads::{BUILDING_SIMPLE_TERMS, building_simple_attributes, key_values_document},
+    entity_operations::{create_entity, ld_json_body_client},
+    subscription_operations::{create_subscription_document, simplified_notification},
+    subscription_payloads::key_values_document,
 };
 use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
@@ -15,7 +17,7 @@ use std::time::Duration;
 
 /// Pins: Delete a not watched attribute and check no notification is received
 /// Clause: 5.8.6
-/// Absence: Wait for no notification 10 s
+/// Absence: no notification within 10 s
 #[gtest]
 #[tokio::test]
 async fn e046_22_03_check_that_a_notification_is_not_sent_with_updated_entity() -> Result<()> {

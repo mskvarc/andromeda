@@ -1,16 +1,10 @@
-//! ETSI `012_01`: a partial attribute update changes the members it names of an attribute, the instance of a dataset
-//! it names, or the targets of a Relationship, and keeps the rest (clause 5.6.4).
+//! A partial attribute update changes the members it names of an attribute, the instance of a dataset it names, or the
+//! targets of a Relationship, and keeps the rest (clause 5.6.4).
 
 use crate::{
-    suite_keywords::{
-        create_vehicle_brand_parked_speed_sources,
-        delete_entities,
-        ld_json_body_client,
-        partial_update,
-        partial_update_document,
-        retrieve_entity_json,
-    },
-    suite_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, provided_by_john_doe, speedometer_speed_56_patch},
+    entity_operations::{delete_entities, ld_json_body_client, partial_update, partial_update_document, retrieve_entity_json},
+    vehicle_entity_payloads::{VEHICLE_BRAND_PARKED_SPEED_SOURCE_TERMS, provided_by_john_doe, speedometer_speed_56_patch},
+    vehicle_fixtures::create_vehicle_brand_parked_speed_sources,
 };
 use andromeda_test_suite::{broker, comparison::matches_document, namespace::Namespace};
 use googletest::prelude::*;
@@ -80,7 +74,7 @@ async fn e012_01_02_check_that_one_can_partially_update_an_attribute_by_specifyi
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
     let client = ld_json_body_client(&broker, &vocabulary)?;
-    partial_update(&client, &id, &speed, Change::Set(speedometer_speed_56_patch(&namespace)?), Lossless::Concise).await?;
+    partial_update(&client, &id, &speed, Change::from(speedometer_speed_56_patch(&namespace)?), Lossless::Concise).await?;
     let read = broker.with_context(vocabulary.context())?.with_accept(NgsiLdMediaType::JsonLd);
     let body = retrieve_entity_json(&read, &id).await?;
     expect_that!(
@@ -136,7 +130,7 @@ async fn e012_01_03_check_that_one_can_partially_update_a_relationship_to_multip
         &client,
         &id,
         &is_parked,
-        Change::Set(Attribute::from(destinations).into_patch()),
+        Change::from(Attribute::from(destinations).into_patch()),
         Lossless::Concise,
     )
     .await?;

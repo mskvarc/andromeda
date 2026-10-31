@@ -17,8 +17,8 @@ use ngsi_ld::{
 /// Pins: Query Entities with type, a q excluding Mercedes and format=simplified answers the two other Vehicles, in
 /// any order, as C.5.3 prints them
 /// Clause: C.5.3, 4.9, 4.5.4, 5.7.2
-/// Corrected: selected-attribute: the Vehicles hold only brandName, the one Attribute the printed answer shows for a
-/// request without attrs (5.7.2)
+/// Expected: the Vehicles hold only brandName, the one Attribute the printed answer shows for a request without attrs
+/// (clause 5.7.2)
 #[gtest]
 #[tokio::test]
 async fn c_5_3_0001_query_by_type_and_q_answers_the_printed_vehicles() -> Result<()> {

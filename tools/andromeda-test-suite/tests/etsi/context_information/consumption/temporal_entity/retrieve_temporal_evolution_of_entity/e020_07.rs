@@ -1,5 +1,4 @@
-//! ETSI `020_07`: the temporal evolution of an entity that does not exist is refused with 404 `ResourceNotFound`
-//! (clause 5.7.3).
+//! The temporal evolution of an entity that does not exist is refused with 404 `ResourceNotFound` (clause 5.7.3).
 
 use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
@@ -8,7 +7,7 @@ use ngsi_ld::{http::headers::Accept, model::ErrorType};
 
 /// Pins: Check that one cannot retrieve the temporal evolution of a non-existing entity
 /// Clause: 5.7.3
-/// Vocabulary: none (the ETSI case references no @context)
+/// Vocabulary: none (the test references no @context)
 #[gtest]
 #[tokio::test]
 async fn e020_07_01_retrieve_the_temporal_evolution_of_a_non_existing_entity() -> Result<()> {

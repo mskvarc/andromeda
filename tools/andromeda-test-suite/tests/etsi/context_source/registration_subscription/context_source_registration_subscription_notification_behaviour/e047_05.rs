@@ -1,5 +1,5 @@
-//! ETSI `047_05`: a csource notification delivered to the endpoint updates the `notification` member of the
-//! subscription (clause 5.11.7).
+//! A csource notification delivered to the endpoint updates the `notification` member of the subscription (clause
+//! 5.11.7).
 
 use crate::{
     context_source::registration_subscription::context_source_registration_subscription_notification_behaviour::registration_notification_case::{
@@ -7,10 +7,13 @@ use crate::{
         registered_any,
         teardown,
     },
-    suite_keywords::{create_registration_subscription, csource_endpoint, ld_json_body_client, once_delivery_recorded, registration_subscription_json},
-    suite_payloads::{building_registration, building_registration_subscription},
+    entity_operations::ld_json_body_client,
+    registration_operations::csource_endpoint,
+    registration_payloads::building_registration,
+    registration_subscription_operations::{create_registration_subscription, once_delivery_recorded, registration_subscription_json},
+    subscription_payloads::building_registration_subscription,
 };
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, robot_literal, vocabulary::Vocabulary};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::NgsiLdMediaType,
@@ -22,14 +25,11 @@ use ngsi_ld::{
 /// "notification.lastNotification" members shall be updated with the current timestamp and the status of the context
 /// source registration subscription shall be updated to "ok"
 /// Clause: 5.11.7
-/// Corrected: `fix(047-notification)`: register a matching context source and consume the initial notification (5.12)
-/// Changed: Wait for notification parses the body as json.loads('''<body>'''), a Python '''...''' literal, so a
-/// backslash in the body is read as an escape and a ''' or a final ' ends the literal; the port refuses all three (not
-/// contains "\\", not contains "'''", not endsWith "'") and then requires the body to be JSON, which is stricter only
-/// where an escape leaves the keyword reading, and accepting, a body other than the one sent
-/// Changed: the Retrieve Context Source Registration Subscription after the notification is repeated every 250 ms for at most 10 s until its
-/// `notification` records the delivery (`lastNotification` present), then checked: clause 5.11.7 records the delivery
-/// once the endpoint's answer reaches the broker, which the endpoint's receipt of the notification precedes
+/// Expected: a matching context source is registered, so the subscription sends an initial notification, which is
+/// consumed first (clause 5.12)
+/// Timing: the Retrieve Context Source Registration Subscription after the notification is repeated every 250 ms for at
+/// most 10 s until its `notification` records the delivery (`lastNotification` present): clause 5.11.7 records the
+/// delivery once the endpoint's answer reaches the broker, which the endpoint's receipt of the notification precedes
 #[gtest]
 #[tokio::test]
 async fn e047_05_01_if_a_csource_notification_is_successfully_sent_the_notification_member_shall_be_updated() -> Result<()> {
@@ -47,7 +47,7 @@ async fn e047_05_01_if_a_csource_notification_is_successfully_sent_the_notificat
     let _registration = registered_any(&broker, &vocabulary, &registration).await?;
 
     let notification = sink.wait_for(1, 1).await?;
-    robot_literal::read(&notification.body)?;
+    notification.json()?;
 
     let reader = broker.with_accept(NgsiLdMediaType::Json);
     let body = once_delivery_recorded(|| registration_subscription_json(&reader, &id)).await?;

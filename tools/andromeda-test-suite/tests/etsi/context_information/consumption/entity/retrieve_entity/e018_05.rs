@@ -1,7 +1,7 @@
-//! ETSI `018_05`: an entity is retrieved as a `GeoJSON` Feature, in its normalized and simplified forms and with the
-//! geometry property the request names (clause 6.3.7).
+//! An entity is retrieved as a `GeoJSON` Feature, in its normalized and simplified forms and with the geometry property
+//! the request names (clause 6.3.7).
 
-use crate::suite_keywords::create_entity;
+use crate::entity_operations::create_entity;
 use andromeda_test_suite::{
     broker::{self},
     comparison::matches_document,
