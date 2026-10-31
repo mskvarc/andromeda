@@ -8,6 +8,7 @@ use crate::{
     forwarded_query::client_query::ClientQuery,
     forwarding_context::BodyPresence,
     forwarding_url::{build_temporal_query_url, build_temporal_retrieve_url},
+    instance_budget::InstanceBudget,
     operation::ForwardingOperation,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
@@ -15,12 +16,16 @@ use crate::{
     received_temporal_answer::ReceivedTemporalAnswer,
     registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
-    request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, SourcePaging},
+    request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, HistoryBudget, SourcePaging, TemporalAnswer},
+    result_budget::ResultBudget,
     split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{
+    received::ContextualEntity,
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+};
 use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
 /// The outcome of a temporal read whose request already looped back onto this
@@ -167,8 +172,84 @@ impl FederationService {
         target: &ContextTarget,
         request: ForwardRetrieveRequest<'_>,
     ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, FederationError> {
+        let targets = match self.retrieve_reads(target, request, TemporalAnswer::AsRequested).await? {
+            RetrieveReads::Settled(outcome) => return Ok(outcome),
+            RetrieveReads::Targets(targets) => targets,
+        };
+        let matched = targets.len();
+        let received = self
+            .fan_out_read(
+                targets,
+                |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
+                retrieve_conditions(request),
+            )
+            .await;
+        let answers = self.read_temporal_answers(received).await;
+        Ok(self
+            .answered_temporal(read_outcome(answers, matched), request.context, request.client_query.timeproperty())
+            .await)
+    }
+
+    /// Forward a temporal entity retrieval to the matching context sources
+    /// (clause 5.7.3.4), each asked for the normalized instances of the window
+    /// whatever representation the client asked for, and read to the end of
+    /// the window past every clause 6.3.10 partial answer under `instances`.
+    ///
+    /// Clause 5.7.3.4 builds the aggregated representation from the instances
+    /// merged into S1, which no source's own aggregate is once another holder
+    /// holds part of the entity, so the instances are what is gathered.
+    ///
+    /// # Errors
+    ///
+    /// The failures of [`FederationService::forward_temporal_retrieve`], each
+    /// as [`QueryForwardingError::Federation`], and
+    /// [`QueryForwardingError::TooManyInstances`] once the sources together
+    /// answer with more instances than `instances` allows (clause 4.12).
+    pub async fn forward_temporal_retrieve_history(
+        &self,
+        target: &ContextTarget,
+        request: ForwardRetrieveRequest<'_>,
+        instances: &InstanceBudget,
+    ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
+        let targets = match self.retrieve_reads(target, request, TemporalAnswer::Instances).await? {
+            RetrieveReads::Settled(outcome) => return Ok(outcome),
+            RetrieveReads::Targets(targets) => targets,
+        };
+        let matched = targets.len();
+        // One entity is retrieved, so the entity budget bounds nothing a source
+        // answering it could exceed; the instances are what is bounded.
+        let entities = ResultBudget::new(self.result_limits);
+        let answers = self
+            .fan_out_history_walk(
+                targets,
+                retrieve_conditions(request),
+                HistoryBudget {
+                    entities: &entities,
+                    instances,
+                },
+            )
+            .await?;
+        Ok(self
+            .answered_temporal(read_outcome(answers, matched), request.context, request.client_query.timeproperty())
+            .await)
+    }
+
+    /// The reads a temporal retrieval sends each matching registration, each
+    /// asking for `answer`; or the outcome settled without contacting any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::Registration`] when the matching
+    /// registrations cannot be read, and [`FederationError::Conflict`] when
+    /// the selected registrations are mutually exclusive.
+    async fn retrieve_reads(
+        &self,
+        target: &ContextTarget,
+        request: ForwardRetrieveRequest<'_>,
+        answer: TemporalAnswer,
+    ) -> Result<RetrieveReads, FederationError> {
         if !target.permits_federation() {
-            return Ok(ForwardReadOutcome::empty());
+            return Ok(RetrieveReads::Settled(ForwardReadOutcome::empty()));
         }
         let ForwardRetrieveRequest {
             entity_id,
@@ -180,7 +261,7 @@ impl FederationService {
             entity_map,
         } = request;
         if self.is_loop_detected(triggering.via) {
-            return Ok(own_loop_outcome());
+            return Ok(RetrieveReads::Settled(own_loop_outcome()));
         }
         let registrations = self
             .select_registrations(
@@ -210,6 +291,7 @@ impl FederationService {
             .inbound(context)
             .resolver(&resolver)
             .split(SplitEntities::Complete)
+            .temporal_answer(answer)
             .presence(BodyPresence::Absent)
             .build();
         for registration in registrations {
@@ -223,24 +305,29 @@ impl FederationService {
             expand_registration_targets(registration, reads, &mut targets);
         }
         if targets.is_empty() {
-            return Ok(ForwardReadOutcome::empty());
+            return Ok(RetrieveReads::Settled(ForwardReadOutcome::empty()));
         }
-        let matched = targets.len();
-        let received = self
-            .fan_out_read(
-                targets,
-                |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
-                ForwardedGetConditions {
-                    context,
-                    triggering,
-                    cacheability: Cacheability::Uncacheable,
-                    entity_map,
-                },
-            )
-            .await;
-        let answers = self.read_temporal_answers(received).await;
-        Ok(self
-            .answered_temporal(read_outcome(answers, matched), context, client_query.timeproperty())
-            .await)
+        Ok(RetrieveReads::Targets(targets))
+    }
+}
+
+/// What a temporal retrieval's forwarding has to do once its registrations are
+/// matched.
+enum RetrieveReads {
+    /// Nothing is contacted: the branch reaches no source, the request already
+    /// looped back here, or no registration matched.
+    Settled(ForwardReadOutcome<ForwardedTemporalEntities>),
+    /// The read each matching registration is sent.
+    Targets(Vec<(ContextSourceRegistration, ForwardedRead)>),
+}
+
+/// The conditions every forwarded copy of a temporal retrieval is sent under.
+/// Clause 6.3.17 allows caching for `/entities` only.
+const fn retrieve_conditions(request: ForwardRetrieveRequest<'_>) -> ForwardedGetConditions<'_> {
+    ForwardedGetConditions {
+        context: request.context,
+        triggering: request.triggering,
+        cacheability: Cacheability::Uncacheable,
+        entity_map: request.entity_map,
     }
 }

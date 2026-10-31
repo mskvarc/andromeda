@@ -235,12 +235,12 @@ pub(crate) async fn forward_temporal_history(
 }
 
 /// The outcome of one forwarded temporal read, or the failure that ends the
-/// query.
+/// read.
 ///
 /// A truncated collection would make the page window and
 /// `NGSILD-Results-Count` silently wrong, so exceeding the budget refuses the
-/// query (clauses 4.12 and 6.3.13); a forwarding that failed at its sources
-/// leaves the query with the local answer, but one that could not read the
+/// read (clauses 4.12 and 6.3.13); a forwarding that failed at its sources
+/// leaves the read with the local answer, but one that could not read the
 /// registrations because this broker's store is saturated or unreachable
 /// fails it rather than hide every source.
 ///
@@ -248,7 +248,7 @@ pub(crate) async fn forward_temporal_history(
 ///
 /// The clause 4.12 `TooManyResults` refusal, and the classified failure of a
 /// forwarding this broker's own store failed.
-fn forwarding_outcome(
+pub(crate) fn forwarding_outcome(
     forwarded: Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError>,
     instance: &Uri,
 ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, ProblemResponse> {
@@ -264,7 +264,7 @@ fn forwarding_outcome(
                 // clone: the problem response owns the request URI it names
                 return Err(report.with_instance(instance.clone()));
             }
-            warn!(%error, "context source forwarding failed during the temporal query");
+            warn!(%error, "context source forwarding failed during the temporal read");
             Ok(ForwardReadOutcome::empty())
         }
     }

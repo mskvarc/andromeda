@@ -84,6 +84,8 @@ pub mod local_map_entities;
 pub mod query;
 /// Temporal retrieve handling.
 pub mod retrieve;
+/// Aggregating at this broker the entity of a federated temporal retrieval.
+mod retrieve_aggregation;
 /// The distributed half of a temporal retrieval.
 mod retrieve_forwarding;
 /// Temporal update attribute instance handling.

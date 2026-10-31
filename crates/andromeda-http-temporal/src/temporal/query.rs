@@ -43,9 +43,9 @@ use andromeda_temporal::{
 /// Admitting a decoded query before it runs.
 mod admission;
 /// Asking the registered context sources for their part of the history.
-mod forwarding;
+pub(crate) mod forwarding;
 /// Aggregating here the entities a distributed aggregated query meets in more than one part.
-mod hub_aggregation;
+pub(crate) mod hub_aggregation;
 /// Gathering what every part holds in effect when a split query's window opens.
 mod in_effect_gathering;
 /// Folding what those sources returned into the locally read history.

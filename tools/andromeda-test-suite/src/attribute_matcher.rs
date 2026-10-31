@@ -7,6 +7,7 @@
 
 use crate::{
     attribute_check::{Check, check_mismatch},
+    attribute_instance::read_instance,
     attribute_member::Member,
     equivalence::Comparison,
 };
@@ -24,27 +25,12 @@ use ngsi_ld::model::{
     EntityId,
     EntityTypeName,
     InstanceId,
-    Instances,
     OneOrMany,
     Output,
     Value,
     VocabTerm,
     geometry::Geometry,
 };
-
-/// Why an attribute holds no instance a matcher can read.
-#[derive(Debug, thiserror::Error)]
-enum MissingInstance<'a> {
-    /// No instance is the default one.
-    #[error("has no default instance")]
-    Default,
-    /// No instance carries the dataset the matcher reads.
-    #[error("has no instance of dataset {0}")]
-    Dataset(&'a DatasetId),
-    /// The matcher names no dataset and the attribute holds this many instances.
-    #[error("has {0} instances")]
-    Several(usize),
-}
 
 /// The requirements on one attribute.
 #[derive(Debug, Clone, Default, MatcherBase)]
@@ -336,29 +322,6 @@ impl AttributeMatcher {
         self.with(Check::SubAttributeCount(count))
     }
 
-    /// The instance this matcher reads in `instances`, or why there is none.
-    fn instance<'a>(&'a self, instances: &'a Instances<Attribute<Output>>) -> Result<&'a Attribute<Output>, MissingInstance<'a>> {
-        match &self.dataset_id {
-            // The default instance is written without a `datasetId` (clause 4.5.5).
-            Some(DatasetId::DefaultInstance) => instances
-                .iter()
-                .find(|instance| {
-                    instance
-                        .meta()
-                        .dataset_id
-                        .as_ref()
-                        .is_none_or(|dataset_id| *dataset_id == DatasetId::DefaultInstance)
-                })
-                .ok_or(MissingInstance::Default),
-            Some(dataset_id) => instances
-                .iter()
-                .find(|instance| instance.meta().dataset_id.as_ref() == Some(dataset_id))
-                .ok_or(MissingInstance::Dataset(dataset_id)),
-            None if instances.len() == 1 => Ok(instances.first()),
-            None => Err(MissingInstance::Several(instances.len())),
-        }
-    }
-
     /// The first requirement `attribute` breaks, if any.
     fn mismatch(&self, attribute: &Attribute<Output>) -> Option<String> {
         if let Some(kind) = self.kind
@@ -377,7 +340,7 @@ impl AttributeMatcher {
         else {
             return Some(format!("has no attribute {name}"));
         };
-        match self.instance(instances) {
+        match read_instance(self.dataset_id.as_ref(), instances) {
             Ok(instance) => self.mismatch(instance).map(|reason| format!("whose attribute {name} {reason}")),
             Err(reason) => Some(format!("whose attribute {name} {reason}")),
         }

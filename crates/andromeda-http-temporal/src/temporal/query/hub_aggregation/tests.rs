@@ -1,6 +1,6 @@
 use crate::{
     temporal::query::{
-        hub_aggregation::{HubAggregates, overlapping_entities, parts_by_entity, with_local_parts},
+        hub_aggregation::{HubAggregates, asked_documents, overlapping_entities, parts_by_entity, with_local_parts},
         merged_history::MergedTemporalHistory,
     },
     test_history::held_history,
@@ -162,4 +162,15 @@ async fn only_an_entity_the_local_read_returned_joins_its_local_part() {
             (String::from("urn:ngsi-ld:Vehicle:2"), LocalPart::Excluded, vec![1]),
         ]
     );
+}
+
+/// A source asked again for the overlapping entities may answer others besides; only the entities asked for are
+/// aggregated here, so none the client's query did not select joins the response.
+#[tokio::test]
+async fn only_the_entities_asked_again_are_taken_from_the_second_round() {
+    let sources = vec![answered(vec![vehicle(1, &[1, 2]).await, vehicle(2, &[3]).await])];
+    let taken: Vec<String> = asked_documents(sources, &[id("urn:ngsi-ld:Vehicle:2")])
+        .filter_map(|document| document.id().map(ToString::to_string))
+        .collect();
+    pretty_assertions::assert_eq!(taken, vec![String::from("urn:ngsi-ld:Vehicle:2")]);
 }

@@ -1,7 +1,8 @@
 //! The distributed half of a single-entity temporal retrieval (clause
 //! 5.7.3.4): the Entity Map the retrieval runs under, the fan-out to every
 //! matching registration, and the merge of what they returned onto the history
-//! this broker holds itself.
+//! this broker holds itself, or, for an aggregated representation of an entity
+//! held in more than one part, its aggregation here over every part.
 //!
 //! The response the assembled history is rendered into is decided by
 //! `crate::temporal::retrieve`; this module decides only what there is to
@@ -20,7 +21,7 @@ use crate::{
         collect_temporal_warnings,
         complete_history::HistoryCompleteness,
         local_map_entities::LocalHistoryEntities,
-        merge_temporal_retrieve_results,
+        retrieve_aggregation::{RetrievalAggregation, RetrievalRound},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -35,12 +36,11 @@ use andromeda_federation::{
     FederationService,
     entity_result::temporal_contributions_of,
     forwarded_query::client_query::{ClientQuery, TemporalTraversal},
-    outcome::ForwardReadOutcome,
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
     source_reach::SourceReach,
 };
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
-use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
+use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_temporal::{
@@ -49,7 +49,6 @@ use andromeda_temporal::{
     temporal_not_found_reason::TemporalNotFoundReason,
 };
 use axum::http::Uri as RequestUri;
-use tracing::warn;
 
 /// What a temporal retrieval assembled before its representation is rendered.
 pub(crate) struct RetrievedHistory {
@@ -125,8 +124,10 @@ pub(crate) struct RetrievalSources<'a> {
 /// # Errors
 ///
 /// The Table 6.4.3.2-3 `NotImplemented` answer when the one source holding all
-/// the data declined the requested representation, the classified failure of
-/// the local read or of the map store, the 503 of a registration store that
+/// the data declined the requested representation, the clause 4.12
+/// `TooManyResults` refusal when the sources answer with more instances than
+/// one request gathers, the classified failure of the local read, of an
+/// aggregation here or of the map store, the 503 of a registration store that
 /// is saturated or unreachable, and `ResourceNotFound` when the entity
 /// is held neither locally nor by any matching registration (clause 5.7.3.4).
 pub(crate) async fn distributed_retrieval(
@@ -145,35 +146,28 @@ pub(crate) async fn distributed_retrieval(
         triggering,
         map_use,
     } = sources;
-    let forwarded = forwarding
-        .forward_temporal_retrieve(
-            target,
-            ForwardRetrieveRequest {
-                entity_id: id,
-                reach: SourceReach::Every,
-                client_query: ClientQuery::TemporalRetrieve {
-                    id,
-                    params,
-                    traversal: TemporalTraversal::WalkedHere,
-                },
-                context,
-                triggering,
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::from(&map_use),
+    let aggregation = RetrievalAggregation::of(params, forwarding.aggregation_gathering());
+    let round = RetrievalRound {
+        service,
+        forwarding,
+        target,
+        request: ForwardRetrieveRequest {
+            entity_id: id,
+            reach: SourceReach::Every,
+            client_query: ClientQuery::TemporalRetrieve {
+                id,
+                params,
+                traversal: TemporalTraversal::WalkedHere,
             },
-        )
-        .await;
-    let forwarded = match forwarded {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            if let Some(report) = local_federation_failure(&error) {
-                // clone: the problem response owns the request URI it names
-                return Err(report.with_instance(instance.clone()));
-            }
-            warn!(%error, "context source forwarding failed during the temporal retrieval");
-            ForwardReadOutcome::empty()
-        }
+            context,
+            triggering,
+            mode_filter: CsrModeFilter::All,
+            entity_map: EntityMapInUse::from(&map_use),
+        },
+        params,
+        instance,
     };
+    let forwarded = round.first(aggregation).await?;
     if let Some(status) = forwarded.sources.single_source_status {
         return Err(single_source_declined(status, instance));
     }
@@ -196,7 +190,8 @@ pub(crate) async fn distributed_retrieval(
     // Clause 6.3.10: a source that cut its history short bounds the merged
     // page as the local cut does, so the response's range is the merge's.
     let mut completeness = HistoryCompleteness::of(params, range, &forwarded.results).map_err(|error| temporal_problem(&error, instance))?;
-    let merged = merge_temporal_retrieve_results(local_entity, forwarded.results, window);
+    let (merged, assembly_warnings) = round.put_together(aggregation, local_entity, forwarded.results, window).await?;
+    warnings.extend(assembly_warnings);
     let entity_map_uri = record_retrieve_map(entity_maps, map_use, contributions, local_id, instance).await?;
 
     let (history, range) = match merged {

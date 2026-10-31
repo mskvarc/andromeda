@@ -74,7 +74,8 @@ async fn a_fed_qry_9009_a_revalidation_warning_names_the_registration_and_not_wh
     expect_that!(
         warnings.iter().map(NgsiLdWarning::text).collect::<Vec<_>>(),
         elements_are![all!(
-            eq(&format!("3 of the entities context source {registration_id} answered cannot be used")),
+            // The text is read as the header carries it: the warn-agent `-`, then the quoted warn-text (clause 6.3.17).
+            eq(&format!(r#"- "3 of the entities context source {registration_id} answered cannot be used""#)),
             not(contains_substring("not-a-code")),
             not(contains_substring("unitCode"))
         )]

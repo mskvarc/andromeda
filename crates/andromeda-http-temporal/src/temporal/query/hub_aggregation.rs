@@ -216,15 +216,22 @@ async fn regather(
         return Ok((Vec::new(), Vec::new()));
     };
     let warnings = collect_temporal_warnings(&answered.sources);
-    let documents = answered
-        .sources
+    let documents = asked_documents(answered.sources, params.id.as_deref().unwrap_or_default());
+    Ok((parts_by_entity(documents), warnings))
+}
+
+/// The instance documents `sources` answered of the entities of `asked_for`. A source may answer entities it was not
+/// asked for; only the overlapping entities asked again are aggregated here, so nothing joins the response the
+/// client's own query did not select.
+fn asked_documents(sources: Vec<ForwardedTemporalEntities>, asked_for: &[Identifier]) -> impl Iterator<Item = TemporalDocument> {
+    sources
         .into_iter()
         .flat_map(|source| source.entities)
         .filter_map(|entity| match entity {
             TemporalHistory::Instances(document) => Some(document),
             TemporalHistory::Aggregates(_) => None,
-        });
-    Ok((parts_by_entity(documents), warnings))
+        })
+        .filter(|document| document.id().is_some_and(|entity_id| asked_for.contains(entity_id)))
 }
 
 /// The instance documents of `documents` gathered by the entity they belong

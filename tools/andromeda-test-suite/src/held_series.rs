@@ -56,13 +56,19 @@ impl HeldSeries {
         format!("2020-08-01T10:{:02}:{:02}Z", seconds / 60, seconds % 60)
     }
 
-    /// The entity holding every instance of the series, as one element of a temporal query answer.
+    /// Every instance of the series, its value and its `observedAt` instant, in instant order: what a test records
+    /// on a broker that holds the series itself.
+    pub fn observations(&self) -> impl Iterator<Item = (u32, String)> + '_ {
+        self.values().zip(0..).map(|(value, instance)| (value, self.instant(instance)))
+    }
+
+    /// The entity holding every instance of the series, as one element of a temporal query answer or the answer to a
+    /// temporal retrieval.
     #[must_use]
     pub fn instances(&self) -> String {
         let instances: Vec<String> = self
-            .values()
-            .zip(0..)
-            .map(|(value, instance)| format!(r#"{{"type": "Property", "value": {value}, "observedAt": "{}"}}"#, self.instant(instance)))
+            .observations()
+            .map(|(value, instant)| format!(r#"{{"type": "Property", "value": {value}, "observedAt": "{instant}"}}"#))
             .collect();
         format!(
             r#"{{"id": "{}", "type": "{}", "speed": [{}]}}"#,
@@ -73,7 +79,7 @@ impl HeldSeries {
     }
 
     /// The entity holding the `totalCount` and `sum` of the series over one whole-range period, as one element of an
-    /// aggregated temporal query answer.
+    /// aggregated temporal query answer or the answer to an aggregated temporal retrieval.
     #[must_use]
     pub fn aggregates(&self) -> String {
         let end = self.instant(self.count.saturating_sub(1));

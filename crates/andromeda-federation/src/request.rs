@@ -253,6 +253,7 @@ pub struct ForwardQueryRequest<'a> {
 }
 
 /// Parameters for forwarding a single-entity retrieval, current or temporal.
+#[derive(Clone, Copy)]
 pub struct ForwardRetrieveRequest<'a> {
     /// The entity to retrieve.
     pub entity_id: &'a Identifier,
