@@ -4,6 +4,8 @@
 
 /// The error answer a forwarded operation acts on as a step of its own.
 mod acted_on_answer;
+/// How a distributed aggregated temporal query gathers the instances of entities held in more than one part.
+pub mod aggregation_gathering;
 /// The body a context source answered a forwarded write with.
 pub mod answer_body;
 /// Reading a context source's answer of entities into the model.
@@ -229,6 +231,7 @@ pub mod transport;
 mod write_answer;
 
 use crate::{
+    aggregation_gathering::AggregationGathering,
     cache::ForwardedGetCache,
     cooldown::CooldownRegistry,
     cooldown_policy::CooldownPolicy,
@@ -302,6 +305,9 @@ pub struct FederationService {
     /// Most attribute instances one federated temporal query gathers when it
     /// reads its sources' history to the end (clause 4.12).
     max_query_instances: NonZeroU32,
+    /// How a distributed aggregated temporal query gathers the instances of
+    /// the entities held in more than one part (clause 5.7.4.4).
+    aggregation_gathering: AggregationGathering,
 }
 
 impl FederationService {
@@ -360,6 +366,7 @@ impl FederationService {
                 source_rows: config.forwarding.max_query_source_rows,
             },
             max_query_instances: config.forwarding.max_query_instances,
+            aggregation_gathering: AggregationGathering::configured(config.forwarding.federated_aggregation),
         })
     }
 
@@ -378,6 +385,14 @@ impl FederationService {
     #[must_use]
     pub const fn max_query_instances(&self) -> NonZeroU32 {
         self.max_query_instances
+    }
+
+    /// How a distributed temporal query asking for an aggregated
+    /// representation gathers the instances of the entities held in more than
+    /// one part (clause 5.7.4.4).
+    #[must_use]
+    pub const fn aggregation_gathering(&self) -> AggregationGathering {
+        self.aggregation_gathering
     }
 
     /// Resolve a request's or subscription's `splitEntities` against the

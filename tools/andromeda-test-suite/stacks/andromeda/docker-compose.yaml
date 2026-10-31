@@ -213,6 +213,7 @@ services:
       ANDROMEDA__HTTP__FORWARDED__PROXIES: "0.0.0.0/0,::/0"
       ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "available"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-ranges"
+      ANDROMEDA__FEDERATION__FORWARDING__FEDERATED_AGGREGATION: "instances"
 
   postgres-prefixed:
     extends:

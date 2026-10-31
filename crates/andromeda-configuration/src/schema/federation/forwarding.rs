@@ -37,6 +37,34 @@ pub enum SplitEntitiesDefault {
     Complete,
 }
 
+/// How a distributed temporal query asking for an aggregated representation
+/// reads its Context Sources.
+///
+/// Clause 5.7.4.4 aggregates an entity over the instances merged from every
+/// part of it, so an entity held by more than one part is aggregated by this
+/// broker over their instances. The two choices find those entities
+/// differently and trade one round trip against the instances moved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+#[schemars(
+    description = "How a distributed temporal query asking for `aggregatedValues` reads its context sources. An entity held by more than one part is always aggregated by this broker over the instances of every part; the choices differ in how those entities are found."
+)]
+pub enum FederatedAggregation {
+    /// The sources are asked for every instance of the window and every
+    /// entity they answer is aggregated here.
+    #[schemars(
+        description = "Ask the context sources for every instance of the queried window and aggregate every entity they answer here. One round trip, but every instance travels to and is held by this broker. Suits deployments where most entities are held by several sources."
+    )]
+    Instances,
+    /// The sources are asked for their aggregates, and only the entities more
+    /// than one part answered are asked again for their instances.
+    #[default]
+    #[schemars(
+        description = "Ask the context sources for their aggregates, keep the aggregate of an entity only one part holds, and ask again for the instances of the entities more than one part holds. A second round trip only when parts overlap, and only their instances travel."
+    )]
+    OverlappingInstances,
+}
+
 /// How requests are forwarded to Context Sources.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -105,6 +133,13 @@ pub struct ForwardingConfig {
         description = "The most attribute instances one federated temporal query gathers from the context sources whose history it reads to the end, as an aggregated representation of an entity held in several parts needs. A query that would gather more is refused with `403` `TooManyResults`. Zero is refused."
     )]
     pub max_query_instances: NonZeroU32,
+    /// How a distributed temporal query asking for an aggregated
+    /// representation reads its Context Sources: `instances` or
+    /// `overlapping-instances`.
+    #[schemars(
+        description = "How a distributed temporal query asking for `aggregatedValues` reads its context sources. An entity held by more than one part is aggregated by this broker over the instances of every part. `overlapping-instances` asks the sources for their aggregates and asks again only for the instances of the entities more than one part holds: cheapest when parts rarely overlap. `instances` asks for every instance in one round trip: faster when most entities are held by several sources, at the cost of moving and holding every instance."
+    )]
+    pub federated_aggregation: FederatedAggregation,
 }
 
 impl Default for ForwardingConfig {
@@ -120,6 +155,7 @@ impl Default for ForwardingConfig {
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
             max_query_source_rows: DEFAULT_MAX_QUERY_SOURCE_ROWS,
             max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
+            federated_aggregation: FederatedAggregation::default(),
         }
     }
 }
@@ -140,8 +176,24 @@ impl ForwardingConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::federation::forwarding::ForwardingConfig;
+    use crate::schema::federation::forwarding::{FederatedAggregation, ForwardingConfig};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_federated_aggregation_asks_again_only_for_overlapping_entities_by_default() {
+        assert_eq!(ForwardingConfig::default().federated_aggregation, FederatedAggregation::OverlappingInstances);
+    }
+
+    #[test]
+    fn each_federated_aggregation_is_spelled_in_kebab_case() {
+        let spelled = [
+            (FederatedAggregation::Instances, "\"instances\""),
+            (FederatedAggregation::OverlappingInstances, "\"overlapping-instances\""),
+        ];
+        for (choice, spelling) in spelled {
+            assert_eq!(serde_json::to_string(&choice).ok().as_deref(), Some(spelling));
+        }
+    }
 
     #[test]
     fn the_query_budgets_default_to_ten_thousand_entities_thirty_thousand_rows_and_a_hundred_thousand_instances() {

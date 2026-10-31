@@ -57,8 +57,9 @@ pub enum BrokerRole {
     /// The andromeda stack broker delivering notifications in durable mode and holding at most three Snapshots per
     /// Tenant.
     Durable,
-    /// The andromeda stack broker believing the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields and
-    /// reading `q` target languages as RFC 4647 extended ranges.
+    /// The andromeda stack broker believing the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields,
+    /// reading `q` target languages as RFC 4647 extended ranges and asking context sources for every instance of an
+    /// aggregated temporal query.
     Edge,
     /// The edge broker's authority under `https`.
     EdgeHttps,

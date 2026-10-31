@@ -68,6 +68,7 @@ pub mod grouped_query;
 pub mod header_condition;
 pub mod header_matcher;
 pub mod health_check;
+pub mod held_series;
 pub mod hosted_context;
 pub mod identity_matcher;
 pub mod instance_time;

@@ -19,6 +19,7 @@ use crate::{
         query::{
             admission::admit_request,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
+            hub_aggregation::aggregate_at_hub,
             in_effect_gathering::{GatheringRequest, gather_in_effect},
             merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
@@ -43,6 +44,8 @@ use andromeda_temporal::{
 mod admission;
 /// Asking the registered context sources for their part of the history.
 mod forwarding;
+/// Aggregating here the entities a distributed aggregated query meets in more than one part.
+mod hub_aggregation;
 /// Gathering what every part holds in effect when a split query's window opens.
 mod in_effect_gathering;
 /// Folding what those sources returned into the locally read history.
@@ -91,7 +94,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     let split = state.forwarding.split_entities(params.split_entities);
     let filtering = scope.splitting(split);
-    let shape = ContributionShape::of(filtering, &params);
+    let shape = ContributionShape::of(filtering, &params, state.forwarding.aggregation_gathering());
 
     // Forwarding runs before the local read, because under `splitEntities`
     // what the sources answered decides which entities the local read exempts
@@ -111,8 +114,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         .with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
-    let sources = forwarded.as_ref().map_or(&[][..], |history| history.sources.as_slice());
-    let mut completeness = HistoryCompleteness::of(&params, local_result.range, sources).with_instance(&uri)?;
+    let answers = forwarded.as_ref().map_or(&[][..], |history| history.sources.as_slice());
+    let mut completeness = HistoryCompleteness::of(&params, local_result.range, answers).with_instance(&uri)?;
     let contribution = ContributionMerge {
         target: &target,
         params: &params,
@@ -123,7 +126,10 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         contributed: &contributed,
     };
     let projection = local_result.projection;
-    let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, in_effect, &uri).await?;
+    let mut local_entities = local_result.entities;
+    let hub_aggregates = aggregate_at_hub(service, sources, gathering, shape, &mut local_entities, forwarded.as_ref()).await?;
+    let mut merged = merge_with_contributions(service, contribution, local_entities, forwarded, in_effect, &uri).await?;
+    hub_aggregates.replace_in(&mut merged);
     let timeproperty = params.timeproperty_or_default();
     let cut_short = completeness.trim(&mut merged.entities, timeproperty);
     merged.warnings.extend(cut_short);

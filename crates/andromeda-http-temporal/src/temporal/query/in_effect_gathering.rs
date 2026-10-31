@@ -88,13 +88,15 @@ pub(crate) fn instance_documents(sources: &[ForwardedTemporalEntities]) -> impl 
     sources.iter().flat_map(|source| source.entities.iter()).filter_map(TemporalHistory::instances)
 }
 
-/// What gathering the in-effect parts reads of the request.
+/// What gathering parts of the queried entities reads of the request: the
+/// in-effect parts of a split query, and the instances of the entities an
+/// aggregated query aggregates here.
 #[derive(Clone, Copy)]
 pub(crate) struct GatheringRequest<'r> {
     /// The branch the query reads.
-    target: &'r ContextTarget,
+    pub(crate) target: &'r ContextTarget,
     /// The query, its context and the URI a failure names.
-    query: InEffectRequest<'r>,
+    pub(crate) query: InEffectRequest<'r>,
 }
 
 impl<'r> GatheringRequest<'r> {
