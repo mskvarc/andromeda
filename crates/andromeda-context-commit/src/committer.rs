@@ -91,7 +91,7 @@ pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
 #[must_use]
 pub const fn consequences_land(outcome: &WriteOutcome) -> bool {
     match outcome {
-        WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,
+        WriteOutcome::Created(_) | WriteOutcome::Updated(_) | WriteOutcome::Deleted(..) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,
         WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded | WriteOutcome::Refused(_) => false,
     }
 }
@@ -107,10 +107,12 @@ mod tests {
         committer::{consequences_land, validate_submission},
         entity_mutation::EntityMutation,
         error::CommitError,
+        store_instant::StoreInstant,
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use chrono::Utc;
     use std::sync::Arc;
 
     fn write(id: &str) -> AtomicWrite {
@@ -135,9 +137,10 @@ mod tests {
 
     #[test]
     fn only_successful_or_independent_outcomes_land_consequences() {
+        let committed = StoreInstant::new(Utc::now());
         for outcome in [
-            WriteOutcome::Created,
-            WriteOutcome::Updated,
+            WriteOutcome::Created(committed),
+            WriteOutcome::Updated(committed),
             WriteOutcome::NoEntityChange,
             WriteOutcome::Skipped,
         ] {

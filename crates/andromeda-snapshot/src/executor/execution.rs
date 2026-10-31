@@ -93,9 +93,9 @@ pub(super) fn entity_query_failure(error: EntityError) -> Result<ExecutionResult
 fn refusal_of(outcome: WriteOutcome) -> Option<SubmissionRefusal> {
     match outcome {
         WriteOutcome::Refused(refusal) => Some(refusal),
-        WriteOutcome::Created
-        | WriteOutcome::Updated
-        | WriteOutcome::Deleted(_)
+        WriteOutcome::Created(_)
+        | WriteOutcome::Updated(_)
+        | WriteOutcome::Deleted(..)
         | WriteOutcome::AlreadyExists
         | WriteOutcome::NotFound
         | WriteOutcome::Superseded

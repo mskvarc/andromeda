@@ -108,7 +108,7 @@ impl IntervalCandidates<'_> {
 )]
 mod tests {
     use crate::interval_candidates::IntervalCandidates;
-    use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         error::EntityError,
@@ -117,8 +117,14 @@ mod tests {
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
-    use andromeda_subscription::{compilation::compile_subscription, compiled::CompiledSubscription, stored_subscription::StoredSubscription};
+    use andromeda_subscription::{
+        compilation::compile_subscription,
+        compiled::CompiledSubscription,
+        notifying_since::NotifyingSince,
+        stored_subscription::StoredSubscription,
+    };
     use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -204,6 +210,10 @@ mod tests {
             &StoredSubscription {
                 key: SubscriptionKey::try_from(1).expect("a valid key"),
                 subscription,
+                notifying_since: NotifyingSince {
+                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                },
             },
             LanguageMatching::TagEquality,
         );
@@ -235,6 +245,10 @@ mod tests {
             &StoredSubscription {
                 key: SubscriptionKey::try_from(1).expect("a valid key"),
                 subscription,
+                notifying_since: NotifyingSince {
+                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                },
             },
             LanguageMatching::TagEquality,
         )

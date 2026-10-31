@@ -77,6 +77,10 @@ pub enum Subscriptions {
     CreatedAt,
     /// The instant the subscription was last modified (clause 4.8 `modifiedAt`)
     ModifiedAt,
+    /// The transaction timestamp at which the subscription was created active or last set active again
+    ActiveSince,
+    /// The transaction timestamp at which the subscription was created or what it selects last changed
+    SelectedSince,
 }
 
 /// The `subscription_delivery_state` table - the per-subscription delivery
@@ -157,6 +161,8 @@ mod tests {
         assert_eq!(Subscriptions::SplitEntities.to_string(), "split_entities");
         assert_eq!(Subscriptions::NgsildConformance.to_string(), "ngsild_conformance");
         assert_eq!(Subscriptions::ModifiedAt.to_string(), "modified_at");
+        assert_eq!(Subscriptions::ActiveSince.to_string(), "active_since");
+        assert_eq!(Subscriptions::SelectedSince.to_string(), "selected_since");
     }
 
     #[test]

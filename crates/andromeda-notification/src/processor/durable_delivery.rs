@@ -33,7 +33,9 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 subscription: &entry.subscription_id,
                 filters: commit_filters(&entry.event),
             };
-            let outcome = self.apply_entity_change_for(entry.target.clone(), event, audience).await;
+            let outcome = self
+                .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience)
+                .await;
             if outcome.delivered > 0 {
                 DeliveryDisposition::Delivered
             } else if outcome.retryable_failures > 0 {
@@ -140,7 +142,7 @@ mod tests {
             durable_delivery::{commit_filters, queued_change_event, unreadable_subscription},
         },
     };
-    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -221,6 +223,7 @@ mod tests {
             .entity_snapshot(snapshot)
             .sys_attrs_snapshot(sys_attrs)
             .created_at(Utc::now())
+            .committed_at(StoreInstant::new(Utc::now()))
             .build()
     }
 

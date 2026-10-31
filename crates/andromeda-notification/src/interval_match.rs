@@ -63,7 +63,7 @@ fn admitted(sub: &CompiledSubscription, entities: Vec<EntityState>, linked: &Lin
 )]
 mod tests {
     use crate::interval_match::{admitted, standing_at};
-    use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -84,6 +84,7 @@ mod tests {
         change_filters::{ChangedStates, HopResolution, narrow_by_change_filters},
         compilation::compile_subscription,
         compiled::CompiledSubscription,
+        notifying_since::NotifyingSince,
         stored_subscription::StoredSubscription,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -121,6 +122,10 @@ mod tests {
             &StoredSubscription {
                 key: SubscriptionKey::try_from(1).expect("a valid key"),
                 subscription,
+                notifying_since: NotifyingSince {
+                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                },
             },
             LanguageMatching::TagEquality,
         )

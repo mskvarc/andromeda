@@ -10,6 +10,7 @@ use crate::{
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
+        landed_entity::LandedEntity,
         mapper::stored_uri,
         params::PreparedEntityColumns,
         repo::EntityRepository,
@@ -40,14 +41,14 @@ use crate::{
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
-use andromeda_context_commit::entity_version::EntityVersion;
+use andromeda_context_commit::{entity_version::EntityVersion, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
+    clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -98,8 +99,12 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///                WHERE (current_attributes.ordinal, …) IS DISTINCT FROM (excluded.ordinal, …)),
 ///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
 ///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT id FROM ents
+/// SELECT id, now() FROM ents
 /// ```
+///
+/// Each written row comes back with `now()`, the transaction timestamp: the
+/// store's own clock, which orders the change against a Subscription's
+/// lifecycle the same way whichever broker committed either.
 ///
 /// The identity row is the anchor ([`entity_write`]): it counts the write,
 /// stamps the clause 4.8 `modifiedAt` and replaces both expiries, which are
@@ -230,7 +235,7 @@ pub(super) fn entity_update_statement<'entities>(
     for census in CensusStatements::of(target, Srch, CensusChange::Replaced)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::Id).from(Ents).take());
+    let statement = with.query(Query::select().column(Entities::Id).expr(now()).from(Ents).take());
 
     let statement = with_grains_alias(with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns)));
     Ok(ExternallyBound::new(statement, external))
@@ -307,7 +312,8 @@ fn hoisted_changed() -> Cond {
 impl EntityRepository {
     /// Write every entity in `entities` whose expectation still holds, its
     /// attribute instances edited as `rows` and `grains` stage it, returning
-    /// the entities actually written.
+    /// the entities actually written with the instant of the transaction that
+    /// wrote them.
     ///
     /// `expected` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
@@ -326,7 +332,7 @@ impl EntityRepository {
         grains: StagedGrains<'_>,
         expected: &[Option<EntityVersion>],
         accepted_at: DateTime<Utc>,
-    ) -> Result<Vec<Identifier>, ContextStoreError> {
+    ) -> Result<Vec<LandedEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -341,11 +347,18 @@ impl EntityRepository {
         types_present(entities)?;
 
         let rows = entity_update_statement(target, entities, rows, grains, expected, accepted_at)?
-            .into_query_as::<(String,)>()
+            .into_query_as::<(String, DateTime<Utc>)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
-        rows.iter().map(|(id,)| stored_uri(id)).collect()
+        rows.iter()
+            .map(|(id, committed_at)| {
+                Ok(LandedEntity {
+                    id: stored_uri(id)?,
+                    committed_at: StoreInstant::new(*committed_at),
+                })
+            })
+            .collect()
     }
 }
 
@@ -435,7 +448,7 @@ mod tests {
         );
         assert!(!sql.contains(r#""entities"."modified_at" ="#), "{sql}");
         assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
-        assert!(sql.ends_with(r#"SELECT "id" FROM "ents""#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "id", NOW() FROM "ents""#), "{sql}");
     }
 
     /// The attribute instances are written as each entity's edit stages

@@ -62,7 +62,9 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::SplitEntities))
         .column((Subscriptions::Table, Subscriptions::NgsildConformance))
         .column((Subscriptions::Table, Subscriptions::CreatedAt))
-        .column((Subscriptions::Table, Subscriptions::ModifiedAt));
+        .column((Subscriptions::Table, Subscriptions::ModifiedAt))
+        .column((Subscriptions::Table, Subscriptions::ActiveSince))
+        .column((Subscriptions::Table, Subscriptions::SelectedSince));
     if kind.has_dataset_id() {
         select.column((Subscriptions::Table, Subscriptions::DatasetId));
     }

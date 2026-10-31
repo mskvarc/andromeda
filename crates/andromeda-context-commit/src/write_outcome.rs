@@ -1,18 +1,21 @@
 //! Per-entity outcomes returned by an atomic context commit.
 
-use crate::{deleted_entity::DeletedEntity, error::CommitError, submission_refusal::SubmissionRefusal};
+use crate::{deleted_entity::DeletedEntity, error::CommitError, store_instant::StoreInstant, submission_refusal::SubmissionRefusal};
 use derive_more::IsVariant;
 
 /// What one submitted [`AtomicWrite`](crate::atomic_write::AtomicWrite) did to
 /// current entity state.
 #[derive(Debug, IsVariant)]
 pub enum WriteOutcome {
-    /// A new entity row was created.
-    Created,
-    /// An existing entity row was updated.
-    Updated,
-    /// An entity row was deleted and its previous state captured.
-    Deleted(DeletedEntity),
+    /// A new entity row was created, in the transaction the instant was read
+    /// in.
+    Created(StoreInstant),
+    /// An existing entity row was updated, in the transaction the instant was
+    /// read in.
+    Updated(StoreInstant),
+    /// An entity row was deleted and its previous state captured, in the
+    /// transaction the instant was read in.
+    Deleted(DeletedEntity, StoreInstant),
     /// A must-not-exist precondition found an existing entity.
     AlreadyExists,
     /// A required entity was absent.
@@ -29,6 +32,23 @@ pub enum WriteOutcome {
     /// refusal raised while storing one write's own content is that write's
     /// outcome, and the other writes of the commit land without it.
     Refused(SubmissionRefusal),
+}
+
+impl WriteOutcome {
+    /// The store instant of the transaction that changed the entity, or `None`
+    /// when the write changed no current state.
+    #[must_use]
+    pub const fn changed_at(&self) -> Option<StoreInstant> {
+        match self {
+            WriteOutcome::Created(at) | WriteOutcome::Updated(at) | WriteOutcome::Deleted(_, at) => Some(*at),
+            WriteOutcome::AlreadyExists
+            | WriteOutcome::NotFound
+            | WriteOutcome::Superseded
+            | WriteOutcome::Skipped
+            | WriteOutcome::NoEntityChange
+            | WriteOutcome::Refused(_) => None,
+        }
+    }
 }
 
 /// Extract the only outcome expected from a one-write commit.
@@ -59,14 +79,21 @@ pub fn single(outcomes: Vec<WriteOutcome>) -> Result<WriteOutcome, CommitError> 
 )]
 mod tests {
     use crate::{
+        deleted_entity::DeletedEntity,
         error::CommitError,
+        store_instant::StoreInstant,
         submission_refusal::SubmissionRefusal,
         write_outcome::{WriteOutcome, single},
     };
+    use chrono::{TimeZone, Utc};
+
+    fn committed() -> StoreInstant {
+        StoreInstant::new(Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant"))
+    }
 
     #[test]
     fn single_returns_the_only_outcome() {
-        assert!(single(vec![WriteOutcome::Created]).expect("one outcome").is_created());
+        assert!(single(vec![WriteOutcome::Created(committed())]).expect("one outcome").is_created());
     }
 
     #[test]
@@ -88,8 +115,35 @@ mod tests {
     #[test]
     fn single_rejects_multiple_results() {
         assert!(matches!(
-            single(vec![WriteOutcome::Created, WriteOutcome::Updated]),
+            single(vec![WriteOutcome::Created(committed()), WriteOutcome::Updated(committed())]),
             Err(CommitError::UnexpectedOutcomeCount { expected: 1, actual: 2 })
         ));
+    }
+
+    #[test]
+    fn only_an_outcome_that_changed_current_state_carries_its_commit_instant() {
+        let deleted = DeletedEntity {
+            id: "urn:ngsi-ld:A".parse().expect("valid entity URI"),
+            created_at: committed().get(),
+            modified_at: committed().get(),
+            expires_at: None,
+        };
+        for changed in [
+            WriteOutcome::Created(committed()),
+            WriteOutcome::Updated(committed()),
+            WriteOutcome::Deleted(deleted, committed()),
+        ] {
+            pretty_assertions::assert_eq!(changed.changed_at(), Some(committed()));
+        }
+        for unchanged in [
+            WriteOutcome::AlreadyExists,
+            WriteOutcome::NotFound,
+            WriteOutcome::Superseded,
+            WriteOutcome::Skipped,
+            WriteOutcome::NoEntityChange,
+            WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
+        ] {
+            pretty_assertions::assert_eq!(unchanged.changed_at(), None);
+        }
     }
 }

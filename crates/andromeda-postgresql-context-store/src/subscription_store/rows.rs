@@ -88,4 +88,10 @@ pub struct SubscriptionRow {
     pub created_at: DateTime<Utc>,
     /// Row last-modified timestamp.
     pub modified_at: DateTime<Utc>,
+    /// Transaction timestamp at which the subscription was created active or
+    /// last set active again.
+    pub active_since: DateTime<Utc>,
+    /// Transaction timestamp at which the subscription was created or what it
+    /// selects last changed.
+    pub selected_since: DateTime<Utc>,
 }

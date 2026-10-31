@@ -4,6 +4,7 @@ use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
     error::EntityError,
+    read_modify_write::ComputedLanding,
     write_kind::UpdateAttributes,
     write_target::WriteTarget,
     written_members::{member_attribute_names, written_member_names},
@@ -57,7 +58,10 @@ impl EntityService {
         // Clause 5.6.2.5 reports the attributes this request asked for, so the
         // set is read from the fragment before the write merges it away.
         let requested = written_member_names(&fragment)?;
-        let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
+        let ComputedLanding {
+            value: (events, not_updated),
+            committed_at,
+        }: ComputedLanding<(Vec<ChangeEvent>, Vec<AttributeName>)> = self
             .commit_computed_write(target, entity, |previous, now| {
                 let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
                 let not_updated = member_attribute_names(updated.update_attributes(&fragment)?)?;
@@ -74,7 +78,9 @@ impl EntityService {
             })
             .await?;
 
-        self.notifier.publish(target, events).await;
+        if let Some(committed_at) = committed_at {
+            self.notifier.publish(target, committed_at, events).await;
+        }
 
         Ok((requested, not_updated))
     }

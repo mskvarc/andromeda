@@ -12,7 +12,7 @@
 //! resolves to the same event rather than a duplicate. A write whose affected
 //! Entity matched no subscription produces no event at all.
 
-use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
@@ -64,6 +64,9 @@ pub struct NotificationEvent {
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Instant at which the event was recorded.
     pub created_at: DateTime<Utc>,
+    /// The store instant of the commit that made the change, which a delivery
+    /// compares with the instant its Subscription last became active.
+    pub committed_at: StoreInstant,
 }
 
 #[cfg(test)]

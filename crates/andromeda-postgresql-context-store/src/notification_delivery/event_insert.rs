@@ -5,6 +5,7 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         change_code::{stored_change_kind, stored_lifecycle},
+        event_commit::EventCommit,
         rows::NewNotificationEvent,
     },
 };
@@ -45,6 +46,9 @@ use sqlx::{Postgres, Transaction};
 /// INSERT …`), and the two statements inside the one transaction are
 /// equivalent: the second names only the event keys the first returned.
 ///
+/// Every event records the instant of the commit that made its change, as
+/// `commit` names it, which its deliveries are compared with.
+///
 /// Each state an event carries is stored as one `entity_state_record`, its
 /// names as the keys `keys` holds for them; the caller resolved every name the
 /// states mention in the same transaction.
@@ -70,6 +74,7 @@ pub async fn insert_events_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
     record: &WriteRecord,
+    commit: EventCommit,
     events: &[NewNotificationEvent<'_>],
     keys: &NameKeys,
 ) -> Result<(), ContextStoreError> {
@@ -79,7 +84,7 @@ pub async fn insert_events_in_tx(
 
     let rows = events.iter().map(|event| EventRow::of(event, keys)).collect::<Result<Vec<_>, _>>()?;
     let mut external = ExternalArguments::default();
-    let insert = insert_events_statement(target, record, rows, &mut external)?;
+    let insert = insert_events_statement(target, record, commit, rows, &mut external)?;
     // The conflict clause suppresses a replayed event, so a replay reads back
     // only the events this transaction actually inserted; every one of them is
     // then owed its deliveries.
@@ -180,18 +185,20 @@ impl<'a> EventRow<'a> {
     }
 
     /// The row's values in column order, `record` stamping the write's
-    /// instant and identity that every row shares.
+    /// instant and identity and `commit` the instant of the commit that made
+    /// the change, both shared by every row.
     ///
     /// A state is one `entity_state_record`, a composite sea-query cannot
     /// carry, so it is pushed onto `external`; an absent state is the literal
     /// `NULL`.
-    fn values(self, record: &WriteRecord, external: &mut ExternalArguments<'a>) -> [SimpleExpr; 13] {
+    fn values(self, record: &WriteRecord, commit: EventCommit, external: &mut ExternalArguments<'a>) -> [SimpleExpr; 14] {
         let mut state = |state: Option<EntityStateRecord>| match state {
             Some(state) => cast(external.push(state), PostgresType::EntityStateRecord),
             None => SimpleExpr::Keyword(Keyword::Null),
         };
         [
             Expr::val(record.recorded_at()),
+            commit.value(),
             Expr::val(record.write_id().as_uuid()),
             Expr::val(self.event_ordinal),
             Expr::val(self.lifecycle),
@@ -225,12 +232,14 @@ impl<'a> EventRow<'a> {
 fn insert_events_statement<'a>(
     target: &ContextTarget,
     record: &WriteRecord,
+    commit: EventCommit,
     rows: Vec<EventRow<'a>>,
     external: &mut ExternalArguments<'a>,
 ) -> Result<InsertStatement, ContextStoreError> {
     let mut statement = Query::insert();
     statement.into_table(table_of(target, NotificationEvents::Table)).columns([
         NotificationEvents::CreatedAt,
+        NotificationEvents::CommittedAt,
         NotificationEvents::WriteId,
         NotificationEvents::EventOrdinal,
         NotificationEvents::Lifecycle,
@@ -245,7 +254,7 @@ fn insert_events_statement<'a>(
         NotificationEvents::EntityExpiresAt,
     ]);
     for row in rows {
-        statement.values(row.values(record, external))?;
+        statement.values(row.values(record, commit, external))?;
     }
     statement
         .on_conflict(
@@ -338,12 +347,13 @@ fn insert_deliveries_statement(
 mod tests {
     use crate::{
         notification_delivery::{
+            event_commit::EventCommit,
             event_insert::{EventRow, insert_deliveries_statement, insert_events_statement, owed_deliveries},
             rows::NewNotificationEvent,
         },
         statement_text::text_of,
     };
-    use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -426,12 +436,16 @@ mod tests {
     }
 
     fn statement(events: &[NewNotificationEvent<'_>]) -> String {
+        statement_of(events, EventCommit::ThisTransaction)
+    }
+
+    fn statement_of(events: &[NewNotificationEvent<'_>], commit: EventCommit) -> String {
         let rows = events
             .iter()
             .map(|event| EventRow::of(event, &keys()).expect("a representable event"))
             .collect::<Vec<_>>();
         let mut external = ExternalArguments::default();
-        insert_events_statement(&target(), &WriteRecord::mint(Utc::now()), rows, &mut external)
+        insert_events_statement(&target(), &WriteRecord::mint(Utc::now()), commit, rows, &mut external)
             .expect("a valid insert")
             .build(PostgresQueryBuilder)
             .0
@@ -447,15 +461,31 @@ mod tests {
         assert!(sql.contains(r#"RETURNING "event_key", "event_ordinal""#), "{sql}");
     }
 
-    /// Every row records the write's instant and identity first.
+    /// Every row records the write's instant, its commit's instant and its
+    /// identity first; a change committed by the inserting transaction takes
+    /// that transaction's timestamp.
     #[test]
-    fn every_event_of_a_write_records_its_instant_and_identity() {
+    fn every_event_of_a_write_records_its_instant_commit_and_identity() {
         let entity = entity();
         let snapshot = vehicle();
         let change = change(EntityLifecycle::Modified);
         let sql = statement(&[event(&entity, &change, 3, &[1], &snapshot), event(&entity, &change, 4, &[1], &snapshot)]);
+        assert!(sql.contains(r#"("created_at", "committed_at", "write_id","#), "{sql}");
+        assert!(sql.contains("VALUES ($1, NOW(), $2, $3,"), "{sql}");
+        assert!(sql.contains("($12, NOW(), $13, $14,"), "{sql}");
+    }
+
+    /// A replay queues the events of a change an earlier commit made, so each
+    /// row binds that commit's instant rather than the replay's timestamp.
+    #[test]
+    fn a_replayed_event_records_the_instant_of_the_commit_that_made_the_change() {
+        let entity = entity();
+        let snapshot = vehicle();
+        let change = change(EntityLifecycle::Modified);
+        let earlier = EventCommit::Earlier(StoreInstant::new(Utc::now()));
+        let sql = statement_of(&[event(&entity, &change, 3, &[1], &snapshot)], earlier);
         assert!(sql.contains("VALUES ($1, $2, $3, $4,"), "{sql}");
-        assert!(sql.contains("($12, $13, $14, $15,"), "{sql}");
+        assert!(!sql.contains("NOW()"), "{sql}");
     }
 
     #[test]

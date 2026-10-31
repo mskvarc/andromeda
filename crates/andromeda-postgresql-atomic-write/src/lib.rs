@@ -15,6 +15,8 @@ mod attempt_failure;
 /// history.
 mod behind_queue;
 mod columns;
+/// What one commit attempt continues: a fresh write or a replayed job.
+mod commit_continuation;
 mod commit_refusal;
 /// Native PostgreSQL implementation of the context commit port.
 pub mod committer;

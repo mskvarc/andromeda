@@ -17,6 +17,8 @@ pub enum NotificationEvents {
     EventKey,
     /// Instant the event was written, the retention clock reads
     CreatedAt,
+    /// Store transaction timestamp of the commit that made the change
+    CommittedAt,
     /// Identity of the write that produced the event
     WriteId,
     /// Position of the event within its write, unique per write identity
@@ -83,6 +85,7 @@ mod tests {
         assert_eq!(NotificationEvents::Table.to_string(), "notification_events");
         assert_eq!(NotificationEvents::EventKey.to_string(), "event_key");
         assert_eq!(NotificationEvents::CreatedAt.to_string(), "created_at");
+        assert_eq!(NotificationEvents::CommittedAt.to_string(), "committed_at");
         assert_eq!(NotificationEvents::WriteId.to_string(), "write_id");
         assert_eq!(NotificationEvents::EventOrdinal.to_string(), "event_ordinal");
         assert_eq!(NotificationEvents::Lifecycle.to_string(), "lifecycle");

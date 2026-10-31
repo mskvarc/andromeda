@@ -402,7 +402,7 @@ mod tests {
         human_duration::HumanDuration,
         schema::notifications::delivery::{DeliveryConfig, DeliveryMode},
     };
-    use andromeda_context_commit::{lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{lease_holder::LeaseHolder, store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
@@ -705,6 +705,7 @@ mod tests {
             .change(EntityChange::new(EntityLifecycle::Modified, Vec::new()))
             .entity_id(parse("urn:ngsi-ld:Entity:1")?)
             .created_at(Utc::now())
+            .committed_at(StoreInstant::new(Utc::now()))
             .build();
         Ok(DeliveryEntry::builder()
             .target(live_target())

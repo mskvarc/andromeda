@@ -1,7 +1,7 @@
 //! The record and ordinal base a replayed commit continues under, and the job
 //! lease it settles.
 
-use crate::{job_lease::JobLease, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use crate::{job_lease::JobLease, store_instant::StoreInstant, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 
 /// The identity and next free ordinal a durably enqueued side-effect job must
 /// resume its commit under.
@@ -30,14 +30,23 @@ pub struct CommitReplay {
     pub base_ordinal: WriteOrdinal,
     /// The job the replay settles and the lease it must still hold to do so.
     pub lease: JobLease,
+    /// The store instant of the original commit, which changed the entities
+    /// whose notifications the replay queues.
+    pub committed_at: StoreInstant,
 }
 
 impl CommitReplay {
-    /// Construct a replay continuation from its record, next free ordinal and
-    /// the lease of the job it settles.
+    /// Construct a replay continuation from its record, next free ordinal,
+    /// the lease of the job it settles and the instant its original commit
+    /// committed at.
     #[must_use]
-    pub const fn new(record: WriteRecord, base_ordinal: WriteOrdinal, lease: JobLease) -> CommitReplay {
-        CommitReplay { record, base_ordinal, lease }
+    pub const fn new(record: WriteRecord, base_ordinal: WriteOrdinal, lease: JobLease, committed_at: StoreInstant) -> CommitReplay {
+        CommitReplay {
+            record,
+            base_ordinal,
+            lease,
+            committed_at,
+        }
     }
 }
 
@@ -52,6 +61,7 @@ mod tests {
         job_lease::JobLease,
         lease_holder::LeaseHolder,
         side_effect_job_id::SideEffectJobId,
+        store_instant::StoreInstant,
         write_id::WriteId,
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
@@ -66,8 +76,9 @@ mod tests {
             job: SideEffectJobId::mint(),
             holder: LeaseHolder::mint(),
         };
-        let replay = CommitReplay::new(record, WriteOrdinal::at(4), lease);
+        let replay = CommitReplay::new(record, WriteOrdinal::at(4), lease, StoreInstant::new(recorded_at));
         pretty_assertions::assert_eq!(replay.record, record);
+        pretty_assertions::assert_eq!(replay.committed_at, StoreInstant::new(recorded_at));
         pretty_assertions::assert_eq!(replay.base_ordinal, WriteOrdinal::at(4));
         pretty_assertions::assert_eq!(replay.lease, lease);
     }

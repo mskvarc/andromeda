@@ -19,6 +19,7 @@ use crate::{
         conformance_text::stored_conformance,
         interned_attributes::InternedAttributeLists,
         json_document::json_document,
+        notifying_columns::{created_since, restarted_since},
         status_code::stored_status,
         stored_kind::{StoredKind, of_kind},
         trigger_code::stored_trigger_list,
@@ -31,7 +32,7 @@ use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::clock::now;
-use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
+use andromeda_subscription::{error::SubscriptionError, notifying_since::NotifyingRestart, store::SubscriptionFields};
 use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, InsertStatement, Query, SimpleExpr, UpdateStatement};
 
@@ -96,14 +97,16 @@ pub fn csource_create(
             [Subscriptions::Id, Subscriptions::Kind]
                 .into_iter()
                 .chain(names)
-                .chain([Subscriptions::CreatedAt, Subscriptions::ModifiedAt]),
+                .chain([Subscriptions::CreatedAt, Subscriptions::ModifiedAt])
+                .chain(created_since().map(|(column, _)| column)),
         )
         .with_cte(advance_clause())
         .values(
             [Expr::val(id.as_str()), Expr::val(StoredKind::Csource.code().code())]
                 .into_iter()
                 .chain(values)
-                .chain([now(), now()]),
+                .chain([now(), now()])
+                .chain(created_since().map(|(_, value)| value)),
         )
         .map_err(|error| persistence_error::<SubscriptionError>(error))?
         .returning(Query::returning().column(Subscriptions::SubscriptionKey));
@@ -123,12 +126,13 @@ pub fn csource_update(
     fields: &SubscriptionFields<'_>,
     interned: InternedAttributeLists,
     status: SubscriptionStatus,
+    restart: NotifyingRestart,
 ) -> Result<UpdateStatement, SubscriptionError> {
     let mut columns = written_columns(fields, interned, status)?;
     columns.push((Subscriptions::TemporalQ, json_document(fields.temporal_q)?));
     Ok(Query::update()
         .table(table_of(target, Subscriptions::Table))
-        .values(columns.into_iter().chain([(Subscriptions::ModifiedAt, now())]))
+        .values(columns.into_iter().chain([(Subscriptions::ModifiedAt, now())]).chain(restarted_since(restart)))
         .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
         .and_where(of_kind(StoredKind::Csource))
         .with_cte(advance_clause())
@@ -149,6 +153,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use andromeda_subscription::notifying_since::{NotifyingRestart, SinceRestart};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -178,6 +183,10 @@ mod tests {
             &bare_fields(),
             InternedAttributeLists::default(),
             SubscriptionStatus::Active,
+            NotifyingRestart {
+                active: SinceRestart::Kept,
+                selected: SinceRestart::Kept,
+            },
         )
         .expect("the context-source update builds")
         .build(PostgresQueryBuilder);

@@ -33,6 +33,8 @@ mod interned_attributes;
 mod json_document;
 /// PgRow-to-domain conversion for subscriptions.
 pub mod mapper;
+/// The `active_since` and `selected_since` values a subscription write stores.
+mod notifying_columns;
 /// Borrowed input structs for subscription operations.
 pub mod params;
 /// Which periodic subscriptions are owed a notification.

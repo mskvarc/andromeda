@@ -198,12 +198,13 @@ impl EntitySideEffectDrain {
             job,
             record,
             base_ordinal,
+            committed_at,
         } = lease;
         let lease = JobLease {
             job: id,
             holder: self.config.lease_holder,
         };
-        match self.deliver(job, CommitReplay::new(record, base_ordinal, lease)).await {
+        match self.deliver(job, CommitReplay::new(record, base_ordinal, lease, committed_at)).await {
             Ok(ReplaySettlement::Settled(committed)) => {
                 // The replay removed the job in its own transaction, under this
                 // worker's lease, so its live change events are published
@@ -287,8 +288,9 @@ impl EntitySideEffectDrain {
             SideEffectNotificationRoute::Durable(recording) => (owed_subscription_matches(recording, &ContextTarget::Live, &change_events), Vec::new()),
         };
         let writes = replay_writes(owed);
+        let committed_at = replay.committed_at;
         match self.writes.commit_replayed(&ContextTarget::Live, replay, writes).await {
-            Ok(_) => Ok(ReplaySettlement::Settled(CommittedSideEffect { change_events })),
+            Ok(_) => Ok(ReplaySettlement::Settled(CommittedSideEffect { change_events, committed_at })),
             Err(CommitError::ReplayLeaseLost { .. }) => Ok(ReplaySettlement::LeaseLost),
             Err(
                 failure @ (CommitError::DuplicateEntity { .. }
@@ -317,12 +319,13 @@ impl EntitySideEffectDrain {
         let SideEffectNotificationRoute::Live(sink) = &self.notifications else {
             return;
         };
-        let CommittedSideEffect { change_events } = committed;
+        let CommittedSideEffect { change_events, committed_at } = committed;
         let changes = change_events
             .into_iter()
             .map(|event| ContextChangeEvent {
                 target: ContextTarget::Live,
                 event,
+                committed_at,
             })
             .collect();
         sink.publish(changes).await;
@@ -367,6 +370,7 @@ mod tests {
         lease_acknowledgement::LeaseAcknowledgement,
         lease_holder::LeaseHolder,
         side_effect_job_id::SideEffectJobId,
+        store_instant::StoreInstant,
         write_id::WriteId,
         write_ordinal::WriteOrdinal,
         write_outcome::WriteOutcome,
@@ -592,6 +596,11 @@ mod tests {
         WriteRecord::restored(WriteId::mint(), recorded_at)
     }
 
+    /// The store instant of the commit that queued every fixture job.
+    fn queued_at() -> StoreInstant {
+        StoreInstant::new(Utc.timestamp_opt(1_700_000_001, 0).single().expect("valid instant"))
+    }
+
     fn lease(attempts: i32) -> LeasedSideEffect {
         LeasedSideEffect {
             id: SideEffectJobId::mint(),
@@ -599,6 +608,7 @@ mod tests {
             job: BatchSideEffectJob { change_events: Vec::new() },
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
+            committed_at: queued_at(),
         }
     }
 
@@ -654,6 +664,7 @@ mod tests {
             job: BatchSideEffectJob { change_events: vec![event] },
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
+            committed_at: queued_at(),
         }
     }
 
@@ -894,7 +905,10 @@ mod tests {
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
         drain_with_committer(queue, Arc::clone(&committer)).execute(Utc::now()).await?;
         let replays = committer.replays.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(replays.as_slice(), &[CommitReplay::new(expected_record, expected_base, expected_lease)]);
+        pretty_assertions::assert_eq!(
+            replays.as_slice(),
+            &[CommitReplay::new(expected_record, expected_base, expected_lease, queued_at())]
+        );
         Ok(())
     }
 
@@ -1020,6 +1034,7 @@ mod tests {
             job,
             record: fixed_record(),
             base_ordinal: WriteOrdinal::at(3),
+            committed_at: queued_at(),
         }
     }
 
@@ -1052,9 +1067,10 @@ mod tests {
 
     /// A live-delivery broker draining a job a live-delivery broker queued hands
     /// the owed change, with the entity the write left behind, to its
-    /// in-process notification worker.
+    /// in-process notification worker, stamped with the commit that queued the
+    /// job rather than the replay: that commit is when the change happened.
     #[tokio::test]
-    async fn a_live_drain_publishes_the_owed_change_with_its_resulting_entity() -> Result<(), EntityError> {
+    async fn a_live_drain_publishes_the_owed_change_with_its_resulting_entity_and_commit() -> Result<(), EntityError> {
         let id = "urn:ngsi-ld:Building:owed-to-live";
         let job = BatchSideEffectJob {
             change_events: vec![owed_creation(id)],
@@ -1069,6 +1085,7 @@ mod tests {
         let published = sink.published.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(published.len(), 1);
         pretty_assertions::assert_eq!(published[0].event.current_payload.as_deref(), Some(&building(id)));
+        pretty_assertions::assert_eq!(published[0].committed_at, queued_at());
         Ok(())
     }
 }

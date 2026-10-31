@@ -53,11 +53,14 @@ impl EntityService {
             // A conflicting insert is 409, per NGSI-LD 6.4.3.1. It reaches here as a
             // precondition failure rather than a duplicate-key error, which is what
             // lets the same statement serve a partially-succeeding batch.
-            if single(self.writes.commit(target, now, vec![write]).await?)?.is_already_exists() {
+            let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
+            if outcome.is_already_exists() {
                 return Err(EntityError::already_exists(id));
             }
 
-            self.notifier.publish(target, plan.events).await;
+            if let Some(committed_at) = outcome.changed_at() {
+                self.notifier.publish(target, committed_at, plan.events).await;
+            }
 
             Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
         }

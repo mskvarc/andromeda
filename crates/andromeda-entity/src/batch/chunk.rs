@@ -250,7 +250,7 @@ fn error_of(id: &Identifier, outcome: WriteOutcome) -> Option<EntityError> {
         WriteOutcome::NotFound => Some(EntityError::not_found(id)),
         WriteOutcome::Superseded => Some(EntityError::contention(id, WRITE_ATTEMPTS)),
         WriteOutcome::Refused(refusal) => Some(EntityError::from(CommitError::Submission(refusal))),
-        WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
+        WriteOutcome::Created(_) | WriteOutcome::Updated(_) | WriteOutcome::Deleted(..) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
     }
 }
 
@@ -320,6 +320,9 @@ impl EntityService {
             .into());
         }
 
+        // Every write of the chunk landed in one transaction, so any write
+        // that changed an entity carries the instant all its changes share.
+        let committed_at = outcomes.iter().find_map(WriteOutcome::changed_at);
         let mut chunk = ChunkOutcome::default();
         let mut emit_events = Vec::new();
         for ((id, creates, events), outcome) in settled.into_iter().zip(outcomes) {
@@ -342,7 +345,9 @@ impl EntityService {
             emit_events.extend(events);
         }
 
-        self.notifier.publish(target, emit_events).await;
+        if let Some(committed_at) = committed_at {
+            self.notifier.publish(target, committed_at, emit_events).await;
+        }
 
         Ok(chunk)
     }
@@ -355,7 +360,8 @@ impl EntityService {
 )]
 mod tests {
     use crate::{batch::chunk::error_of, error::EntityError};
-    use andromeda_context_commit::{submission_refusal::SubmissionRefusal, write_outcome::WriteOutcome};
+    use andromeda_context_commit::{store_instant::StoreInstant, submission_refusal::SubmissionRefusal, write_outcome::WriteOutcome};
+    use chrono::Utc;
 
     #[test]
     fn a_conflicting_insert_reports_409_and_a_missing_update_reports_404() {
@@ -377,8 +383,8 @@ mod tests {
     #[test]
     fn a_landed_or_skipped_outcome_reports_no_error() {
         for outcome in [
-            WriteOutcome::Created,
-            WriteOutcome::Updated,
+            WriteOutcome::Created(StoreInstant::new(Utc::now())),
+            WriteOutcome::Updated(StoreInstant::new(Utc::now())),
             WriteOutcome::NoEntityChange,
             WriteOutcome::Skipped,
         ] {

@@ -63,7 +63,7 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        created_at: sub.lifecycle.created_at,
+        notifying_since: stored.notifying_since,
         compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
         language_matching,
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),

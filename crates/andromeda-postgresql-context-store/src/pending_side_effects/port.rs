@@ -205,6 +205,7 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
             PendingSideEffects::BaseOrdinal,
+            PendingSideEffects::CreatedAt,
         ]))
         .to_owned()
 }

@@ -4,6 +4,7 @@ use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
     error::EntityError,
+    read_modify_write::ComputedLanding,
     write_kind::AppendAttributes,
     write_target::WriteTarget,
     written_members::{member_attribute_names, written_member_names},
@@ -55,7 +56,10 @@ impl EntityService {
         // from the merged entity instead would report every attribute the entity
         // already held as if this request had appended it.
         let requested = written_member_names(&fragment)?;
-        let (not_appended, events) = self
+        let ComputedLanding {
+            value: (not_appended, events),
+            committed_at,
+        } = self
             .commit_computed_write(target, entity, |previous, now| {
                 let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
@@ -69,7 +73,9 @@ impl EntityService {
             })
             .await?;
 
-        self.notifier.publish(target, events).await;
+        if let Some(committed_at) = committed_at {
+            self.notifier.publish(target, committed_at, events).await;
+        }
 
         Ok((requested, not_appended))
     }

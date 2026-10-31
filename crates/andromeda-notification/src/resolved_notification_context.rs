@@ -114,6 +114,7 @@ mod tests {
     use andromeda_subscription::{
         error::SubscriptionError,
         notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+        notifying_since::NotifyingRestart,
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
@@ -215,6 +216,7 @@ mod tests {
             _id: &Identifier,
             _fields: &SubscriptionFields<'_>,
             _status: SubscriptionStatus,
+            _restart: NotifyingRestart,
         ) -> Result<u64, SubscriptionError> {
             Err(SubscriptionError::StoreSaturated)
         }

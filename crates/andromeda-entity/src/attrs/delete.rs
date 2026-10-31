@@ -5,6 +5,7 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     modification_write::ModificationWrite,
+    read_modify_write::ComputedLanding,
     write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
@@ -79,7 +80,7 @@ impl EntityService {
             DatasetSelection::Default => vec![None],
         };
 
-        let events = self
+        let ComputedLanding { value: events, committed_at } = self
             .commit_computed_write(target, entity, |previous, _| {
                 let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
                 delete_member(&mut remaining, &attribute, selection)?;
@@ -91,7 +92,9 @@ impl EntityService {
             })
             .await?;
 
-        self.notifier.publish(target, events).await;
+        if let Some(committed_at) = committed_at {
+            self.notifier.publish(target, committed_at, events).await;
+        }
 
         Ok(())
     }

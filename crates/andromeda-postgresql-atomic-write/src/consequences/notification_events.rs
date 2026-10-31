@@ -12,6 +12,7 @@
 //! is waiting for, and reaping it later is work the write can simply not create.
 
 use crate::{
+    commit_continuation::CommitContinuation,
     commit_refusal::{context_store, name_lookup},
     consequences::ConsequenceWrite,
 };
@@ -22,7 +23,6 @@ use andromeda_context_commit::{
     subscription_key::SubscriptionKey,
     subscription_match::SubscriptionMatch,
     write_ordinal::WriteOrdinal,
-    write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -47,8 +47,10 @@ pub(crate) struct EventGroup<'a> {
     subscriptions: Vec<SubscriptionKey>,
 }
 
-/// Persist the notification events of `groups` and the deliveries they owe,
-/// reporting whether any event was written.
+/// Persist the notification events of `groups` and the deliveries they owe
+/// under the record `continuation` carries, reporting whether any event was
+/// written, each recording the commit `continuation` names as the one that
+/// made its change.
 ///
 /// `base` continues the commit's one running ordinal counter: temporal history
 /// entries have already drawn from it, and every event group here draws the
@@ -67,7 +69,7 @@ pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
     groups: Vec<EventGroup<'_>>,
-    record: &WriteRecord,
+    continuation: CommitContinuation,
     base: WriteOrdinal,
     entity_type_names: &dyn NameLookup<EntityTypeName>,
     attribute_names: &dyn NameLookup<AttributeName>,
@@ -83,7 +85,7 @@ pub(crate) async fn apply(
         .enumerate()
         .map(|(position, group)| event(base, position, group, &keys))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
-    insert_events_in_tx(tx, target, record, &events, &keys)
+    insert_events_in_tx(tx, target, &continuation.record(), continuation.event_commit(), &events, &keys)
         .await
         .map_err(|error| context_store(error))?;
     Ok(ConsequenceWrite::Written)

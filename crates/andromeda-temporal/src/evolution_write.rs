@@ -82,7 +82,7 @@ impl TemporalService {
                     let committed = self.writes.commit(target, now, vec![write]).await.map_err(TemporalError::from)?;
                     let outcome = single(committed).map_err(TemporalError::from)?;
                     match after_attempt(&outcome) {
-                        AfterAttempt::Settled => Ok(events),
+                        AfterAttempt::Settled => Ok((events, outcome.changed_at())),
                         // A concurrent writer created or changed the Entity, or
                         // deleted it, since the read: the fold is recomputed
                         // against what it did.
@@ -92,10 +92,14 @@ impl TemporalService {
             )
             .await;
         match settled {
-            Ok(events) => {
+            Ok((events, committed_at)) => {
                 // The events describe the attempt the store accepted, never one
-                // that was computed and lost to a concurrent writer.
-                self.notifier.publish(target, events).await;
+                // that was computed and lost to a concurrent writer. A write that
+                // left current state as it was changed no entity, and owes no
+                // notification.
+                if let Some(committed_at) = committed_at {
+                    self.notifier.publish(target, committed_at, events).await;
+                }
                 Ok(())
             }
             Err(EvolutionAttempt::Lost) => Err(TemporalError::TransactionContended),

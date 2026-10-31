@@ -15,7 +15,7 @@ use crate::{
         trigger_code::trigger_of,
     },
 };
-use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
-use andromeda_subscription::stored_subscription::StoredSubscription;
+use andromeda_subscription::{notifying_since::NotifyingSince, stored_subscription::StoredSubscription};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
@@ -232,6 +232,8 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         last_failure: row.try_get(SubscriptionDeliveryState::LastFailure.unquoted())?,
         created_at: row.try_get(Subscriptions::CreatedAt.unquoted())?,
         modified_at: row.try_get(Subscriptions::ModifiedAt.unquoted())?,
+        active_since: row.try_get(Subscriptions::ActiveSince.unquoted())?,
+        selected_since: row.try_get(Subscriptions::SelectedSince.unquoted())?,
     })
 }
 
@@ -259,9 +261,14 @@ pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: Dataset
 #[must_use]
 pub fn row_to_stored_subscription(row: SubscriptionRow) -> StoredSubscription {
     let key = row.key;
+    let notifying_since = NotifyingSince {
+        active: StoreInstant::new(row.active_since),
+        selected: StoreInstant::new(row.selected_since),
+    };
     StoredSubscription {
         key,
         subscription: row_to_subscription(row),
+        notifying_since,
     }
 }
 

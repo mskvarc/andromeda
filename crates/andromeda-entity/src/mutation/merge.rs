@@ -7,6 +7,7 @@ use crate::{
     error::EntityError,
     merge_fragment::{adapt_member, held_attribute_family},
     merge_options::MergeOptions,
+    read_modify_write::ComputedLanding,
     write_kind::MergeEntity,
     write_target::WriteTarget,
 };
@@ -78,7 +79,7 @@ impl EntityService {
                 admitted.into_document()
             };
 
-            let events = self
+            let ComputedLanding { value: events, committed_at } = self
                 .commit_computed_write(target, write_target, |previous, now| {
                     let mut merged = EntityState::clone(previous); // clone: shares every attribute the merge leaves alone
                     merged.merge(&fragment, options.observed_at)?;
@@ -92,7 +93,9 @@ impl EntityService {
                 })
                 .await?;
 
-            self.notifier.publish(target, events).await;
+            if let Some(committed_at) = committed_at {
+                self.notifier.publish(target, committed_at, events).await;
+            }
 
             Ok(())
         }

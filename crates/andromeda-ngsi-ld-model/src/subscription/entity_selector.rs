@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Entity selector for subscriptions (ETSI GS CIM 009 clause 5.2.33).
 ///
 /// Selects entities by type and optionally by id or id pattern.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntitySelector {
     /// Exact entity id to match.

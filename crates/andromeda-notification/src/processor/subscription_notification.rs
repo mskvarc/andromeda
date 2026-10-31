@@ -170,7 +170,7 @@ mod tests {
         notifier_test_double::{ClaimRecordingStore, NoEntities, entity_query, offline_engine, transport},
         processor::{NotificationProcessor, NotificationProcessorDeps, payload::cache::NotificationCompactionCache, subscription_notification::NotifiedChange},
     };
-    use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
@@ -183,6 +183,7 @@ mod tests {
         cache::SubscriptionCache,
         compilation::compile_subscription,
         compiled::CompiledSubscription,
+        notifying_since::NotifyingSince,
         stored_subscription::StoredSubscription,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -222,6 +223,10 @@ mod tests {
             &StoredSubscription {
                 key: SubscriptionKey::try_from(1).expect("a valid key"),
                 subscription,
+                notifying_since: NotifyingSince {
+                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                },
             },
             LanguageMatching::TagEquality,
         )

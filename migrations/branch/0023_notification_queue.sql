@@ -31,6 +31,14 @@
 create table notification_events (
     event_key bigint generated always as identity (cache 32),
     created_at timestamptz not null,
+    -- The store's transaction timestamp of the commit that made the change:
+    -- the inserting transaction's own, or for a replayed job the timestamp of
+    -- the commit that queued it. A delivery is dropped when its Subscription
+    -- last became active after this instant, so a change committed while the
+    -- Subscription was paused is never notified once it is active again
+    -- (clause 5.8.6). Both instants come from the same clock whichever broker
+    -- wrote them.
+    committed_at timestamptz not null,
     -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
     -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
     -- can only report them from here; a change that leaves the Entity in place

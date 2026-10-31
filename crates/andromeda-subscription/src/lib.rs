@@ -69,6 +69,9 @@ mod notification_context;
 pub mod notification_slot;
 /// The rules a subscription request's notification is checked against.
 mod notification_validation;
+/// Since when a Subscription may be notified of a change, and which committed
+/// changes that leaves owed to it.
+pub mod notifying_since;
 /// Expansion of the projection lists of a subscription's notification.
 mod projection_expansion;
 /// Subscription request validation.

@@ -1,7 +1,7 @@
 //! The subscription store a re-assembly test runs against: it holds the one
 //! local subscription and records what the re-assembly writes back to it.
 
-use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_subscription::{
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::{NotifyingRestart, NotifyingSince},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -69,7 +70,16 @@ impl SubscriptionStore for RecordingSubscriptions {
     async fn get(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
         let subscription: Subscription = serde_json::from_value(self.document.clone())?; // clone: each read decodes its own copy of the stored form
         let key = SubscriptionKey::try_from(KEY).map_err(|_unrepresentable| SubscriptionError::StoreUnavailable)?;
-        Ok((subscription.id == *id).then_some(StoredSubscription { key, subscription }))
+        let since = StoreInstant::new(subscription.lifecycle.created_at);
+        let notifying_since = NotifyingSince {
+            active: since,
+            selected: since,
+        };
+        Ok((subscription.id == *id).then_some(StoredSubscription {
+            key,
+            subscription,
+            notifying_since,
+        }))
     }
 
     async fn list(&self, _target: &ContextTarget, _window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
@@ -147,6 +157,7 @@ impl SubscriptionStore for RecordingSubscriptions {
         _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
+        _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         Err(SubscriptionError::StoreUnavailable)
     }

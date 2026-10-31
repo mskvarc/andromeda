@@ -27,6 +27,7 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
     entity_version::EntityVersion,
     precondition::Precondition,
+    store_instant::StoreInstant,
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -111,7 +112,7 @@ impl StoredRows {
             }
             (EntityMutation::Insert(record), None, _) => {
                 self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
-                WriteOutcome::Created
+                WriteOutcome::Created(StoreInstant::new(accepted_at))
             }
             // An update or a deletion stating a version matches the row only
             // while it carries that version, and a missing row carries none.
@@ -124,16 +125,19 @@ impl StoredRows {
             }
             (EntityMutation::Update(record), Some(_), _) => {
                 self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
-                WriteOutcome::Updated
+                WriteOutcome::Updated(StoreInstant::new(accepted_at))
             }
             (EntityMutation::Delete, Some((_, modified_at)), _) => {
                 self.remove(id);
-                WriteOutcome::Deleted(DeletedEntity {
-                    id: id.clone(), // clone: the outcome owns the identifier
-                    created_at: modified_at,
-                    modified_at,
-                    expires_at: None,
-                })
+                WriteOutcome::Deleted(
+                    DeletedEntity {
+                        id: id.clone(), // clone: the outcome owns the identifier
+                        created_at: modified_at,
+                        modified_at,
+                        expires_at: None,
+                    },
+                    StoreInstant::new(accepted_at),
+                )
             }
             (EntityMutation::None, _, _) => WriteOutcome::NoEntityChange,
         }

@@ -10,6 +10,7 @@ use crate::{
     entity::{
         census::delta::{CensusChange, CensusStatements},
         created_entities::CreatedEntities,
+        landed_entity::LandedEntity,
         mapper::stored_uri,
         params::PreparedEntityColumns,
         repo::EntityRepository,
@@ -38,11 +39,13 @@ use crate::{
     },
     error::ContextStoreError,
 };
+use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
+    clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
     returning_image::{New, Old},
     unnest::UnnestAliased,
@@ -95,8 +98,12 @@ const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
 ///      census_type_attributes AS (INSERT INTO entity_type_attribute_census … FROM srch …),
 ///      census_attributes AS (INSERT INTO attribute_census … FROM srch …)
-/// SELECT id, established FROM ins
+/// SELECT id, established, now() FROM ins
 /// ```
+///
+/// Each written row comes back with `now()`, the transaction timestamp: the
+/// store's own clock, which orders the change against a Subscription's
+/// lifecycle the same way whichever broker committed either.
 ///
 /// The conflict clause on `entities` is how a duplicate create is detected:
 /// an Entity with a current state is left alone, its identifier does not come
@@ -212,7 +219,7 @@ pub(super) fn entity_insert_statement<'entities>(
     for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::Id).column(Established).from(Ins).take());
+    let statement = with.query(Query::select().column(Entities::Id).column(Established).expr(now()).from(Ins).take());
 
     let statement = with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns));
     Ok(ExternallyBound::new(statement, external))
@@ -301,18 +308,21 @@ impl EntityRepository {
         types_present(entities)?;
 
         let rows = entity_insert_statement(target, entities, rows, accepted_at, establishing)?
-            .into_query_as::<(String, bool)>()
+            .into_query_as::<(String, bool, DateTime<Utc>)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
         let mut created = CreatedEntities::default();
-        for (id, established) in &rows {
+        for (id, established, committed_at) in &rows {
             let id = stored_uri(id)?;
             if *established {
                 // clone: the identifier is both landed and established.
                 created.established.push(id.clone());
             }
-            created.landed.push(id);
+            created.landed.push(LandedEntity {
+                id,
+                committed_at: StoreInstant::new(*committed_at),
+            });
         }
         Ok(created)
     }
@@ -415,7 +425,7 @@ mod tests {
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"SELECT "id", "established" FROM "ins""#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "id", "established", NOW() FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
             2,

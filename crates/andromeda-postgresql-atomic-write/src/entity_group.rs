@@ -6,14 +6,16 @@ use andromeda_context_commit::{
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
     precondition::Precondition,
+    store_instant::StoreInstant,
     write_outcome::WriteOutcome,
 };
 
 /// Whether a fused statement returned the identifier a write named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowReturned {
-    /// The statement affected this row.
-    Yes,
+    /// The statement affected this row, in the transaction the instant was
+    /// read in.
+    At(StoreInstant),
     /// The statement did not affect this row.
     No,
 }
@@ -51,8 +53,8 @@ pub(crate) fn group(writes: &[AtomicWrite]) -> EntityGroups<'_> {
 /// Interpret a fused insert result under its semantic precondition.
 pub(crate) const fn insert_outcome(precondition: Precondition, returned: RowReturned) -> WriteOutcome {
     match (returned, precondition) {
-        (RowReturned::Yes, Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
-            WriteOutcome::Created
+        (RowReturned::At(at), Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
+            WriteOutcome::Created(at)
         }
         (RowReturned::No, Precondition::MustNotExist) => WriteOutcome::AlreadyExists,
         (RowReturned::No, Precondition::None | Precondition::MustExist | Precondition::UnchangedSince(_)) => WriteOutcome::Skipped,
@@ -62,8 +64,8 @@ pub(crate) const fn insert_outcome(precondition: Precondition, returned: RowRetu
 /// Interpret a fused update result under its semantic precondition.
 pub(crate) const fn update_outcome(precondition: Precondition, returned: RowReturned) -> WriteOutcome {
     match (returned, precondition) {
-        (RowReturned::Yes, Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
-            WriteOutcome::Updated
+        (RowReturned::At(at), Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
+            WriteOutcome::Updated(at)
         }
         (RowReturned::No, Precondition::UnchangedSince(_)) => WriteOutcome::Superseded,
         (RowReturned::No, Precondition::None | Precondition::MustNotExist | Precondition::MustExist) => WriteOutcome::NotFound,
@@ -71,10 +73,10 @@ pub(crate) const fn update_outcome(precondition: Precondition, returned: RowRetu
 }
 
 /// Interpret a fused delete result under its semantic precondition.
-pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<DeletedEntity>) -> WriteOutcome {
+pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<(DeletedEntity, StoreInstant)>) -> WriteOutcome {
     match (deleted, precondition) {
-        (Some(entity), Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
-            WriteOutcome::Deleted(entity)
+        (Some((entity, at)), Precondition::None | Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
+            WriteOutcome::Deleted(entity, at)
         }
         (None, Precondition::UnchangedSince(_)) => WriteOutcome::Superseded,
         (None, Precondition::None | Precondition::MustNotExist | Precondition::MustExist) => WriteOutcome::NotFound,
@@ -94,6 +96,7 @@ mod tests {
         entity_record::EntityRecord,
         entity_version::EntityVersion,
         precondition::Precondition,
+        store_instant::StoreInstant,
     };
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -116,7 +119,15 @@ mod tests {
 
     #[test]
     fn statement_results_map_to_precondition_outcomes() {
-        assert!(insert_outcome(Precondition::MustNotExist, RowReturned::Yes).is_created());
+        let committed = StoreInstant::new(chrono::Utc::now());
+        pretty_assertions::assert_eq!(
+            insert_outcome(Precondition::MustNotExist, RowReturned::At(committed)).changed_at(),
+            Some(committed)
+        );
+        pretty_assertions::assert_eq!(
+            update_outcome(Precondition::MustExist, RowReturned::At(committed)).changed_at(),
+            Some(committed)
+        );
         assert!(insert_outcome(Precondition::MustNotExist, RowReturned::No).is_already_exists());
         assert!(update_outcome(Precondition::MustExist, RowReturned::No).is_not_found());
         assert!(update_outcome(Precondition::UnchangedSince(EntityVersion::new(1, 1)), RowReturned::No).is_superseded());

@@ -5,6 +5,7 @@ use crate::{
     admitted_write::AdmittedAttribute,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
+    read_modify_write::ComputedLanding,
     write_kind::PartialUpdateAttribute,
     write_target::WriteTarget,
 };
@@ -53,7 +54,7 @@ impl EntityService {
         }
         let (attribute, fragment) = admitted.into_parts();
 
-        let events = self
+        let ComputedLanding { value: events, committed_at } = self
             .commit_computed_write(target, entity, |previous, now| {
                 let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
                 updated.partial_update_attribute(&attribute, &fragment)?;
@@ -67,7 +68,9 @@ impl EntityService {
             })
             .await?;
 
-        self.notifier.publish(target, events).await;
+        if let Some(committed_at) = committed_at {
+            self.notifier.publish(target, committed_at, events).await;
+        }
 
         Ok(())
     }

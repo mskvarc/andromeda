@@ -34,7 +34,7 @@ impl EntityChangeSink for QueuedEntityChangeSink {
 #[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod tests {
     use crate::event::entity_change_sink::QueuedEntityChangeSink;
-    use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
+    use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::change_sink::EntityChangeSink;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -55,6 +55,7 @@ mod tests {
                 .occurred_at(Utc::now())
                 .origin(ChangeOrigin::Local)
                 .build(),
+            committed_at: StoreInstant::new(Utc::now()),
         }
     }
 

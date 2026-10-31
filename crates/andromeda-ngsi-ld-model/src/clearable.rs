@@ -145,6 +145,21 @@ impl<T> Clearable<T> {
         }
     }
 
+    /// Whether applying the fragment over the `stored` member changes its
+    /// value: a value that differs from the stored one, or the NGSI-LD Null
+    /// over a stored member.
+    #[must_use]
+    pub fn changes(&self, stored: Option<&T>) -> bool
+    where
+        T: PartialEq,
+    {
+        match self {
+            Clearable::Absent => false,
+            Clearable::NgsiLdNull => stored.is_some(),
+            Clearable::Set(value) => stored != Some(value),
+        }
+    }
+
     /// The member after the fragment is applied over the `stored` one.
     #[must_use]
     pub fn applied_over(self, stored: Option<T>) -> Option<T> {
@@ -446,5 +461,16 @@ mod tests {
         pretty_assertions::assert_eq!(Clearable::from_text("7", str::parse::<u8>), Ok(Clearable::Set(7)));
         pretty_assertions::assert_eq!(Clearable::from_text("urn:ngsi-ld:null", str::parse::<u8>), Ok(Clearable::NgsiLdNull));
         assert!(Clearable::from_text("seven", str::parse::<u8>).is_err());
+    }
+
+    #[test]
+    fn a_fragment_changes_a_member_only_when_the_value_it_leaves_differs() {
+        assert!(!Clearable::<u8>::Absent.changes(Some(&1)));
+        assert!(!Clearable::<u8>::Absent.changes(None));
+        assert!(!Clearable::Set(1_u8).changes(Some(&1)));
+        assert!(Clearable::Set(2_u8).changes(Some(&1)));
+        assert!(Clearable::Set(1_u8).changes(None));
+        assert!(Clearable::<u8>::NgsiLdNull.changes(Some(&1)));
+        assert!(!Clearable::<u8>::NgsiLdNull.changes(None));
     }
 }

@@ -28,6 +28,8 @@ pub mod claimed_event;
 pub mod claimed_event_read;
 /// Reaping delivered rows and the events they leave behind.
 pub mod cleanup;
+/// Which commit a stored notification event records the instant of.
+pub mod event_commit;
 /// Writing one write's notification events and their deliveries.
 pub mod event_insert;
 /// The queue behind the notification-owned store port.

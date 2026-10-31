@@ -25,20 +25,6 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    // A subscription is notified of changes that happen while it is active, not
-    // of the state that existed before it (clause 5.2.12: a subscription has no
-    // initial notification). An entity change committed before the subscription
-    // was created can still reach the notification worker after the subscription
-    // has entered the cache; matching it here would deliver a notification for a
-    // change the subscriber could never have asked to observe.
-    if event.occurred_at < sub.created_at {
-        debug!(
-            "Subscription {} skipped: event occurred at {} before the subscription was created at {}",
-            sub.id, event.occurred_at, sub.created_at
-        );
-        return false;
-    }
-
     if sub.time_interval_secs.is_some() {
         return false;
     }
@@ -138,8 +124,9 @@ mod tests {
         error::SubscriptionError,
         geo_filter::{SubscriptionGeoFilter, compile_geo_q},
         matching::{matches_entity_filters, matches_subscription},
+        notifying_since::NotifyingSince,
     };
-    use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -211,7 +198,10 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            created_at: DateTime::<Utc>::MIN_UTC,
+            notifying_since: NotifyingSince {
+                active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            },
             compiled_q: None,
             language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
@@ -252,36 +242,6 @@ mod tests {
 
     fn make_event() -> ChangeEvent {
         event_of(change(EntityLifecycle::Created, AttributeChangeKind::Created))
-    }
-
-    fn at(unix_seconds: i64) -> DateTime<Utc> {
-        DateTime::from_timestamp(unix_seconds, 0).expect("a fixture timestamp in range")
-    }
-
-    /// Clause 5.2.12: a subscription has no initial notification, so a change
-    /// that occurred before the subscription was created never notifies it. The
-    /// notification worker can still see such a change after the subscription has
-    /// entered the cache, which is when this guard has to hold.
-    #[test]
-    fn a_change_that_occurred_before_the_subscription_was_created_is_not_matched() {
-        let mut event = make_event();
-        event.occurred_at = at(1_000);
-        let mut sub = make_sub();
-
-        sub.created_at = at(2_000);
-        assert!(
-            !matches_subscription(&sub, &event),
-            "a change before the subscription's creation must not match"
-        );
-
-        sub.created_at = at(1_000);
-        assert!(
-            matches_subscription(&sub, &event),
-            "a change at the subscription's creation instant still matches"
-        );
-
-        sub.created_at = at(500);
-        assert!(matches_subscription(&sub, &event), "a change after the subscription's creation matches");
     }
 
     /// Resolves every term to the NGSI-LD `location` `GeoProperty`, which is what

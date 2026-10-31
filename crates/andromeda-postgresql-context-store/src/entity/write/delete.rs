@@ -5,6 +5,7 @@ use crate::{
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
+        removed_entity::RemovedEntity,
         repo::EntityRepository,
         write::{
             search_image::SearchImage,
@@ -15,7 +16,7 @@ use crate::{
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
-use andromeda_context_commit::{deleted_entity::DeletedEntity, entity_version::EntityVersion};
+use andromeda_context_commit::{deleted_entity::DeletedEntity, entity_version::EntityVersion, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::{schema_iden, table_of};
@@ -28,13 +29,16 @@ use andromeda_postgresql_schema::{
     current::{CurrentAttributes, E, Entities, EntitySearch},
     type_membership::MembershipSide,
 };
-use andromeda_postgresql_seaquery::{pg_array::text_array, statement::Statement, unnest::UnnestAliased};
+use andromeda_postgresql_seaquery::{clock::now, pg_array::text_array, statement::Statement, unnest::UnnestAliased};
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
+use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Postgres, Row, Transaction};
 
 /// The statement name the entity set-delete is observed under.
 const ENTITY_DELETE: StatementName = StatementName("entity-delete");
+
+/// The column the delete answers its transaction timestamp under.
+const COMMITTED_AT: &str = "committed_at";
 
 /// The delete CTE, `gone`, whose only purpose is to run.
 #[derive(Iden, Clone, Copy)]
@@ -92,8 +96,12 @@ struct Strays;
 ///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… WHERE kept) AND is_evolution_member),
 ///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… WHERE kept) AND NOT is_evolution_member),
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT id, created_at, modified_at, expires_at FROM doomed
+/// SELECT id, created_at, modified_at, expires_at, now() AS committed_at FROM doomed
 /// ```
+///
+/// Each written row comes back with `now()`, the transaction timestamp: the
+/// store's own clock, which orders the change against a Subscription's
+/// lifecycle the same way whichever broker committed either.
 ///
 /// Carries the same nullable expectation the update does, and for the same
 /// reason: a delete computed from a state the caller read is a
@@ -225,6 +233,7 @@ pub(super) fn entity_delete_statement(
                 Entities::ModifiedAt.into_iden(),
                 Entities::ExpiresAt.into_iden(),
             ])
+            .expr_as(now(), Alias::new(COMMITTED_AT))
             .from(Doomed)
             .take(),
     );
@@ -234,7 +243,8 @@ pub(super) fn entity_delete_statement(
 
 impl EntityRepository {
     /// Delete every entity in `ids` whose expectation still holds, returning
-    /// the system attributes each one held.
+    /// the system attributes each one held and the instant of the transaction
+    /// that removed it.
     ///
     /// The search row is deleted beside the identity row so the discovery
     /// census can count out what it held; the membership and attribute
@@ -257,7 +267,7 @@ impl EntityRepository {
         target: &ContextTarget,
         ids: &[Identifier],
         expected: &[Option<EntityVersion>],
-    ) -> Result<Vec<DeletedEntity>, ContextStoreError> {
+    ) -> Result<Vec<RemovedEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -275,11 +285,14 @@ impl EntityRepository {
 
         rows.into_iter()
             .map(|row| {
-                Ok(DeletedEntity {
-                    id: stored_uri(row.try_get("id")?)?,
-                    created_at: row.try_get("created_at")?,
-                    modified_at: row.try_get("modified_at")?,
-                    expires_at: row.try_get("expires_at")?,
+                Ok(RemovedEntity {
+                    entity: DeletedEntity {
+                        id: stored_uri(row.try_get("id")?)?,
+                        created_at: row.try_get("created_at")?,
+                        modified_at: row.try_get("modified_at")?,
+                        expires_at: row.try_get("expires_at")?,
+                    },
+                    committed_at: StoreInstant::new(row.try_get(COMMITTED_AT)?),
                 })
             })
             .collect()
@@ -330,7 +343,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at" FROM "doomed""#),
+            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at", NOW() AS "committed_at" FROM "doomed""#),
             "{sql}"
         );
     }

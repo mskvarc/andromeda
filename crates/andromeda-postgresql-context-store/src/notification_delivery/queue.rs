@@ -162,7 +162,13 @@ mod tests {
         queue::{delivery_claim, held},
         rows::{ClaimedDeliveryError, UnreadableClaimedDelivery},
     };
-    use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{
+        lease_acknowledgement::LeaseAcknowledgement,
+        lease_holder::LeaseHolder,
+        store_instant::StoreInstant,
+        write_id::WriteId,
+        write_ordinal::WriteOrdinal,
+    };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
@@ -190,6 +196,7 @@ mod tests {
                     .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
                     .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"))
                     .created_at(Utc::now())
+                    .committed_at(StoreInstant::new(Utc::now()))
                     .build(),
             ))
             .build()

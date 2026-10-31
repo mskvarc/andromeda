@@ -7,7 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
-use crate::{geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence};
+use crate::{geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence, notifying_since::NotifyingSince};
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_lexicon::{
@@ -30,7 +30,6 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
-use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use std::{collections::HashSet, num::NonZeroU32};
@@ -155,14 +154,11 @@ pub struct CompiledSubscription {
     pub notification_show_changes: bool,
     /// JSON-LD context supplied with notifications.
     pub jsonld_context: Option<IriBuf>,
-    /// When the subscription was created (clause 5.2.12 `createdAt`).
-    ///
-    /// A subscription is notified of changes that happen after it exists, so an
-    /// entity change whose `occurredAt` precedes this instant is not matched.
-    /// Without it, an entity change committed before the subscription was
-    /// created still reaches it once the notification worker processes that
-    /// change after the subscription has entered the cache.
-    pub created_at: DateTime<Utc>,
+    /// Since when the subscription may be notified of a committed change: a
+    /// change the notification worker evaluates after the subscription was
+    /// created, set active again or reselected is owed only if it committed
+    /// after that.
+    pub notifying_since: NotifyingSince,
     /// Parsed entity filter expression.
     pub compiled_q: Option<Expr>,
     /// How the target languages of `compiled_q` and `compiled_csf` select

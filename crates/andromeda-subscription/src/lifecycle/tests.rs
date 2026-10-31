@@ -9,12 +9,13 @@ use crate::{
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
     lifecycle::{SubscriptionService, generate_id},
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::{NotifyingRestart, NotifyingSince, SinceRestart},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
     subscription_context::SubscriptionContext,
     subscription_validation_reason::SubscriptionValidationReason,
 };
-use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
@@ -193,6 +194,7 @@ impl SubscriptionStore for DeletingStore {
         _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
+        _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         Err(unused("update_subscription"))
     }
@@ -363,12 +365,16 @@ type WrittenContext = Arc<Mutex<Option<Option<IriBuf>>>>;
 /// The status an update wrote, recorded by [`UpdatingStore`].
 type WrittenStatus = Arc<Mutex<Option<SubscriptionStatus>>>;
 
-/// A store holding one subscription, which records the `jsonldContext` and the
-/// status an update writes back.
+/// What an update restarted, recorded by [`UpdatingStore`].
+type WrittenRestart = Arc<Mutex<Option<NotifyingRestart>>>;
+
+/// A store holding one subscription, which records the `jsonldContext`, the
+/// status and the restarted instants an update writes back.
 struct UpdatingStore {
     stored: Subscription,
     written: WrittenContext,
     status: WrittenStatus,
+    restart: WrittenRestart,
 }
 
 #[async_trait]
@@ -377,6 +383,7 @@ impl SubscriptionStore for UpdatingStore {
         Ok(Some(StoredSubscription {
             key: SubscriptionKey::try_from(1_i64).expect("a positive key"),
             subscription: self.stored.clone(), // clone: every read hands back its own copy of the stored resource.
+            notifying_since: since_creation(),
         }))
     }
 
@@ -447,12 +454,102 @@ impl SubscriptionStore for UpdatingStore {
         _id: &Identifier,
         fields: &SubscriptionFields<'_>,
         status: SubscriptionStatus,
+        restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         // clone: the record keeps the written IRI for the assertion.
         *self.written.lock().expect("the written context is never poisoned") = Some(fields.jsonld_context.cloned());
         *self.status.lock().expect("the written status is never poisoned") = Some(status);
+        *self.restart.lock().expect("the written restart is never poisoned") = Some(restart);
         Ok(1)
     }
+}
+
+/// The instants of a subscription created at the epoch and never restarted.
+fn since_creation() -> NotifyingSince {
+    let created = StoreInstant::new(DateTime::<Utc>::UNIX_EPOCH);
+    NotifyingSince {
+        active: created,
+        selected: created,
+    }
+}
+
+/// What an update of `fragment` restarts of a stored subscription standing
+/// at `status` with no `expiresAt`.
+async fn restart_written_after_update(status: SubscriptionStatus, fragment: Value) -> NotifyingRestart {
+    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    let mut stored = subscription_with_chosen_context();
+    stored.lifecycle.standing.status = status;
+    let written = WrittenRestart::default();
+    let store = UpdatingStore {
+        stored,
+        written: WrittenContext::default(),
+        status: WrittenStatus::default(),
+        restart: Arc::clone(&written),
+    };
+    let service = SubscriptionService::new(
+        Arc::new(store),
+        // clone: the service and the variant each own an engine handle.
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+        filter_admission(),
+    );
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
+    let updated = service
+        .update(
+            &ContextTarget::Live,
+            &uri("urn:ngsi-ld:Subscription:stored"),
+            request,
+            &AdmittedContext::core_only(),
+        )
+        .await;
+    assert!(updated.is_ok(), "{updated:?}");
+    let recorded = *written.lock().expect("the written restart is never poisoned");
+    recorded.expect("the update wrote the subscription back")
+}
+
+/// Table 5.2.12-1 `isActive`: a paused subscription set active again may be
+/// notified only of changes committed from then on, so the update restarts
+/// its active instant and leaves its selection alone.
+#[tokio::test]
+async fn reactivating_a_paused_subscription_restarts_its_active_instant() {
+    let restart = restart_written_after_update(SubscriptionStatus::Paused, json!({"isActive": true})).await;
+    assert_eq!(
+        restart,
+        NotifyingRestart {
+            active: SinceRestart::Restarted,
+            selected: SinceRestart::Kept,
+        }
+    );
+}
+
+#[tokio::test]
+async fn pausing_or_retuning_delivery_restarts_nothing() {
+    for fragment in [json!({"isActive": false}), json!({"throttling": 5})] {
+        let restart = restart_written_after_update(SubscriptionStatus::Active, fragment).await;
+        assert_eq!(
+            restart,
+            NotifyingRestart {
+                active: SinceRestart::Kept,
+                selected: SinceRestart::Kept,
+            }
+        );
+    }
+}
+
+/// `entities` decides which changes trigger a notification (clause 5.8.1.4),
+/// so a new selector restarts the selected instant of an active subscription.
+#[tokio::test]
+async fn a_new_entity_selector_restarts_the_selected_instant() {
+    let restart = restart_written_after_update(SubscriptionStatus::Active, json!({"entities": [{"type": "https://example.com/Truck"}]})).await;
+    assert_eq!(
+        restart,
+        NotifyingRestart {
+            active: SinceRestart::Kept,
+            selected: SinceRestart::Restarted,
+        }
+    );
 }
 
 /// An entity subscription whose subscriber chose [`CHOSEN_CONTEXT`] for its
@@ -491,6 +588,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         stored: subscription_with_chosen_context(),
         written: Arc::clone(&written),
         status: WrittenStatus::default(),
+        restart: WrittenRestart::default(),
     };
     let service = SubscriptionService::new(
         Arc::new(store),
@@ -529,6 +627,7 @@ async fn status_written_after_update(status: SubscriptionStatus, fragment: Value
         stored,
         written: WrittenContext::default(),
         status: Arc::clone(&written),
+        restart: WrittenRestart::default(),
     };
     let service = SubscriptionService::new(
         Arc::new(store),
@@ -646,6 +745,7 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
         stored: subscription_with_chosen_context(),
         written: Arc::clone(&written),
         status: WrittenStatus::default(),
+        restart: WrittenRestart::default(),
     };
     let service = SubscriptionService::new(
         Arc::new(store),
@@ -846,6 +946,7 @@ impl SubscriptionStore for ListingStore {
         _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
+        _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         Err(unused("update_subscription"))
     }

@@ -11,6 +11,7 @@ use crate::{EntityService, entity_validation_reason::EntityValidationReason, err
 use andromeda_context_commit::{
     change_event::ChangeEvent,
     history_record::{HistoryRecord, removal_history},
+    write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -81,7 +82,7 @@ impl EntityService {
                 })
                 .await?;
 
-            let (Some(_), Some(events)) = (outcome, purged) else {
+            let (Some(committed_at), Some(events)) = (outcome.as_ref().and_then(WriteOutcome::changed_at), purged) else {
                 continue;
             };
             modified_count += 1;
@@ -90,7 +91,7 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            self.notifier.publish(target, events).await;
+            self.notifier.publish(target, committed_at, events).await;
         }
 
         Ok(modified_count)

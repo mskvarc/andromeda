@@ -14,6 +14,8 @@ pub(crate) mod dictionary_join;
 pub mod entity_types;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
+/// One Entity a create or update statement wrote, and when it committed.
+pub mod landed_entity;
 /// Row-to-domain conversions for the `entities` table.
 pub mod mapper;
 /// The parallel bind vectors every entity statement is driven from.
@@ -24,6 +26,8 @@ mod port;
 pub mod pushdown;
 /// The statements that read one entity's current state.
 pub mod read;
+/// One Entity a delete statement removed, and when it committed.
+pub mod removed_entity;
 /// The PostgreSQL entity store.
 pub mod repo;
 /// How a set-write stages one hoisted geometry of one entity row.

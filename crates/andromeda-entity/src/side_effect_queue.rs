@@ -15,6 +15,7 @@ use andromeda_context_commit::{
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
     side_effect_job_id::SideEffectJobId,
+    store_instant::StoreInstant,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
@@ -51,6 +52,9 @@ pub struct LeasedSideEffect {
     /// counter at this value rather than restarting it at zero, so the deferred
     /// consequences are numbered after the ones the commit already wrote.
     pub base_ordinal: WriteOrdinal,
+    /// The store instant of the enqueueing commit, which changed the entities
+    /// the job's events describe.
+    pub committed_at: StoreInstant,
 }
 
 /// Draining the durable side-effect queue.

@@ -10,7 +10,7 @@
 //! the write, and the in-process change events published once it landed.
 
 use crate::{NotificationWriteConfig, change_sink::EntityChangeSink};
-use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_subscription::cache::SubscriptionCache;
 use std::sync::Arc;
@@ -70,15 +70,16 @@ impl ChangeNotifier {
         }
     }
 
-    /// Publish the changes one commit made, in commit order, waiting while the
-    /// consumer catches up.
-    pub async fn publish(&self, target: &ContextTarget, events: impl IntoIterator<Item = ChangeEvent>) {
+    /// Publish the changes one commit made at `committed_at`, in commit order,
+    /// waiting while the consumer catches up.
+    pub async fn publish(&self, target: &ContextTarget, committed_at: StoreInstant, events: impl IntoIterator<Item = ChangeEvent>) {
         if let Some(ref sink) = self.change_sink {
             let changes = events
                 .into_iter()
                 .map(|event| ContextChangeEvent {
                     target: target.clone(), // clone: the asynchronous consumer owns the immutable branch selection.
                     event,
+                    committed_at,
                 })
                 .collect();
             sink.publish(changes).await;

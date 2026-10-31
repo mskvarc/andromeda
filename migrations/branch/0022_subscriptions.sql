@@ -50,6 +50,18 @@ create table subscriptions (
     evaluated_context_source_revision bigint,
     created_at timestamptz not null default now(),
     modified_at timestamptz not null default now(),
+    -- The transaction timestamp at which the subscription was created active
+    -- or last set active from paused or expired. Clause 5.8.6 notifies only an
+    -- active subscription, so a change committed before this instant is never
+    -- notified to it, however late it is evaluated. The change's commit
+    -- instant is the store's transaction timestamp too, so every broker
+    -- sharing the database orders the two alike.
+    active_since timestamptz not null default now(),
+    -- The transaction timestamp at which the subscription was created or the
+    -- value of a member deciding which changes it is notified of last changed.
+    -- A change matched only after it committed is not judged by a selection
+    -- written after the change.
+    selected_since timestamptz not null default now(),
     -- A csource subscription leaves `dataset_id` and `local_only` at their
     -- defaults.
     kind smallint not null,

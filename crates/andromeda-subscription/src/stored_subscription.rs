@@ -1,5 +1,6 @@
 //! A Subscription as the store hands it back, with the identity it is stored under.
 
+use crate::notifying_since::NotifyingSince;
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 
@@ -16,4 +17,7 @@ pub struct StoredSubscription {
     pub key: SubscriptionKey,
     /// The Subscription resource as stored.
     pub subscription: Subscription,
+    /// Since when the Subscription may be notified of a committed change,
+    /// which no representation of it carries.
+    pub notifying_since: NotifyingSince,
 }

@@ -35,6 +35,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_subscription::{
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::NotifyingRestart,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -135,6 +136,7 @@ impl SubscriptionStore for ClaimRecordingStore {
         _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
+        _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         Err(SubscriptionError::StoreSaturated)
     }

@@ -45,9 +45,9 @@ pub enum AfterAttempt {
 #[must_use]
 pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
     match outcome {
-        WriteOutcome::Created
-        | WriteOutcome::Updated
-        | WriteOutcome::Deleted(_)
+        WriteOutcome::Created(_)
+        | WriteOutcome::Updated(_)
+        | WriteOutcome::Deleted(..)
         | WriteOutcome::NoEntityChange
         | WriteOutcome::Skipped
         | WriteOutcome::Refused(_) => AfterAttempt::Settled,
@@ -60,9 +60,11 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
 mod tests {
     use crate::{
         precondition::{AfterAttempt, after_attempt},
+        store_instant::StoreInstant,
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
+    use chrono::Utc;
 
     #[test]
     fn a_superseded_write_requests_a_reread() {
@@ -86,9 +88,10 @@ mod tests {
 
     #[test]
     fn a_landed_write_settles() {
+        let committed = StoreInstant::new(Utc::now());
         for outcome in [
-            WriteOutcome::Created,
-            WriteOutcome::Updated,
+            WriteOutcome::Created(committed),
+            WriteOutcome::Updated(committed),
             WriteOutcome::NoEntityChange,
             WriteOutcome::Skipped,
         ] {

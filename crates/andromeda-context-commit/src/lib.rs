@@ -56,6 +56,8 @@ pub mod projected_attributes;
 pub mod scope_presence;
 /// The identity of one durable side-effect job.
 pub mod side_effect_job_id;
+/// An instant read from the store's own clock.
+pub mod store_instant;
 /// Why the content of a submission cannot be stored as written.
 pub mod submission_refusal;
 /// The narrow key a stored Subscription is referenced by.

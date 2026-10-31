@@ -17,6 +17,7 @@ use crate::{EntityService, contended_attempt::ContendedAttempt, entity_invariant
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     precondition::{AfterAttempt, Precondition, after_attempt},
+    store_instant::StoreInstant,
     write_outcome::{WriteOutcome, single},
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -42,6 +43,15 @@ impl ComputedWrite {
             None => ComputedWrite::Nothing,
         }
     }
+}
+
+/// What a computed write produced besides the write, and when it landed.
+pub(crate) struct ComputedLanding<T> {
+    /// What the computation of the attempt that landed produced.
+    pub(crate) value: T,
+    /// The store instant of the commit that changed the entity, `None` when
+    /// the computation changed nothing and nothing was stored.
+    pub(crate) committed_at: Option<StoreInstant>,
 }
 
 impl EntityService {
@@ -100,7 +110,8 @@ impl EntityService {
     }
 
     /// Commit a read-modify-write and hand back whatever its computation
-    /// produced besides the write.
+    /// produced besides the write, with the store instant of the commit that
+    /// landed it.
     ///
     /// The notification a mutation raises is a function of the same merge that
     /// produced the write, which attributes it dropped, what the entity looked
@@ -118,7 +129,12 @@ impl EntityService {
     ///
     /// Reports [`EntityError::NotFound`] when the entity is absent or outside
     /// the type selector of `entity`, and otherwise propagates whatever `build` or the coordinator returns.
-    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, entity: WriteTarget<'_>, mut build: B) -> Result<T, EntityError>
+    pub(crate) async fn commit_computed_write<B, T>(
+        &self,
+        target: &ContextTarget,
+        entity: WriteTarget<'_>,
+        mut build: B,
+    ) -> Result<ComputedLanding<T>, EntityError>
     where
         B: FnMut(&Arc<EntityState>, SystemInstant) -> Result<(Option<AtomicWrite>, T), EntityError>,
     {
@@ -136,7 +152,11 @@ impl EntityService {
             .await?;
 
         match (landed, produced) {
-            (Some(_), Some((value, ComputedWrite::Stored | ComputedWrite::Nothing))) | (None, Some((value, ComputedWrite::Nothing))) => Ok(value),
+            (Some(outcome), Some((value, ComputedWrite::Stored | ComputedWrite::Nothing))) => Ok(ComputedLanding {
+                value,
+                committed_at: outcome.changed_at(),
+            }),
+            (None, Some((value, ComputedWrite::Nothing))) => Ok(ComputedLanding { value, committed_at: None }),
             (None, Some((_, ComputedWrite::Stored)) | None) => Err(EntityError::not_found(id)),
             (Some(_), None) => Err(EntityInvariant::ReadModifyWriteWithoutResult {
                 entity: id.clone(), // clone: the error owns the entity it names.

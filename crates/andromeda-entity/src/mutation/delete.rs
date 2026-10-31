@@ -139,13 +139,15 @@ impl EntityService {
             .precondition(Precondition::UnchangedSince(version))
             .build();
         let now = SystemInstant::new(Utc::now());
-        let next = after_attempt(&single(self.writes.commit(target, now, vec![write]).await?)?);
-        if next != AfterAttempt::Settled {
+        let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
+        let next = after_attempt(&outcome);
+        let Some(committed_at) = outcome.changed_at() else {
             return Ok(next);
-        }
+        };
         self.notifier
             .publish(
                 target,
+                committed_at,
                 [ChangeEvent::builder()
                     .entity_id(id.clone()) // clone: the published event owns its identifier
                     .entity_types(types)
@@ -218,14 +220,16 @@ impl EntityService {
             .build();
 
         let now = SystemInstant::new(Utc::now());
-        let next = after_attempt(&single(self.writes.commit(target, now, vec![write]).await?)?);
-        if next != AfterAttempt::Settled {
+        let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
+        let next = after_attempt(&outcome);
+        let Some(committed_at) = outcome.changed_at() else {
             return Ok(next);
-        }
+        };
 
         self.notifier
             .publish(
                 target,
+                committed_at,
                 [ChangeEvent::builder()
                     .entity_id(id.clone()) // clone: the published event owns its identifier
                     .entity_types(entity_types)

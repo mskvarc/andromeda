@@ -12,6 +12,7 @@ use crate::{
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     side_effect_job_id::SideEffectJobId,
+    store_instant::StoreInstant,
     write_id::WriteId,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
@@ -32,6 +33,8 @@ pub(crate) struct ReadJob {
     record: WriteRecord,
     /// First ordinal free in the enqueueing commit's numbering.
     base_ordinal: WriteOrdinal,
+    /// The enqueueing transaction's timestamp, which `created_at` defaults to.
+    committed_at: StoreInstant,
     /// The owed changes, in the order the commit made them.
     events: Vec<ReadChangeEvent>,
 }
@@ -59,6 +62,7 @@ impl ReadJob {
             job: BatchSideEffectJob { change_events },
             record: self.record,
             base_ordinal: self.base_ordinal,
+            committed_at: self.committed_at,
         })
     }
 }
@@ -73,6 +77,7 @@ pub(crate) fn read_row(id: SideEffectJobId, row: &PgRow) -> Result<ReadJob, Enti
         attempts: stored_column(row, "attempt_count")?,
         record: WriteRecord::restored(write_id, recorded_at),
         base_ordinal: WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::from(undecodable(&error)))?,
+        committed_at: StoreInstant::new(stored_column(row, "created_at")?),
         events: read_events(stored_column(row, "events")?)?,
     })
 }

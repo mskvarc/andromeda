@@ -110,8 +110,9 @@ mod tests {
         change_filters::{ChangedStates, HopResolution, narrow_by_change_filters},
         compiled::CompiledSubscription,
         geo_filter::SubscriptionGeoFilter,
+        notifying_since::NotifyingSince,
     };
-    use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -165,7 +166,10 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            created_at: DateTime::<Utc>::MIN_UTC,
+            notifying_since: NotifyingSince {
+                active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            },
             compiled_q: Some(parse(q).expect("the filter parses")),
             language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

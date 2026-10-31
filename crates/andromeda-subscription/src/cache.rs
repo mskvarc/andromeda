@@ -249,10 +249,11 @@ mod tests {
         error::SubscriptionError,
         geo_filter::SubscriptionGeoFilter,
         notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+        notifying_since::{NotifyingRestart, NotifyingSince},
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
-    use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
@@ -360,6 +361,7 @@ mod tests {
             _id: &Identifier,
             _fields: &SubscriptionFields<'_>,
             _status: SubscriptionStatus,
+            _restart: NotifyingRestart,
         ) -> Result<u64, SubscriptionError> {
             Err(unused("update_subscription"))
         }
@@ -400,7 +402,10 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            created_at: DateTime::<Utc>::MIN_UTC,
+            notifying_since: NotifyingSince {
+                active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            },
             compiled_q: None,
             language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

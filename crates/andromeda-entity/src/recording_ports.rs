@@ -19,6 +19,7 @@ use andromeda_context_commit::{
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
     entity_version::EntityVersion,
+    store_instant::StoreInstant,
     write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -93,14 +94,17 @@ impl ContextCommitter for RecordingCommitter {
         let outcomes: Vec<WriteOutcome> = writes
             .iter()
             .map(|write| match write.entity {
-                EntityMutation::Insert(_) => WriteOutcome::Created,
-                EntityMutation::Update(_) | EntityMutation::None => WriteOutcome::Updated,
-                EntityMutation::Delete => WriteOutcome::Deleted(DeletedEntity {
-                    id: Identifier::clone(&write.entity_id), // clone: the outcome owns the identifier the write shares
-                    created_at: now,
-                    modified_at: now,
-                    expires_at: None,
-                }),
+                EntityMutation::Insert(_) => WriteOutcome::Created(StoreInstant::new(now)),
+                EntityMutation::Update(_) | EntityMutation::None => WriteOutcome::Updated(StoreInstant::new(now)),
+                EntityMutation::Delete => WriteOutcome::Deleted(
+                    DeletedEntity {
+                        id: Identifier::clone(&write.entity_id), // clone: the outcome owns the identifier the write shares
+                        created_at: now,
+                        modified_at: now,
+                        expires_at: None,
+                    },
+                    StoreInstant::new(now),
+                ),
             })
             .collect();
         self.recorded.lock().expect("recording mutex is not poisoned").extend(writes);

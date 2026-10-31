@@ -4,6 +4,7 @@ use crate::{
     attempt_failure::AttemptFailure,
     behind_queue,
     columns::{columns_for, expectations},
+    commit_continuation::CommitContinuation,
     commit_refusal::{context_store, database, entity_statement},
     consequences::{
         ConsequenceWrite,
@@ -30,15 +31,14 @@ use andromeda_context_commit::{
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
     deleted_entity::DeletedEntity,
     error::CommitError,
-    job_lease::JobLease,
-    write_ordinal::WriteOrdinal,
+    store_instant::StoreInstant,
     write_outcome::WriteOutcome,
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-use andromeda_postgresql_context_store::entity::{created_entities::CreatedEntities, repo::EntityRepository};
+use andromeda_postgresql_context_store::entity::{created_entities::CreatedEntities, landed_entity::LandedEntity, repo::EntityRepository};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -117,7 +117,7 @@ impl PostgresAtomicCommitter {
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let CreatedEntities { landed, established } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;
-        let landed: HashSet<Identifier> = landed.into_iter().collect();
+        let landed = landed_at(landed);
         for (index, write) in &inserts {
             outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
         }
@@ -169,7 +169,7 @@ impl PostgresAtomicCommitter {
         let saved = EntityRepository::save_batch_in_tx(tx, target, &binds.entities, binds.rows, binds.grains, &expected, accepted_at)
             .await
             .map_err(|error| entity_statement(error))?;
-        let landed: HashSet<Identifier> = saved.into_iter().collect();
+        let landed = landed_at(saved);
         for (index, write) in updates {
             outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
         }
@@ -192,11 +192,11 @@ impl PostgresAtomicCommitter {
             .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
             .collect();
         let expected = expectations(deletes);
-        let mut snapshots: HashMap<Identifier, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
+        let mut snapshots: HashMap<Identifier, (DeletedEntity, StoreInstant)> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
             .await
             .map_err(|error| context_store(error))?
             .into_iter()
-            .map(|entity| (entity.id.clone(), entity)) // clone: both the lookup key and returned snapshot own the identifier.
+            .map(|removed| (removed.entity.id.clone(), (removed.entity, removed.committed_at))) // clone: both the lookup key and returned snapshot own the identifier.
             .collect();
         for (index, write) in deletes {
             outcomes[*index] = Some(delete_outcome(write.precondition, snapshots.remove(write.entity_id.as_ref())));
@@ -205,20 +205,27 @@ impl PostgresAtomicCommitter {
     }
 }
 
-/// Whether a fused statement returned an entity identifier.
-fn returned_flag(landed: &HashSet<Identifier>, id: &Identifier) -> RowReturned {
-    if landed.contains(id) { RowReturned::Yes } else { RowReturned::No }
+/// The entities a fused statement wrote, keyed by identifier.
+fn landed_at(landed: Vec<LandedEntity>) -> HashMap<Identifier, StoreInstant> {
+    landed.into_iter().map(|entity| (entity.id, entity.committed_at)).collect()
+}
+
+/// Whether a fused statement returned an entity identifier, and the instant
+/// of the transaction it was written in.
+fn returned_flag(landed: &HashMap<Identifier, StoreInstant>, id: &Identifier) -> RowReturned {
+    landed.get(id).map_or(RowReturned::No, |at| RowReturned::At(*at))
 }
 
 impl PostgresAtomicCommitter {
-    /// Commit every write under one write identity, numbering every temporal,
-    /// notification and side-effect consequence from `base`.
+    /// Commit every write under the write identity `continuation` carries,
+    /// numbering every temporal, notification and side-effect consequence from
+    /// its base.
     ///
     /// Every durable consequence of this commit — every landed entity's
     /// temporal history entries, its notification events, and its side-effect
     /// job — shares the one write identity and ingestion instant carried by
-    /// `record`, and draws its ordinals from the one running counter that
-    /// starts at `base`, in the order [`number_consequences`] gives them.
+    /// the record, and draws its ordinals from the one running counter that
+    /// starts at the base, in the order [`number_consequences`] gives them.
     /// `commit` and `commit_enqueued` mint a fresh record and start that
     /// counter at zero; `commit_replayed` reuses a durably stored record and resumes
     /// the counter at its stored `base_ordinal`, so a replay's consequences
@@ -234,7 +241,7 @@ impl PostgresAtomicCommitter {
     /// behind either, which is what lets `commit` set that write aside and run
     /// the rest under the same record and base.
     ///
-    /// A replay also removes the job it `settles` in that one transaction, as
+    /// A replay also removes the job it settles in that one transaction, as
     /// the transaction's first statement and under the job's lease (see
     /// [`settle`]): a replay whose lease had already lapsed ends in
     /// [`CommitError::ReplayLeaseLost`] before it wrote anything, and one that
@@ -246,12 +253,13 @@ impl PostgresAtomicCommitter {
     async fn commit_under(
         &self,
         target: &ContextTarget,
-        record: WriteRecord,
-        base: WriteOrdinal,
+        continuation: CommitContinuation,
         writes: &[AtomicWrite],
-        settles: Option<JobLease>,
         response: CommitResponse,
     ) -> Result<Vec<WriteOutcome>, AttemptFailure> {
+        let record = continuation.record();
+        let base = continuation.base();
+        let settles = continuation.settles();
         if writes.is_empty() && settles.is_none() {
             return Ok(Vec::new());
         }
@@ -299,7 +307,7 @@ impl PostgresAtomicCommitter {
             &mut tx,
             target,
             events,
-            &record,
+            continuation,
             events_base,
             self.entity_type_names.as_ref(),
             self.attribute_names.as_ref(),
@@ -350,7 +358,7 @@ impl PostgresAtomicCommitter {
         let record = WriteRecord::mint(accepted_at.get());
         let mut submission = IsolatedSubmission::new(writes);
         loop {
-            match rerun_while_contended(|| self.commit_under(target, record, WriteOrdinal::at(0), submission.writes(), None, response)).await {
+            match rerun_while_contended(|| self.commit_under(target, CommitContinuation::Fresh(record), submission.writes(), response)).await {
                 Ok(landed) => return submission.outcomes(landed),
                 Err(AttemptFailure::Refused(refused)) => submission.set_aside(&refused.entity_id, refused.refusal)?,
                 Err(AttemptFailure::Failed(error)) => return Err(error),
@@ -372,18 +380,9 @@ impl ContextCommitter for PostgresAtomicCommitter {
     fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
         Box::pin(async move {
-            rerun_while_contended(|| {
-                self.commit_under(
-                    &target,
-                    replay.record,
-                    replay.base_ordinal,
-                    &writes,
-                    Some(replay.lease),
-                    CommitResponse::Synchronous,
-                )
-            })
-            .await
-            .map_err(AttemptFailure::into_commit_error)
+            rerun_while_contended(|| self.commit_under(&target, CommitContinuation::Replay(replay), &writes, CommitResponse::Synchronous))
+                .await
+                .map_err(AttemptFailure::into_commit_error)
         })
     }
 }
@@ -395,15 +394,18 @@ impl ContextCommitter for PostgresAtomicCommitter {
 )]
 mod tests {
     use crate::{committer::returned_flag, entity_group::RowReturned};
+    use andromeda_context_commit::store_instant::StoreInstant;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use std::collections::HashSet;
+    use chrono::Utc;
+    use std::collections::HashMap;
 
     #[test]
-    fn returned_flag_reports_identifier_membership() {
+    fn returned_flag_reports_identifier_membership_with_its_commit_instant() {
         let present = "urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI");
         let absent = "urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI");
-        let landed = HashSet::from([present.clone()]); // clone: the set and the probe each own the probe identifier
-        assert!(matches!(returned_flag(&landed, &present), RowReturned::Yes));
-        assert!(matches!(returned_flag(&landed, &absent), RowReturned::No));
+        let committed = StoreInstant::new(Utc::now());
+        let landed = HashMap::from([(present.clone(), committed)]); // clone: the map and the probe each own the probe identifier
+        pretty_assertions::assert_eq!(returned_flag(&landed, &present), RowReturned::At(committed));
+        pretty_assertions::assert_eq!(returned_flag(&landed, &absent), RowReturned::No);
     }
 }

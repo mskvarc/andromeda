@@ -96,9 +96,10 @@ mod tests {
         compiled::CompiledSubscription,
         error::SubscriptionError,
         geo_filter::SubscriptionGeoFilter,
+        notifying_since::NotifyingSince,
         selector_routing::{SelectorRouting, SelectorShape},
     };
-    use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
     use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -143,7 +144,10 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            created_at: DateTime::<Utc>::MIN_UTC,
+            notifying_since: NotifyingSince {
+                active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            },
             compiled_q: None,
             language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

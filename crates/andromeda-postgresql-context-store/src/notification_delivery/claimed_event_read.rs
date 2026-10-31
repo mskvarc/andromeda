@@ -189,6 +189,7 @@ fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> Unnes
         .column((ClaimedEventRow, NotificationEvents::EntityModifiedAt))
         .column((ClaimedEventRow, NotificationEvents::EntityExpiresAt))
         .column((ClaimedEventRow, NotificationEvents::CreatedAt))
+        .column((ClaimedEventRow, NotificationEvents::CommittedAt))
         .from(table_of(target, NotificationEvents::Table).alias(ClaimedEventRow))
         .and_where(Expr::col((ClaimedEventRow, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
         .to_owned();
@@ -220,7 +221,7 @@ mod tests {
         notification_delivery::claimed_event_read::{claimed_events_statement, distinct_event_keys, split_held},
         statement_text::text_of,
     };
-    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
@@ -250,6 +251,7 @@ mod tests {
                 .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
                 .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"))
                 .created_at(Utc::now())
+                .committed_at(StoreInstant::new(Utc::now()))
                 .build(),
         )
     }
@@ -282,6 +284,7 @@ mod tests {
             "entity_modified_at",
             "entity_expires_at",
             "created_at",
+            "committed_at",
         ] {
             assert!(sql.contains(&format!(r#""e"."{column}""#)), "{column}: {sql}");
         }

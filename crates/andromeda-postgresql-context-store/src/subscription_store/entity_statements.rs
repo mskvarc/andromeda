@@ -17,6 +17,7 @@ use crate::{
         conformance_text::stored_conformance,
         interned_attributes::InternedAttributeLists,
         json_document::json_document,
+        notifying_columns::{created_since, restarted_since},
         status_code::stored_status,
         stored_kind::{StoredKind, of_kind},
         trigger_code::stored_trigger_list,
@@ -29,7 +30,7 @@ use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::clock::now;
-use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
+use andromeda_subscription::{error::SubscriptionError, notifying_since::NotifyingRestart, store::SubscriptionFields};
 use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, InsertStatement, Query, SimpleExpr, UpdateStatement};
 
@@ -98,13 +99,15 @@ pub fn entity_create(
             [Subscriptions::Id, Subscriptions::Kind]
                 .into_iter()
                 .chain(names)
-                .chain([Subscriptions::CreatedAt, Subscriptions::ModifiedAt]),
+                .chain([Subscriptions::CreatedAt, Subscriptions::ModifiedAt])
+                .chain(created_since().map(|(column, _)| column)),
         )
         .values(
             [Expr::val(id.as_str()), Expr::val(StoredKind::Entity.code().code())]
                 .into_iter()
                 .chain(values)
-                .chain([now(), now()]),
+                .chain([now(), now()])
+                .chain(created_since().map(|(_, value)| value)),
         )
         .map_err(|error| persistence_error::<SubscriptionError>(error))?
         .returning(Query::returning().column(Subscriptions::SubscriptionKey));
@@ -124,13 +127,15 @@ pub fn entity_update(
     fields: &SubscriptionFields<'_>,
     interned: InternedAttributeLists,
     status: SubscriptionStatus,
+    restart: NotifyingRestart,
 ) -> Result<UpdateStatement, SubscriptionError> {
     Ok(Query::update()
         .table(table_of(target, Subscriptions::Table))
         .values(
             written_columns(fields, interned, status)?
                 .into_iter()
-                .chain([(Subscriptions::ModifiedAt, now())]),
+                .chain([(Subscriptions::ModifiedAt, now())])
+                .chain(restarted_since(restart)),
         )
         .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
         .and_where(of_kind(StoredKind::Entity))
@@ -151,6 +156,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use andromeda_subscription::notifying_since::{NotifyingRestart, SinceRestart};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -174,12 +180,19 @@ mod tests {
 
     /// The replacement of a subscription carrying nothing optional, rendered.
     fn update_sql() -> (String, usize) {
+        update_sql_restarting(SinceRestart::Kept, SinceRestart::Kept)
+    }
+
+    /// The replacement of a subscription carrying nothing optional and
+    /// restarting its instants as `active` and `selected` say, rendered.
+    fn update_sql_restarting(active: SinceRestart, selected: SinceRestart) -> (String, usize) {
         let (sql, values) = entity_update(
             &ContextTarget::Live,
             &id(),
             &bare_fields(),
             InternedAttributeLists::default(),
             SubscriptionStatus::Active,
+            NotifyingRestart { active, selected },
         )
         .expect("the entity update builds")
         .build(PostgresQueryBuilder);
@@ -195,6 +208,27 @@ mod tests {
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
         assert_eq!(values, 26, "the create binds every column but the two timestamps: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
+    }
+
+    /// Clause 5.8.6: a created subscription is notified only of changes
+    /// committed from its creating transaction on.
+    #[test]
+    fn the_create_stamps_both_notifying_instants_with_the_transaction_clock() {
+        let (sql, _) = create_sql();
+        assert!(sql.contains(r#""active_since", "selected_since")"#), "{sql}");
+        assert!(sql.ends_with(r#"NOW(), NOW(), NOW(), NOW()) RETURNING "subscription_key""#), "{sql}");
+    }
+
+    #[test]
+    fn an_update_writes_only_the_notifying_instants_it_restarts() {
+        let (kept, _) = update_sql();
+        assert!(!kept.contains("active_since") && !kept.contains("selected_since"), "{kept}");
+        let (reactivated, _) = update_sql_restarting(SinceRestart::Restarted, SinceRestart::Kept);
+        assert!(reactivated.contains(r#""active_since" = NOW()"#), "{reactivated}");
+        assert!(!reactivated.contains("selected_since"), "{reactivated}");
+        let (reselected, _) = update_sql_restarting(SinceRestart::Kept, SinceRestart::Restarted);
+        assert!(reselected.contains(r#""selected_since" = NOW()"#), "{reselected}");
+        assert!(!reselected.contains("active_since"), "{reselected}");
     }
 
     #[test]

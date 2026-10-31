@@ -168,9 +168,9 @@ impl EntityService {
             if let WriteOutcome::Refused(refusal) = outcome {
                 warn!(entity = %identifier, %refusal, "attribute-expiry write refused");
             }
-            if outcome.is_updated() {
+            if let WriteOutcome::Updated(committed_at) = outcome {
                 landed += 1;
-                self.notifier.publish(target, events).await;
+                self.notifier.publish(target, *committed_at, events).await;
             }
         }
         Ok(landed)
@@ -285,7 +285,7 @@ mod tests {
         error::EntityError,
         expiry::{EntityExpiryBatchSize, FailureReach, failure_reach, landed_ids, purge_write},
     };
-    use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, write_outcome::WriteOutcome};
+    use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, store_instant::StoreInstant, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -318,7 +318,11 @@ mod tests {
 
     #[test]
     fn only_successful_purges_are_reported() -> Result<(), IdentifierParseError> {
-        let outcomes = vec![WriteOutcome::Updated, WriteOutcome::Superseded, WriteOutcome::Updated];
+        let outcomes = vec![
+            WriteOutcome::Updated(StoreInstant::new(Utc::now())),
+            WriteOutcome::Superseded,
+            WriteOutcome::Updated(StoreInstant::new(Utc::now())),
+        ];
         pretty_assertions::assert_eq!(
             landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:B", "urn:ngsi-ld:C"])?, &outcomes),
             identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:C"])?
@@ -336,7 +340,7 @@ mod tests {
 
     #[test]
     fn concurrent_sweeps_report_one_semantic_attribute_deletion() -> Result<(), IdentifierParseError> {
-        let outcomes = vec![WriteOutcome::Updated, WriteOutcome::Superseded];
+        let outcomes = vec![WriteOutcome::Updated(StoreInstant::new(Utc::now())), WriteOutcome::Superseded];
         let landed = landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:A"])?, &outcomes);
         pretty_assertions::assert_eq!(landed, identifiers(&["urn:ngsi-ld:A"])?);
         Ok(())

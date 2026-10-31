@@ -1,7 +1,7 @@
 //! Who one committed change is evaluated for, and the candidates its entity
 //! filters admit for them (clause 5.8.6).
 
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -10,8 +10,10 @@ use andromeda_subscription::{
     cache::SubscriptionCache,
     change_filters::{ChangedStates, HopResolution, narrow_by_change_filters},
     compiled::CompiledSubscription,
+    notifying_since::SelectionJudged,
 };
 use std::sync::Arc;
+use tracing::debug;
 
 /// Who one committed change is evaluated for.
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +27,34 @@ pub(crate) enum ChangeAudience<'a> {
         /// Whether the commit already decided its entity filters.
         filters: CommitFilters,
     },
+}
+
+impl ChangeAudience<'_> {
+    /// Whether `candidate`'s selection is the one its commit matched the change
+    /// against, or the one standing when the change is evaluated here.
+    ///
+    /// A live change is matched only here. A queued delivery was matched at
+    /// commit, its entity filters with it unless the commit could not decide
+    /// them or they hop into linked entities, which are both evaluated here.
+    pub(crate) fn selection_judged(self, candidate: &CompiledSubscription) -> SelectionJudged {
+        match self {
+            ChangeAudience::Live
+            | ChangeAudience::Queued {
+                filters: CommitFilters::Undecided,
+                ..
+            } => SelectionJudged::AtEvaluation,
+            ChangeAudience::Queued {
+                filters: CommitFilters::Decided,
+                ..
+            } => {
+                if candidate.filters_hop() {
+                    SelectionJudged::AtEvaluation
+                } else {
+                    SelectionJudged::AtCommit
+                }
+            }
+        }
+    }
 }
 
 /// Whether the commit that queued a delivery decided the subscription's
@@ -44,6 +74,24 @@ pub(crate) enum CommitFilters {
     /// The commit had no state to evaluate them on, so it admitted the change
     /// and delivery evaluates them on the entity it reads.
     Undecided,
+}
+
+/// The candidates a change committed at `committed_at` is owed to: each one
+/// active when the change committed and, unless its commit matched it, selecting
+/// as it did then (clause 5.8.6).
+pub(crate) fn owed_since_commit(
+    audience: ChangeAudience<'_>,
+    committed_at: StoreInstant,
+    mut candidates: Vec<Arc<CompiledSubscription>>,
+) -> Vec<Arc<CompiledSubscription>> {
+    candidates.retain(|candidate| {
+        let owed = candidate.notifying_since.owes(committed_at, audience.selection_judged(candidate));
+        if !owed {
+            debug!(subscription = %candidate.id, "Subscription skipped: it became active or reselected after the change committed");
+        }
+        owed
+    });
+    candidates
 }
 
 /// The candidates the change's entity filters admit for `audience`: decided

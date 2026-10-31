@@ -18,6 +18,7 @@ use crate::{
     notification_delivery::stored_change::{StoredChangeError, decode_change, decode_system_attributes},
 };
 use andromeda_context_commit::{
+    store_instant::StoreInstant,
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
@@ -117,6 +118,8 @@ pub(crate) struct RawClaimedEventRow {
     pub(crate) entity_expires_at: Option<DateTime<Utc>>,
     /// Instant the event was recorded.
     pub(crate) created_at: DateTime<Utc>,
+    /// Store transaction timestamp of the commit that made the change.
+    pub(crate) committed_at: DateTime<Utc>,
 }
 
 /// One claimed event as its deliveries share it: the decoded event, or why it
@@ -175,6 +178,8 @@ struct ReadEvent {
     sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Instant the event was recorded.
     created_at: DateTime<Utc>,
+    /// The commit that made the change.
+    committed_at: StoreInstant,
 }
 
 /// The events one claim read back, by key, their states still holding
@@ -242,6 +247,7 @@ fn read_event(row: RawClaimedEventRow) -> Result<ReadEvent, ClaimedEventError> {
         previous_state: state(row.previous_snapshot)?,
         sys_attrs_snapshot: decode_system_attributes(row.entity_created_at, row.entity_modified_at, row.entity_expires_at)?,
         created_at: row.created_at,
+        committed_at: StoreInstant::new(row.committed_at),
     })
 }
 
@@ -271,6 +277,7 @@ fn assemble_event(read: ReadEvent, names: &KeyNames) -> Result<NotificationEvent
         .previous_snapshot(previous_snapshot)
         .sys_attrs_snapshot(read.sys_attrs_snapshot)
         .created_at(read.created_at)
+        .committed_at(read.committed_at)
         .build())
 }
 
@@ -335,6 +342,7 @@ pub(crate) mod tests {
             entity_modified_at: None,
             entity_expires_at: None,
             created_at: Utc::now(),
+            committed_at: Utc::now(),
         }
     }
 

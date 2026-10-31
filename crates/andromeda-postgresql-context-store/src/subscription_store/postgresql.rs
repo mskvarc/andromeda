@@ -39,6 +39,7 @@ use andromeda_subscription::{
     error::SubscriptionError,
     interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::NotifyingRestart,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -253,10 +254,11 @@ macro_rules! impl_subscription_store {
                 id: &Identifier,
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
+                restart: NotifyingRestart,
             ) -> Result<u64, SubscriptionError> {
                 let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
-                let result = $update(target, id, fields, interned, status)?
+                let result = $update(target, id, fields, interned, status, restart)?
                     .to_query()
                     .execute(&mut *transaction)
                     .await

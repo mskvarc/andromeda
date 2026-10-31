@@ -114,11 +114,17 @@ mod tests {
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
         error::CommitError,
+        store_instant::StoreInstant,
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use chrono::Utc;
     use std::sync::Arc;
+
+    fn landed_at() -> StoreInstant {
+        StoreInstant::new(Utc::now())
+    }
 
     fn id(raw: &str) -> Identifier {
         raw.parse().expect("a valid entity URI")
@@ -152,15 +158,15 @@ mod tests {
             .set_aside(&id("urn:ngsi-ld:B"), SubmissionRefusal::RelationshipMissingObject)
             .expect("B is in the submission");
         let outcomes = submission
-            .outcomes(vec![WriteOutcome::Created, WriteOutcome::Updated])
+            .outcomes(vec![WriteOutcome::Created(landed_at()), WriteOutcome::Updated(landed_at())])
             .expect("one outcome per committed write");
         assert!(
             matches!(
                 outcomes.as_slice(),
                 [
-                    WriteOutcome::Created,
+                    WriteOutcome::Created(_),
                     WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
-                    WriteOutcome::Updated
+                    WriteOutcome::Updated(_)
                 ]
             ),
             "{outcomes:?}"
@@ -179,16 +185,16 @@ mod tests {
             .set_aside(&id("urn:ngsi-ld:A"), SubmissionRefusal::PropertyMissingValue)
             .expect("A is in the submission");
         let outcomes = submission
-            .outcomes(vec![WriteOutcome::Created, WriteOutcome::Created])
+            .outcomes(vec![WriteOutcome::Created(landed_at()), WriteOutcome::Created(landed_at())])
             .expect("one outcome per committed write");
         assert!(
             matches!(
                 outcomes.as_slice(),
                 [
                     WriteOutcome::Refused(SubmissionRefusal::PropertyMissingValue),
-                    WriteOutcome::Created,
+                    WriteOutcome::Created(_),
                     WriteOutcome::Refused(SubmissionRefusal::VocabPropertyMissingVocab),
-                    WriteOutcome::Created
+                    WriteOutcome::Created(_)
                 ]
             ),
             "{outcomes:?}"
@@ -226,15 +232,15 @@ mod tests {
     fn a_submission_that_refused_nothing_returns_its_outcomes_as_they_landed() {
         let submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"]);
         let outcomes = submission
-            .outcomes(vec![WriteOutcome::Created, WriteOutcome::Skipped])
+            .outcomes(vec![WriteOutcome::Created(landed_at()), WriteOutcome::Skipped])
             .expect("one outcome per committed write");
-        assert!(matches!(outcomes.as_slice(), [WriteOutcome::Created, WriteOutcome::Skipped]), "{outcomes:?}");
+        assert!(matches!(outcomes.as_slice(), [WriteOutcome::Created(_), WriteOutcome::Skipped]), "{outcomes:?}");
     }
 
     #[test]
     fn landed_outcomes_that_do_not_match_the_committed_writes_are_an_invariant_failure() {
         let submission = submission(&["urn:ngsi-ld:A", "urn:ngsi-ld:B"]);
-        let outcomes = submission.outcomes(vec![WriteOutcome::Created]);
+        let outcomes = submission.outcomes(vec![WriteOutcome::Created(landed_at())]);
         assert!(
             matches!(outcomes, Err(CommitError::UnexpectedOutcomeCount { expected: 2, actual: 1 })),
             "{outcomes:?}"

@@ -16,13 +16,13 @@ mod subscription_notification;
 use crate::{
     error::NotificationError,
     processor::{
-        change_audience::{ChangeAudience, admitted_by_entity_filters, changed_states},
+        change_audience::{ChangeAudience, admitted_by_entity_filters, changed_states, owed_since_commit},
         change_payload::notified_state,
         payload::cache::NotificationCompactionCache,
         subscription_notification::NotifiedChange,
     },
 };
-use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -157,10 +157,17 @@ impl NotificationProcessor {
 
     /// Evaluate and deliver notifications for one committed entity change.
     pub async fn apply_entity_change(&self, change: ContextChangeEvent) -> NotificationEvaluationOutcome {
-        self.apply_entity_change_for(change.target, change.event, ChangeAudience::Live).await
+        self.apply_entity_change_for(change.target, change.event, change.committed_at, ChangeAudience::Live)
+            .await
     }
 
-    async fn apply_entity_change_for(&self, target: ContextTarget, event: ChangeEvent, audience: ChangeAudience<'_>) -> NotificationEvaluationOutcome {
+    async fn apply_entity_change_for(
+        &self,
+        target: ContextTarget,
+        event: ChangeEvent,
+        committed_at: StoreInstant,
+        audience: ChangeAudience<'_>,
+    ) -> NotificationEvaluationOutcome {
         debug!(
             entity = %event.entity_id,
             lifecycle = ?event.change.lifecycle,
@@ -168,7 +175,7 @@ impl NotificationProcessor {
             attributes = ?event.change.attributes(),
             "Change event received"
         );
-        let candidates = self.candidate_subscriptions(&target, &event, audience);
+        let candidates = self.candidate_subscriptions(&target, &event, committed_at, audience);
         if candidates.is_empty() {
             debug!(entity = %event.entity_id, "No matching subscriptions for the change");
             return NotificationEvaluationOutcome::default();
@@ -230,14 +237,25 @@ impl NotificationProcessor {
         self.cache.refresh(target, subscription_id, self.sub_repo.as_ref()).await
     }
 
-    /// The compiled subscriptions the change reaches before entity filters are
-    /// evaluated, narrowed to the one subscription a durably queued delivery
-    /// is addressed to.
+    /// The compiled subscriptions the change committed at `committed_at`
+    /// reaches before entity filters are evaluated, narrowed to the one
+    /// subscription a durably queued delivery is addressed to.
     ///
-    /// The subscription's own state is read as it stands now -- a subscription
+    /// The subscription's own state is read as it stands now, so a subscription
     /// paused, expired or re-targeted since the change was queued is not
-    /// notified of it -- while nothing here reads the entity.
-    fn candidate_subscriptions(&self, target: &ContextTarget, event: &ChangeEvent, audience: ChangeAudience<'_>) -> Vec<Arc<CompiledSubscription>> {
+    /// notified of it, while nothing here reads the entity. Clause 5.8.6
+    /// notifies only an active subscription, so one that became active after
+    /// the change committed was paused, expired or absent when it happened and
+    /// is owed nothing for it; and one whose selection changed after the commit
+    /// is owed nothing for a change judged now, by a selection that did not
+    /// exist when it happened.
+    fn candidate_subscriptions(
+        &self,
+        target: &ContextTarget,
+        event: &ChangeEvent,
+        committed_at: StoreInstant,
+        audience: ChangeAudience<'_>,
+    ) -> Vec<Arc<CompiledSubscription>> {
         let outcome = self.cache.find_matching(target, event);
         debug!(
             entity = %event.entity_id,
@@ -254,7 +272,7 @@ impl NotificationProcessor {
         if let ChangeAudience::Queued { subscription, .. } = audience {
             matching.retain(|candidate| &candidate.id == subscription);
         }
-        matching
+        owed_since_commit(audience, committed_at, matching)
     }
 
     /// The entities the `rel{…}` hops of the candidates' filters cross into
@@ -316,8 +334,8 @@ impl NotificationProcessor {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::processor::change_audience::{ChangeAudience, CommitFilters, admitted_by_entity_filters};
-    use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+    use crate::processor::change_audience::{ChangeAudience, CommitFilters, admitted_by_entity_filters, owed_since_commit};
+    use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
@@ -345,6 +363,7 @@ mod tests {
         compiled::CompiledSubscription,
         geo_filter::SubscriptionGeoFilter,
         matching::{matches_entity_filters, matches_subscription},
+        notifying_since::NotifyingSince,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
@@ -402,7 +421,10 @@ mod tests {
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
-            created_at: DateTime::<Utc>::MIN_UTC,
+            notifying_since: NotifyingSince {
+                active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+                selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            },
             compiled_q: None,
             language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
@@ -622,6 +644,81 @@ mod tests {
         sub.standing.status = SubscriptionStatus::Paused;
         let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
+    }
+
+    fn at(unix_seconds: i64) -> StoreInstant {
+        StoreInstant::new(DateTime::from_timestamp(unix_seconds, 0).expect("a fixture timestamp in range"))
+    }
+
+    /// A Vehicle subscription active since `active` and selecting as it does
+    /// since `selected`.
+    fn vehicle_sub_since(active: i64, selected: i64) -> Arc<CompiledSubscription> {
+        let mut sub = make_sub("since", vec![], vec!["attributeUpdated"], None);
+        sub.notifying_since = NotifyingSince {
+            active: at(active),
+            selected: at(selected),
+        };
+        Arc::new(sub)
+    }
+
+    fn owed_ids(audience: ChangeAudience<'_>, committed_at: StoreInstant, candidates: Vec<Arc<CompiledSubscription>>) -> usize {
+        owed_since_commit(audience, committed_at, candidates).len()
+    }
+
+    /// Table 5.2.12-1 `isActive` and clause 5.8.6: the Subscription was paused
+    /// when the change committed at 1 500 and set active again at 2 000; the
+    /// change is evaluated only now, after the reactivation, and still owes
+    /// nothing.
+    #[test]
+    fn a_change_committed_while_paused_and_evaluated_after_reactivation_sends_nothing() {
+        pretty_assertions::assert_eq!(owed_ids(ChangeAudience::Live, at(1_500), vec![vehicle_sub_since(2_000, 1_000)]), 0);
+    }
+
+    #[test]
+    fn a_change_committed_after_the_subscription_was_set_active_is_notified() {
+        pretty_assertions::assert_eq!(owed_ids(ChangeAudience::Live, at(2_500), vec![vehicle_sub_since(2_000, 1_000)]), 1);
+    }
+
+    /// Clause 5.2.12 has no initial notification: a Subscription created at
+    /// 2 000 is owed nothing for a change committed at 1 000, however late it
+    /// is evaluated.
+    #[test]
+    fn a_change_committed_before_the_subscription_was_created_is_not_notified_to_it() {
+        pretty_assertions::assert_eq!(owed_ids(ChangeAudience::Live, at(1_000), vec![vehicle_sub_since(2_000, 2_000)]), 0);
+    }
+
+    /// The selection changed at 2 000, after the change committed at 1 500.
+    /// A live change is judged now, by a selection that did not exist when it
+    /// happened; a queued delivery was matched by the commit, under the
+    /// selection of its commit, unless the commit left its filters undecided.
+    #[test]
+    fn a_selection_changed_after_the_commit_drops_only_what_is_judged_after_it() {
+        let subscription = vehicle_sub_since(1_000, 2_000);
+        let id = subscription.id.clone(); // clone: the audience borrows the identifier the candidate list consumes
+        pretty_assertions::assert_eq!(owed_ids(ChangeAudience::Live, at(1_500), vec![Arc::clone(&subscription)]), 0);
+        let decided = ChangeAudience::Queued {
+            subscription: &id,
+            filters: CommitFilters::Decided,
+        };
+        pretty_assertions::assert_eq!(owed_ids(decided, at(1_500), vec![Arc::clone(&subscription)]), 1);
+        let undecided = ChangeAudience::Queued {
+            subscription: &id,
+            filters: CommitFilters::Undecided,
+        };
+        pretty_assertions::assert_eq!(owed_ids(undecided, at(1_500), vec![subscription]), 0);
+    }
+
+    /// A queued delivery is owed only while the Subscription has been active
+    /// since its commit: one paused and set active again in between is not.
+    #[test]
+    fn a_queued_delivery_reactivated_after_its_commit_is_not_sent() {
+        let subscription = vehicle_sub_since(2_000, 1_000);
+        let id = subscription.id.clone(); // clone: the audience borrows the identifier the candidate list consumes
+        let decided = ChangeAudience::Queued {
+            subscription: &id,
+            filters: CommitFilters::Decided,
+        };
+        pretty_assertions::assert_eq!(owed_ids(decided, at(1_500), vec![subscription]), 0);
     }
 
     /// The states a modification leaving `state` is filtered against.

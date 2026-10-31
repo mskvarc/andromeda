@@ -17,6 +17,7 @@ use crate::{
     forwarding_hook::SubscriptionForwardingHook,
     merged_validation::validate_merged_subscription,
     notification_context,
+    notifying_since::{NotifyingRestart, SinceRestart},
     request_validation,
     status::{compute_updated_status, requested_status_change},
     store::SubscriptionStore,
@@ -244,11 +245,12 @@ where
             }
             let existing_status = existing.lifecycle.standing.reported_status(Utc::now());
             let status = compute_updated_status(existing_status, &requested_status_change(&request));
+            let restart = NotifyingRestart::of_update(existing_status, status, SinceRestart::of_selection(&request, &existing));
             let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
 
-            let updated = self.repo.update_subscription(target, id, &fields, status).await?;
+            let updated = self.repo.update_subscription(target, id, &fields, status, restart).await?;
             if updated == 0 {
                 return Err(SubscriptionError::not_found(id));
             }

@@ -7,6 +7,7 @@
 use crate::{
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::NotifyingRestart,
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -247,7 +248,9 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Create a new subscription with the given fields and status.
+    /// Create a new subscription with the given fields and status, both
+    /// instants of its [`NotifyingSince`](crate::notifying_since::NotifyingSince)
+    /// the creating transaction's timestamp.
     fn create_subscription<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
@@ -262,13 +265,15 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life3: 'async_trait,
         'life4: 'async_trait,
         Self: 'async_trait;
-    /// Update an existing subscription. Returns rows affected.
+    /// Update an existing subscription, restarting at the update's transaction
+    /// timestamp each instant `restart` names. Returns rows affected.
     fn update_subscription<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,
         fields: &'life3 SubscriptionFields<'life4>,
         status: SubscriptionStatus,
+        restart: NotifyingRestart,
     ) -> BoxFuture<'async_trait, Result<u64, SubscriptionError>>
     where
         'life0: 'async_trait,

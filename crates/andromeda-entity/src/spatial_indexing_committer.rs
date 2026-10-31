@@ -180,18 +180,18 @@ impl IndexChange {
     /// Settle the index to what the write actually did.
     fn settle(self, index: &SpatialEntityIndex, placement: &LocationPlacement, outcome: &WriteOutcome) {
         match (self, outcome) {
-            (IndexChange::Restate { entity_id, state }, WriteOutcome::Created | WriteOutcome::Updated) => {
+            (IndexChange::Restate { entity_id, state }, WriteOutcome::Created(_) | WriteOutcome::Updated(_)) => {
                 index.replace_entity(entity_id, placement.of(state.types().as_slice(), state.location_geometry()));
             }
-            (IndexChange::Remove { entity_id }, WriteOutcome::Deleted(_)) => index.remove(&entity_id),
+            (IndexChange::Remove { entity_id }, WriteOutcome::Deleted(..)) => index.remove(&entity_id),
             // A write that did not land leaves the store as it was; whatever it
             // anticipated only widens a candidate set until the entity's next
             // write or the next rebuild.
             (
                 IndexChange::Restate { .. } | IndexChange::Remove { .. } | IndexChange::Unchanged,
-                WriteOutcome::Created
-                | WriteOutcome::Updated
-                | WriteOutcome::Deleted(_)
+                WriteOutcome::Created(_)
+                | WriteOutcome::Updated(_)
+                | WriteOutcome::Deleted(..)
                 | WriteOutcome::AlreadyExists
                 | WriteOutcome::NotFound
                 | WriteOutcome::Superseded
@@ -218,6 +218,7 @@ mod tests {
         entity_mutation::EntityMutation,
         entity_record::{EntityRecord, SearchProjection},
         error::CommitError,
+        store_instant::StoreInstant,
         write_outcome::WriteOutcome,
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
@@ -341,18 +342,21 @@ mod tests {
     }
 
     fn deleted() -> WriteOutcome {
-        WriteOutcome::Deleted(DeletedEntity {
-            id: vehicle(),
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            expires_at: None,
-        })
+        WriteOutcome::Deleted(
+            DeletedEntity {
+                id: vehicle(),
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                expires_at: None,
+            },
+            StoreInstant::new(Utc::now()),
+        )
     }
 
     #[tokio::test]
     async fn a_landed_write_is_in_the_index_before_the_commit_returns() {
         let index = seeded_index();
-        let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated));
+        let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))));
         committer
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
@@ -363,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn a_landed_move_leaves_the_old_location() {
         let index = seeded_index();
-        let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated));
+        let committer = committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))));
         committer
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
@@ -379,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn a_superseded_write_keeps_the_entity_where_the_store_still_has_it() {
         let index = seeded_index();
-        committer(&index, Script::Answer(|| WriteOutcome::Updated))
+        committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))))
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
@@ -393,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn a_commit_dropped_before_its_outcome_leaves_the_entity_reachable_at_its_new_location() {
         let index = seeded_index();
-        committer(&index, Script::Answer(|| WriteOutcome::Updated))
+        committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))))
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
@@ -411,7 +415,7 @@ mod tests {
     #[tokio::test]
     async fn a_landed_deletion_removes_the_entity_and_a_refused_one_keeps_it() {
         let index = seeded_index();
-        committer(&index, Script::Answer(|| WriteOutcome::Updated))
+        committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))))
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
@@ -434,7 +438,7 @@ mod tests {
             SnapshotKey::try_from(3).expect("positive key"),
             "urn:ngsi-ld:Snapshot:a".parse().expect("a well-formed URI"),
         ));
-        committer(&index, Script::Answer(|| WriteOutcome::Updated))
+        committer(&index, Script::Answer(|| WriteOutcome::Updated(StoreInstant::new(Utc::now()))))
             .commit(&snapshot, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");

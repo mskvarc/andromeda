@@ -5,7 +5,7 @@
 //! durable settlement tests match against the same subscription, so its stored
 //! form and the cache loaded with it live here rather than in either harness.
 
-use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
@@ -14,6 +14,7 @@ use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notifying_since::{NotifyingRestart, NotifyingSince},
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -98,8 +99,8 @@ fn unused_store_call(method: &str) -> SubscriptionError {
 /// by `id`, stored under `key` and listening for `triggers`.
 ///
 /// It is stored in expanded form (its selector carries the expanded Building
-/// IRI) and is created in the past so the clause 5.2.12 `createdAt` guard
-/// admits the tests' events.
+/// IRI) and has been active and selecting since 2020, so every change the tests
+/// commit is owed to it.
 fn stored_building_subscription(id: &str, key: i64, triggers: &[&str]) -> StoredSubscription {
     let subscription = serde_json::from_value::<Subscription>(json!({
         "id": id,
@@ -113,7 +114,15 @@ fn stored_building_subscription(id: &str, key: i64, triggers: &[&str]) -> Stored
     }))
     .expect("a valid fixture subscription");
     let key = SubscriptionKey::try_from(key).expect("a valid fixture subscription key");
-    StoredSubscription { key, subscription }
+    let since = StoreInstant::new(subscription.lifecycle.created_at);
+    StoredSubscription {
+        key,
+        subscription,
+        notifying_since: NotifyingSince {
+            active: since,
+            selected: since,
+        },
+    }
 }
 
 /// The fixture subscription's surrogate key, as the store would have assigned it.
@@ -198,6 +207,7 @@ impl SubscriptionStore for FixtureSubscriptionStore {
         _id: &Identifier,
         _fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
+        _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         Err(unused_store_call("update_subscription"))
     }

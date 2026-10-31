@@ -56,7 +56,7 @@ mod tests {
         held_events::HeldEvents,
         notification_event::{NotificationEvent, NotificationEventKey},
     };
-    use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use chrono::Utc;
@@ -72,6 +72,7 @@ mod tests {
                 .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
                 .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"))
                 .created_at(Utc::now())
+                .committed_at(StoreInstant::new(Utc::now()))
                 .build(),
         )
     }

@@ -11,8 +11,9 @@ use crate::{
     error::SubscriptionError,
     geo_filter::SubscriptionGeoFilter,
     matching::matches_subscription,
+    notifying_since::NotifyingSince,
 };
-use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_entity::reads::{
     attribute_change::{AttributeChange, AttributeChangeKind},
     attribute_instance_key::AttributeInstanceKey,
@@ -181,7 +182,10 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         notification_sys_attrs: SysAttrsInclusion::Strip,
         notification_show_changes: false,
         jsonld_context: None,
-        created_at: DateTime::<Utc>::MIN_UTC,
+        notifying_since: NotifyingSince {
+            active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+            selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
+        },
         compiled_q: None,
         language_matching: LanguageMatching::TagEquality,
         compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
