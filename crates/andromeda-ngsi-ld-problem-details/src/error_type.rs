@@ -55,6 +55,10 @@ pub enum NgsiLdErrorType {
     /// The request method is not one the resource serves (405).
     #[strum(to_string = "Method not allowed")]
     MethodNotAllowed,
+    /// The client did not send the whole request within the broker's request
+    /// deadline (408).
+    #[strum(to_string = "Request timeout")]
+    RequestTimeout,
 }
 
 impl NgsiLdErrorType {
@@ -76,6 +80,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::NonexistentTenant => iri!("https://uri.etsi.org/ngsi-ld/errors/NonexistentTenant"),
             NgsiLdErrorType::RequestEntityTooLarge => iri!("https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge"),
             NgsiLdErrorType::MethodNotAllowed => iri!("https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed"),
+            NgsiLdErrorType::RequestTimeout => iri!("https://uri.etsi.org/ngsi-ld/errors/RequestTimeout"),
         }
     }
 
@@ -90,7 +95,7 @@ impl NgsiLdErrorType {
     ///
     /// Searches the variants rather than matching a second list of IRIs: a
     /// hand-written inverse can drift from [`type_iri`](Self::type_iri), and a
-    /// fourteen-element scan costs nothing on a path that runs once per
+    /// fifteen-element scan costs nothing on a path that runs once per
     /// deserialised batch error.
     #[must_use]
     pub fn from_type_iri(iri: &IriRefBuf) -> Option<NgsiLdErrorType> {
@@ -117,6 +122,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::NoMultiTenantSupport => StatusCode::NOT_IMPLEMENTED,
             NgsiLdErrorType::RequestEntityTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             NgsiLdErrorType::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
+            NgsiLdErrorType::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
         }
     }
 }
@@ -217,6 +223,12 @@ mod tests {
                 "MethodNotAllowed",
                 "Method not allowed",
                 StatusCode::METHOD_NOT_ALLOWED,
+            ),
+            (
+                NgsiLdErrorType::RequestTimeout,
+                "RequestTimeout",
+                "Request timeout",
+                StatusCode::REQUEST_TIMEOUT,
             ),
         ] {
             pretty_assertions::assert_eq!(category.type_iri().as_str(), format!("https://uri.etsi.org/ngsi-ld/errors/{suffix}"));

@@ -1,5 +1,6 @@
 //! Deterministic application of API-wide and process-wide middleware.
 
+mod body_arrival;
 mod compression_layer;
 mod cors_layer;
 pub mod csrf_layer;

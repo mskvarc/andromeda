@@ -46,7 +46,9 @@ const DEFAULT_MAX_Q_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(15)
 )]
 pub struct RequestLimitsConfig {
     /// The longest one request may take, in human-readable form (`"30s"`).
-    #[schemars(description = "The longest one request may run. A request still running then is answered `500` `InternalError`.")]
+    #[schemars(
+        description = "The longest one request may run. A request whose body is still arriving then is answered `408` `RequestTimeout`, and any other request still running is answered `500` `InternalError`."
+    )]
     pub timeout: HumanDuration,
     /// The largest request body accepted, in human-readable form
     /// (`"64 MiB"`). A larger body is answered 413.

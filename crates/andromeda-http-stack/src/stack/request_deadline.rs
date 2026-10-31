@@ -5,15 +5,24 @@
 //! answers with 500. A request still in flight past its deadline is answered
 //! with that problem document, and its handler future is dropped with whatever
 //! store connections it held.
+//!
+//! A request whose client has not finished sending its body by then is the
+//! client's failure, not the broker's: RFC 9110 clause 15.5.9 answers it 408
+//! and has the server close the connection, which over HTTP/1.x is said with
+//! `Connection: close`. HTTP/2 and HTTP/3 forbid that field and end only the
+//! stream.
 
+use crate::stack::body_arrival::{BodyArrival, HeldUpBy};
 use andromeda_http_extraction::addressed_uri::addressed_request_uri;
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::{Request, State},
+    http::Version,
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use headers::{Connection, HeaderMapExt};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
@@ -35,15 +44,34 @@ impl RequestDeadline {
 #[error("the request did not complete within {} ms", .0.as_millis())]
 struct DeadlinePassed(Duration);
 
-/// Run the rest of the stack, answering 500 `InternalError` once the deadline
-/// passes first.
+/// A request body was still arriving when the deadline passed.
+#[derive(Clone, Copy, Debug, Error)]
+#[error("the request body did not arrive within {} ms", .0.as_millis())]
+struct BodyLate(Duration);
+
+/// Run the rest of the stack, answering once the deadline passes first: 408
+/// `RequestTimeout` while the stack waits on the client for more of the body,
+/// 500 `InternalError` otherwise.
 pub async fn answer_within_deadline(State(deadline): State<RequestDeadline>, request: Request, next: Next) -> Response {
     let instance = addressed_request_uri(&request);
+    let version = request.version();
+    let (request, arrival) = BodyArrival::watch(request);
     match timeout(deadline.0, next.run(request)).await {
         Ok(response) => response,
-        Err(_elapsed) => ClassifiedReport::public(NgsiLdErrorType::InternalError, DeadlinePassed(deadline.0).to_string())
-            .with_instance(instance)
-            .into_response(),
+        Err(_elapsed) => match arrival.held_up_by() {
+            HeldUpBy::Broker => ClassifiedReport::public(NgsiLdErrorType::InternalError, DeadlinePassed(deadline.0).to_string())
+                .with_instance(instance)
+                .into_response(),
+            HeldUpBy::Client => {
+                let mut response = ClassifiedReport::public(NgsiLdErrorType::RequestTimeout, BodyLate(deadline.0).to_string())
+                    .with_instance(instance)
+                    .into_response();
+                if matches!(version, Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11) {
+                    response.headers_mut().typed_insert(Connection::close());
+                }
+                response
+            }
+        },
     }
 }
 
@@ -52,14 +80,21 @@ mod tests {
     use crate::stack::request_deadline::{RequestDeadline, answer_within_deadline};
     use axum::{
         Router,
-        body::{Body, to_bytes},
+        body::{Body, Bytes, to_bytes},
         extract::Request,
-        http::{StatusCode, header::CONTENT_TYPE},
+        http::{
+            Error as RequestBuildError,
+            StatusCode,
+            Version,
+            header::{CONNECTION, CONTENT_TYPE},
+        },
         middleware::from_fn_with_state,
-        routing::get,
+        routing::{get, post},
     };
+    use futures::stream::{StreamExt, iter, pending as pending_stream};
     use serde_json::Value;
     use std::{
+        convert::Infallible,
         error::Error,
         future::pending,
         sync::{
@@ -119,6 +154,70 @@ mod tests {
         pretty_assertions::assert_eq!(problem["status"], 500);
         pretty_assertions::assert_eq!(problem["instance"], "/ngsi-ld/v1/entities?type=Room");
         pretty_assertions::assert_eq!(problem["detail"], "the request did not complete within 20 ms");
+        Ok(())
+    }
+
+    /// The client sends the start of the body and then nothing more; the
+    /// handler reads the body before it answers, as every payload handler does.
+    fn stalled_body_request(version: Version) -> Result<Request, RequestBuildError> {
+        let chunks = iter([Ok::<_, Infallible>(Bytes::from_static(b"{"))]).chain(pending_stream());
+        Request::post("/ngsi-ld/v1/entities").version(version).body(Body::from_stream(chunks))
+    }
+
+    fn reading_router(limit: Duration) -> Router {
+        bounded(
+            Router::new().route("/ngsi-ld/v1/entities", post(|body: Bytes| async move { (StatusCode::CREATED, body) })),
+            limit,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_body_still_arriving_at_the_deadline_is_answered_with_a_request_timeout_problem() -> Result<(), Box<dyn Error>> {
+        let response = reading_router(Duration::from_millis(20))
+            .oneshot(stalled_body_request(Version::HTTP_11)?)
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        pretty_assertions::assert_eq!(response.headers().get(CONNECTION).and_then(|value| value.to_str().ok()), Some("close"));
+        let problem: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+        pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestTimeout");
+        pretty_assertions::assert_eq!(problem["title"], "Request timeout");
+        pretty_assertions::assert_eq!(problem["status"], 408);
+        pretty_assertions::assert_eq!(problem["instance"], "/ngsi-ld/v1/entities");
+        pretty_assertions::assert_eq!(problem["detail"], "the request body did not arrive within 20 ms");
+        Ok(())
+    }
+
+    /// RFC 9113 clause 8.2.2 and RFC 9114 clause 4.2 forbid the
+    /// connection-specific `Connection` field.
+    #[tokio::test]
+    async fn a_body_still_arriving_over_http_2_or_3_is_answered_without_a_connection_field() -> Result<(), Box<dyn Error>> {
+        for version in [Version::HTTP_2, Version::HTTP_3] {
+            let response = reading_router(Duration::from_millis(20)).oneshot(stalled_body_request(version)?).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT, "{version:?}");
+            pretty_assertions::assert_eq!(response.headers().get(CONNECTION), None, "{version:?}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_body_read_whole_before_a_handler_outlives_the_deadline_is_answered_with_an_internal_error() -> Result<(), Box<dyn Error>> {
+        let router = bounded(
+            Router::new().route("/ngsi-ld/v1/entities", post(|_body: Bytes| pending::<StatusCode>())),
+            Duration::from_millis(20),
+        );
+        let response = router.oneshot(Request::post("/ngsi-ld/v1/entities").body(Body::from("{}"))?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        pretty_assertions::assert_eq!(response.headers().get(CONNECTION), None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_body_arriving_within_the_deadline_keeps_the_handler_answer() -> Result<(), Box<dyn Error>> {
+        let response = reading_router(Duration::from_secs(30))
+            .oneshot(Request::post("/ngsi-ld/v1/entities").body(Body::from("{}"))?)
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
+        pretty_assertions::assert_eq!(to_bytes(response.into_body(), usize::MAX).await?, Bytes::from_static(b"{}"));
         Ok(())
     }
 
