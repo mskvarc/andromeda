@@ -1,14 +1,14 @@
 //! The clause 6.3.17 warnings of a source's answer of entities or Temporal Evolutions that is not read in full.
 //!
 //! A warning names the registration and what was wrong with its answer. Why
-//! in detail quotes what the source sent, so it is logged and not reported.
+//! in detail quotes what the source sent, so it is logged and not reported:
+//! entities left out are counted, never named.
 
-use crate::entity_reading::{EntityReading, TemporalEntityReading};
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::received::{ElementRefusal, ReceivedDocumentError};
+use andromeda_ngsi_ld_model::received::ReceivedDocumentError;
 use std::error::Error as StdError;
 use thiserror::Error;
 use tracing::warn;
@@ -17,14 +17,13 @@ use tracing::warn;
 /// failure, its cause the source of the error.
 #[derive(Debug, Error)]
 pub(crate) enum SourceAnswerFailure<'a> {
-    /// An element of the answer is refused by the model.
-    #[error("context source {registration} returned an entity that is refused")]
-    EntityRefused {
+    /// Entities of the answer cannot be used and are left out: each is logged with its reason where it is dropped, and the source is reported once with their count.
+    #[error("{count} of the entities context source {registration} answered cannot be used")]
+    EntitiesDropped {
         /// The registration that answered.
         registration: &'a Identifier,
-        /// Why the element is refused.
-        #[source]
-        refusal: ElementRefusal,
+        /// How many entities are left out.
+        count: usize,
     },
     /// The answer is no document of entities.
     #[error("context source {registration} returned a payload that is no entity document")]
@@ -34,15 +33,6 @@ pub(crate) enum SourceAnswerFailure<'a> {
         /// Why the body does not read.
         #[source]
         error: ReceivedDocumentError,
-    },
-    /// An entity does not read under the context it is spelled in.
-    #[error("context source {registration} returned an entity that does not read")]
-    EntityUnreadable {
-        /// The registration that answered.
-        registration: &'a Identifier,
-        /// Why the entity does not read.
-        #[source]
-        reading: EntityReading,
     },
     /// The answer to a retrieval is an entity other than the one requested.
     #[error("context source {registration} answered the retrieval of {requested} with another entity")]
@@ -69,15 +59,6 @@ pub(crate) enum SourceAnswerFailure<'a> {
         #[source]
         error: ExpansionError,
     },
-    /// An element of the answer is a temporal entity the model refuses.
-    #[error("context source {registration} returned a temporal entity that is refused")]
-    TemporalEntityRefused {
-        /// The registration that answered.
-        registration: &'a Identifier,
-        /// Why the element is refused.
-        #[source]
-        refusal: ElementRefusal,
-    },
     /// The answer is no document of Temporal Evolutions.
     #[error("context source {registration} returned a payload that is no temporal entity document")]
     TemporalDocument {
@@ -86,15 +67,6 @@ pub(crate) enum SourceAnswerFailure<'a> {
         /// Why the body does not read.
         #[source]
         error: ReceivedDocumentError,
-    },
-    /// A Temporal Evolution does not read under the context it is spelled in.
-    #[error("context source {registration} returned a temporal entity that does not read")]
-    TemporalEntityUnreadable {
-        /// The registration that answered.
-        registration: &'a Identifier,
-        /// Why the entity does not read.
-        #[source]
-        reading: TemporalEntityReading,
     },
     /// An aggregate cannot be spelled in the client's context.
     #[error("context source {registration} answered an aggregate that cannot be spelled in the client's context")]

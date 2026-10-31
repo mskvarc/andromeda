@@ -4,6 +4,7 @@
 
 use crate::{
     FederationService,
+    dropped_entities::DroppedEntities,
     entity_reading::EntityReading,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse},
     source_answer_failure::SourceAnswerFailure,
@@ -33,6 +34,8 @@ pub(crate) struct ReceivedAnswer {
     pub(crate) entities: Vec<ContextualEntity>,
     /// The clause 6.3.17 warnings of the attempt.
     pub(crate) warnings: Vec<NgsiLdWarning>,
+    /// The entities left out of the answer so far, reported with one warning once the answer is read.
+    pub(crate) dropped: DroppedEntities,
     /// The `EntityMap` the source used for the request (clause 5.5.14).
     pub(crate) linked_map: Option<Identifier>,
 }
@@ -79,18 +82,20 @@ impl WalkedAnswer for ReceivedAnswer {
 
     fn absorb(&mut self, page: ReceivedAnswer) {
         self.warnings.extend(page.warnings);
+        self.dropped.absorb(page.dropped);
     }
 }
 
 /// One source's answer, its body read as `document`; a body that is not that document is a clause 6.3.17 warning.
 pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome, document: AnswerDocument) -> ReadPage<ReceivedAnswer> {
-    let answer = |naming, entities, warnings, linked_map| {
+    let answer = |naming, entities, warnings, dropped, linked_map| {
         Some(ReceivedAnswer {
             registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
             mode: registration.access.mode.unwrap_or_default(),
             naming,
             entities,
             warnings,
+            dropped,
             linked_map,
         })
     };
@@ -105,23 +110,18 @@ pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome:
             Ok(ReceivedEntities(elements)) => {
                 let sent = elements.len();
                 let mut entities = Vec::with_capacity(sent);
+                let mut dropped = DroppedEntities::default();
                 for element in elements {
                     match element {
                         ReceivedElement::Read(entity) => entities.push(entity),
                         ReceivedElement::Refused(refusal) => {
                             warn!("Context source {} returned an entity that is refused: {}", registration.id, refusal);
-                            warnings.push(
-                                SourceAnswerFailure::EntityRefused {
-                                    registration: &registration.id,
-                                    refusal,
-                                }
-                                .into_warning(),
-                            );
+                            dropped.record(refusal.id);
                         }
                     }
                 }
                 ReadPage {
-                    answer: answer(naming, entities, warnings, entity_map),
+                    answer: answer(naming, entities, warnings, dropped, entity_map),
                     sent,
                 }
             }
@@ -134,20 +134,20 @@ pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome:
                     }
                     .into_warning(),
                 );
-                ReadPage::empty(answer(naming, Vec::new(), warnings, None))
+                ReadPage::empty(answer(naming, Vec::new(), warnings, DroppedEntities::default(), None))
             }
         },
         // A 404 is not abnormal (clause 6.3.17), but the warnings the source
         // reported about the sources behind it still travel.
         ForwardGetOutcome::NotFound(cs_warnings) => ReadPage::empty(
             (!cs_warnings.is_empty())
-                .then(|| answer(Box::new(ContextSpec::none()), Vec::new(), cs_warnings, None))
+                .then(|| answer(Box::new(ContextSpec::none()), Vec::new(), cs_warnings, DroppedEntities::default(), None))
                 .flatten(),
         ),
         other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
             ReadPage::empty(other.warning(&registration.id).and_then(|warning| {
                 warn!("Forwarding to context source {} failed: {}", registration.id, warning);
-                answer(Box::new(ContextSpec::none()), Vec::new(), vec![warning], None)
+                answer(Box::new(ContextSpec::none()), Vec::new(), vec![warning], DroppedEntities::default(), None)
             }))
         }
     }
@@ -165,8 +165,8 @@ impl FederationService {
         ForwardReadOutcome { results: read, sources }
     }
 
-    /// Read one source's entities into the model at `now`, each refused
-    /// entity a clause 6.3.17 warning naming it.
+    /// Read one source's entities into the model at `now`, the entities
+    /// left out on any page or here reported with one clause 6.3.17 warning.
     async fn answered_entities(&self, answer: ReceivedAnswer, now: DateTime<Utc>) -> ForwardedEntities {
         let ReceivedAnswer {
             registration_id,
@@ -174,6 +174,7 @@ impl FederationService {
             naming,
             entities,
             mut warnings,
+            mut dropped,
             linked_map,
         } = answer;
         let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
@@ -181,18 +182,12 @@ impl FederationService {
         if !entities.is_empty() {
             match EntityExpansion::prepare(&self.engine, &naming).await {
                 Ok(expansion) => {
-                    for contextual in entities {
-                        match self.received_state(&expansion, contextual).await {
+                    for mut contextual in entities {
+                        match self.received_state(&expansion, &mut contextual).await {
                             Ok(received) => states.extend(unexpired(received, &source, now)),
                             Err(refusal) => {
                                 warn!("Context source {} returned an entity that does not read: {}", source, refusal);
-                                warnings.extend(registration_id.as_ref().map(|registration| {
-                                    SourceAnswerFailure::EntityUnreadable {
-                                        registration,
-                                        reading: refusal,
-                                    }
-                                    .into_warning()
-                                }));
+                                dropped.record(contextual.id);
                             }
                         }
                     }
@@ -210,6 +205,7 @@ impl FederationService {
                 }
             }
         }
+        warnings.extend(registration_id.as_ref().and_then(|registration| dropped.warning(registration)));
         ForwardedEntities {
             registration_id,
             mode,
@@ -223,7 +219,7 @@ impl FederationService {
     /// 1.1: a node's context applies to that node), else under the context
     /// the answer is spelled in, its members read as the core terms that
     /// context says they stand for.
-    async fn received_state(&self, expansion: &EntityExpansion<'_>, mut contextual: ContextualEntity) -> Result<ReceivedState, EntityReading> {
+    async fn received_state(&self, expansion: &EntityExpansion<'_>, contextual: &mut ContextualEntity) -> Result<ReceivedState, EntityReading> {
         match contextual.context.take() {
             None => {
                 let entity = contextual.entity(expansion.context().reading()).map_err(EntityReading::Undecodable)?;
@@ -467,7 +463,36 @@ mod tests {
         )
         .await;
         pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:valid"]);
-        pretty_assertions::assert_eq!(answer.warnings.len(), 2, "{:?}", answer.warnings);
+        pretty_assertions::assert_eq!(answer.warnings.len(), 1, "{:?}", answer.warnings);
+    }
+
+    /// Clause 6.3.17: the entities a source answered that cannot be used are
+    /// reported with one warning for the source, counting every one of them
+    /// whichever stage of the reading left it out, and naming none.
+    #[tokio::test]
+    async fn three_unusable_entities_of_one_source_are_reported_with_one_warning_counting_them() {
+        let answer = answered(
+            r#"[
+                {"id":"urn:ngsi-ld:Vehicle:valueless","type":"Vehicle","speed":{"type":"Property"}},
+                {"id":"urn:ngsi-ld:Vehicle:off-axes","type":"Vehicle","location":{"type":"GeoProperty","value":{"type":"Point","coordinates":[14.5,146.05]}}},
+                {"id":"urn:ngsi-ld:Vehicle:kmh","type":"Vehicle","speed":{"type":"Property","value":50,"unitCode":"km/h"}},
+                {"id":"urn:ngsi-ld:Vehicle:valid","type":"Vehicle"}
+            ]"#,
+            ContextSpec::core_only(),
+        )
+        .await;
+        pretty_assertions::assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:valid"]);
+        pretty_assertions::assert_eq!(
+            answer
+                .warnings
+                .iter()
+                .map(|warning| (warning.code(), warning.text().as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                WarnCode::RevalidationFailed,
+                "3 of the entities context source urn:ngsi-ld:ContextSourceRegistration:1 answered cannot be used"
+            )]
+        );
     }
 
     /// An exact decimal survives the reading.

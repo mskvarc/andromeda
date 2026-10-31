@@ -112,6 +112,7 @@ impl FederationService {
             budget.instances.charge(page.instance_count())?;
             gathered.entities.extend(page.entities);
             gathered.warnings.extend(page.warnings);
+            gathered.dropped.absorb(page.dropped);
             gathered.partial_ranges = page.partial_ranges;
             resumed_at = Some(stopped_at);
         }

@@ -34,6 +34,8 @@ pub mod discovery;
 mod discovery_answer_failure;
 /// Discovery response merging.
 pub mod discovery_result;
+/// The entities of one source's answer that are left out, reported once for the source.
+mod dropped_entities;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
 pub mod entity_map;
 /// Current-entity query and retrieve execution.

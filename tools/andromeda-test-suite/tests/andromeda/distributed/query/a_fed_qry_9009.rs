@@ -18,11 +18,11 @@ use ngsi_ld::{
     registration::{CSourceRegistration, EntityInfo, OperationGroup, RegistrationInfo, RegistrationMode},
 };
 
-/// Pins: The source entities dropped by Query Entities are reported in one NGSILD-Warning with code 111 naming the registration,
-/// which repeats neither the dropped entities nor their refused members
+/// Pins: The source entities dropped by Query Entities are reported in one NGSILD-Warning with code 111 naming the registration
+/// and counting the three dropped entities, which repeats neither the dropped entities nor their refused members
 /// Clause: 6.3.17
 /// Recorded: 6.3.17 fixes the warning code and leaves its text to the broker; Andromeda names the registration and
-/// what went wrong, and leaves what the source sent to its log
+/// counts the entities it left out, and leaves what the source sent to its log
 #[gtest]
 #[tokio::test]
 async fn a_fed_qry_9009_a_revalidation_warning_names_the_registration_and_not_what_the_source_sent() -> Result<()> {
@@ -74,7 +74,7 @@ async fn a_fed_qry_9009_a_revalidation_warning_names_the_registration_and_not_wh
     expect_that!(
         warnings.iter().map(NgsiLdWarning::text).collect::<Vec<_>>(),
         elements_are![all!(
-            contains_substring(format!("context source {registration_id} returned an entity that does not read")),
+            eq(&format!("3 of the entities context source {registration_id} answered cannot be used")),
             not(contains_substring("not-a-code")),
             not(contains_substring("unitCode"))
         )]

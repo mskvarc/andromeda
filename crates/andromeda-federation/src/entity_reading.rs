@@ -29,7 +29,4 @@ pub(crate) enum TemporalEntityReading {
     /// Evolution the model can hold.
     #[error(transparent)]
     Undecodable(Box<ElementRefusal>),
-    /// The entity does not read into the model.
-    #[error(transparent)]
-    Refused(ExpansionError),
 }

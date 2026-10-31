@@ -9,6 +9,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::expansion_context::ExpansionContext};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{received::ContextualEntity, temporal::temporal_body::TemporalBody};
 use std::sync::Arc;
 use tracing::warn;
@@ -16,6 +17,8 @@ use tracing::warn;
 /// One Temporal Evolution a source answered, read into the model.
 #[derive(Debug)]
 pub(crate) struct ReadTemporalEntity {
+    /// The `id` the source wrote for the evolution, when it named a readable one.
+    pub(crate) id: Option<Identifier>,
     /// The processed context the evolution was written in, which its names
     /// expand under.
     pub(crate) context: Arc<ExpansionContext>,
@@ -51,8 +54,8 @@ impl FederationService {
         SourceAnswer { mode, error_status, entry }
     }
 
-    /// Read every evolution of `answer`, each one that does not read a clause
-    /// 6.3.17 warning naming it.
+    /// Read every evolution of `answer`, each one that does not read left out
+    /// and counted among the answer's dropped entities.
     pub(crate) async fn read_temporal_answer(&self, answer: ReceivedTemporalAnswer<ContextualEntity>) -> ReceivedTemporalAnswer<ReadTemporalEntity> {
         let ReceivedTemporalAnswer {
             registration_id,
@@ -60,6 +63,7 @@ impl FederationService {
             naming,
             entities,
             mut warnings,
+            mut dropped,
             linked_map,
             partial_ranges,
         } = answer;
@@ -86,17 +90,13 @@ impl FederationService {
             None
         };
         let mut read = Vec::with_capacity(entities.len());
-        for contextual in entities {
-            match self.read_evolution(contextual, spelled_in.as_ref()).await {
+        for mut contextual in entities {
+            match self.read_evolution(&mut contextual, spelled_in.as_ref()).await {
                 Ok(Some(entity)) => read.push(entity),
                 Ok(None) => {}
                 Err(reading) => {
                     warn!("Context source {} returned a temporal entity that does not read: {}", source, reading);
-                    warnings.extend(
-                        registration_id
-                            .as_ref()
-                            .map(|registration| SourceAnswerFailure::TemporalEntityUnreadable { registration, reading }.into_warning()),
-                    );
+                    dropped.record(contextual.id);
                 }
             }
         }
@@ -106,6 +106,7 @@ impl FederationService {
             naming,
             entities: read,
             warnings,
+            dropped,
             linked_map,
             partial_ranges,
         }
@@ -117,7 +118,7 @@ impl FederationService {
     /// process, which is reported once for the answer.
     async fn read_evolution(
         &self,
-        mut contextual: ContextualEntity,
+        contextual: &mut ContextualEntity,
         spelled_in: Option<&Arc<ExpansionContext>>,
     ) -> Result<Option<ReadTemporalEntity>, TemporalEntityReading> {
         let context = match contextual.context.take() {
@@ -132,6 +133,10 @@ impl FederationService {
             },
         };
         let body = contextual.temporal(context.reading()).map_err(TemporalEntityReading::Undecodable)?;
-        Ok(Some(ReadTemporalEntity { context, body }))
+        Ok(Some(ReadTemporalEntity {
+            id: contextual.id.take(),
+            context,
+            body,
+        }))
     }
 }

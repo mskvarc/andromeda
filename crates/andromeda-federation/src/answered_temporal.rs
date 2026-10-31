@@ -4,7 +4,6 @@
 
 use crate::{
     FederationService,
-    entity_reading::TemporalEntityReading,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     received_temporal_answer::ReceivedTemporalAnswer,
     source_answer_failure::SourceAnswerFailure,
@@ -37,8 +36,8 @@ impl FederationService {
         ForwardReadOutcome { results: read, sources }
     }
 
-    /// Read one source's entities into the model, each refused entity a clause
-    /// 6.3.17 warning naming it.
+    /// Read one source's entities into the model, the entities left out on
+    /// any page, in any walk or here reported with one clause 6.3.17 warning.
     async fn answered_histories(
         &self,
         answer: ReceivedTemporalAnswer<ReadTemporalEntity>,
@@ -51,34 +50,23 @@ impl FederationService {
             naming,
             entities,
             mut warnings,
+            mut dropped,
             linked_map,
             partial_ranges,
         } = answer;
         let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
         let mut gathered: IndexMap<Identifier, TemporalHistory> = IndexMap::with_capacity(entities.len());
         let mut client_names: Option<NameCompaction> = None;
-        for ReadTemporalEntity { context: written_in, body } in entities {
+        for ReadTemporalEntity { id, context: written_in, body } in entities {
             let history = match body {
-                TemporalBody::Evolution(entity) => {
-                    let expanded = EntityExpansion::from_context(&self.engine, written_in)
-                        .temporal(entity)
-                        .await
-                        .map_err(TemporalEntityReading::Refused);
-                    match expanded {
-                        Ok(document) => TemporalHistory::Instances(document),
-                        Err(refusal) => {
-                            warn!("Context source {} returned a temporal entity that does not read: {}", source, refusal);
-                            warnings.extend(registration_id.as_ref().map(|registration| {
-                                SourceAnswerFailure::TemporalEntityUnreadable {
-                                    registration,
-                                    reading: refusal,
-                                }
-                                .into_warning()
-                            }));
-                            continue;
-                        }
+                TemporalBody::Evolution(entity) => match EntityExpansion::from_context(&self.engine, written_in).temporal(entity).await {
+                    Ok(document) => TemporalHistory::Instances(document),
+                    Err(refusal) => {
+                        warn!("Context source {} returned a temporal entity that does not read: {}", source, refusal);
+                        dropped.record(id);
+                        continue;
                     }
-                }
+                },
                 TemporalBody::Aggregated(entity) => {
                     if client_names.is_none() {
                         match self.engine.compactor(context).processed_context().await {
@@ -107,6 +95,7 @@ impl FederationService {
                 None => {}
             }
         }
+        warnings.extend(registration_id.as_ref().and_then(|registration| dropped.warning(registration)));
         ForwardedTemporalEntities {
             registration_id,
             mode,

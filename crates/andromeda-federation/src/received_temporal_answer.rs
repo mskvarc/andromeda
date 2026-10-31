@@ -2,6 +2,7 @@
 
 use crate::{
     FederationService,
+    dropped_entities::DroppedEntities,
     outcome::{ForwardGetOutcome, ForwardedResponse},
     source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
@@ -31,6 +32,8 @@ pub(crate) struct ReceivedTemporalAnswer<E> {
     pub(crate) entities: Vec<E>,
     /// The clause 6.3.17 warnings of the attempt.
     pub(crate) warnings: Vec<NgsiLdWarning>,
+    /// The entities left out of the answer so far, reported with one warning once the answer is read.
+    pub(crate) dropped: DroppedEntities,
     /// The `EntityMap` the source used for the request (clause 5.5.14).
     pub(crate) linked_map: Option<Identifier>,
     /// The `Content-Range` of every page of the answer that the source cut
@@ -78,6 +81,7 @@ impl WalkedAnswer for ReceivedTemporalAnswer<ContextualEntity> {
 
     fn absorb(&mut self, page: ReceivedTemporalAnswer<ContextualEntity>) {
         self.warnings.extend(page.warnings);
+        self.dropped.absorb(page.dropped);
         self.partial_ranges.extend(page.partial_ranges);
     }
 }
@@ -87,18 +91,20 @@ impl FederationService {
     /// abnormal outcome. A 404 contributes nothing. A query answers with an
     /// array and a retrieval with one object, but either is read from either:
     /// a retrieval continuing a clause 4.5.23 flat join answers with an array.
-    /// An element whose text is refused is dropped with a warning of its own.
+    /// An element whose text is refused is dropped, and counted in the one
+    /// warning the source's dropped entities are reported with.
     pub(crate) fn received_temporal_answer(
         registration: &ContextSourceRegistration,
         outcome: ForwardGetOutcome,
     ) -> ReadPage<ReceivedTemporalAnswer<ContextualEntity>> {
-        let answered = |naming, entities, warnings, linked_map, partial_range: Option<NgsiLdContentRange>| {
+        let answered = |naming, entities, warnings, dropped, linked_map, partial_range: Option<NgsiLdContentRange>| {
             Some(ReceivedTemporalAnswer {
                 registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
                 mode: registration.access.mode.unwrap_or_default(),
                 naming,
                 entities,
                 warnings,
+                dropped,
                 linked_map,
                 partial_ranges: partial_range.into_iter().collect(),
             })
@@ -115,23 +121,18 @@ impl FederationService {
                 Ok(ReceivedEntities(elements)) => {
                     let sent = elements.len();
                     let mut entities = Vec::with_capacity(sent);
+                    let mut dropped = DroppedEntities::default();
                     for element in elements {
                         match element {
                             ReceivedElement::Read(entity) => entities.push(entity),
                             ReceivedElement::Refused(refusal) => {
                                 warn!("Context source {} returned a temporal entity that is refused: {}", registration.id, refusal);
-                                warnings.push(
-                                    SourceAnswerFailure::TemporalEntityRefused {
-                                        registration: &registration.id,
-                                        refusal,
-                                    }
-                                    .into_warning(),
-                                );
+                                dropped.record(refusal.id);
                             }
                         }
                     }
                     ReadPage {
-                        answer: answered(naming, entities, warnings, entity_map, partial_range),
+                        answer: answered(naming, entities, warnings, dropped, entity_map, partial_range),
                         sent,
                     }
                 }
@@ -144,20 +145,20 @@ impl FederationService {
                         }
                         .into_warning(),
                     );
-                    ReadPage::empty(answered(naming, Vec::new(), warnings, None, None))
+                    ReadPage::empty(answered(naming, Vec::new(), warnings, DroppedEntities::default(), None, None))
                 }
             },
             // A 404 is not abnormal (clause 6.3.17), but the warnings the
             // source reported about the sources behind it still travel.
             ForwardGetOutcome::NotFound(cs_warnings) => ReadPage::empty(
                 (!cs_warnings.is_empty())
-                    .then(|| answered(Box::new(ContextSpec::none()), Vec::new(), cs_warnings, None, None))
+                    .then(|| answered(Box::new(ContextSpec::none()), Vec::new(), cs_warnings, DroppedEntities::default(), None, None))
                     .flatten(),
             ),
             other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
                 ReadPage::empty(other.warning(&registration.id).and_then(|warning| {
                     warn!("Temporal forwarding to context source {} failed: {}", registration.id, warning);
-                    answered(Box::new(ContextSpec::none()), Vec::new(), vec![warning], None, None)
+                    answered(Box::new(ContextSpec::none()), Vec::new(), vec![warning], DroppedEntities::default(), None, None)
                 }))
             }
         }

@@ -161,6 +161,36 @@ async fn a_temporal_entity_with_an_unusable_unit_code_is_refused() {
     assert_eq!(answer.warnings.len(), 1, "{:?}", answer.warnings);
 }
 
+/// Clause 6.3.17: the evolutions a source answered that cannot be used are
+/// reported with one warning for the source, counting every one of them
+/// whichever stage of the reading left it out, and naming none.
+#[tokio::test]
+async fn three_unusable_temporal_entities_of_one_source_are_reported_with_one_warning_counting_them() {
+    let answer = answered(
+        r#"[
+            {"id":"urn:ngsi-ld:Vehicle:valueless","type":"Vehicle","speed":[{"type":"Property"}]},
+            {"id":"urn:ngsi-ld:Vehicle:kmh","type":"Vehicle","speed":[{"type":"Property","value":50,"unitCode":"km/h","observedAt":"2020-01-01T00:00:00Z"}]},
+            {"@context":{"bad":{"@id":5}},"id":"urn:ngsi-ld:Vehicle:own-context","type":"Vehicle"},
+            {"id":"urn:ngsi-ld:Vehicle:valid","type":"Vehicle"}
+        ]"#,
+        ContextSpec::core_only(),
+        &ContextSpec::core_only(),
+    )
+    .await;
+    assert_eq!(ids(&answer), vec!["urn:ngsi-ld:Vehicle:valid"]);
+    assert_eq!(
+        answer
+            .warnings
+            .iter()
+            .map(|warning| (warning.code(), warning.text().as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            WarnCode::RevalidationFailed,
+            "3 of the entities context source urn:ngsi-ld:ContextSourceRegistration:1 answered cannot be used"
+        )]
+    );
+}
+
 /// A body that is no temporal entity document is a warning, not a failure.
 #[tokio::test]
 async fn a_payload_that_is_not_json_is_a_warning() {
