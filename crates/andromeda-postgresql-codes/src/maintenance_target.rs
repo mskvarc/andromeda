@@ -78,8 +78,8 @@ compact_code_registry! {
             EntitySearchStatistics = 30, "entity_search_statistics";
             /// The notification deliveries' claim index.
             IdxNotificationDeliveriesClaim = 31, "idx_notification_deliveries_claim";
-            /// The notification deliveries' event index.
-            IdxNotificationDeliveriesEvent = 32, "idx_notification_deliveries_event";
+            /// The notification deliveries' one-per-event-and-subscription constraint index.
+            UqNotificationDeliveriesEventSubscription = 32, "uq_notification_deliveries_event_subscription";
             /// The notification deliveries' subscription index.
             IdxNotificationDeliveriesSubscription = 33, "idx_notification_deliveries_subscription";
             /// The notification deliveries' primary key index.

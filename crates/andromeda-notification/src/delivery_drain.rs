@@ -1,6 +1,7 @@
 //! One bounded pass over the notification delivery queue.
 
 use crate::{
+    delivery_acknowledgement::DeliveryAcknowledgement,
     delivery_attempt_ceiling::DeliveryAttemptCeiling,
     delivery_backoff::retry_due_at,
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
@@ -8,7 +9,7 @@ use crate::{
     delivery_concurrency::DeliveryConcurrency,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
-    delivery_lease::{DeliveryLeaseError, LeaseTerm},
+    delivery_lease::LeaseTerm,
     delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
     delivery_store::DeliveryStore,
     error::NotificationError,
@@ -17,15 +18,14 @@ use crate::{
 };
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
-use andromeda_retry::schedule::BackoffSchedule;
-use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
+use andromeda_retry::{retry_delay::RetryDelay, schedule::BackoffSchedule};
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use std::{
     num::{NonZeroU32, NonZeroUsize},
     sync::Arc,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 /// Outcome of one bounded notification delivery pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,33 +37,6 @@ pub struct DeliveryDrainOutcome {
     pub lease_lost: usize,
     /// Whether another immediate pass could find work.
     pub work_may_remain: bool,
-}
-
-/// Absorb a lost lease and surface a failed statement.
-///
-/// A lost lease is not this pass's failure: the delivery was reclaimed by
-/// another worker, which is now responsible for sending it, so the pass records
-/// the loss and moves on. A failed statement is a persistence failure the task
-/// supervisor must see.
-fn classify_acknowledgement(result: &Result<(), DeliveryLeaseError>) -> Result<LeaseAcknowledgement, NotificationError> {
-    match result {
-        Ok(()) => Ok(LeaseAcknowledgement::Applied),
-        Err(DeliveryLeaseError::LeaseLost { delivery, worker }) => {
-            warn!(delivery_id = %delivery, worker_id = %worker, event = "notification_delivery_lease_lost");
-            Ok(LeaseAcknowledgement::Lost)
-        }
-        Err(DeliveryLeaseError::Persistence(failure)) => Err(NotificationError::Persistence(*failure)),
-    }
-}
-
-/// Record the queue outcome of one acknowledged delivery, or its lost lease.
-fn record_outcome(acknowledgement: LeaseAcknowledgement, outcome: QueueOutcome) -> LeaseAcknowledgement {
-    let outcome = match acknowledgement {
-        LeaseAcknowledgement::Applied => outcome,
-        LeaseAcknowledgement::Lost => QueueOutcome::LeaseLost,
-    };
-    record_queue_outcome(QueueName::NotificationDeliveries, outcome, 1);
-    acknowledgement
 }
 
 /// Delivery classification that drives notification retry policy.
@@ -110,6 +83,8 @@ pub struct NotificationDeliveryDrain {
     transport: Arc<dyn NotificationDeliveryTransport>,
     worker_id: LeaseHolder,
     lease_term: LeaseTerm,
+    /// Where the outcome of each delivery the pass leased is recorded.
+    acknowledgement: DeliveryAcknowledgement,
     error_bound: DeliveryErrorBound,
     concurrency: DeliveryConcurrency,
     /// Deliveries one pass sends at most.
@@ -151,7 +126,8 @@ fn trace_entry(entry: &DeliveryEntry) {
 }
 
 impl NotificationDeliveryDrain {
-    /// Create a bounded delivery operation from validated runtime configuration.
+    /// Create a bounded delivery operation from validated runtime configuration,
+    /// waiting on `delay` between requests to record an outcome.
     ///
     /// # Errors
     ///
@@ -162,6 +138,7 @@ impl NotificationDeliveryDrain {
     pub fn new(
         store: Arc<dyn DeliveryStore>,
         transport: Arc<dyn NotificationDeliveryTransport>,
+        delay: Arc<dyn RetryDelay>,
         config: &DeliveryConfig,
     ) -> Result<NotificationDeliveryDrain, NotificationError> {
         let worker_id = LeaseHolder::mint();
@@ -171,11 +148,14 @@ impl NotificationDeliveryDrain {
         let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
         let attempt_ceiling = attempt_ceiling(config).map_err(NotificationInvariant::from)?;
         let batch_size = NonZeroUsize::try_from(config.queue.batch_size).map_err(|_| NotificationInvariant::BatchSizeExceedsAddressWidth)?;
+        // clone: the acknowledgement records outcomes in the queue the drain claims from.
+        let acknowledgement = DeliveryAcknowledgement::new(Arc::clone(&store), worker_id, delay, lease_term);
         Ok(NotificationDeliveryDrain {
             store,
             transport,
             worker_id,
             lease_term,
+            acknowledgement,
             error_bound,
             concurrency,
             batch_size,
@@ -307,28 +287,18 @@ impl NotificationDeliveryDrain {
     /// terminal failure, so the store never has to know the ceiling to keep an
     /// exhausted delivery out of the claimable set.
     async fn advance(&self, entry: &DeliveryEntry, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, NotificationError> {
-        let (acknowledgement, outcome) = match self.transport.deliver(entry).await {
-            DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => (
-                classify_acknowledgement(&self.store.mark_delivered(entry.key, &self.worker_id, &entry.target).await)?,
-                QueueOutcome::Completed,
-            ),
+        match self.transport.deliver(entry).await {
+            DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => self.acknowledgement.delivered(entry.key, &entry.target).await,
             DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => {
                 let next_attempt = retry_due_at(&self.retry_schedule, entry.attempt_count, clock.now()).map_err(NotificationInvariant::AttemptCount)?;
                 let detail = self.error_bound.truncate(&detail);
-                (
-                    classify_acknowledgement(&self.store.mark_failed(entry.key, &self.worker_id, &detail, next_attempt, &entry.target).await)?,
-                    QueueOutcome::Retried,
-                )
+                self.acknowledgement.failed(entry.key, &detail, next_attempt, &entry.target).await
             }
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
-                (
-                    classify_acknowledgement(&self.store.mark_terminal(entry.key, &self.worker_id, &detail, &entry.target).await)?,
-                    QueueOutcome::Exhausted,
-                )
+                self.acknowledgement.exhausted(entry.key, &detail, &entry.target).await
             }
-        };
-        Ok(record_outcome(acknowledgement, outcome))
+        }
     }
 
     /// Retire a claimed delivery whose stored row could not be read back.
@@ -344,8 +314,7 @@ impl NotificationDeliveryDrain {
             event = "notification_delivery_unreadable"
         );
         let detail = self.error_bound.truncate(&unreadable.diagnostic);
-        let acknowledgement = classify_acknowledgement(&self.store.mark_terminal(unreadable.key, &self.worker_id, &detail, &unreadable.target).await)?;
-        Ok(record_outcome(acknowledgement, QueueOutcome::Exhausted))
+        self.acknowledgement.exhausted(unreadable.key, &detail, &unreadable.target).await
     }
 
     /// Purge acknowledged deliveries before an explicit retention cutoff.
@@ -388,6 +357,7 @@ impl NotificationDeliveryDrain {
 )]
 mod tests {
     use crate::{
+        delivery_acknowledgement::acknowledgement_retry,
         delivery_claim::{DeliveryClaim, UnreadableDelivery},
         delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
         delivery_entry::{DeliveryEntry, DeliveryKey},
@@ -407,7 +377,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-    use andromeda_retry::retry_number::RetryNumber;
+    use andromeda_retry::{retry_delay::RetryDelay, retry_number::RetryNumber};
     use async_trait::async_trait;
     use chrono::{DateTime, TimeDelta, Utc};
     use futures::{
@@ -421,7 +391,7 @@ mod tests {
         sync::{
             Arc,
             Mutex,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         task::Poll,
         thread::sleep,
@@ -436,6 +406,9 @@ mod tests {
         Held,
         Expired,
         Unrecordable,
+        /// The first acknowledgement fails as an unreachable queue would, and
+        /// every later one is recorded.
+        UnrecordableOnce,
     }
 
     /// One call the drain made on the recorded store, in the order it made it.
@@ -469,6 +442,9 @@ mod tests {
         calls: Mutex<Vec<StoreCall>>,
         lease_state: LeaseState,
         claim_state: ClaimState,
+        /// Whether an [`LeaseState::UnrecordableOnce`] store has refused its
+        /// one acknowledgement yet.
+        refused_once: AtomicBool,
     }
 
     impl RecordingStore {
@@ -508,12 +484,22 @@ mod tests {
             }
         }
 
+        fn with_one_unrecordable_acknowledgement(entry: DeliveryEntry) -> RecordingStore {
+            RecordingStore {
+                lease_state: LeaseState::UnrecordableOnce,
+                ..RecordingStore::with_entry(entry)
+            }
+        }
+
         fn lease_check(&self, key: DeliveryKey, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
             self.calls.lock().map_err(poisoned)?.push(StoreCall::Acknowledge(key));
             match self.lease_state {
-                LeaseState::Held => Ok(()),
                 LeaseState::Expired => Err(DeliveryLeaseError::lease_lost(key, worker_id)),
                 LeaseState::Unrecordable => Err(DeliveryLeaseError::Persistence(PersistenceFailure::Unavailable)),
+                LeaseState::UnrecordableOnce if !self.refused_once.swap(true, Ordering::SeqCst) => {
+                    Err(DeliveryLeaseError::Persistence(PersistenceFailure::Unavailable))
+                }
+                LeaseState::Held | LeaseState::UnrecordableOnce => Ok(()),
             }
         }
 
@@ -620,6 +606,32 @@ mod tests {
         }
     }
 
+    /// A wait that returns at once and records what it was asked for.
+    #[derive(Default)]
+    struct RecordedDelay(Mutex<Vec<Duration>>);
+
+    impl RecordedDelay {
+        fn waits(&self) -> Vec<Duration> {
+            self.0.lock().expect("the wait record lock is not poisoned").clone()
+        }
+    }
+
+    impl RetryDelay for RecordedDelay {
+        fn wait<'life0, 'async_trait>(&'life0 self, delay: Duration) -> BoxFuture<'async_trait, ()>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            self.0.lock().expect("the wait record lock is not poisoned").push(delay);
+            Box::pin(async {})
+        }
+    }
+
+    /// A wait between requests to record an outcome that returns at once.
+    fn waits() -> Arc<dyn RetryDelay> {
+        Arc::new(RecordedDelay::default())
+    }
+
     struct FixedTransport(DeliveryDisposition);
 
     impl NotificationDeliveryTransport for FixedTransport {
@@ -722,7 +734,7 @@ mod tests {
     }
 
     fn drain(store: Arc<RecordingStore>, disposition: DeliveryDisposition) -> Result<NotificationDeliveryDrain, NotificationError> {
-        NotificationDeliveryDrain::new(store, Arc::new(FixedTransport(disposition)), &config())
+        NotificationDeliveryDrain::new(store, Arc::new(FixedTransport(disposition)), waits(), &config())
     }
 
     #[test]
@@ -739,7 +751,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let transport = Arc::new(InFlightTransport::default());
             let config = sized(10, 4);
-            let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), &config)?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
@@ -926,7 +938,7 @@ mod tests {
             });
             let store = Arc::new(RecordingStore::with_claims([unreadable, DeliveryClaim::Readable(Box::new(entry()?))]));
             let config = sized(2, 4);
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 2);
@@ -951,7 +963,7 @@ mod tests {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entries([entry_keyed(1)?, entry_keyed(2)?, entry_keyed(3)?]));
             let config = sized(3, 4);
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(PoisonedTransport(DeliveryKey::from(2_i64))), &config)?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(PoisonedTransport(DeliveryKey::from(2_i64))), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
@@ -974,6 +986,7 @@ mod tests {
             NotificationDeliveryDrain::new(
                 Arc::new(RecordingStore::refusing_claims()),
                 Arc::new(FixedTransport(DeliveryDisposition::Delivered)),
+                waits(),
                 &config(),
             )?
             .execute(Utc::now())
@@ -991,7 +1004,7 @@ mod tests {
             let entries = (1..=10_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(10, 4);
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
@@ -1010,7 +1023,7 @@ mod tests {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(6, 2);
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             let mut outstanding = 0_i64;
@@ -1034,7 +1047,7 @@ mod tests {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(5, 2);
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), &config)?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             let acknowledged: Vec<DeliveryKey> = store
@@ -1063,7 +1076,7 @@ mod tests {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(5, 2);
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), &config)?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(store.reused_keys(), [2, 3, 4, 5].map(DeliveryKey::from));
@@ -1080,7 +1093,7 @@ mod tests {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(3, 1);
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(store.claim_widths(), vec![1, 1, 1]);
@@ -1097,7 +1110,7 @@ mod tests {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(10, 2);
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
@@ -1117,14 +1130,71 @@ mod tests {
         ));
         let config = sized(4, 2);
         let outcome = block_on(async {
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), &config)?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
                 .execute(Utc::now())
                 .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
         pretty_assertions::assert_eq!(store.claim_widths(), vec![2]);
-        pretty_assertions::assert_eq!(store.recorded_calls().len(), 3, "both claimed deliveries were still acknowledged");
+        let requests =
+            usize::try_from(acknowledgement_retry(LeaseTerm::from_seconds(30).expect("a valid lease term")).attempts.get()).expect("a representable count");
+        pretty_assertions::assert_eq!(
+            store.recorded_calls().len(),
+            1 + 2 * requests,
+            "both claimed deliveries were still acknowledged, each as often as the lease leaves room for"
+        );
         Ok(())
+    }
+
+    /// An outcome the queue failed to record would leave the delivery leased,
+    /// to be claimed and sent again once its lease lapsed; the worker asks
+    /// again after the first backoff wait, and the notification the endpoint
+    /// accepted is recorded as delivered.
+    #[test]
+    fn a_delivered_outcome_the_queue_failed_to_record_is_recorded_on_a_later_request() -> Result<(), NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_one_unrecordable_acknowledgement(entry()?));
+            let delay = Arc::new(RecordedDelay::default());
+            let outcome = NotificationDeliveryDrain::new(
+                store.clone(),
+                Arc::new(FixedTransport(DeliveryDisposition::Delivered)),
+                Arc::clone(&delay) as Arc<dyn RetryDelay>,
+                &config(),
+            )?
+            .execute(Utc::now())
+            .await?;
+            pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (1, 0));
+            pretty_assertions::assert_eq!(
+                store.delivered.lock().expect("the delivered result lock is not poisoned").as_slice(),
+                &[DeliveryKey::from(1_i64)]
+            );
+            pretty_assertions::assert_eq!(delay.waits(), vec![Duration::from_millis(100)]);
+            Ok(())
+        })
+    }
+
+    /// A lost lease is the queue's answer, not a failure to record: another
+    /// worker owns the delivery, so the outcome is not asked again.
+    #[test]
+    fn a_lost_lease_is_not_asked_again() -> Result<(), NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
+            let delay = Arc::new(RecordedDelay::default());
+            NotificationDeliveryDrain::new(
+                store.clone(),
+                Arc::new(FixedTransport(DeliveryDisposition::Delivered)),
+                Arc::clone(&delay) as Arc<dyn RetryDelay>,
+                &config(),
+            )?
+            .execute(Utc::now())
+            .await?;
+            pretty_assertions::assert_eq!(
+                store.recorded_calls(),
+                vec![StoreCall::Claim(1), StoreCall::Acknowledge(DeliveryKey::from(1_i64))]
+            );
+            pretty_assertions::assert_eq!(delay.waits(), Vec::<Duration>::new());
+            Ok(())
+        })
     }
 
     /// A retry is due one backoff after the instant it is acknowledged, not
@@ -1136,7 +1206,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             let delay = Duration::from_millis(50);
             let now = Utc::now();
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowFailingTransport(delay)), &config())?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowFailingTransport(delay)), waits(), &config())?
                 .execute(now)
                 .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");

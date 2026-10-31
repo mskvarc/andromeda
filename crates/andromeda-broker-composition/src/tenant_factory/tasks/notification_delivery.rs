@@ -23,7 +23,7 @@ use andromeda_notification::{
     error::NotificationError,
 };
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
-use andromeda_retry::schedule::BackoffSchedule;
+use andromeda_retry::{schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -79,7 +79,10 @@ pub(super) fn register_notification_delivery(
     transport: Arc<dyn NotificationDeliveryTransport>,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
-    let drain = Arc::new(NotificationDeliveryDrain::new(store, transport, config).map_err(|error| AssemblyInvariant::NotificationDrain(Box::new(error)))?);
+    let drain = Arc::new(
+        NotificationDeliveryDrain::new(store, transport, Arc::new(TokioRetryDelay), config)
+            .map_err(|error| AssemblyInvariant::NotificationDrain(Box::new(error)))?,
+    );
     let DeliveryDrainDrive { wake, pacer } = drive;
     // clone: delivery and cleanup share one stateless delivery operation and the tenant's one pacer.
     register_delivery_drain(supervisor, Arc::clone(&drain), config, wake, Arc::clone(&pacer))?;
@@ -249,6 +252,7 @@ mod tests {
         held_events::HeldEvents,
     };
     use andromeda_postgresql_context_store::error::ContextStoreError;
+    use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
     use andromeda_tenancy::state_factory::RuntimeActivity;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
@@ -356,6 +360,7 @@ mod tests {
         let drain = NotificationDeliveryDrain::new(
             Arc::clone(&queue) as Arc<dyn DeliveryStore>,
             Arc::new(UnusedTransport),
+            Arc::new(TokioRetryDelay),
             &DeliveryConfig::default(),
         )
         .expect("the default delivery configuration composes a drain");

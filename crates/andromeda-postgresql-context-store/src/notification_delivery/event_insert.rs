@@ -300,6 +300,12 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// changes of the subscription, never its ordinary updates. Every delivery starts
 /// due at the write's own ingestion instant so the queue's ordering reflects
 /// the order changes were accepted in.
+///
+/// A change owes each subscription one delivery (clause 5.8.6), which
+/// `uq_notification_deliveries_event_subscription` holds:
+/// `ON CONFLICT (event_key, subscription_key) DO NOTHING` drops a pair the
+/// queue already holds, or one the arrays name twice, rather than queueing the
+/// notification a second time.
 fn insert_deliveries_statement(
     target: &ContextTarget,
     event_keys: Vec<i64>,
@@ -335,8 +341,13 @@ fn insert_deliveries_statement(
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
         ])
-        .select_from(source)?;
-    Ok(UnnestAliased::new(statement.clone()).with_columns(aliased, &columns))
+        .select_from(source)?
+        .on_conflict(
+            OnConflict::columns([NotificationDeliveries::EventKey, NotificationDeliveries::SubscriptionKey])
+                .do_nothing()
+                .to_owned(),
+        );
+    Ok(UnnestAliased::new(statement).with_columns(aliased, &columns))
 }
 
 #[cfg(test)]
@@ -621,7 +632,15 @@ mod tests {
     #[test]
     fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
         let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
-        assert!(sql.ends_with(r#"FOR KEY SHARE OF "s""#), "{sql}");
+        assert!(sql.contains(r#"FOR KEY SHARE OF "s" ON CONFLICT"#), "{sql}");
+    }
+
+    /// Clause 5.8.6 notifies a change once per subscription, so a pair the
+    /// queue already holds is not queued a second time.
+    #[test]
+    fn a_change_already_queued_for_a_subscription_is_not_queued_again() {
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42], vec![1, 1], Utc::now()).expect("a valid insert"));
+        assert!(sql.ends_with(r#"ON CONFLICT ("event_key", "subscription_key") DO NOTHING"#), "{sql}");
     }
 
     #[test]

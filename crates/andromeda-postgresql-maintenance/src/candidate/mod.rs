@@ -105,7 +105,7 @@ mod tests {
             (IndexTarget::IdxCaValueObject, HeapTarget::CurrentAttributes),
             (IndexTarget::IdxCaValueLongTextTrgm, HeapTarget::CurrentAttributes),
             (IndexTarget::IdxNotificationDeliveriesClaim, HeapTarget::NotificationDeliveries),
-            (IndexTarget::IdxNotificationDeliveriesEvent, HeapTarget::NotificationDeliveries),
+            (IndexTarget::UqNotificationDeliveriesEventSubscription, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxNotificationDeliveriesSubscription, HeapTarget::NotificationDeliveries),
             (IndexTarget::PkNotificationDeliveries, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxEntitiesIdTrgm, HeapTarget::Entities),

@@ -294,7 +294,7 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxCaValueObject
             | IndexTarget::IdxCaValueLongTextTrgm
             | IndexTarget::IdxNotificationDeliveriesClaim
-            | IndexTarget::IdxNotificationDeliveriesEvent
+            | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
             | IndexTarget::PkNotificationDeliveries
             | IndexTarget::IdxEntitiesIdTrgm

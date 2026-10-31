@@ -84,7 +84,7 @@
 --     28 temporal_append_intents_statistics,
 --     29 snapshot_notification_outbox_statistics,
 --     30 entity_search_statistics, 31 idx_notification_deliveries_claim,
---     32 idx_notification_deliveries_event,
+--     32 uq_notification_deliveries_event_subscription,
 --     33 idx_notification_deliveries_subscription,
 --     34 pk_notification_deliveries, 35 attribute_history_columnstore,
 --     36 idx_entities_id_trgm, 37 temporal_attribute_streams,

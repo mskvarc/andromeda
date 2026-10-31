@@ -17,6 +17,8 @@ mod csource_membership;
 pub mod csource_processor;
 /// The clause 5.3.3 transitions of a context source notification.
 mod csource_transition;
+/// Recording the outcome of a leased delivery, asked again while its lease can hold.
+mod delivery_acknowledgement;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
 pub mod delivery_attempt_ceiling;
 /// Retry wait for a failed notification delivery.
@@ -27,7 +29,6 @@ pub mod delivery_claim;
 mod delivery_claim_budget;
 /// In-flight bound for one notification delivery pass.
 pub mod delivery_concurrency;
-/// Notification delivery runtime configuration.
 /// One bounded notification delivery pass.
 pub mod delivery_drain;
 /// A pending delivery of a notification event to one subscription.
@@ -36,6 +37,7 @@ pub mod delivery_entry;
 pub mod delivery_error_bound;
 /// Worker ownership of a claimed notification delivery.
 pub mod delivery_lease;
+/// Notification delivery runtime configuration.
 pub mod delivery_policy;
 /// Notification delivery queue persistence.
 pub mod delivery_store;

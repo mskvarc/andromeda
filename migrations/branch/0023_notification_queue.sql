@@ -107,6 +107,11 @@ create table notification_deliveries (
     constraint pk_notification_deliveries primary key (delivery_key),
     constraint fk_notification_deliveries_event foreign key (event_key) references notification_events (event_key) on delete cascade,
     constraint fk_notification_deliveries_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
+    -- Clause 5.8.6 notifies a change once per Subscription, so a change owes
+    -- each Subscription one delivery however often its commit runs. Led by
+    -- `event_key`, its index also serves the event cascade and the check the
+    -- reap runs for events whose last delivery it removed.
+    constraint uq_notification_deliveries_event_subscription unique (event_key, subscription_key),
     constraint chk_notification_deliveries_attempt_count_non_negative check (attempt_count >= 0),
     constraint chk_notification_deliveries_claim_coherent check (num_nonnulls(claimed_at, claimed_by, lease_until) in (0, 3)),
     constraint chk_notification_deliveries_exhausted_state check (exhausted_at is null or (delivered_at is null and num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
@@ -140,7 +145,3 @@ where
     exhausted_at is not null;
 
 create index idx_notification_deliveries_subscription on notification_deliveries (subscription_key);
-
--- The event cascade, and the check the reap runs for events whose last
--- delivery it removed.
-create index idx_notification_deliveries_event on notification_deliveries (event_key);
