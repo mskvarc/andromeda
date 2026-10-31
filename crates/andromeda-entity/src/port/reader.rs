@@ -75,17 +75,6 @@ pub trait EntityReader: Send + Sync + 'static {
         'life3: 'async_trait,
         'life4: 'async_trait,
         Self: 'async_trait;
-    /// Read one entity's clause 4.8 system attributes.
-    fn get_sys_attrs<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        id: &'life2 Identifier,
-    ) -> BoxFuture<'async_trait, Result<Option<SysAttrsSnapshot>, EntityError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
     /// Read system attributes keyed by entity identifier.
     fn get_sys_attrs_batch<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,

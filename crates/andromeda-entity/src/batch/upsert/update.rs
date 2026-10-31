@@ -45,7 +45,6 @@ struct UpdateRewrite<'a> {
 
 impl ChunkRewrite for UpdateRewrite<'_> {
     type Entry = UpsertFragment;
-    type Reads = ();
 
     fn id(entry: &UpsertFragment) -> &Identifier {
         match entry {
@@ -58,13 +57,12 @@ impl ChunkRewrite for UpdateRewrite<'_> {
         &self,
         entry: UpsertFragment,
         snapshot: Option<&EntitySnapshot>,
-        _reads: &(),
         now: SystemInstant,
     ) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
         let (target, service) = (self.target, self.service);
         match (entry, snapshot) {
             (UpsertFragment::Requested(prepared), Some(snapshot)) => {
-                let write = service.upsert_update_write(target, prepared.id.clone(), &prepared.document, &snapshot.state, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
+                let write = service.upsert_update_write(target, prepared.id.clone(), &prepared.document, snapshot, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(prepared),
                     write,
@@ -72,7 +70,7 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             }
             (UpsertFragment::Inserted { id, stored }, Some(snapshot)) => {
                 let document = EntityDocument::from(&*stored);
-                let write = service.upsert_update_write(target, id.clone(), &document, &snapshot.state, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
+                let write = service.upsert_update_write(target, id.clone(), &document, snapshot, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(Box::new(PreparedEntity { id, document })),
                     write,
@@ -170,11 +168,11 @@ impl EntityService {
         target: &ContextTarget,
         id: Identifier,
         fragment: &EntityDocument,
-        previous: &Arc<EntityState>,
+        previous: &EntitySnapshot,
         now: SystemInstant,
     ) -> Result<Option<ChunkWrite>, Box<(Identifier, EntityError)>> {
         // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
-        let mut updated = EntityState::clone(previous);
+        let mut updated = EntityState::clone(&previous.state);
         if let Err(error) = updated.update_attributes(fragment) {
             return Err(Box::new((id, EntityError::from(error))));
         }

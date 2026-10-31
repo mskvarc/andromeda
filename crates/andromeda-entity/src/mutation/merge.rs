@@ -80,7 +80,8 @@ impl EntityService {
             };
 
             let ComputedLanding { value: events, committed_at } = self
-                .commit_computed_write(target, write_target, |previous, now| {
+                .commit_computed_write(target, write_target, |read, now| {
+                    let previous = &read.state;
                     let mut merged = EntityState::clone(previous); // clone: shares every attribute the merge leaves alone
                     merged.merge(&fragment, options.observed_at)?;
                     // Clause 4.8: a merged instance keeps its createdAt and, when its
@@ -88,7 +89,7 @@ impl EntityService {
                     merged.settle(Some(previous), now);
                     let merged = Arc::new(merged);
                     let history = mutation_history(previous, &merged);
-                    let (write, events) = self.write_if_modified(target, id, previous, merged, history)?;
+                    let (write, events) = self.write_if_modified(target, id, read, merged, history, now)?;
                     Ok((write, events))
                 })
                 .await?;

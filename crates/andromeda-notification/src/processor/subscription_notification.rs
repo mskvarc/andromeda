@@ -19,7 +19,6 @@ use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::DeliveryResult, request::NotificationDelivery};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
     compiled::CompiledSubscription,
@@ -45,9 +44,6 @@ pub(super) struct NotifiedChange<'a> {
     pub(super) notified: Option<&'a Arc<EntityState>>,
     /// The instant every notification of the change reads the entity at.
     pub(super) now: DateTime<Utc>,
-    /// The entity's clause 4.8 system attributes, resolved once for every
-    /// subscription that asked for them.
-    pub(super) sys_attrs: Option<&'a SysAttrsSnapshot>,
     /// Compaction and linked-entity memoization shared by the notifications
     /// this change produces.
     pub(super) compaction_cache: &'a NotificationCompactionCache,
@@ -121,7 +117,7 @@ impl NotificationProcessor {
             engine: &self.engine,
             notified,
             previous: event.previous_attributes.as_deref(),
-            sys_attrs: change.sys_attrs,
+            sys_attrs: event.sys_attrs_snapshot.as_ref(),
             sub: compiled_sub,
             change: &event.change,
             occurred_at: event.occurred_at,
@@ -255,7 +251,6 @@ mod tests {
             event: &event,
             notified: Some(&notified),
             now: evaluated_at,
-            sys_attrs: None,
             compaction_cache: &compaction_cache,
         };
         let sent = processor(&store).notify_subscription(subscription, &change).await;

@@ -62,7 +62,8 @@ impl EntityService {
             value: (events, not_updated),
             committed_at,
         }: ComputedLanding<(Vec<ChangeEvent>, Vec<AttributeName>)> = self
-            .commit_computed_write(target, entity, |previous, now| {
+            .commit_computed_write(target, entity, |read, now| {
+                let previous = &read.state;
                 let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
                 let not_updated = member_attribute_names(updated.update_attributes(&fragment)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
@@ -73,7 +74,7 @@ impl EntityService {
                 // The durable matches and the in-process events are planned
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
-                let (write, events) = self.write_if_modified(target, id, previous, updated, history)?;
+                let (write, events) = self.write_if_modified(target, id, read, updated, history, now)?;
                 Ok((write, (events, not_updated)))
             })
             .await?;

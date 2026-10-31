@@ -72,11 +72,12 @@ impl EntityService {
         for entity_id in entity_ids {
             let mut purged: Option<Vec<ChangeEvent>> = None;
             let outcome = self
-                .commit_read_modify_write(target, entity_id, |previous, _| {
+                .commit_read_modify_write(target, entity_id, |read, now| {
+                    let previous = &read.state;
                     let Some((current, history)) = purged_state(previous, mode, &attributes) else {
                         return Ok(None);
                     };
-                    let ModificationWrite { write, events } = self.modification_write(target, entity_id, previous, Arc::new(current), history)?;
+                    let ModificationWrite { write, events } = self.modification_write(target, entity_id, read, Arc::new(current), history, now)?;
                     purged = Some(events);
                     Ok(Some(write))
                 })

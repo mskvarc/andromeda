@@ -164,25 +164,18 @@ impl EntityService {
     /// reading the state it removes for the notification.
     async fn delete_removed_state(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
         let id = entity.id;
-        let Some(EntitySnapshot { state: removed, version }) = self.reader.get_snapshot(target, id).await? else {
+        let Some(EntitySnapshot {
+            state: removed,
+            version,
+            sys_attrs,
+        }) = self.reader.get_snapshot(target, id).await?
+        else {
             return Ok(AfterAttempt::Vanished);
         };
         if !entity.selects(removed.types().as_slice()) {
             return Ok(AfterAttempt::Vanished);
         }
         let entity_types = removed.types().as_slice().to_vec();
-
-        // Captured before the delete so the notification can carry them: once
-        // the row is gone they are unreadable. Read after the state, so a
-        // write that lands in between moves the version the deletion holds
-        // against.
-        let sys_attrs_snapshot = match self.reader.get_sys_attrs(target, id).await {
-            Ok(attrs) => attrs,
-            Err(e) => {
-                tracing::warn!("Failed to fetch sys_attrs before delete for {}: {}", id, e);
-                None
-            }
-        };
 
         let change = deletion(&removed);
 
@@ -197,9 +190,9 @@ impl EntityService {
         // (the durable path re-derives only `deletedAt`, from the event
         // instant).
         let snapshots = MutationSnapshots {
-            current: SnapshotSupply::Removed {
-                removed: &removed,
-                sys_attrs: sys_attrs_snapshot.as_ref(),
+            current: SnapshotSupply::Carried {
+                state: &removed,
+                sys_attrs: Some(&sys_attrs),
             },
             previous: Some(&removed),
         };
@@ -238,7 +231,7 @@ impl EntityService {
                     .origin(ChangeOrigin::Local)
                     .entity_snapshot(Some(Arc::clone(&removed)))
                     .previous_attributes(Some(removed))
-                    .sys_attrs_snapshot(sys_attrs_snapshot)
+                    .sys_attrs_snapshot(Some(sys_attrs))
                     .build()],
             )
             .await;

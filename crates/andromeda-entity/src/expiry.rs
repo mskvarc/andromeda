@@ -10,7 +10,7 @@ use crate::{
 };
 #[cfg(test)]
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
-use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
+use andromeda_context_commit::{history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, operation::expiry_removal::InstanceExpiry, reads::removed_instance::removed_attribute_instances};
 #[cfg(test)]
@@ -133,6 +133,7 @@ impl EntityService {
         batch_size: EntityExpiryBatchSize,
     ) -> Result<usize, EntityError> {
         let candidates = source.entities_with_expired_attributes(target, cutoff, batch_size).await?;
+        let now = SystemInstant::new(Utc::now());
         let mut writes = Vec::new();
         let mut pending = Vec::new();
         for (identifier, snapshot) in candidates {
@@ -140,7 +141,8 @@ impl EntityService {
                 warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
                 continue;
             };
-            let ModificationWrite { mut write, events } = match self.modification_write(target, &identifier, &purged.previous, purged.current, purged.history) {
+            let ModificationWrite { mut write, events } = match self.modification_write(target, &identifier, &purged.read, purged.current, purged.history, now)
+            {
                 Ok(write) => write,
                 Err(error) => match failure_reach(&error) {
                     FailureReach::Sweep => return Err(error),
@@ -150,7 +152,7 @@ impl EntityService {
                     }
                 },
             };
-            write.precondition = Precondition::UnchangedSince(purged.version);
+            write.precondition = Precondition::UnchangedSince(purged.read.version);
             writes.push(write);
             pending.push((identifier, events));
         }
@@ -158,7 +160,7 @@ impl EntityService {
             return Ok(0);
         }
 
-        let outcomes = self.writes.commit(target, SystemInstant::new(Utc::now()), writes).await?;
+        let outcomes = self.writes.commit(target, now, writes).await?;
         let mut landed = 0;
         for ((identifier, events), outcome) in pending.into_iter().zip(&outcomes) {
             // The sweep writes back what the store already held, less the
@@ -223,12 +225,11 @@ fn landed_ids(identifiers: Vec<Identifier>, outcomes: &[WriteOutcome]) -> Vec<Id
 
 /// One entity's state before and after its expired instances went.
 struct PurgedState {
-    /// The state as it was read.
-    previous: Arc<EntityState>,
+    /// The entity as it was read, with the version and the system attributes
+    /// of that read.
+    read: EntitySnapshot,
     /// The state without its expired instances.
     current: Arc<EntityState>,
-    /// The version the state was read at.
-    version: EntityVersion,
     /// A tombstone for every instance that went.
     history: Vec<HistoryRecord>,
 }
@@ -236,19 +237,17 @@ struct PurgedState {
 /// The entity `snapshot` becomes once every instance expired at `cutoff` is
 /// gone (clause 4.22), or `None` when it held no such instance.
 fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
-    let EntitySnapshot { state: previous, version } = snapshot;
-    let mut purged = EntityState::clone(&previous); // clone: shares every attribute holding no expired instance
+    let mut purged = EntityState::clone(&snapshot.state); // clone: shares every attribute holding no expired instance
     match purged.remove_expired_instances(cutoff) {
         InstanceExpiry::NoneExpired => None,
         InstanceExpiry::Removed => {
-            let history = removed_attribute_instances(&previous, &purged)
+            let history = removed_attribute_instances(&snapshot.state, &purged)
                 .into_iter()
                 .map(HistoryRecord::Tombstone)
                 .collect();
             Some(PurgedState {
-                previous,
+                read: snapshot,
                 current: Arc::new(purged),
-                version,
                 history,
             })
         }
@@ -266,10 +265,10 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
         AtomicWrite::builder()
             .entity_id(Arc::new(purged.current.id().clone())) // clone: the atomic write owns a shared validated identifier.
             .entity(EntityMutation::Update(
-                EntityRecord::replacing(&purged.previous, purged.current).expect("a projectable state"),
+                EntityRecord::replacing(&purged.read.state, purged.current).expect("a projectable state"),
             ))
             .history(purged.history)
-            .precondition(Precondition::UnchangedSince(purged.version))
+            .precondition(Precondition::UnchangedSince(purged.read.version))
             .build(),
     )
 }
@@ -288,6 +287,7 @@ mod tests {
     use andromeda_context_commit::{entity_version::EntityVersion, history_record::HistoryRecord, store_instant::StoreInstant, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
+    use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
@@ -305,6 +305,11 @@ mod tests {
         EntitySnapshot {
             state: Arc::new(EntityState::from_slice(&serde_json::to_vec(payload).expect("JSON")).expect("a stored entity")),
             version: EntityVersion::new(1, 1),
+            sys_attrs: SysAttrsSnapshot {
+                created_at: cutoff(),
+                modified_at: cutoff(),
+                expires_at: None,
+            },
         }
     }
 

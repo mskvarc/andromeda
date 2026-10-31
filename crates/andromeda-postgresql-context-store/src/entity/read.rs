@@ -151,16 +151,6 @@ impl EntityRepository {
         Ok(RowSelection::of(returned, &attributes))
     }
 
-    /// Retrieve system attributes for a single entity.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextStoreError`] when the system-attribute query fails.
-    pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
-        let row = sys_attrs_query(target, Expr::val(id.as_str())).to_query().fetch_optional(&self.pool).await?;
-        row.as_ref().map(sys_attrs_of).transpose()
-    }
-
     /// Fetch system attributes for multiple entities in one query.
     ///
     /// # Errors

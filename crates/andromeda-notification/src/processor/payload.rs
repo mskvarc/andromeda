@@ -50,7 +50,8 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) notified: &'a EntityState,
     /// The entity before the write, for deleted instances and `showChanges`.
     pub(super) previous: Option<&'a EntityState>,
-    /// The entity's own clause 4.8 system attributes, when resolved.
+    /// The entity's own clause 4.8 system attributes as the change left them
+    /// (clause 5.8.6), `None` when the change does not carry them.
     pub(super) sys_attrs: Option<&'a SysAttrsSnapshot>,
     /// The subscription notified.
     pub(super) sub: &'a CompiledSubscription,

@@ -244,10 +244,6 @@ impl EntityReader for StubBroker {
         panic!("get_snapshot_batch is not exercised by the traversal harness")
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        panic!("get_sys_attrs is not exercised by the traversal harness")
-    }
-
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         panic!("get_sys_attrs_batch is not exercised by the traversal harness")
     }

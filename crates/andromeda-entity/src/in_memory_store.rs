@@ -150,6 +150,7 @@ impl StoredRow {
         EntitySnapshot {
             state: self.state,
             version: self.version,
+            sys_attrs: sys_attrs(self.modified_at),
         }
     }
 }
@@ -325,18 +326,12 @@ impl EntityReader for InMemoryStore {
         }))
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Ok(self.modified_at(id).map(sys_attrs))
-    }
-
-    async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
-        let mut sys_attrs = HashMap::with_capacity(ids.len());
-        for id in ids {
-            if let Some(attrs) = self.get_sys_attrs(target, id).await? {
-                sys_attrs.insert(id.clone(), attrs); // clone: the answer owns the identifiers it is keyed by
-            }
-        }
-        Ok(sys_attrs)
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
+        Ok(ids
+            .iter()
+            // clone: the answer owns the identifiers it is keyed by
+            .filter_map(|id| self.modified_at(id).map(|modified_at| (id.clone(), sys_attrs(modified_at))))
+            .collect())
     }
 }
 

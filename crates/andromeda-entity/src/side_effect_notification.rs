@@ -49,16 +49,14 @@ pub(crate) fn owed_subscription_matches(recording: &NotificationWriteConfig, tar
 ///
 /// A creation or update carries the entity the write left behind, which is both
 /// what is filtered and what is notified. A deletion carries no resulting
-/// entity, only what was removed: the match stores that with its clause 4.8
-/// system attributes beside it, because the row is gone by delivery time and
-/// `createdAt` and `modifiedAt` can no longer be read back (clause 5.8.6).
+/// entity, only what was removed. Either way the match stores the clause 4.8
+/// system attributes the change recorded beside the state: the notification
+/// reports the change as it left the Entity (clause 5.8.6), and a deleted row
+/// cannot be read back at all.
 fn change_matches(recording: &NotificationWriteConfig, target: &ContextTarget, change: &ChangeEvent) -> Vec<SubscriptionMatch> {
+    let sys_attrs = change.sys_attrs_snapshot.as_ref();
     let current = match (change.current_payload.as_ref(), change.change.lifecycle, change.entity_snapshot.as_ref()) {
-        (Some(current), _, _) => SnapshotSupply::Ready(current),
-        (None, EntityLifecycle::Deleted, Some(removed)) => SnapshotSupply::Removed {
-            removed,
-            sys_attrs: change.sys_attrs_snapshot.as_ref(),
-        },
+        (Some(state), _, _) | (None, EntityLifecycle::Deleted, Some(state)) => SnapshotSupply::Carried { state, sys_attrs },
         (None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted, _) => SnapshotSupply::Absent,
     };
     recording.subscription_matches(
@@ -145,12 +143,19 @@ mod tests {
     }
 
     /// Clause 5.8.6: an update owes the subscription the entity the write left
-    /// behind, with the state it replaced for `showChanges`.
+    /// behind, with the state it replaced for `showChanges` and the clause 4.8
+    /// system attributes the write left it with.
     #[tokio::test]
     async fn an_owed_update_matches_the_subscription_with_the_resulting_entity() {
+        let sys_attrs = SysAttrsSnapshot {
+            created_at: Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant"),
+            modified_at: Utc.timestamp_opt(1_700_000_100, 0).single().expect("a valid instant"),
+            expires_at: None,
+        };
         let mut updated = change(EntityLifecycle::Modified, AttributeChangeKind::Updated, &[BUILDING_TYPE_IRI]);
         updated.current_payload = Some(Arc::new(building("retail")));
         updated.previous_attributes = Some(Arc::new(building("office")));
+        updated.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: compared with what the match stores
 
         let matches = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[updated]);
 
@@ -159,6 +164,7 @@ mod tests {
         assert_eq!(matches[0].change.lifecycle, EntityLifecycle::Modified);
         assert_eq!(matches[0].entity_snapshot.as_deref(), Some(&building("retail")));
         assert_eq!(matches[0].previous_snapshot.as_deref(), Some(&building("office")));
+        assert_eq!(matches[0].sys_attrs_snapshot, Some(sys_attrs));
     }
 
     /// A change to an entity no subscription selects is owed nothing.

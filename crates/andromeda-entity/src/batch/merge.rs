@@ -36,7 +36,6 @@ struct MergeRewrite<'a> {
 
 impl ChunkRewrite for MergeRewrite<'_> {
     type Entry = PreparedEntity;
-    type Reads = ();
 
     fn id(entry: &PreparedEntity) -> &Identifier {
         &entry.id
@@ -46,23 +45,24 @@ impl ChunkRewrite for MergeRewrite<'_> {
         &self,
         entry: PreparedEntity,
         snapshot: Option<&EntitySnapshot>,
-        _reads: &(),
         now: SystemInstant,
     ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        let previous = &snapshot.state;
         // clone: reference-count bumps; the merge shares every attribute it does not touch with the stored state
-        let mut merged = EntityState::clone(previous);
+        let mut merged = EntityState::clone(&snapshot.state);
         if let Err(error) = merged.merge(&entry.document, None) {
             return Err(Box::new((entry.id, EntityError::from(error))));
         }
         let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedStates { previous, current: merged },
+            UpdatedStates {
+                previous: snapshot,
+                current: merged,
+            },
             now,
         )?;
         Ok(PlannedWrite { entry, write })

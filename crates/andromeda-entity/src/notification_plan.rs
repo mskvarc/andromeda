@@ -25,10 +25,10 @@ use andromeda_ngsi_ld_entity::{
     entity_state::EntityState,
     reads::attribute_change::{AttributeChangeKind, classify_attribute_changes, deleted_instances},
 };
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
-    notification::ChangeOrigin,
+    notification::{ChangeOrigin, SysAttrsSnapshot},
 };
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -41,6 +41,45 @@ pub struct NotificationPlan {
     /// In-process change events: the one change the mutation made, or none
     /// when it changed nothing a subscriber can see.
     pub events: Vec<ChangeEvent>,
+}
+
+/// The Entity as a write leaves it: the state it stores and the clause 4.8
+/// system attributes the store records beside that state.
+///
+/// A notification reports the change as it left the Entity (clause 5.8.6), so
+/// both travel with the change. Reading the system attributes back at delivery
+/// would stamp the notification with the `modifiedAt` of whatever write landed
+/// on the Entity last.
+#[derive(Clone, Copy)]
+pub struct WrittenEntity<'a> {
+    /// The state the write stores.
+    pub state: &'a Arc<EntityState>,
+    /// The Entity's `createdAt`, `modifiedAt` and `expiresAt` once the write
+    /// landed.
+    pub sys_attrs: &'a SysAttrsSnapshot,
+}
+
+/// The clause 4.8 system attributes of an Entity a write creates as `current`
+/// at `at`: the creation is also its first modification.
+#[must_use]
+pub fn created_sys_attrs(current: &EntityState, at: SystemInstant) -> SysAttrsSnapshot {
+    SysAttrsSnapshot {
+        created_at: at.get(),
+        modified_at: at.get(),
+        expires_at: current.entity_expiry(),
+    }
+}
+
+/// The clause 4.8 system attributes of an Entity read with `read` that a write
+/// turns into `current` at `at`: it keeps the `createdAt` it had and takes the
+/// write instant as its `modifiedAt`.
+#[must_use]
+pub fn modified_sys_attrs(read: &SysAttrsSnapshot, current: &EntityState, at: SystemInstant) -> SysAttrsSnapshot {
+    SysAttrsSnapshot {
+        created_at: read.created_at,
+        modified_at: at.get(),
+        expires_at: current.entity_expiry(),
+    }
 }
 
 /// The change a write made to an Entity it created, from the state it stored.
@@ -71,15 +110,13 @@ pub(crate) fn deletion(previous: &EntityState) -> EntityChange {
 /// removal of an expired instance by the expiry sweep is still a deletion. A
 /// modification left with no instance changed nothing at all; a creation or a
 /// deletion is still an Entity lifecycle change without one.
-fn standing_change(mut change: EntityChange, current: Option<&EntityState>, at: DateTime<Utc>) -> Option<EntityChange> {
-    if let Some(current) = current {
-        change.instances.retain(|instance| match instance.kind {
-            AttributeChangeKind::Deleted => true,
-            AttributeChangeKind::Created | AttributeChangeKind::Updated => {
-                !current.instance_expired(instance.key.attr.as_str(), instance.key.dataset_id.as_ref(), at)
-            }
-        });
-    }
+fn standing_change(mut change: EntityChange, current: &EntityState, at: DateTime<Utc>) -> Option<EntityChange> {
+    change.instances.retain(|instance| match instance.kind {
+        AttributeChangeKind::Deleted => true,
+        AttributeChangeKind::Created | AttributeChangeKind::Updated => {
+            !current.instance_expired(instance.key.attr.as_str(), instance.key.dataset_id.as_ref(), at)
+        }
+    });
     match change.lifecycle {
         EntityLifecycle::Modified if change.instances.is_empty() => None,
         EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted => Some(change),
@@ -89,10 +126,11 @@ fn standing_change(mut change: EntityChange, current: Option<&EntityState>, at: 
 impl ChangeNotifier {
     /// Plan both notification channels for one write's `change` to one Entity.
     ///
-    /// `entity_snapshot` is the entity as it stands after the mutation, the
-    /// state a `keyValues`/`normalized` notification renders, never the
-    /// request fragment. The previous state is carried for `showChanges` and
-    /// for the filters of a change that removed instances.
+    /// `written` is the entity as it stands after the mutation, the state a
+    /// `keyValues`/`normalized` notification renders, never the request
+    /// fragment, with the system attributes it carries then. The previous
+    /// state is carried for `showChanges` and for the filters of a change that
+    /// removed instances.
     #[must_use]
     pub fn plan(
         &self,
@@ -100,12 +138,11 @@ impl ChangeNotifier {
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         change: EntityChange,
-        entity_snapshot: Option<&Arc<EntityState>>,
+        written: WrittenEntity<'_>,
         previous_snapshot: Option<&Arc<EntityState>>,
     ) -> NotificationPlan {
-        let snapshot_ref = entity_snapshot.map(|snapshot| &**snapshot);
         let now = Utc::now();
-        let Some(change) = standing_change(change, snapshot_ref, now) else {
+        let Some(change) = standing_change(change, written.state, now) else {
             return NotificationPlan {
                 matches: Vec::new(),
                 events: Vec::new(),
@@ -117,7 +154,10 @@ impl ChangeNotifier {
             types: entity_types,
         };
         let snapshots = MutationSnapshots {
-            current: entity_snapshot.map_or(SnapshotSupply::Absent, SnapshotSupply::Ready),
+            current: SnapshotSupply::Carried {
+                state: written.state,
+                sys_attrs: Some(written.sys_attrs),
+            },
             previous: previous_snapshot,
         };
         let matches = self.subscription_matches(mutated, &change, snapshots);
@@ -128,7 +168,8 @@ impl ChangeNotifier {
             .occurred_at(now)
             .origin(ChangeOrigin::Local)
             .previous_attributes(previous_snapshot.map(Arc::clone))
-            .current_payload(entity_snapshot.map(Arc::clone)) // clone: Arc ref-count bump
+            .current_payload(Some(Arc::clone(written.state))) // clone: Arc ref-count bump
+            .sys_attrs_snapshot(Some(written.sys_attrs.clone())) // clone: three instants; the event owns its copy
             .build();
         NotificationPlan { matches, events: vec![event] }
     }
@@ -141,7 +182,7 @@ impl ChangeNotifier {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::notification_plan::{creation, deletion, modification, standing_change};
+    use crate::notification_plan::{created_sys_attrs, creation, deletion, modification, modified_sys_attrs, standing_change};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -149,8 +190,11 @@ mod tests {
             attribute_instance_key::AttributeInstanceKey,
         },
     };
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-    use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
+    use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, system_instant::SystemInstant};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        notification::SysAttrsSnapshot,
+    };
     use chrono::{DateTime, Utc};
     use serde_json::{Map, Value, json};
 
@@ -212,7 +256,7 @@ mod tests {
                 instance("https://example.com/heading", AttributeChangeKind::Updated),
             ],
         );
-        let standing = standing_change(change, Some(&half_expired()), instant("2030-01-01T00:00:00Z")).expect("heading still stands");
+        let standing = standing_change(change, &half_expired(), instant("2030-01-01T00:00:00Z")).expect("heading still stands");
         pretty_assertions::assert_eq!(standing.instances, vec![instance("https://example.com/heading", AttributeChangeKind::Updated)]);
     }
 
@@ -224,7 +268,7 @@ mod tests {
             EntityLifecycle::Modified,
             vec![instance("https://example.com/speed", AttributeChangeKind::Updated)],
         );
-        assert!(standing_change(change, Some(&half_expired()), instant("2030-01-01T00:00:00Z")).is_none());
+        assert!(standing_change(change, &half_expired(), instant("2030-01-01T00:00:00Z")).is_none());
     }
 
     /// The expiry sweep removing an expired instance is still a deletion: a
@@ -235,7 +279,7 @@ mod tests {
             EntityLifecycle::Modified,
             vec![instance("https://example.com/speed", AttributeChangeKind::Deleted)],
         );
-        let standing = standing_change(change, Some(&half_expired()), instant("2030-01-01T00:00:00Z")).expect("the deletion stands");
+        let standing = standing_change(change, &half_expired(), instant("2030-01-01T00:00:00Z")).expect("the deletion stands");
         pretty_assertions::assert_eq!(standing.instances.len(), 1);
     }
 
@@ -247,7 +291,7 @@ mod tests {
             EntityLifecycle::Created,
             vec![instance("https://example.com/speed", AttributeChangeKind::Created)],
         );
-        let standing = standing_change(change, Some(&half_expired()), instant("2030-01-01T00:00:00Z")).expect("the creation stands");
+        let standing = standing_change(change, &half_expired(), instant("2030-01-01T00:00:00Z")).expect("the creation stands");
         assert_eq!(standing.instances, Vec::<AttributeChange>::new());
     }
 
@@ -281,5 +325,65 @@ mod tests {
         let deleted = deletion(&state(json!({"https://example.com/a": property(1)})));
         pretty_assertions::assert_eq!(deleted.lifecycle, EntityLifecycle::Deleted);
         pretty_assertions::assert_eq!(deleted.instances, vec![instance("https://example.com/a", AttributeChangeKind::Deleted)]);
+    }
+
+    /// An entity that expires at the start of 2031.
+    fn expiring() -> EntityState {
+        state(json!({
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2031-01-01T00:00:00Z"}],
+            "https://example.com/a": property(1)
+        }))
+    }
+
+    /// Clause 4.8: an entity created at an instant was created and last
+    /// modified at that instant, and its `expiresAt` is the one it stores.
+    #[test]
+    fn a_created_entity_is_created_and_modified_at_the_write_instant() {
+        let at = instant("2030-05-01T10:00:00Z");
+        let times = created_sys_attrs(&expiring(), SystemInstant::new(at));
+        pretty_assertions::assert_eq!(
+            times,
+            SysAttrsSnapshot {
+                created_at: at,
+                modified_at: at,
+                expires_at: Some(instant("2031-01-01T00:00:00Z")),
+            }
+        );
+    }
+
+    /// Clause 4.8: a modification keeps the `createdAt` the entity was read
+    /// with and moves `modifiedAt` to the write instant, whatever `modifiedAt`
+    /// the read held.
+    #[test]
+    fn a_modified_entity_keeps_its_creation_and_takes_the_write_instant() {
+        let read = SysAttrsSnapshot {
+            created_at: instant("2030-01-01T00:00:00Z"),
+            modified_at: instant("2030-02-01T00:00:00Z"),
+            expires_at: None,
+        };
+        let at = instant("2030-05-01T10:00:00Z");
+        let times = modified_sys_attrs(&read, &expiring(), SystemInstant::new(at));
+        pretty_assertions::assert_eq!(
+            times,
+            SysAttrsSnapshot {
+                created_at: instant("2030-01-01T00:00:00Z"),
+                modified_at: at,
+                expires_at: Some(instant("2031-01-01T00:00:00Z")),
+            }
+        );
+    }
+
+    /// A modification that drops the entity's `expiresAt` leaves it without
+    /// one, whatever the read held.
+    #[test]
+    fn a_modification_that_drops_the_expiry_carries_none() {
+        let read = SysAttrsSnapshot {
+            created_at: instant("2030-01-01T00:00:00Z"),
+            modified_at: instant("2030-02-01T00:00:00Z"),
+            expires_at: Some(instant("2031-01-01T00:00:00Z")),
+        };
+        let current = state(json!({"https://example.com/a": property(1)}));
+        let times = modified_sys_attrs(&read, &current, SystemInstant::new(instant("2030-05-01T10:00:00Z")));
+        pretty_assertions::assert_eq!(times.expires_at, None);
     }
 }

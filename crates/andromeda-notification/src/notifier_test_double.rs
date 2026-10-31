@@ -172,10 +172,6 @@ impl EntityReader for NoEntities {
         Ok(None)
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Ok(None)
-    }
-
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Ok(HashMap::new())
     }

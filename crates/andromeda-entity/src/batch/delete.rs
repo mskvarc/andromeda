@@ -1,8 +1,9 @@
 //! Batch entity deletion (clause 5.6.10).
 //!
 //! A deleted entity's payload and system attributes are unreadable once the row
-//! is gone, and the clause 5.6.10 notifications carry both, so both are read
-//! before the delete, which the tombstones of clause 5.6.6 need as well. The
+//! is gone, and the clause 5.6.10 notifications carry both, so both are read,
+//! in one snapshot, before the delete, which the tombstones of clause 5.6.6
+//! need as well. The
 //! tombstones and the notification are only true of the state they were read
 //! from, so each delete holds only while the entity is unchanged since that
 //! read and is rebuilt from a fresh one when it is not (see
@@ -33,7 +34,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, SysAttrsSnapshot};
 use chrono::Utc;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
 pub(super) type DeleteChunkOutcome = (Vec<Identifier>, Vec<(Identifier, EntityError)>);
@@ -47,24 +48,15 @@ struct DeleteRewrite<'a> {
 
 impl ChunkRewrite for DeleteRewrite<'_> {
     type Entry = Identifier;
-    /// The system attributes of every pending entity: the durable matches and
-    /// the notifications carry them, and they are unreadable once the row is
-    /// gone.
-    type Reads = HashMap<Identifier, SysAttrsSnapshot>;
 
     fn id(entry: &Identifier) -> &Identifier {
         entry
-    }
-
-    async fn read(&self, pending: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
-        self.service.reader.get_sys_attrs_batch(self.target, pending).await
     }
 
     fn build(
         &self,
         entry: Identifier,
         snapshot: Option<&EntitySnapshot>,
-        reads: &HashMap<Identifier, SysAttrsSnapshot>,
         _now: SystemInstant,
     ) -> Result<PlannedWrite<Identifier>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
@@ -72,7 +64,7 @@ impl ChunkRewrite for DeleteRewrite<'_> {
             return Err(Box::new((entry, error)));
         };
         let removed = &snapshot.state;
-        let sys_attrs = reads.get(&entry);
+        let sys_attrs = &snapshot.sys_attrs;
         let plan = NotificationPlan {
             matches: self.service.delete_subscription_matches(self.target, &entry, removed, sys_attrs),
             events: deletion_events(&entry, removed, sys_attrs),
@@ -97,16 +89,14 @@ impl EntityService {
     /// delete (clause 5.6.6): one per subscription the deletion is owed to,
     /// carrying the removed state as its entity and previous image.
     ///
-    /// The clause 4.8 system attributes travel beside the removed state when
-    /// they are known, because the deleted row is gone by delivery time and
-    /// the durable path cannot re-read `createdAt`/`modifiedAt` the way a
-    /// non-deletion notification does.
+    /// The clause 4.8 system attributes travel beside the removed state,
+    /// because the deleted row is gone by delivery time.
     fn delete_subscription_matches(
         &self,
         target: &ContextTarget,
         id: &Identifier,
         removed: &Arc<EntityState>,
-        sys_attrs: Option<&SysAttrsSnapshot>,
+        sys_attrs: &SysAttrsSnapshot,
     ) -> Vec<SubscriptionMatch> {
         let deleted = ChangedEntity {
             target,
@@ -114,7 +104,10 @@ impl EntityService {
             types: removed.types().as_slice(),
         };
         let snapshots = MutationSnapshots {
-            current: SnapshotSupply::Removed { removed, sys_attrs },
+            current: SnapshotSupply::Carried {
+                state: removed,
+                sys_attrs: Some(sys_attrs),
+            },
             previous: Some(removed),
         };
         self.notifier.subscription_matches(deleted, &deletion(removed), snapshots)
@@ -137,7 +130,7 @@ impl EntityService {
 
 /// The clause 5.6.10 notification one deletion raises: one change carrying
 /// the Entity's deletion and every instance it took with it (clause 5.8.6).
-fn deletion_events(id: &Identifier, removed: &Arc<EntityState>, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
+fn deletion_events(id: &Identifier, removed: &Arc<EntityState>, sys_attrs: &SysAttrsSnapshot) -> Vec<ChangeEvent> {
     vec![
         ChangeEvent::builder()
             .entity_id(id.clone()) // clone: the event owns its identifier
@@ -147,7 +140,7 @@ fn deletion_events(id: &Identifier, removed: &Arc<EntityState>, sys_attrs: Optio
             .origin(ChangeOrigin::Local)
             .entity_snapshot(Some(Arc::clone(removed))) // clone: reference-count bump
             .previous_attributes(Some(Arc::clone(removed))) // clone: reference-count bump
-            .sys_attrs_snapshot(sys_attrs.cloned()) // clone: the event owns the system times it carries
+            .sys_attrs_snapshot(Some(sys_attrs.clone())) // clone: the event owns the system times it carries
             .build(),
     ]
 }

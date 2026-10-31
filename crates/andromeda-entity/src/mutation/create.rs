@@ -1,6 +1,12 @@
 //! Create Entity (clause 5.6.1).
 
-use crate::{EntityService, admitted_write::AdmittedEntity, error::EntityError, notification_plan::creation, write_kind::CreateEntity};
+use crate::{
+    EntityService,
+    admitted_write::AdmittedEntity,
+    error::EntityError,
+    notification_plan::{WrittenEntity, created_sys_attrs, creation},
+    write_kind::CreateEntity,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     entity_mutation::EntityMutation,
@@ -38,9 +44,12 @@ impl EntityService {
             let now = SystemInstant::new(Utc::now());
             created.settle(None, now);
             let created = Arc::new(created);
-            let plan = self
-                .notifier
-                .plan(target, id, created.types().as_slice(), creation(&created), Some(&created), None);
+            let sys_attrs = created_sys_attrs(&created, now);
+            let written = WrittenEntity {
+                state: &created,
+                sys_attrs: &sys_attrs,
+            };
+            let plan = self.notifier.plan(target, id, created.types().as_slice(), creation(&created), written, None);
 
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.

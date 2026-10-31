@@ -91,10 +91,6 @@ impl EntityReader for HeldEntities {
         Ok(HashMap::new())
     }
 
-    async fn get_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Ok(self.states.contains_key(id).then(HeldEntities::system_times))
-    }
-
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Ok(ids
             .iter()

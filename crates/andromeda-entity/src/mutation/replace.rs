@@ -47,7 +47,8 @@ impl EntityService {
             let mut replacement = Arc::new(EntityState::try_from(identified_as(admitted.into_document(), id)?)?);
 
             let ComputedLanding { value: events, committed_at } = self
-                .commit_computed_write(target, entity, |previous, now| {
+                .commit_computed_write(target, entity, |read, now| {
+                    let previous = &read.state;
                     // Clause 4.8: an attribute the replacement keeps (same datasetId)
                     // keeps its createdAt, matching the Entity-level createdAt column
                     // that a replace does not rewrite; an instance whose content
@@ -59,7 +60,7 @@ impl EntityService {
                     Arc::make_mut(&mut replacement).settle(Some(previous), now);
                     let history = mutation_history(previous, &replacement);
                     // clone: Arc ref-count bump; the write stores the replacement
-                    self.write_if_modified(target, id, previous, Arc::clone(&replacement), history)
+                    self.write_if_modified(target, id, read, Arc::clone(&replacement), history, now)
                 })
                 .await?;
 

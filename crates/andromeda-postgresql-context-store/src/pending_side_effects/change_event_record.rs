@@ -219,7 +219,8 @@ pub struct ReadChangeEvent {
     entity_state: Option<StoredState>,
     /// The Entity's state before a change that left it in place.
     previous_state: Option<StoredState>,
-    /// The clause 4.8 system attributes of an Entity a deletion removed.
+    /// The clause 4.8 system attributes of the Entity as the change left it,
+    /// or as a deletion removed it.
     sys_attrs_snapshot: Option<SysAttrsSnapshot>,
 }
 

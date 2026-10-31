@@ -147,6 +147,7 @@ impl VersionedEntity {
         EntitySnapshot {
             state: self.retrieved.state,
             version: self.version,
+            sys_attrs: self.retrieved.sys_attrs,
         }
     }
 }

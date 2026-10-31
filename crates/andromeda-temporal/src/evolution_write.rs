@@ -31,7 +31,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     change_notifier::ChangeNotifier,
     entity_snapshot::EntitySnapshot,
-    notification_plan::{creation, modification},
+    notification_plan::{WrittenEntity, created_sys_attrs, creation, modification, modified_sys_attrs},
     stored_census::admit_stored_entity,
 };
 use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_state;
@@ -168,11 +168,15 @@ fn evolution_write(
                 Some(previous) => EntityRecord::replacing(previous, Arc::clone(&state))?,
                 None => EntityRecord::from_state(Arc::clone(&state))?,
             };
-            let change = match previous {
-                Some(previous) => modification(previous, &state),
-                None => creation(&state),
+            let (change, sys_attrs) = match current {
+                Some(snapshot) => (modification(&snapshot.state, &state), modified_sys_attrs(&snapshot.sys_attrs, &state, now)),
+                None => (creation(&state), created_sys_attrs(&state, now)),
             };
-            let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&state), previous);
+            let written = WrittenEntity {
+                state: &state,
+                sys_attrs: &sys_attrs,
+            };
+            let plan = notifier.plan(target, entity_id, &record.projection.types, change, written, previous);
             let (entity, precondition) = match current {
                 Some(snapshot) => (EntityMutation::Update(record), Precondition::UnchangedSince(snapshot.version)),
                 None => (EntityMutation::Insert(record), Precondition::MustNotExist),
@@ -225,7 +229,7 @@ mod tests {
         reads::attribute_change::AttributeChangeKind,
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
-    use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
+    use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::SysAttrsSnapshot};
     use andromeda_ngsi_ld_number::{JsonNumber, json_value::value_census::JsonValueLimit};
     use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
     use chrono::{TimeZone, Utc};
@@ -264,6 +268,11 @@ mod tests {
         EntitySnapshot {
             state: Arc::new(EntityState::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a stored entity decodes")),
             version: EntityVersion::new(1, 1),
+            sys_attrs: SysAttrsSnapshot {
+                created_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("a valid instant"),
+                modified_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("a valid instant"),
+                expires_at: None,
+            },
         }
     }
 

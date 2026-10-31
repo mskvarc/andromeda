@@ -3,6 +3,7 @@
 
 use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use std::sync::Arc;
 
 /// One entity's state together with the version a
@@ -18,4 +19,8 @@ pub struct EntitySnapshot {
     pub state: Arc<EntityState>,
     /// The version the entity stood at in the same read.
     pub version: EntityVersion,
+    /// The entity's clause 4.8 system attributes in the same read: the
+    /// `createdAt` a write computed from this read keeps, and what a deletion
+    /// notifies once the row is gone.
+    pub sys_attrs: SysAttrsSnapshot,
 }

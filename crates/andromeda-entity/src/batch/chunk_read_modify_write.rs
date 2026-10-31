@@ -32,28 +32,17 @@ use crate::{
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_retry::retry_policy::RetryAttempt;
-use std::{collections::HashSet, future::Future, mem::take};
+use std::{collections::HashSet, mem::take};
 
-/// One batch path's part in a chunk read-modify-write: what it reads besides
-/// the entities' snapshots, and the write it builds for one entity against the
-/// state an attempt read.
+/// One batch path's part in a chunk read-modify-write: the write it builds for
+/// one entity against the entity as an attempt read it.
 pub(super) trait ChunkRewrite: Sync {
     /// What the path builds one entity's write from. It is handed back with
     /// every write, because a write the store refuses is rebuilt from it.
     type Entry: Send;
-    /// What one attempt reads for the pending entities besides their snapshots.
-    type Reads: Default + Send + Sync;
 
     /// The entity `entry` writes.
     fn id(entry: &Self::Entry) -> &Identifier;
-
-    /// Read what the path needs besides the snapshots of the `pending`
-    /// entities. Called after the snapshots are read, so whatever it reads is
-    /// no older than they are.
-    fn read(&self, pending: &[Identifier]) -> impl Future<Output = Result<Self::Reads, EntityError>> + Send {
-        let _ = pending;
-        async { Ok(Self::Reads::default()) }
-    }
 
     /// Build the write of `entry` against `snapshot`, the entity as this
     /// attempt read it, or `None` when the attempt found it absent.
@@ -69,7 +58,6 @@ pub(super) trait ChunkRewrite: Sync {
         &self,
         entry: Self::Entry,
         snapshot: Option<&EntitySnapshot>,
-        reads: &Self::Reads,
         now: SystemInstant,
     ) -> Result<PlannedWrite<Self::Entry>, Box<(Identifier, EntityError)>>;
 }
@@ -154,13 +142,12 @@ impl EntityService {
         settled: &mut ChunkOutcome,
     ) -> Result<Vec<R::Entry>, EntityError> {
         let mut snapshots = self.reader.get_snapshot_batch(placement.target(), ids).await?;
-        let reads = rewrite.read(ids).await?;
 
         let mut writes = Vec::with_capacity(pending.len());
         let mut built = Vec::with_capacity(pending.len());
         for entry in pending {
             let snapshot = snapshots.remove(R::id(&entry));
-            match rewrite.build(entry, snapshot.as_ref(), &reads, now) {
+            match rewrite.build(entry, snapshot.as_ref(), now) {
                 Ok(PlannedWrite { entry, write: Some(write) }) => {
                     let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.version));
                     writes.push(GuardedWrite { write, precondition });

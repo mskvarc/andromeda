@@ -81,13 +81,14 @@ impl EntityService {
         };
 
         let ComputedLanding { value: events, committed_at } = self
-            .commit_computed_write(target, entity, |previous, _| {
+            .commit_computed_write(target, entity, |read, now| {
+                let previous = &read.state;
                 let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
                 delete_member(&mut remaining, &attribute, selection)?;
 
                 let history = deletion_history(previous, &attribute, &tombstone_targets);
 
-                let ModificationWrite { write, events } = self.modification_write(target, id, previous, Arc::new(remaining), history)?;
+                let ModificationWrite { write, events } = self.modification_write(target, id, read, Arc::new(remaining), history, now)?;
                 Ok((Some(write), events))
             })
             .await?;

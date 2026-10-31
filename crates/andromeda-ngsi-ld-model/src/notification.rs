@@ -81,14 +81,15 @@ fn push_unique(triggers: &mut Vec<NotificationTrigger>, trigger: NotificationTri
     }
 }
 
-/// System attribute timestamps captured before entity deletion.
+/// An Entity's own clause 4.8 system attributes at one point of its history:
+/// as one read found it, or as one write left it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SysAttrsSnapshot {
-    /// Creation timestamp the entity carried.
+    /// When the Entity was created.
     pub created_at: DateTime<Utc>,
-    /// Last modification timestamp the entity carried.
+    /// When the Entity was last modified.
     pub modified_at: DateTime<Utc>,
-    /// Expiration timestamp the entity carried, if any.
+    /// When the Entity expires (clause 4.22), `None` when it does not.
     pub expires_at: Option<DateTime<Utc>>,
 }
 

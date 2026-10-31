@@ -60,7 +60,8 @@ impl EntityService {
             value: (not_appended, events),
             committed_at,
         } = self
-            .commit_computed_write(target, entity, |previous, now| {
+            .commit_computed_write(target, entity, |read, now| {
+                let previous = &read.state;
                 let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
@@ -68,7 +69,7 @@ impl EntityService {
                 appended.settle(Some(previous), now);
                 let appended = Arc::new(appended);
                 let history = mutation_history(previous, &appended);
-                let (write, events) = self.write_if_modified(target, id, previous, appended, history)?;
+                let (write, events) = self.write_if_modified(target, id, read, appended, history, now)?;
                 Ok((write, (not_appended, events)))
             })
             .await?;

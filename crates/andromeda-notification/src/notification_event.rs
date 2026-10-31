@@ -55,11 +55,13 @@ pub struct NotificationEvent {
     /// Entity state before the mutation, carried for `showChanges` support.
     #[builder(default = Default::default())]
     pub previous_snapshot: Option<Arc<EntityState>>,
-    /// The clause 4.8 system attributes of an entity the change deleted.
+    /// The clause 4.8 system attributes of the entity as the change left it,
+    /// or as a deletion removed it.
     ///
     /// An entity state holds no entity-level `createdAt` or `modifiedAt`, and
-    /// once the deletion committed the entity row they were read from is gone,
-    /// so the event records them beside the removed state.
+    /// by delivery time a later write may have moved the row's `modifiedAt`
+    /// on, or a deletion removed the row, so the event records them beside the
+    /// state (clause 5.8.6 notifies the entity as the change left it).
     #[builder(default = Default::default())]
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Instant at which the event was recorded.

@@ -586,8 +586,8 @@ mod tests {
         );
     }
 
-    /// A change that leaves the entity in place stores no system attributes
-    /// and no snapshot it was not handed.
+    /// A change stores no system attributes and no snapshot it was not
+    /// handed.
     #[test]
     fn a_change_without_system_attributes_stores_nulls() {
         let entity = entity();

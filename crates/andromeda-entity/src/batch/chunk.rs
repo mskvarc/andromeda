@@ -15,9 +15,10 @@
 use crate::{
     EntityService,
     entity_invariant::EntityInvariant,
+    entity_snapshot::EntitySnapshot,
     error::EntityError,
     modification_write::leaves_entity_unchanged,
-    notification_plan::{NotificationPlan, creation, modification},
+    notification_plan::{NotificationPlan, WrittenEntity, created_sys_attrs, creation, modification, modified_sys_attrs},
     side_effect::SideEffectPlacement,
     stored_census::admit_stored_entity,
 };
@@ -70,9 +71,10 @@ pub(super) struct GuardedWrite {
 /// observation of every modified instance all come from the difference between
 /// the stored state and the state replacing it.
 pub(super) struct UpdatedStates<'a> {
-    /// The entity as the store holds it before the write. It is also the state
-    /// a deletion filter and `showChanges` are evaluated against.
-    pub previous: &'a Arc<EntityState>,
+    /// The entity as the store holds it before the write, with the version
+    /// and the system attributes of that read. Its state is also the one a
+    /// deletion filter and `showChanges` are evaluated against.
+    pub previous: &'a EntitySnapshot,
     /// The entity the write stores in its place, not yet stamped. It shares
     /// every attribute it did not change with `previous`.
     pub current: EntityState,
@@ -81,7 +83,7 @@ pub(super) struct UpdatedStates<'a> {
 /// An entity update once its instances carry the write instant: the state it
 /// replaces, the state replacing it and what the Temporal Evolution records.
 struct StampedUpdate<'a> {
-    previous: &'a Arc<EntityState>,
+    previous: &'a EntitySnapshot,
     current: Arc<EntityState>,
     history: Vec<HistoryRecord>,
 }
@@ -94,12 +96,12 @@ impl<'a> StampedUpdate<'a> {
         // its createdAt; an untouched one keeps both. Stamped before the columns
         // and the notification plan read the state, so both see it; only an
         // attribute whose stamps change stops being shared with `previous`.
-        current.settle(Some(previous), now);
+        current.settle(Some(&previous.state), now);
         let current = Arc::new(current);
         // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
         // entity, so the batch records exactly what its single-entity sibling
         // records: the instances it modified and the ends of what it removed.
-        let history = mutation_history(previous, &current);
+        let history = mutation_history(&previous.state, &current);
         StampedUpdate { previous, current, history }
     }
 }
@@ -153,7 +155,12 @@ impl EntityService {
         // instant as both createdAt and modifiedAt.
         state.settle(None, now);
         let state = Arc::new(state);
-        let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), Some(&state), None);
+        let sys_attrs = created_sys_attrs(&state, now);
+        let written = WrittenEntity {
+            state: &state,
+            sys_attrs: &sys_attrs,
+        };
+        let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), written, None);
         // clone: reference-count bump; the stored state is also the write's observation.
         let history = vec![HistoryRecord::Observations(Arc::clone(&state))];
         let record = match EntityRecord::from_state(state) {
@@ -197,34 +204,40 @@ impl EntityService {
         now: SystemInstant,
     ) -> Result<Option<ChunkWrite>, Box<(Identifier, EntityError)>> {
         let StampedUpdate { previous, current, history } = StampedUpdate::of(states, now);
-        if leaves_entity_unchanged(previous, &current, &history) {
+        if leaves_entity_unchanged(&previous.state, &current, &history) {
             return Ok(None);
         }
-        if let Err(exceeded) = admit_stored_entity(self.payload_budget.json_values, Some(previous), &current) {
+        if let Err(exceeded) = admit_stored_entity(self.payload_budget.json_values, Some(&previous.state), &current) {
             return Err(Box::new((id, exceeded.into())));
         }
-        self.update_write(target, id, previous, current, history).map(Some)
+        self.update_write(target, id, StampedUpdate { previous, current, history }, now).map(Some)
     }
 
-    /// The write storing `current` in place of `previous`, with the
-    /// notifications and history it owes.
+    /// The write storing the state `update` stamped in place of the one it
+    /// was computed from, committed at `now`, with the notifications and
+    /// history it owes.
     fn update_write(
         &self,
         target: &ContextTarget,
         id: Identifier,
-        previous: &Arc<EntityState>,
-        current: Arc<EntityState>,
-        history: Vec<HistoryRecord>,
+        update: StampedUpdate<'_>,
+        now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
+        let StampedUpdate { previous, current, history } = update;
+        let sys_attrs = modified_sys_attrs(&previous.sys_attrs, &current, now);
+        let written = WrittenEntity {
+            state: &current,
+            sys_attrs: &sys_attrs,
+        };
         let plan = self.notifier.plan(
             target,
             &id,
             current.types().as_slice(),
-            modification(previous, &current),
-            Some(&current),
-            Some(previous),
+            modification(&previous.state, &current),
+            written,
+            Some(&previous.state),
         );
-        let record = match EntityRecord::replacing(previous, current) {
+        let record = match EntityRecord::replacing(&previous.state, current) {
             Ok(record) => record,
             Err(error) => return Err(Box::new((id, error.into()))),
         };

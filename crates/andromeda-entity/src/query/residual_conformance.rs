@@ -196,10 +196,6 @@ mod tests {
             Err(unused("get_snapshot_batch"))
         }
 
-        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-            Err(unused("get_sys_attrs"))
-        }
-
         async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
             Err(unused("get_sys_attrs_batch"))
         }

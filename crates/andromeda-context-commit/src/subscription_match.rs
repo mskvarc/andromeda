@@ -29,12 +29,13 @@ pub struct SubscriptionMatch {
     /// same change.
     #[builder(default = Default::default())]
     pub previous_snapshot: Option<Arc<EntityState>>,
-    /// The clause 4.8 system attributes of an entity a deletion removed.
+    /// The clause 4.8 system attributes of the entity as the change left it,
+    /// or as a deletion removed it.
     ///
-    /// By delivery time the entity row is gone and its `createdAt` and
-    /// `modifiedAt` can no longer be read back (clause 5.8.6), and an entity
-    /// state holds no entity-level system attribute of its own, so they travel
-    /// beside the removed state.
+    /// By delivery time a later write may have moved the row's `modifiedAt`
+    /// on, or the deletion removed the row, while clause 5.8.6 notifies the
+    /// entity as the change left it; an entity state holds no entity-level
+    /// system attribute of its own, so they travel beside the state.
     #[builder(default = Default::default())]
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
 }

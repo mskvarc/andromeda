@@ -46,7 +46,6 @@ struct UpdateRewrite<'a> {
 
 impl ChunkRewrite for UpdateRewrite<'_> {
     type Entry = PreparedEntity;
-    type Reads = ();
 
     fn id(entry: &PreparedEntity) -> &Identifier {
         &entry.id
@@ -56,16 +55,14 @@ impl ChunkRewrite for UpdateRewrite<'_> {
         &self,
         entry: PreparedEntity,
         snapshot: Option<&EntitySnapshot>,
-        _reads: &(),
         now: SystemInstant,
     ) -> Result<PlannedWrite<PreparedEntity>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        let previous = &snapshot.state;
         // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
-        let mut updated = EntityState::clone(previous);
+        let mut updated = EntityState::clone(&snapshot.state);
 
         // Clause 5.6.9.4 runs Append Attributes (clause 5.6.3) locally under
         // either policy: with overwrite an attribute the fragment names is
@@ -77,7 +74,10 @@ impl ChunkRewrite for UpdateRewrite<'_> {
         let write = self.service.chunk_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            UpdatedStates { previous, current: updated },
+            UpdatedStates {
+                previous: snapshot,
+                current: updated,
+            },
             now,
         )?;
         // Clause 5.6.9.4 puts an Entity in S when it was "successfully updated

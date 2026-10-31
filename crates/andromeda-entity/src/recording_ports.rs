@@ -172,6 +172,7 @@ impl EntityReader for SnapshotReader {
         Ok(Some(EntitySnapshot {
             state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes.
             version: self.version,
+            sys_attrs: self.sys_attrs(),
         }))
     }
 
@@ -185,6 +186,7 @@ impl EntityReader for SnapshotReader {
                     EntitySnapshot {
                         state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes
                         version: self.version,
+                        sys_attrs: self.sys_attrs(),
                     },
                 )
             })
@@ -202,10 +204,6 @@ impl EntityReader for SnapshotReader {
             state: Arc::clone(&self.state), // clone: Arc ref-count bump; the reader keeps serving the snapshot.
             sys_attrs: self.sys_attrs(),
         }))
-    }
-
-    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        Ok(Some(self.sys_attrs()))
     }
 
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {

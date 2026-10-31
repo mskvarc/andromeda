@@ -158,7 +158,8 @@ pub struct NewNotificationEvent<'a> {
     pub entity_snapshot: Option<&'a EntityState>,
     /// Entity state before the change, for `showChanges`.
     pub previous_snapshot: Option<&'a EntityState>,
-    /// The clause 4.8 system attributes of an entity a deletion removed.
+    /// The clause 4.8 system attributes of the entity as the change left it,
+    /// or as a deletion removed it.
     pub sys_attrs_snapshot: Option<&'a SysAttrsSnapshot>,
     /// Subscriptions this event is due to, in matcher order.
     pub subscription_keys: Vec<SubscriptionKey>,

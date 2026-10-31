@@ -47,7 +47,6 @@ struct ReplaceRewrite<'a> {
 
 impl ChunkRewrite for ReplaceRewrite<'_> {
     type Entry = Replacement;
-    type Reads = ();
 
     fn id(entry: &Replacement) -> &Identifier {
         match entry {
@@ -60,7 +59,6 @@ impl ChunkRewrite for ReplaceRewrite<'_> {
         &self,
         entry: Replacement,
         snapshot: Option<&EntitySnapshot>,
-        _reads: &(),
         now: SystemInstant,
     ) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
         let (id, replacement) = match entry {
@@ -131,7 +129,7 @@ impl EntityService {
         };
         let entry_id = id.clone(); // clone: the entry is kept to rebuild the write if the store refuses it
         let states = UpdatedStates {
-            previous: &snapshot.state,
+            previous: snapshot,
             current: replacement,
         };
         match self.chunk_update(target, id, states, now)? {

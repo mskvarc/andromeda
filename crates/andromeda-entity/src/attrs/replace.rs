@@ -57,7 +57,8 @@ impl EntityService {
         let (attribute, replacement) = admitted.into_parts();
 
         let ComputedLanding { value: events, committed_at } = self
-            .commit_computed_write(target, entity, |previous, now| {
+            .commit_computed_write(target, entity, |read, now| {
+                let previous = &read.state;
                 let mut replaced = EntityState::clone(previous); // clone: shares every attribute the replacement leaves alone
                 replaced.replace_attribute(&attribute, &replacement)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
@@ -65,7 +66,7 @@ impl EntityService {
                 replaced.settle(Some(previous), now);
                 let replaced = Arc::new(replaced);
                 let history = mutation_history(previous, &replaced);
-                let (write, events) = self.write_if_modified(target, id, previous, replaced, history)?;
+                let (write, events) = self.write_if_modified(target, id, read, replaced, history, now)?;
                 Ok((write, events))
             })
             .await?;

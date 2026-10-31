@@ -13,7 +13,14 @@
 //! their history rows land. The Entity API and the Temporal Evolution then
 //! disagree permanently, because nothing sweeps the difference away.
 
-use crate::{EntityService, contended_attempt::ContendedAttempt, entity_invariant::EntityInvariant, error::EntityError, write_target::WriteTarget};
+use crate::{
+    EntityService,
+    contended_attempt::ContendedAttempt,
+    entity_invariant::EntityInvariant,
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    write_target::WriteTarget,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     precondition::{AfterAttempt, Precondition, after_attempt},
@@ -21,10 +28,9 @@ use andromeda_context_commit::{
     write_outcome::{WriteOutcome, single},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use chrono::Utc;
-use std::{slice::from_ref, sync::Arc};
+use std::slice::from_ref;
 
 /// What one attempt of a computed write asked the store to do.
 #[derive(Clone, Copy)]
@@ -58,10 +64,11 @@ impl EntityService {
     /// Commit one entity's read-modify-write, re-reading whatever a concurrent
     /// writer superseded.
     ///
-    /// `build` turns the entity's current state into the write that
-    /// supersedes it, or `None` when the state needs no write at all, settling
-    /// its system times at the instant it is handed, which the commit records
-    /// the write's history at. It runs once per attempt, each attempt at an
+    /// `build` turns the entity as read (its state and its clause 4.8 system
+    /// attributes) into the write that supersedes it, or `None` when the state
+    /// needs no write at all, settling its system times at the instant it is
+    /// handed, which the commit records the write's history and the entity's
+    /// `modifiedAt` at. It runs once per attempt, each attempt at an
     /// instant read after the state it computes from, so it must not consume
     /// anything it needs again.
     ///
@@ -81,7 +88,7 @@ impl EntityService {
     /// [`EntityError::Contention`] once the attempt budget is spent.
     pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
-        B: FnMut(&Arc<EntityState>, SystemInstant) -> Result<Option<AtomicWrite>, EntityError>,
+        B: FnMut(&EntitySnapshot, SystemInstant) -> Result<Option<AtomicWrite>, EntityError>,
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
@@ -90,7 +97,7 @@ impl EntityService {
                 return Ok(None);
             };
             let now = SystemInstant::new(Utc::now());
-            let Some(mut write) = build(&snapshot.state, now)? else {
+            let Some(mut write) = build(&snapshot, now)? else {
                 return Ok(None);
             };
             write.precondition = Precondition::UnchangedSince(snapshot.version);
@@ -136,16 +143,16 @@ impl EntityService {
         mut build: B,
     ) -> Result<ComputedLanding<T>, EntityError>
     where
-        B: FnMut(&Arc<EntityState>, SystemInstant) -> Result<(Option<AtomicWrite>, T), EntityError>,
+        B: FnMut(&EntitySnapshot, SystemInstant) -> Result<(Option<AtomicWrite>, T), EntityError>,
     {
         let id = entity.id;
         let mut produced: Option<(T, ComputedWrite)> = None;
         let landed = self
-            .commit_read_modify_write(target, id, |previous, now| {
+            .commit_read_modify_write(target, id, |read, now| {
                 // Clauses 5.6.2.4 to 5.6.19.4: an entity outside the request's
                 // type selector is not the target, whatever the attempt read.
-                entity.admits(previous)?;
-                let (write, value) = build(previous, now)?;
+                entity.admits(&read.state)?;
+                let (write, value) = build(read, now)?;
                 produced = Some((value, ComputedWrite::of(write.as_ref())));
                 Ok(write)
             })

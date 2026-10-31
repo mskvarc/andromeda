@@ -1,9 +1,9 @@
 //! Delivering a durably queued notification event through the processor.
 //!
 //! A queued delivery carries the event as it was persisted, so the change
-//! event the processor evaluates is rebuilt from the stored row: the deleted
-//! entity's types come back from the state it removed and its system
-//! attributes from the event, because the row they described is gone.
+//! event the processor evaluates is rebuilt from the stored row: the entity's
+//! types come back from the state it carries and its system attributes from
+//! the event, which recorded them as the change left the Entity.
 
 use crate::{
     delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
@@ -101,18 +101,18 @@ fn commit_filters(stored: &NotificationEvent) -> CommitFilters {
 ///
 /// The stored lifecycle says whether the Entity outlived the change, so the one
 /// stored state is placed accordingly: an Entity the change deleted is carried
-/// as what was removed (the shape clause 5.8.6 reduces to `deletedAt`), with
-/// the clause 4.8 system attributes the event recorded because the row is gone;
-/// any other Entity is carried as the write left it, and its system attributes
-/// are read from its row.
+/// as what was removed (the shape clause 5.8.6 reduces to `deletedAt`), any
+/// other Entity as the write left it. Either way the clause 4.8 system
+/// attributes are the ones the event recorded, never the ones the row holds by
+/// delivery time: a later write may have moved its `modifiedAt` on, and a
+/// deleted row is gone.
 fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
     let snapshot = stored.entity_snapshot.as_ref().map(Arc::clone);
     // clone: the change event owns the types it is routed by
     let entity_types = snapshot.as_ref().map(|state| state.types().as_slice().to_vec()).unwrap_or_default();
-    let (removed, current, sys_attrs_snapshot) = match stored.change.lifecycle {
-        // clone: the change event owns the system attributes it notifies with
-        EntityLifecycle::Deleted => (snapshot, None, stored.sys_attrs_snapshot.clone()),
-        EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot, None),
+    let (removed, current) = match stored.change.lifecycle {
+        EntityLifecycle::Deleted => (snapshot, None),
+        EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot),
     };
     ChangeEvent::builder()
         .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
@@ -121,7 +121,7 @@ fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
         .occurred_at(stored.created_at)
         .entity_snapshot(removed)
         .previous_attributes(stored.previous_snapshot.as_ref().map(Arc::clone))
-        .sys_attrs_snapshot(sys_attrs_snapshot)
+        .sys_attrs_snapshot(stored.sys_attrs_snapshot.clone()) // clone: the change event owns the system attributes it notifies with
         .origin(ChangeOrigin::Local)
         .current_payload(current)
         .build()
@@ -195,7 +195,7 @@ mod tests {
         }]))
     }
 
-    /// The system attributes a deletion recorded.
+    /// The system attributes a change recorded.
     fn recorded_instants() -> SysAttrsSnapshot {
         SysAttrsSnapshot {
             created_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"),
@@ -230,19 +230,18 @@ mod tests {
     /// Clause 5.6.5 removes one Attribute and leaves the Entity: the queued
     /// change is a modification, rebuilt as the Entity the write left behind,
     /// so clause 5.8.6 notifies the deleted Attribute as `urn:ngsi-ld:null`
-    /// rather than reducing the Entity to `deletedAt`.
+    /// rather than reducing the Entity to `deletedAt`. It carries the system
+    /// attributes the write left the Entity with, not the ones its row holds
+    /// by delivery time (clause 4.8 `modifiedAt` is that write's instant).
     #[test]
     fn a_queued_attribute_deletion_is_rebuilt_as_the_entity_it_left_behind() {
         let left_behind = entity_without_name();
-        let event = queued_change_event(&queued(EntityLifecycle::Modified, Some(Arc::clone(&left_behind)), None));
+        let event = queued_change_event(&queued(EntityLifecycle::Modified, Some(Arc::clone(&left_behind)), Some(recorded_instants())));
         pretty_assertions::assert_eq!(event.entity_id.as_str(), "urn:ngsi-ld:Building:1");
         pretty_assertions::assert_eq!(event.change.lifecycle, EntityLifecycle::Modified);
         assert!(event.current_payload.as_ref().is_some_and(|current| Arc::ptr_eq(current, &left_behind)));
         assert!(event.entity_snapshot.is_none());
-        assert!(
-            event.sys_attrs_snapshot.is_none(),
-            "a surviving Entity's system attributes are read from its row"
-        );
+        pretty_assertions::assert_eq!(event.sys_attrs_snapshot, Some(recorded_instants()));
     }
 
     /// Clause 5.6.6 removes the Entity: the queued change is a deletion,

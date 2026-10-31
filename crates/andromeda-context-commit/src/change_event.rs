@@ -30,7 +30,9 @@ pub struct ChangeEvent {
     /// The state before the mutation, for `showChanges`.
     #[builder(default = Default::default())]
     pub previous_attributes: Option<Arc<EntityState>>,
-    /// System attributes captured before deletion.
+    /// The Entity's clause 4.8 system attributes as the change left it, or as
+    /// a deletion removed it: what a notification of the change is stamped
+    /// with (clause 5.8.6), whatever later writes did to the row.
     #[builder(default = Default::default())]
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Whether the event originated locally or from a forwarded source.

@@ -50,10 +50,6 @@ impl EntityReader for EntityRepository {
         EntityRepository::get_snapshot_batch(self, target, ids).await.map_err(|error| classify(&error))
     }
 
-    async fn get_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<SysAttrsSnapshot>, EntityError> {
-        EntityRepository::get_sys_attrs(self, target, id).await.map_err(|error| classify(&error))
-    }
-
     async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         EntityRepository::get_sys_attrs_batch(self, target, ids).await.map_err(|error| classify(&error))
     }

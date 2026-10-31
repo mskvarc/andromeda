@@ -7,7 +7,13 @@
 //! channels are planned from that one change (clause 5.2.12). A write that
 //! modified nothing is not stored at all.
 
-use crate::{EntityService, error::EntityError, notification_plan::modification, stored_census::admit_stored_entity};
+use crate::{
+    EntityService,
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    notification_plan::{WrittenEntity, modification, modified_sys_attrs},
+    stored_census::admit_stored_entity,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -17,7 +23,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use std::sync::Arc;
 
 /// One computed modification: the write to commit and the events to publish
@@ -45,7 +51,11 @@ pub(crate) fn leaves_entity_unchanged(previous: &EntityState, current: &EntitySt
 
 impl EntityService {
     /// The write that stores `current` as the entity `id` names in place of
-    /// `previous`, recording `history`.
+    /// the state `read` holds, recording `history`, committed at `now`.
+    ///
+    /// The notifications it plans carry the entity's system attributes as
+    /// this write leaves them: the `createdAt` of `read` and `now` as the
+    /// `modifiedAt` the store records.
     ///
     /// No precondition is set here:
     /// [`commit_computed_write`](crate::EntityService::commit_computed_write)
@@ -63,14 +73,19 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        previous: &Arc<EntityState>,
+        read: &EntitySnapshot,
         current: Arc<EntityState>,
         history: Vec<HistoryRecord>,
+        now: SystemInstant,
     ) -> Result<ModificationWrite, EntityError> {
+        let previous = &read.state;
         let change = modification(previous, &current);
-        let plan = self
-            .notifier
-            .plan(target, id, current.types().as_slice(), change, Some(&current), Some(previous));
+        let sys_attrs = modified_sys_attrs(&read.sys_attrs, &current, now);
+        let written = WrittenEntity {
+            state: &current,
+            sys_attrs: &sys_attrs,
+        };
+        let plan = self.notifier.plan(target, id, current.types().as_slice(), change, written, Some(previous));
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::Update(EntityRecord::replacing(previous, current)?))
@@ -80,9 +95,9 @@ impl EntityService {
         Ok(ModificationWrite { write, events: plan.events })
     }
 
-    /// The write a modification owes for turning `previous` into `current`,
-    /// and the events it publishes, or no write and no events when it modified
-    /// nothing.
+    /// The write a modification owes for turning the state `read` holds into
+    /// `current` at `now`, and the events it publishes, or no write and no
+    /// events when it modified nothing.
     ///
     /// Clause 4.8 moves `modifiedAt` when the Entity "was last modified",
     /// clause 5.8.6 notifies a change only for a value "different than the
@@ -108,15 +123,16 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        previous: &Arc<EntityState>,
+        read: &EntitySnapshot,
         current: Arc<EntityState>,
         history: Vec<HistoryRecord>,
+        now: SystemInstant,
     ) -> Result<(Option<AtomicWrite>, Vec<ChangeEvent>), EntityError> {
-        if leaves_entity_unchanged(previous, &current, &history) {
+        if leaves_entity_unchanged(&read.state, &current, &history) {
             return Ok((None, Vec::new()));
         }
-        admit_stored_entity(self.payload_budget.json_values, Some(previous), &current)?;
-        let ModificationWrite { write, events } = self.modification_write(target, id, previous, current, history)?;
+        admit_stored_entity(self.payload_budget.json_values, Some(&read.state), &current)?;
+        let ModificationWrite { write, events } = self.modification_write(target, id, read, current, history, now)?;
         Ok((Some(write), events))
     }
 }

@@ -32,9 +32,7 @@ use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::En
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::queried::linked_states::LinkedStates;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_query::filter::expression::Expr;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
@@ -199,14 +197,12 @@ impl NotificationProcessor {
             return NotificationEvaluationOutcome::default();
         }
 
-        let sys_attrs = self.sys_attrs_for(&target, &event, &matching).await;
         let compaction_cache = NotificationCompactionCache::default();
         let change = NotifiedChange {
             target: &target,
             event: &event,
             notified: notified.as_ref(),
             now: Utc::now(),
-            sys_attrs: sys_attrs.as_ref(),
             compaction_cache: &compaction_cache,
         };
         let deliveries: Vec<Option<DeliveryResult>> = stream::iter(matching)
@@ -299,32 +295,6 @@ impl NotificationProcessor {
             .linked_filter_states(target, &roots, &filters, Utc::now())
             .await
             .inspect_err(|error| warn!(entity = %event.entity_id, %error, "the entities a subscription filter links to could not be read"))
-    }
-
-    /// The entity's clause 4.8 system attributes, resolved once when any
-    /// notified subscription asks for them.
-    ///
-    /// A deleted entity cannot be read back, so the snapshot the change
-    /// carries is what the notification is stamped with; a read that finds
-    /// nothing, or fails, falls back to that same snapshot.
-    async fn sys_attrs_for(&self, target: &ContextTarget, event: &ChangeEvent, matching: &[Arc<CompiledSubscription>]) -> Option<SysAttrsSnapshot> {
-        if !matching.iter().any(|sub| sub.notification_sys_attrs == SysAttrsInclusion::Include) {
-            return None;
-        }
-        // clone: the notification stamps its own copy while the event keeps its snapshot
-        let recorded = event.sys_attrs_snapshot.clone();
-        match event.change.lifecycle {
-            EntityLifecycle::Deleted => return recorded,
-            EntityLifecycle::Created | EntityLifecycle::Modified => (),
-        }
-        match self.entity_reader.get_sys_attrs(target, &event.entity_id).await {
-            Ok(Some(attrs)) => Some(attrs),
-            Ok(None) => recorded,
-            Err(error) => {
-                debug!("Failed to fetch sysAttrs for {}: {}", event.entity_id, error);
-                recorded
-            }
-        }
     }
 }
 
