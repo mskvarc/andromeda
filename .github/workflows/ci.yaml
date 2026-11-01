@@ -196,7 +196,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tree: [ngsi_ld, andromeda]
+        tree: [ngsi_ld, andromeda, etsi, annex_c]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
