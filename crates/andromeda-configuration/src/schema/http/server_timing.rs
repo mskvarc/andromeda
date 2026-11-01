@@ -29,7 +29,7 @@ pub enum ServerTimingPhase {
 
 /// `Server-Timing` configuration.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Whether responses carry a `Server-Timing` header, and which times it reports.")]
 pub struct ServerTimingConfig {
     /// Whether the broker emits a `Server-Timing` response header at all.

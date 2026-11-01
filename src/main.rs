@@ -42,7 +42,7 @@ async fn main() -> ExitCode {
                 port: cli.port,
             };
             match load_reported(configuration_file, overrides) {
-                ConfigurationLoadOutcome::Ready(config) => andromeda_broker_composition::run(*config).await,
+                ConfigurationLoadOutcome::Ready(loaded) => andromeda_broker_composition::run(*loaded).await,
                 ConfigurationLoadOutcome::Failed(outcome) => outcome,
             }
         }

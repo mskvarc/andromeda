@@ -29,7 +29,7 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
-use andromeda_configuration::{broker_config::BrokerConfig, schema::feature_mode::FeatureMode};
+use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration, schema::feature_mode::FeatureMode};
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
@@ -138,7 +138,8 @@ enum BrokerStartupError {
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
-pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
+pub async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
+    let LoadedConfiguration { config, ignored } = loaded;
     // Held for the whole process: dropping the guard flushes the non-blocking
     // file appender, so it lives until after the shutdown logs below are written.
     let _log_guard = match logging::initialize(&config) {
@@ -148,7 +149,7 @@ pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
             return ProcessExitOutcome::StartupFailure;
         }
     };
-    report_startup(&config);
+    report_startup(&config, &ignored);
     let config = Arc::new(config);
     let telemetry = match install_telemetry(config.observability.metrics.prometheus.mode) {
         Ok(telemetry) => telemetry,

@@ -12,7 +12,7 @@ use url::Url;
 
 /// The data-plane listener.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The data-plane listener that serves the NGSI-LD API over HTTP/1.1 and HTTP/2, and its HTTP/3 sibling.")]
 pub struct ServerConfig {
     /// Listener address.

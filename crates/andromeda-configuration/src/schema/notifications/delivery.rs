@@ -60,7 +60,7 @@ pub enum DeliveryMode {
 
 /// How long a finished delivery is kept.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How long finished deliveries and their change events are kept in the tenant database.")]
 pub struct DeliveryRetentionConfig {
     /// How long an acknowledged delivery is kept, in human-readable form
@@ -103,7 +103,7 @@ impl Default for DeliveryRetentionConfig {
 /// have queued deliveries that are still due. `request_timeout` bounds every
 /// outbound notification, queued or live.
 #[derive(Clone, Deserialize, Serialize, JsonSchema, Debug, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "How notifications reach their subscribers. The queue and its retention govern the delivery drain, which runs under either mode: a tenant database can still hold deliveries queued by a durable broker, or by this one before it was switched to live delivery."
 )]

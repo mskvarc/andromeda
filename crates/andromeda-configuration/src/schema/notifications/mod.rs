@@ -10,7 +10,7 @@ use std::num::NonZeroUsize;
 
 /// How live delivery evaluates committed entity changes.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How live delivery evaluates committed entity changes against subscriptions.")]
 pub struct EvaluationConfig {
     /// The most committed entity changes each tenant buffers for live
@@ -50,7 +50,7 @@ impl Default for EvaluationConfig {
 
 /// How the periodic (`timeInterval`) notification drain waits.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How the drain of periodic (`timeInterval`) notifications waits.")]
 pub struct PeriodicConfig {
     /// The longest the drain sleeps while no subscription is due, in
@@ -75,7 +75,7 @@ impl Default for PeriodicConfig {
 
 /// How notifications are delivered, evaluated and scheduled.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How notifications are delivered, evaluated and scheduled.")]
 pub struct NotificationsConfig {
     /// How notifications reach their subscribers.

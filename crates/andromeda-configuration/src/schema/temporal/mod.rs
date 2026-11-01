@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// How Temporal Evolutions are read, recorded and stored.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How the broker reads, records and stores the Temporal Evolution of entities.")]
 pub struct TemporalConfig {
     /// How much of a Temporal Evolution one read returns.

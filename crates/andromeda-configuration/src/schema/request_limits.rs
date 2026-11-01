@@ -48,7 +48,7 @@ const DEFAULT_MAX_Q_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(15)
 
 /// What one request may cost the broker.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "What one request may cost the broker. A load balancer can send any request to any replica, so every replica of one deployment runs the same values."
 )]

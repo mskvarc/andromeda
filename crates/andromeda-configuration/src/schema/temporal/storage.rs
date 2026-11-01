@@ -25,7 +25,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 
 /// When a history partition is converted to the columnstore.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "When history partitions are converted to the columnstore.")]
 pub struct ColumnstoreConfig {
     /// The age past which a history partition is converted, as a whole number
@@ -59,7 +59,7 @@ impl Default for ColumnstoreConfig {
 /// specification defines deletion of a Temporal Evolution (clause 5.6.16)
 /// and says nothing about storage an operator chooses not to keep.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "Whether, and at what age, history is deleted. Retention is a storage decision, not an NGSI-LD deletion: history past the age leaves the database without a deletion record and without a notification."
 )]
@@ -98,7 +98,7 @@ impl Default for RetentionConfig {
 
 /// How history is partitioned, converted to the columnstore, and aged out.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How history is partitioned, converted to the columnstore and aged out.")]
 pub struct TemporalStorageConfig {
     /// The span one write-side history partition covers, as a whole number of

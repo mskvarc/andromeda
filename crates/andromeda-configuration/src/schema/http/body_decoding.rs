@@ -21,7 +21,7 @@ pub enum BodyDecodingConfigError {
 
 /// Where request payloads are decoded.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Where request bodies are parsed, so a large body does not hold up other requests.")]
 pub struct BodyDecodingConfig {
     /// The payload size, in human-readable form (`"256 KiB"`), from which a

@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 /// How the inbound HTTP stack treats a request it accepts.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "The web-facing layers in front of the API: `Link` layout, body decoding, CORS, compression, forwarded-field trust, `Server-Timing`, security headers and CSRF. The defaults suit machine clients."
 )]

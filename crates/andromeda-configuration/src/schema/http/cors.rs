@@ -225,7 +225,7 @@ pub enum CorsPermission {
 
 /// CORS policy configuration for the broker edge.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The Cross-Origin Resource Sharing policy browser clients see.")]
 pub struct CorsConfig {
     /// The overall CORS mode. `permissive` and `very-permissive` ignore every

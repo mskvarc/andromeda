@@ -12,7 +12,7 @@ use std::num::{NonZeroU32, NonZeroUsize};
 /// Where each named tenant's data lives.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
 #[schemars(description = "How each named tenant's database is named, and how many connections its pool opens.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct TenantDatabasesConfig {
     /// The prefix of every per-tenant database name the broker provisions.
     #[schemars(
@@ -44,7 +44,7 @@ impl Default for TenantDatabasesConfig {
 /// The default tenant's pool.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "The tenant a request reaches when it names none in `NGSILD-Tenant`, whose data lives in `database.url`.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct DefaultTenantConfig {
     /// The most connections the default tenant's pool opens.
     #[schemars(
@@ -64,7 +64,7 @@ impl Default for DefaultTenantConfig {
 /// How many tenant runtimes stay open, and for how long.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How many tenants a broker process keeps loaded, for how long, and how an unloaded tenant with due work is loaded again.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct ResidencyConfig {
     /// How long an unused tenant runtime stays open before it is evicted, in
     /// human-readable form (`"15m"`).
@@ -148,7 +148,7 @@ impl Default for ResidencyConfig {
 /// How a tenant runtime is opened on its first request.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How a tenant is loaded on its first request.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct TenantBuildConfig {
     /// The most tenant runtimes built at once.
     ///
@@ -187,7 +187,7 @@ impl Default for TenantBuildConfig {
 #[schemars(
     description = "Whether named tenants are served, how the default tenant's and each named tenant's pools are sized, how named tenants' databases are named, and how many stay loaded."
 )]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct TenancyConfig {
     /// Whether named tenants are served: `enabled` or `disabled`.
     #[schemars(

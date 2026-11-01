@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// are the `axum-helmet` defaults, except `Strict-Transport-Security`, which is
 /// sent only when an operator turns it on.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The security headers API responses carry, each set or turned off on its own.")]
 pub struct SecurityHeadersConfig {
     /// Whether any security response field is set: `enabled` or `disabled`.

@@ -63,7 +63,7 @@ pub enum FederatedAggregation {
 
 /// What a federated query means and how much it may gather.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "What a federated query means and how much it may gather from context sources.")]
 pub struct FederatedQueryConfig {
     /// What `splitEntities` means when a request or subscription leaves it

@@ -17,7 +17,7 @@ use std::num::NonZeroU32;
 /// never serves it.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How often each tenant deletes the resources past their `expiresAt`, and how many entities one pass reads.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct ExpiryConfig {
     /// How often the sweeps run, in human-readable form (`"30s"`).
     #[schemars(

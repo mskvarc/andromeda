@@ -11,7 +11,7 @@ use url::Url;
 /// send no `Origin` and are unaffected, while a browser-driven UI in front of the
 /// broker enables it and declares the origins it serves from.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "Cross-Site Request Forgery protection, for a browser-driven interface in front of the broker. Machine clients send no `Origin` and are unaffected."
 )]

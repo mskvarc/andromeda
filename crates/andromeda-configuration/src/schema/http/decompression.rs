@@ -31,7 +31,7 @@ pub enum UnacceptedEncoding {
 /// `mode` turns decompression on or off; the codings are a typed set that
 /// must name at least one coding while decompression is on.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Request decompression: which codings a request body may arrive in, and what happens to one in any other.")]
 pub struct DecompressionConfig {
     /// Whether request bodies are decoded at all.

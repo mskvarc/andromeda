@@ -15,7 +15,7 @@ use std::num::NonZeroUsize;
 #[schemars(
     description = "How many Snapshots, and how much storage, one tenant may keep. Over a quota, Snapshots are deleted until the tenant is within it again: the lowest `snapshotPriority` first, then the one expiring soonest, then the one used least recently."
 )]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct SnapshotQuotaConfig {
     /// The most Snapshots one tenant keeps, or `"unlimited"`.
     #[schemars(description = "The most Snapshots one tenant keeps, or `\"unlimited\"` to keep any number.")]
@@ -38,7 +38,7 @@ impl Default for SnapshotQuotaConfig {
 /// How a Snapshot is prepared.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How a Snapshot's content is captured or cloned after it is created.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct PreparationConfig {
     /// The results read in each capture page.
     #[schemars(description = "The results read per page while a Snapshot captures its content.")]
@@ -82,7 +82,7 @@ impl Default for PreparationConfig {
 /// prepared.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How long a Snapshot lives, how many a tenant may keep, and how one is prepared.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct SnapshotConfig {
     /// The lifetime of a Snapshot created without `snapshotLifetime`, in
     /// human-readable form (`"1h"`).

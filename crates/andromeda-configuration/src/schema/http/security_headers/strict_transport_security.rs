@@ -14,7 +14,7 @@ const DEFAULT_MAX_AGE: HumanDuration = HumanDuration::from_days(180);
 /// too, so only an operator who knows the host is served over TLS for that long
 /// turns it on.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The `Strict-Transport-Security` header.")]
 pub struct StrictTransportSecurityConfig {
     /// Whether the field is sent over the TLS listener: `enabled` or `disabled`.

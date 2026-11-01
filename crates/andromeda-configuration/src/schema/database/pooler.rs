@@ -15,7 +15,7 @@ use url_macro::url;
 /// directly, since they hold session state across transactions.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
 #[schemars(description = "A transaction-pooling proxy, such as PgBouncer in transaction mode, that request connections go through.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct PoolerConfig {
     /// The proxy's PostgreSQL-protocol URL, used by the request path in place
     /// of `database.url`. The proxy forwards to the same PostgreSQL, so

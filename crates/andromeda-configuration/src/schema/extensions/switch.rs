@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Whether one extension is served. Off by default: a broker that sets no
 /// extension is a conformant broker.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Whether one extension that is only switched on or off is served.")]
 pub struct ExtensionSwitch {
     /// Whether the extension is served: `enabled` or `disabled`.

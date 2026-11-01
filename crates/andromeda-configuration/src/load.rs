@@ -8,9 +8,16 @@
 //! of one key and never nests. An environment variable sets a scalar only: a
 //! list setting takes its members separated by commas, and a table is set in
 //! the file alone.
+//!
+//! A key the configuration does not define is ignored and reported, so a file
+//! written for a later version still loads. A defined key holding a value it
+//! does not define is refused.
+
+pub mod ignored_setting;
 
 use crate::{
     broker_config::BrokerConfig,
+    load::ignored_setting::{IgnoredSetting, WritingLayers, ignored_settings},
     validate::{InvalidConfiguration, validate},
 };
 use etcetera::{BaseStrategy, choose_base_strategy};
@@ -59,8 +66,8 @@ pub enum LoadError {
     #[error("configuration file not found: {0}")]
     MissingFile(PathBuf),
     /// The layers could not be read into the configuration: a value of the
-    /// wrong type, an unknown key, or a file that is not TOML. Boxed: it is by
-    /// far the largest variant.
+    /// wrong type, a choice a key does not define, or a file that is not
+    /// TOML. Boxed: it is by far the largest variant.
     #[error("loading configuration failed: {0}")]
     Layers(#[source] Box<LayerError>),
     /// The configuration was read, and a check refused it.
@@ -100,6 +107,17 @@ pub fn resolve_configuration_file(explicit: Option<PathBuf>) -> Result<Option<Pa
     }
 }
 
+/// A configuration that loaded, and the settings its layers write that it
+/// does not define.
+#[derive(Debug)]
+pub struct LoadedConfiguration {
+    /// The configuration in effect.
+    pub config: BrokerConfig,
+    /// Every key the file or the environment writes that the configuration
+    /// does not define, once for each layer that writes it.
+    pub ignored: Vec<IgnoredSetting>,
+}
+
 /// Load, normalize and check the configuration.
 ///
 /// A `None` file means no file layer contributes: the broker loads from
@@ -109,12 +127,12 @@ pub fn resolve_configuration_file(explicit: Option<PathBuf>) -> Result<Option<Pa
 ///
 /// Returns [`LoadError::Layers`] when the layers do not read into the
 /// configuration, and [`LoadError::Invalid`] when a check refuses it.
-pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> Result<BrokerConfig, LoadError> {
+pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> Result<LoadedConfiguration, LoadError> {
     let mut figment = Figment::from(Serialized::defaults(BrokerConfig::default()));
     if let Some(path) = configuration_file {
         figment = figment.merge(Toml::file(path));
     }
-    figment = figment.merge(Env::prefixed(ENVIRONMENT_PREFIX).split("__").parser(environment_scalar));
+    figment = figment.merge(environment_layer());
     if let Some(host) = overrides.host {
         figment = figment.merge(Serialized::default("server.host", host));
     }
@@ -122,12 +140,23 @@ pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> 
         figment = figment.merge(Serialized::default("server.port", port));
     }
     let mut config: BrokerConfig = figment.extract().map_err(|error| LoadError::Layers(Box::new(error)))?;
+    let writing_layers = WritingLayers {
+        file: configuration_file.map(|path| (path, Figment::from(Toml::file(path)))),
+        environment: Figment::from(environment_layer()),
+    };
+    let ignored = ignored_settings(&figment, &writing_layers).map_err(LoadError::Layers)?;
     // Relative preload paths resolve against the configuration file's
     // directory; with no file they resolve against the working directory.
     let configuration_directory = configuration_file.and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     config.jsonld.resolve_preload_paths(&configuration_directory);
     validate(&config)?;
-    Ok(config)
+    Ok(LoadedConfiguration { config, ignored })
+}
+
+/// The `ANDROMEDA__` environment layer: `__` nests, and every value is a
+/// scalar.
+fn environment_layer() -> Env {
+    Env::prefixed(ENVIRONMENT_PREFIX).split("__").parser(environment_scalar)
 }
 
 /// The scalar an environment value spells: a boolean, an integer, a decimal

@@ -27,7 +27,7 @@ impl ContentSecurityPolicyText {
 
 /// Whether the `Content-Security-Policy` field is sent, and what it says.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The `Content-Security-Policy` header.")]
 pub struct ContentSecurityPolicyConfig {
     /// Whether the field is sent: `enabled` or `disabled`.

@@ -45,7 +45,7 @@ pub enum ManagementMode {
 /// [`ManagementMode::SharedPort`] the endpoints ride the data-plane listener, and in
 /// [`ManagementMode::Disabled`] no management listener is bound.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Where the broker serves its health probes and metrics, kept apart from the NGSI-LD API.")]
 pub struct ManagementConfig {
     /// Where the management endpoints are served: `disabled`, `shared-port` or

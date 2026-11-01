@@ -6,8 +6,7 @@ use crate::{
     outcome::ProcessExitOutcome,
 };
 use andromeda_configuration::{
-    broker_config::BrokerConfig,
-    load::{ListenerOverrides, load, resolve_configuration_file},
+    load::{ListenerOverrides, LoadedConfiguration, ignored_setting::IgnoredSetting, load, resolve_configuration_file},
     redact::{redacted_json, redacted_toml},
     reference::{ReferenceError, descriptor::configuration_descriptor_text, json_schema::configuration_schema_text, template::configuration_template},
 };
@@ -24,8 +23,9 @@ pub enum ConfigurationOutputFormat {
 
 /// Result of configuration loading after its failures have been reported.
 pub enum ConfigurationLoadOutcome {
-    /// An admitted configuration is ready for broker composition.
-    Ready(Box<BrokerConfig>),
+    /// An admitted configuration, with the settings its layers write that it
+    /// ignores, is ready for broker composition.
+    Ready(Box<LoadedConfiguration>),
     /// Loading failed and the contained process outcome is ready to return.
     Failed(ProcessExitOutcome),
 }
@@ -37,18 +37,29 @@ pub enum ConfigurationLoadOutcome {
 ///
 /// Returns [`ConfigurationError::Load`] when the configuration does not load
 /// and [`ConfigurationError::Admission`] when a domain refuses a section value.
-pub(crate) fn load_admitted(configuration_file: Option<PathBuf>, overrides: ListenerOverrides) -> Result<(Option<PathBuf>, BrokerConfig), ConfigurationError> {
+pub(crate) fn load_admitted(
+    configuration_file: Option<PathBuf>,
+    overrides: ListenerOverrides,
+) -> Result<(Option<PathBuf>, LoadedConfiguration), ConfigurationError> {
     let configuration_file = resolve_configuration_file(configuration_file)?;
-    let config = load(configuration_file.as_deref(), overrides)?;
-    admit_sections(&config)?;
-    Ok((configuration_file, config))
+    let loaded = load(configuration_file.as_deref(), overrides)?;
+    admit_sections(&loaded.config)?;
+    Ok((configuration_file, loaded))
+}
+
+/// Print a warning for each ignored setting on standard error, where it does
+/// not mix with a document printed on standard output.
+fn print_ignored(ignored: &[IgnoredSetting]) {
+    for setting in ignored {
+        eprintln!("warning: {setting}");
+    }
 }
 
 /// Load the configuration for broker execution, reporting a failure.
 #[must_use]
 pub fn load_reported(configuration_file: Option<PathBuf>, overrides: ListenerOverrides) -> ConfigurationLoadOutcome {
     match load_admitted(configuration_file, overrides) {
-        Ok((_, config)) => ConfigurationLoadOutcome::Ready(Box::new(config)),
+        Ok((_, loaded)) => ConfigurationLoadOutcome::Ready(Box::new(loaded)),
         Err(error) => {
             eprintln!("{error}");
             ConfigurationLoadOutcome::Failed(ProcessExitOutcome::ConfigurationFailure)
@@ -60,11 +71,13 @@ pub fn load_reported(configuration_file: Option<PathBuf>, overrides: ListenerOve
 #[must_use]
 pub fn validate_reported(configuration_file: Option<PathBuf>) -> ProcessExitOutcome {
     match load_admitted(configuration_file, ListenerOverrides::default()) {
-        Ok((Some(path), _)) => {
+        Ok((Some(path), loaded)) => {
+            print_ignored(&loaded.ignored);
             println!("Configuration valid: {}", path.display());
             ProcessExitOutcome::Success
         }
-        Ok((None, _)) => {
+        Ok((None, loaded)) => {
+            print_ignored(&loaded.ignored);
             println!("Configuration valid: defaults and environment (no configuration file present)");
             ProcessExitOutcome::Success
         }
@@ -78,10 +91,11 @@ pub fn validate_reported(configuration_file: Option<PathBuf>) -> ProcessExitOutc
 /// Print the effective redacted configuration, reporting a failure.
 #[must_use]
 pub fn print_effective_reported(configuration_file: Option<PathBuf>, format: ConfigurationOutputFormat) -> ProcessExitOutcome {
-    let rendered = load_admitted(configuration_file, ListenerOverrides::default()).and_then(|(_, config)| {
+    let rendered = load_admitted(configuration_file, ListenerOverrides::default()).and_then(|(_, loaded)| {
+        print_ignored(&loaded.ignored);
         Ok(match format {
-            ConfigurationOutputFormat::Json => redacted_json(&config)?,
-            ConfigurationOutputFormat::Toml => redacted_toml(&config)?,
+            ConfigurationOutputFormat::Json => redacted_json(&loaded.config)?,
+            ConfigurationOutputFormat::Toml => redacted_toml(&loaded.config)?,
         })
     });
     match rendered {

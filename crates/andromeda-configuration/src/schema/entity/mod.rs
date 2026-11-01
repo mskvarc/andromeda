@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// how the spatial index is kept.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default)]
 #[schemars(description = "How entity batches run, how their deferred side effects are queued, and how the spatial index is kept.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct EntityConfig {
     /// How a batch operation is cut into chunks and run.
     #[schemars(description = "How a batch operation is cut into chunks and run.")]

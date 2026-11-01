@@ -8,7 +8,7 @@ use std::num::NonZeroUsize;
 /// How a batch operation is cut into chunks and run.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How a batch operation is cut into chunks and run.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct EntityBatchConfig {
     /// The entities one chunk of a batch holds.
     #[schemars(description = "The entities one chunk of a large batch holds.")]

@@ -34,7 +34,7 @@ pub enum CooldownMode {
 ///
 /// The registration's own `management.cooldown` is always a floor.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How a failing context source is held back. A registration's own `management.cooldown` is always the minimum hold.")]
 pub struct CooldownConfig {
     /// How a source is held back after a failed forwarded request:

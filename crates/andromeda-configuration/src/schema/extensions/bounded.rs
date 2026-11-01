@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 /// The temporal delete-by-query extension.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Temporal delete-by-query: a windowed, selector-scoped purge of temporal history on `DELETE /temporal/entities`.")]
 pub struct TemporalDeleteByQueryConfig {
     /// Whether the extension is served: `enabled` or `disabled`.
@@ -36,7 +36,7 @@ impl Default for TemporalDeleteByQueryConfig {
 
 /// The grouped temporal aggregation extension.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.")]
 pub struct TemporalAggregationGroupingConfig {
     /// Whether the extension is served: `enabled` or `disabled`.

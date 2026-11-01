@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 /// How long resolved contexts are kept in memory.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How long resolved contexts are kept in memory.")]
 pub struct JsonLdCacheConfig {
     /// The most entries each in-process context cache holds.

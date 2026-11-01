@@ -35,7 +35,7 @@ pub enum Http3Mode {
 /// the TCP listener, differing only in transport (UDP/QUIC rather than TCP).
 /// Its certificate is the `[tls]` identity.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The HTTP/3 listener, which shares the API listener's host and port and always terminates TLS 1.3 with the `[tls]` certificate.")]
 pub struct Http3Config {
     /// Whether the QUIC/HTTP/3 listener is served alongside the TCP listener.

@@ -9,7 +9,7 @@ use std::num::NonZeroU32;
 /// What is recorded in a Temporal Evolution, and how the queue that records it
 /// is drained.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "What is recorded in history, and how the queue of committed history writes is drained.")]
 pub struct TemporalHistoryConfig {
     /// Whether Core API writes add to the Temporal Evolution of the Entities

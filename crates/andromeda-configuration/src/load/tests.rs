@@ -4,7 +4,7 @@ mod key_tree;
 
 use crate::{
     broker_config::BrokerConfig,
-    load::{ListenerOverrides, LoadError, PRECEDENCE, default_configuration_file, load, resolve_configuration_file},
+    load::{ListenerOverrides, LoadError, LoadedConfiguration, PRECEDENCE, default_configuration_file, load, resolve_configuration_file},
     redact::{redacted_json, redacted_toml},
     reference::template::configuration_template,
     schema::{
@@ -35,7 +35,7 @@ use std::{
 /// Load with only the built-in defaults and the environment, so no file layer
 /// contributes.
 fn load_env_only() -> BrokerConfig {
-    load(None, ListenerOverrides::default()).expect("config should load")
+    load(None, ListenerOverrides::default()).expect("config should load").config
 }
 
 fn write_temp_config(contents: &str) -> PathBuf {
@@ -48,12 +48,38 @@ fn write_temp_config(contents: &str) -> PathBuf {
     path
 }
 
-/// Load `contents` as the configuration file.
-fn load_file(contents: &str) -> Result<BrokerConfig, LoadError> {
+/// Load `contents` as the configuration file, with what the load ignores.
+fn load_file_reporting(contents: &str) -> Result<LoadedConfiguration, LoadError> {
     let path = write_temp_config(contents);
     let result = load(Some(&path), ListenerOverrides::default());
     fs::remove_file(path).expect("temp config should be removed");
     result
+}
+
+/// Load `contents` as the configuration file.
+fn load_file(contents: &str) -> Result<BrokerConfig, LoadError> {
+    load_file_reporting(contents).map(|loaded| loaded.config)
+}
+
+/// Every setting `loaded` ignores, as its path and the layer that writes it.
+fn ignored_settings_of(loaded: &LoadedConfiguration) -> Vec<(String, &'static str)> {
+    loaded
+        .ignored
+        .iter()
+        .map(|setting| (setting.path().to_string(), <&'static str>::from(setting)))
+        .collect()
+}
+
+/// Every setting `contents`, loaded as the configuration file, writes that
+/// the load ignores; the file must load.
+fn ignored_in(contents: &str) -> Vec<(String, &'static str)> {
+    let loaded = load_file_reporting(contents).expect("a file with unknown keys loads");
+    ignored_settings_of(&loaded)
+}
+
+/// One ignored setting `path` that the configuration file writes.
+fn in_file(path: &str) -> Vec<(String, &'static str)> {
+    vec![(path.to_owned(), "file")]
 }
 
 /// The rules `contents` breaks as the configuration file: empty when it
@@ -157,13 +183,14 @@ fn a_cors_method_list_set_from_the_environment_splits_on_commas() {
 }
 
 /// The defaults written by `configuration generate` load back to the
-/// defaults.
+/// defaults, and every key the template writes is one the broker reads.
 #[test]
 #[serial]
 fn the_generated_defaults_load_back_to_the_defaults() {
-    let loaded = load_file(&configuration_template().expect("the template renders")).expect("the generated defaults load");
+    let loaded = load_file_reporting(&configuration_template().expect("the template renders")).expect("the generated defaults load");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), Vec::new());
     pretty_assertions::assert_eq!(
-        toml::to_string(&loaded).expect("the loaded configuration renders"),
+        toml::to_string(&loaded.config).expect("the loaded configuration renders"),
         toml::to_string(&BrokerConfig::default()).expect("the defaults render")
     );
 }
@@ -295,7 +322,7 @@ fn a_write_reserve_loads_below_the_whole_pool_and_the_whole_pool_is_refused() {
 fn env_overrides_file() {
     let path = write_temp_config("[server]\nport = 1600\n");
     unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "1700") };
-    let config = load(Some(&path), ListenerOverrides::default()).expect("config should load");
+    let config = load(Some(&path), ListenerOverrides::default()).expect("config should load").config;
     unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
     fs::remove_file(path).expect("temp config should be removed");
     pretty_assertions::assert_eq!(config.server.port, 1700);
@@ -305,7 +332,9 @@ fn env_overrides_file() {
 #[serial]
 fn cli_overrides_env() {
     unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "8888") };
-    let config = load(None, ListenerOverrides { host: None, port: Some(7777) }).expect("config should load");
+    let config = load(None, ListenerOverrides { host: None, port: Some(7777) })
+        .expect("config should load")
+        .config;
     unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
     pretty_assertions::assert_eq!(config.server.port, 7777);
 }
@@ -321,12 +350,13 @@ fn a_single_prefix_underscore_name_is_not_read() {
 
 #[test]
 #[serial]
-fn a_single_underscore_between_table_and_key_is_refused_as_an_unknown_table() {
+fn a_single_underscore_between_table_and_key_is_ignored_as_an_unknown_key() {
     unsafe { env::set_var("ANDROMEDA__SERVER_HOST", "203.0.113.1") };
     let result = load(None, ListenerOverrides::default());
     unsafe { env::remove_var("ANDROMEDA__SERVER_HOST") };
-    let message = result.expect_err("a table named server_host does not exist").to_string();
-    assert!(message.to_lowercase().contains("server_host"), "{message}");
+    let loaded = result.expect("an unknown environment key loads");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("server_host".to_owned(), "environment")]);
+    pretty_assertions::assert_eq!(loaded.config.server.host, BrokerConfig::default().server.host);
 }
 
 #[test]
@@ -371,127 +401,203 @@ fn the_default_configuration_names_no_atomic_write_table() {
     assert!(!rendered.contains("atomic_write") && !rendered.contains("bulk_mode"), "{rendered}");
 }
 
-/// Load a file holding one misspelled key under `table` and return the
-/// rendered startup error.
-fn unknown_key_error(table: &str) -> String {
-    let error = load_file(&format!("[{table}]\nunknown_key = 1\n")).expect_err("an unknown key must fail loading");
-    assert!(matches!(error, LoadError::Layers(_)), "{error:?}");
-    error.to_string()
-}
-
-macro_rules! unknown_key_is_refused_with_its_path {
+macro_rules! an_unknown_key_is_ignored_and_reported_with_its_path {
     ($($name:ident: $table:literal,)+) => {
         $(
             #[test]
             #[serial]
             fn $name() {
-                let message = unknown_key_error($table);
-                assert!(message.contains(concat!($table, ".unknown_key")), "{message}");
-                assert!(message.contains("unknown field: found `unknown_key`, expected"), "{message}");
+                pretty_assertions::assert_eq!(
+                    ignored_in(concat!("[", $table, "]\nunknown_key = 1\n")),
+                    in_file(concat!($table, ".unknown_key"))
+                );
             }
         )+
     };
 }
 
-unknown_key_is_refused_with_its_path! {
-    an_unknown_server_key_is_refused: "server",
-    an_unknown_server_http3_key_is_refused: "server.http3",
-    an_unknown_tls_key_is_refused: "tls",
-    an_unknown_tls_client_authentication_key_is_refused: "tls.client_authentication",
-    an_unknown_management_key_is_refused: "management",
-    an_unknown_request_limits_key_is_refused: "request_limits",
-    an_unknown_http_key_is_refused: "http",
-    an_unknown_http_body_decoding_key_is_refused: "http.body_decoding",
-    an_unknown_http_cors_key_is_refused: "http.cors",
-    an_unknown_http_compression_key_is_refused: "http.compression",
-    an_unknown_http_decompression_key_is_refused: "http.decompression",
-    an_unknown_http_server_timing_key_is_refused: "http.server_timing",
-    an_unknown_http_security_headers_key_is_refused: "http.security_headers",
-    an_unknown_http_csrf_key_is_refused: "http.csrf",
-    an_unknown_database_key_is_refused: "database",
-    an_unknown_database_name_cache_key_is_refused: "database.name_cache",
-    an_unknown_database_maintenance_key_is_refused: "database.maintenance",
-    an_unknown_tenancy_key_is_refused: "tenancy",
-    an_unknown_tenancy_databases_key_is_refused: "tenancy.databases",
-    an_unknown_tenancy_residency_key_is_refused: "tenancy.residency",
-    an_unknown_tenancy_build_key_is_refused: "tenancy.build",
-    an_unknown_expiry_key_is_refused: "expiry",
-    an_unknown_jsonld_key_is_refused: "jsonld",
-    an_unknown_jsonld_fetch_key_is_refused: "jsonld.fetch",
-    an_unknown_jsonld_cache_key_is_refused: "jsonld.cache",
-    an_unknown_entity_key_is_refused: "entity",
-    an_unknown_entity_batch_key_is_refused: "entity.batch",
-    an_unknown_entity_side_effects_key_is_refused: "entity.side_effects",
-    an_unknown_entity_side_effects_queue_key_is_refused: "entity.side_effects.queue",
-    an_unknown_entity_side_effects_retention_key_is_refused: "entity.side_effects.retention",
-    an_unknown_entity_spatial_index_key_is_refused: "entity.spatial_index",
-    an_unknown_temporal_key_is_refused: "temporal",
-    an_unknown_temporal_query_key_is_refused: "temporal.query",
-    an_unknown_temporal_history_key_is_refused: "temporal.history",
-    an_unknown_temporal_history_queue_key_is_refused: "temporal.history.queue",
-    an_unknown_temporal_storage_key_is_refused: "temporal.storage",
-    an_unknown_temporal_storage_columnstore_key_is_refused: "temporal.storage.columnstore",
-    an_unknown_temporal_storage_retention_key_is_refused: "temporal.storage.retention",
-    an_unknown_notifications_key_is_refused: "notifications",
-    an_unknown_notifications_delivery_key_is_refused: "notifications.delivery",
-    an_unknown_notifications_delivery_queue_key_is_refused: "notifications.delivery.queue",
-    an_unknown_notifications_delivery_retention_key_is_refused: "notifications.delivery.retention",
-    an_unknown_notifications_evaluation_key_is_refused: "notifications.evaluation",
-    an_unknown_notifications_periodic_key_is_refused: "notifications.periodic",
-    an_unknown_federation_key_is_refused: "federation",
-    an_unknown_federation_forwarding_key_is_refused: "federation.forwarding",
-    an_unknown_federation_response_cache_key_is_refused: "federation.response_cache",
-    an_unknown_federation_cooldown_key_is_refused: "federation.cooldown",
-    an_unknown_federation_identity_key_is_refused: "federation.identity",
-    an_unknown_snapshot_key_is_refused: "snapshot",
-    an_unknown_snapshot_quota_key_is_refused: "snapshot.quota",
-    an_unknown_snapshot_preparation_key_is_refused: "snapshot.preparation",
-    an_unknown_extensions_key_is_refused: "extensions",
-    an_unknown_extensions_cursor_pagination_key_is_refused: "extensions.cursor_pagination",
-    an_unknown_extensions_temporal_delete_by_query_key_is_refused: "extensions.temporal_delete_by_query",
-    an_unknown_extensions_tenant_management_key_is_refused: "extensions.tenant_management",
-    an_unknown_extensions_q_target_languages_key_is_refused: "extensions.q_target_languages",
-    an_unknown_observability_key_is_refused: "observability",
-    an_unknown_observability_log_key_is_refused: "observability.log",
-    an_unknown_observability_log_file_key_is_refused: "observability.log.file",
-    an_unknown_observability_metrics_key_is_refused: "observability.metrics",
+an_unknown_key_is_ignored_and_reported_with_its_path! {
+    an_unknown_server_key_is_ignored: "server",
+    an_unknown_server_http3_key_is_ignored: "server.http3",
+    an_unknown_tls_key_is_ignored: "tls",
+    an_unknown_tls_client_authentication_key_is_ignored: "tls.client_authentication",
+    an_unknown_management_key_is_ignored: "management",
+    an_unknown_request_limits_key_is_ignored: "request_limits",
+    an_unknown_http_key_is_ignored: "http",
+    an_unknown_http_body_decoding_key_is_ignored: "http.body_decoding",
+    an_unknown_http_cors_key_is_ignored: "http.cors",
+    an_unknown_http_compression_key_is_ignored: "http.compression",
+    an_unknown_http_decompression_key_is_ignored: "http.decompression",
+    an_unknown_http_server_timing_key_is_ignored: "http.server_timing",
+    an_unknown_http_security_headers_key_is_ignored: "http.security_headers",
+    an_unknown_http_csrf_key_is_ignored: "http.csrf",
+    an_unknown_database_key_is_ignored: "database",
+    an_unknown_database_name_cache_key_is_ignored: "database.name_cache",
+    an_unknown_database_maintenance_key_is_ignored: "database.maintenance",
+    an_unknown_tenancy_key_is_ignored: "tenancy",
+    an_unknown_tenancy_databases_key_is_ignored: "tenancy.databases",
+    an_unknown_tenancy_default_tenant_key_is_ignored: "tenancy.default_tenant",
+    an_unknown_tenancy_residency_key_is_ignored: "tenancy.residency",
+    an_unknown_tenancy_build_key_is_ignored: "tenancy.build",
+    an_unknown_expiry_key_is_ignored: "expiry",
+    an_unknown_jsonld_key_is_ignored: "jsonld",
+    an_unknown_jsonld_fetch_key_is_ignored: "jsonld.fetch",
+    an_unknown_jsonld_cache_key_is_ignored: "jsonld.cache",
+    an_unknown_entity_key_is_ignored: "entity",
+    an_unknown_entity_batch_key_is_ignored: "entity.batch",
+    an_unknown_entity_side_effects_key_is_ignored: "entity.side_effects",
+    an_unknown_entity_side_effects_queue_key_is_ignored: "entity.side_effects.queue",
+    an_unknown_entity_side_effects_retention_key_is_ignored: "entity.side_effects.retention",
+    an_unknown_entity_spatial_index_key_is_ignored: "entity.spatial_index",
+    an_unknown_temporal_key_is_ignored: "temporal",
+    an_unknown_temporal_query_key_is_ignored: "temporal.query",
+    an_unknown_temporal_history_key_is_ignored: "temporal.history",
+    an_unknown_temporal_history_queue_key_is_ignored: "temporal.history.queue",
+    an_unknown_temporal_storage_key_is_ignored: "temporal.storage",
+    an_unknown_temporal_storage_columnstore_key_is_ignored: "temporal.storage.columnstore",
+    an_unknown_temporal_storage_retention_key_is_ignored: "temporal.storage.retention",
+    an_unknown_notifications_key_is_ignored: "notifications",
+    an_unknown_notifications_delivery_key_is_ignored: "notifications.delivery",
+    an_unknown_notifications_delivery_queue_key_is_ignored: "notifications.delivery.queue",
+    an_unknown_notifications_delivery_retention_key_is_ignored: "notifications.delivery.retention",
+    an_unknown_notifications_evaluation_key_is_ignored: "notifications.evaluation",
+    an_unknown_notifications_periodic_key_is_ignored: "notifications.periodic",
+    an_unknown_federation_key_is_ignored: "federation",
+    an_unknown_federation_forwarding_key_is_ignored: "federation.forwarding",
+    an_unknown_federation_query_key_is_ignored: "federation.query",
+    an_unknown_federation_response_cache_key_is_ignored: "federation.response_cache",
+    an_unknown_federation_cooldown_key_is_ignored: "federation.cooldown",
+    an_unknown_federation_identity_key_is_ignored: "federation.identity",
+    an_unknown_snapshot_key_is_ignored: "snapshot",
+    an_unknown_snapshot_quota_key_is_ignored: "snapshot.quota",
+    an_unknown_snapshot_preparation_key_is_ignored: "snapshot.preparation",
+    an_unknown_extensions_key_is_ignored: "extensions",
+    an_unknown_extensions_cursor_pagination_key_is_ignored: "extensions.cursor_pagination",
+    an_unknown_extensions_temporal_delete_by_query_key_is_ignored: "extensions.temporal_delete_by_query",
+    an_unknown_extensions_tenant_management_key_is_ignored: "extensions.tenant_management",
+    an_unknown_extensions_q_target_languages_key_is_ignored: "extensions.q_target_languages",
+    an_unknown_observability_key_is_ignored: "observability",
+    an_unknown_observability_log_key_is_ignored: "observability.log",
+    an_unknown_observability_log_file_key_is_ignored: "observability.log.file",
+    an_unknown_observability_metrics_key_is_ignored: "observability.metrics",
+    an_unknown_observability_metrics_prometheus_key_is_ignored: "observability.metrics.prometheus",
 }
 
 #[test]
 #[serial]
-fn an_unknown_database_pooler_key_is_refused() {
-    let message = load_file("[database.pooler]\nurl = \"postgres://pooler/db\"\nunknown_key = 1\n")
-        .expect_err("an unknown pooler key must fail loading")
-        .to_string();
-    assert!(message.contains("database.pooler.unknown_key"), "{message}");
+fn an_unknown_database_pooler_key_is_ignored_and_the_pooler_still_loads() {
+    let loaded = load_file_reporting("[database.pooler]\nurl = \"postgres://pooler/db\"\nmax_connections_per_tenant = 2\nunknown_key = 1\n")
+        .expect("an unknown pooler key loads");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("database.pooler.unknown_key"));
+    assert!(loaded.config.database.is_pooled());
 }
 
 #[test]
 #[serial]
-fn an_unknown_preloaded_context_key_is_refused() {
-    let message = load_file("[[jsonld.preloaded_contexts]]\nurl = \"https://example.com/c.jsonld\"\npath = \"c.jsonld\"\nunknown_key = 1\n")
-        .expect_err("an unknown preloaded-context key must fail loading")
-        .to_string();
-    assert!(message.contains("unknown_key"), "{message}");
+fn an_unknown_key_in_a_preloaded_context_entry_is_ignored_with_the_entry_index() {
+    let loaded = load_file_reporting(concat!(
+        "[[jsonld.preloaded_contexts]]\nurl = \"https://example.com/a.jsonld\"\npath = \"a.jsonld\"\n",
+        "[[jsonld.preloaded_contexts]]\nurl = \"https://example.com/b.jsonld\"\npath = \"b.jsonld\"\nunknown_key = 1\n",
+    ))
+    .expect("an unknown preloaded-context key loads");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("jsonld.preloaded_contexts[1].unknown_key"));
+    pretty_assertions::assert_eq!(loaded.config.jsonld.preloaded_contexts.len(), 2);
 }
 
 #[test]
 #[serial]
-fn an_unknown_top_level_key_is_refused() {
-    let message = load_file("unknown_section = 1\n")
-        .expect_err("an unknown top-level key must fail loading")
-        .to_string();
-    assert!(message.contains("unknown_section"), "{message}");
+fn an_unknown_top_level_key_is_ignored() {
+    pretty_assertions::assert_eq!(ignored_in("unknown_section = 1\n"), in_file("unknown_section"));
+}
+
+/// A table the configuration does not define is reported once, as a whole,
+/// not once for each key it holds.
+#[test]
+#[serial]
+fn an_unknown_top_level_table_is_ignored_as_one_setting() {
+    pretty_assertions::assert_eq!(ignored_in("[future_feature]\nmode = \"enabled\"\nlimit = 3\n"), in_file("future_feature"));
 }
 
 #[test]
 #[serial]
-fn an_unknown_prefixed_environment_variable_is_refused() {
+fn an_unknown_nested_table_is_ignored_and_its_siblings_still_load() {
+    let loaded = load_file_reporting("[server]\nport = 1600\n\n[server.future]\nmode = \"enabled\"\n").expect("an unknown nested table loads");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("server.future"));
+    pretty_assertions::assert_eq!(loaded.config.server.port, 1600);
+}
+
+#[test]
+#[serial]
+fn a_file_without_unknown_keys_ignores_nothing() {
+    pretty_assertions::assert_eq!(ignored_in("[server]\nport = 1600\n"), Vec::new());
+}
+
+/// The message names the key, where it is written and that it is ignored.
+#[test]
+#[serial]
+fn an_ignored_file_key_names_its_path_and_its_file() {
+    let path = write_temp_config("[server]\nunknown_key = 1\n");
+    let result = load(Some(&path), ListenerOverrides::default());
+    fs::remove_file(&path).expect("temp config should be removed");
+    let message = result
+        .expect("an unknown key loads")
+        .ignored
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    pretty_assertions::assert_eq!(
+        message,
+        vec![format!(
+            "`server.unknown_key` in {} is not a setting this broker reads, so it is ignored",
+            path.display()
+        )]
+    );
+}
+
+#[test]
+#[serial]
+fn an_unknown_prefixed_environment_variable_is_ignored_and_named() {
     unsafe { env::set_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ", "1") };
     let result = load(None, ListenerOverrides::default());
     unsafe { env::remove_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ") };
-    let message = result.expect_err("an unknown environment key must fail loading").to_string();
-    assert!(message.to_lowercase().contains("http.server_timing.phasez"), "{message}");
+    let loaded = result.expect("an unknown environment key loads");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("http.server_timing.phasez".to_owned(), "environment")]);
+    pretty_assertions::assert_eq!(
+        loaded.ignored.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        vec!["ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ sets `http.server_timing.phasez`, which is not a setting this broker reads, so it is ignored".to_owned()]
+    );
+}
+
+/// The file and the environment each write the unknown key, so each is
+/// reported.
+#[test]
+#[serial]
+fn an_unknown_key_written_by_the_file_and_the_environment_is_reported_for_both() {
+    let path = write_temp_config("[server]\nunknown_key = 1\n");
+    unsafe { env::set_var("ANDROMEDA__SERVER__UNKNOWN_KEY", "2") };
+    let result = load(Some(&path), ListenerOverrides::default());
+    unsafe { env::remove_var("ANDROMEDA__SERVER__UNKNOWN_KEY") };
+    fs::remove_file(&path).expect("temp config should be removed");
+    pretty_assertions::assert_eq!(
+        ignored_settings_of(&result.expect("an unknown key loads")),
+        vec![("server.unknown_key".to_owned(), "file"), ("server.unknown_key".to_owned(), "environment")]
+    );
+}
+
+/// A key the configuration defines holding a value of the wrong type is
+/// refused, never ignored.
+#[test]
+#[serial]
+fn a_defined_key_with_a_value_of_the_wrong_type_is_still_refused() {
+    let refused = load_file("[server]\nport = \"high\"\n");
+    assert!(matches!(&refused, Err(LoadError::Layers(_))), "{:?}", refused.map(|_| ()));
+}
+
+#[test]
+#[serial]
+fn a_defined_duration_key_with_a_malformed_value_is_still_refused() {
+    let refused = load_file("[server]\ngraceful_drain_timeout = \"soon\"\n");
+    assert!(matches!(&refused, Err(LoadError::Layers(_))), "{:?}", refused.map(|_| ()));
 }
 
 #[test]

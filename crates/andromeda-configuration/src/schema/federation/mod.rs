@@ -14,7 +14,7 @@ use std::num::NonZeroUsize;
 
 /// The per-tenant cache of forwarded `GET` responses (clause 6.3.17).
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The per-tenant cache of forwarded `GET` responses.")]
 pub struct ResponseCacheConfig {
     /// The most responses one tenant's cache holds.
@@ -35,7 +35,7 @@ impl Default for ResponseCacheConfig {
 /// Forwarding to Context Sources, caching their answers, holding back the
 /// failing ones, and this broker's own identity.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "How the broker forwards requests to the context sources its registrations name, and the identity it reports as a context source itself."
 )]

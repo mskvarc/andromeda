@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// The identity returned by `/info/sourceIdentity` and used for distributed
 /// loop detection (Table 5.2.40-1).
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The identity the broker reports at `/ngsi-ld/v1/info/sourceIdentity` and uses to detect distributed forwarding loops.")]
 pub struct IdentityConfig {
     /// The URI identifying this Context Source. Left out, it is

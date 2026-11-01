@@ -86,7 +86,7 @@ pub enum LogCompression {
 /// rotating, optionally compressed file, independent of standard output and
 /// with its own verbosity.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "The structured log file, written in addition to standard output with a level of its own. `RUST_LOG` does not affect it.")]
 pub struct LogFileConfig {
     /// Whether the structured file sink is installed.
@@ -141,7 +141,7 @@ impl Default for LogFileConfig {
 
 /// What the broker logs, and where.
 #[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "What the broker logs, and where.")]
 pub struct LogConfig {
     /// The most verbose level written to standard output: `error`, `warn`,
@@ -155,7 +155,7 @@ pub struct LogConfig {
 
 /// The Prometheus exporter.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Prometheus metrics served at `GET /metrics` on the management endpoints.")]
 pub struct PrometheusMetricsConfig {
     /// Whether a Prometheus recorder is installed and `GET /metrics` served.
@@ -171,7 +171,7 @@ impl Default for PrometheusMetricsConfig {
 
 /// Which exporters the broker's metrics go to, one table each.
 #[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Which exporters the broker's metrics go to, one table each.")]
 pub struct MetricsConfig {
     /// The Prometheus exporter.
@@ -181,7 +181,7 @@ pub struct MetricsConfig {
 
 /// Logging and metrics.
 #[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Logging and metrics.")]
 pub struct ObservabilityConfig {
     /// What the broker logs, and where.

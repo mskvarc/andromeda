@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 /// The broker composition reads it and hands each crate the one table that
 /// crate reads.
 #[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     title = "Andromeda configuration",
     description = "The whole broker configuration, one table per concern. Each table is independent of the others except where a key names another by its dotted path."

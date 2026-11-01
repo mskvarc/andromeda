@@ -42,7 +42,7 @@ pub enum NameLoading {
 #[schemars(
     description = "How each tenant's attribute and entity type name caches are filled, how much memory each may hold, and how long an unused name stays in one."
 )]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct NameCacheConfig {
     /// When the caches are filled: `eager` (as the tenant opens) or `lazy`
     /// (as names are first resolved).

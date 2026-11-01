@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_AGGREGATION_INSTANCES: NonZeroU64 = NonZeroU64::MIN.satura
 
 /// How much of a Temporal Evolution one read returns.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How much of a Temporal Evolution one temporal read returns.")]
 pub struct TemporalQueryConfig {
     /// Instances per attribute a temporal read without `lastN` returns before

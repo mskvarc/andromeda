@@ -40,7 +40,7 @@ pub enum MaintenanceProfile {
 /// Adaptive PostgreSQL maintenance configuration.
 #[derive(Clone, Copy, Deserialize, Serialize, Default, JsonSchema, Debug, Eq, PartialEq)]
 #[schemars(description = "Adaptive PostgreSQL inspection and maintenance of the tenant databases.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct MaintenanceConfig {
     /// Whether inspection is disabled, observational, or automatic.
     #[schemars(description = "Whether maintenance is off, only inspects and reports, or also acts on what it finds.")]

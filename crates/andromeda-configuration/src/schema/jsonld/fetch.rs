@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// Whether and how a remote `@context` is downloaded.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Whether and how a remote `@context` is downloaded.")]
 pub struct JsonLdFetchConfig {
     /// Whether a context that is neither embedded, preloaded nor cached may

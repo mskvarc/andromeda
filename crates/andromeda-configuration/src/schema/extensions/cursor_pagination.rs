@@ -43,7 +43,7 @@ pub enum CursorPaginationMode {
 /// "implemented in a completely opaque way", which is why this is the one
 /// extension a default broker serves.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "Opaque, keyset-backed pagination pointers: collections hand out `prev`, `next` and `last` links carrying an opaque `cursor` token. The one extension a default broker serves, since NGSI-LD permits pointers implemented in a completely opaque way."
 )]

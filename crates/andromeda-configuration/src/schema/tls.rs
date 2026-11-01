@@ -82,7 +82,7 @@ pub enum TlsConfigError {
 /// Whether connecting clients are asked for a certificate, and which issuer
 /// it must chain to.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Whether clients must present a certificate, and which issuers it must chain to.")]
 pub struct ClientAuthenticationConfig {
     /// Whether clients are asked for a certificate: `disabled`, `optional` or
@@ -103,7 +103,7 @@ pub struct ClientAuthenticationConfig {
 /// The broker's TLS identity and handshake policy, shared by every listener
 /// that terminates TLS.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "The TLS identity and handshake policy every TLS-terminating listener shares: the API listener with `server.transport` at `\"tls\"`, the HTTP/3 listener, and a separate management listener with `management.transport` at `\"tls\"`. Nothing reads it while no listener terminates TLS."
 )]

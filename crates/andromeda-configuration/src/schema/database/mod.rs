@@ -60,7 +60,7 @@ pub enum SynchronousCommit {
 /// The PostgreSQL the broker stores in, and how it connects.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
 #[schemars(description = "The PostgreSQL server the broker stores in, and how it connects to it.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// PostgreSQL connection URL. It always names PostgreSQL itself, never a
     /// proxy: provisioning, migration and maintenance connect here, and so

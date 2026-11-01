@@ -11,7 +11,7 @@ use url::Url;
 
 /// One `@context` read from a file at startup instead of being downloaded.
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "One `@context` read from a file at startup instead of being downloaded.")]
 pub struct PreloadedContext {
     /// The URL the context is known by.
@@ -28,7 +28,7 @@ pub struct PreloadedContext {
 
 /// How `@context` documents are resolved.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How the broker downloads, caches and preloads the `@context` documents requests refer to.")]
 pub struct JsonLdConfig {
     /// Contexts read from files at startup, one `[[jsonld.preloaded_contexts]]`

@@ -32,7 +32,7 @@ pub enum CompressionQuality {
 /// `mode` turns compression on or off; the codings are a typed set that must
 /// name at least one coding while compression is on.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "Response compression: which codings, at what quality.")]
 pub struct CompressionConfig {
     /// Whether responses are compressed at all.

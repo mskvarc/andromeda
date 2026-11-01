@@ -41,7 +41,7 @@ fn admitted(contents: &str) -> Result<BrokerConfig, ConfigurationError> {
     let path = write_temp_config(contents);
     let result = load_admitted(Some(path.clone()), ListenerOverrides::default()); // clone: the file is removed after loading
     fs::remove_file(path).expect("temp config should be removed");
-    result.map(|(_, config)| config)
+    result.map(|(_, loaded)| loaded.config)
 }
 
 #[test]

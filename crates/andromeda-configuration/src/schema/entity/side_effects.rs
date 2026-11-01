@@ -14,7 +14,7 @@ use std::num::NonZeroU32;
 /// landed.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How long a dead-lettered side-effect job is kept, and how often expired ones are removed.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct SideEffectRetentionConfig {
     /// How long a dead-lettered job is kept, in human-readable form
     /// (`"7days"`).
@@ -42,7 +42,7 @@ impl Default for SideEffectRetentionConfig {
 #[schemars(
     description = "The durable queue of change events a `Prefer: respond-async` batch stores with its entities for a worker to turn into notifications."
 )]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct SideEffectsConfig {
     /// Jobs one pass claims at most; the pass replays them one after another.
     #[schemars(description = "The most jobs one pass claims. The pass replays them one after another before the worker claims again.")]

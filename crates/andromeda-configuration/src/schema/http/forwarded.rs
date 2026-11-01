@@ -16,7 +16,7 @@ use strum::{Display, EnumString};
 /// Whose forwarded fields are believed, and the proxies a `proxies` trust
 /// names.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "Whether the `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` request fields decide the scheme and host of the URLs the broker builds, such as a pagination `Link` and the stored URL of an `@context`."
 )]

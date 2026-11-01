@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// How a durable queue is polled, claimed and retried.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How a durable work queue is polled, claimed and retried.")]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct DurableQueue {
     /// How long the worker waits before polling again once a commit's wake
     /// has been handled, in human-readable form (`"1s"`). The floor of its
@@ -66,13 +66,22 @@ impl Default for DurableQueue {
 #[cfg(test)]
 mod tests {
     use crate::schema::durable_queue::DurableQueue;
+    use pretty_assertions::assert_eq;
+    use toml::de::Error as TomlError;
 
+    /// How a job that keeps failing is handled differs by queue, so
+    /// `dead_letter_after` lives in the table that owns the queue and the
+    /// shared table does not read it.
     #[test]
-    fn a_key_outside_the_queue_table_is_refused() {
-        let refused = toml::from_str::<DurableQueue>(
-            "dead_letter_after = \"1day\"
-",
-        );
-        assert!(refused.is_err_and(|error| error.to_string().contains("unknown field `dead_letter_after`")));
+    fn a_key_outside_the_queue_table_is_not_read() -> Result<(), TomlError> {
+        let table: toml::Value = toml::from_str(concat!(
+            "poll_interval = \"1s\"\nmax_poll_interval = \"30s\"\nlease_timeout = \"30s\"\n",
+            "retry_interval = \"2s\"\nmax_retry_interval = \"5m\"\ndead_letter_after = \"1day\"\n",
+        ))?;
+        let mut ignored = Vec::new();
+        let queue = serde_ignored::deserialize::<_, _, DurableQueue>(table, |path| ignored.push(path.to_string()))?;
+        assert_eq!(queue, DurableQueue::default());
+        assert_eq!(ignored, ["dead_letter_after"]);
+        Ok(())
     }
 }

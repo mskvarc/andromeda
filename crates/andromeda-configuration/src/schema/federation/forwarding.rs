@@ -8,7 +8,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 /// How requests are forwarded to Context Sources.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "How requests reach context sources: fan-out, timeouts and the addresses a source may resolve into.")]
 pub struct ForwardingConfig {
     /// The most forwarded requests in flight at once.

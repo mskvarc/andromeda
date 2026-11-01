@@ -1,11 +1,17 @@
 //! The one-shot startup profile log emitted before broker resources open.
 
-use andromeda_configuration::{broker_config::BrokerConfig, load::PRECEDENCE, schema::management::ManagementMode};
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    load::{PRECEDENCE, ignored_setting::IgnoredSetting},
+    schema::management::ManagementMode,
+};
 use std::net::SocketAddr;
-use tracing::info;
+use tracing::{info, warn};
 
-/// Report the active construction profile before broker resources are opened.
-pub(crate) fn report_startup(config: &BrokerConfig) {
+/// Report the active construction profile, and every setting the
+/// configuration layers write that the broker ignores, before broker
+/// resources are opened.
+pub(crate) fn report_startup(config: &BrokerConfig, ignored: &[IgnoredSetting]) {
     info!(
         host = %config.server.host,
         port = config.server.port,
@@ -19,6 +25,20 @@ pub(crate) fn report_startup(config: &BrokerConfig) {
         "Starting Andromeda"
     );
     report_management_plane(config);
+    report_ignored_settings(ignored);
+}
+
+/// Warn once for each setting a layer writes that the configuration does not
+/// define, naming the layer, so a misspelt key is seen although it loads.
+fn report_ignored_settings(ignored: &[IgnoredSetting]) {
+    for setting in ignored {
+        warn!(
+            event = "configuration_setting_ignored",
+            setting = %setting.path(),
+            layer = <&'static str>::from(setting),
+            "{setting}"
+        );
+    }
 }
 
 /// Report where the observability endpoints (`/livez`, `/readyz`, `/metrics`)

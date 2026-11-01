@@ -81,7 +81,7 @@ pub enum QTargetLanguageLevel {
 
 /// The `[extensions.q_target_languages]` table.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(description = "What a `q` bracket may name as a target language.")]
 pub struct QTargetLanguagesConfig {
     /// Whether a `q` bracket may name more than the specification's grammar.
@@ -131,7 +131,7 @@ impl From<QTargetLanguages> for QTargetLanguagesConfig {
 
 /// Andromeda's opt-in, non-standard features.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 #[schemars(
     description = "Andromeda's opt-in, non-standard features, one table each. Every extension is inert unless a client asks for it, and its off state is the behaviour of a conformant broker."
 )]
