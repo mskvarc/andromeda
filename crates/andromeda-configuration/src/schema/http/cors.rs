@@ -16,7 +16,7 @@ use url::Url;
 /// The browser-origin policy the broker installs at its edge.
 ///
 /// `permissive` and `very-permissive` are complete profiles that ignore every
-/// other `[http.cors]` field; `enabled` builds the policy from the custom fields;
+/// other `[http.cors]` field; `configured` builds the policy from the custom fields;
 /// `disabled` installs no CORS middleware at all.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -30,7 +30,7 @@ pub enum CorsMode {
     #[schemars(
         description = "Builds the policy from `http.cors.allow_origins`, `http.cors.allow_methods`, `http.cors.allow_headers`, `http.cors.expose_headers`, `http.cors.credentials`, `http.cors.private_network` and `http.cors.preflight_lifetime`."
     )]
-    Enabled,
+    Configured,
     /// Accept any origin, method and header, without credentials.
     #[default]
     #[schemars(description = "Allows any origin, method and header, without credentials. Every other `[http.cors]` key is ignored.")]
@@ -230,26 +230,26 @@ pub enum CorsPermission {
 pub struct CorsConfig {
     /// The overall CORS mode. `permissive` and `very-permissive` ignore every
     /// other field in this table.
-    #[schemars(description = "Which CORS policy applies. Only `\"enabled\"` reads the other keys of this table.")]
+    #[schemars(description = "Which CORS policy applies. Only `\"configured\"` reads the other keys of this table.")]
     pub mode: CorsMode,
-    /// Origins accepted when `mode = enabled`.
+    /// Origins accepted when `mode = configured`.
     #[schemars(
-        description = "The origins allowed to read the API: `\"any\"`, or a list such as `[\"https://dashboard.example.org\"]`. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "The origins allowed to read the API: `\"any\"`, or a list such as `[\"https://dashboard.example.org\"]`. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub allow_origins: OriginRule,
-    /// Methods allowed when `mode = enabled`.
+    /// Methods allowed when `mode = configured`.
     #[schemars(
-        description = "The methods allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list such as `[\"GET\", \"POST\"]`. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "The methods allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list such as `[\"GET\", \"POST\"]`. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub allow_methods: MethodRule,
-    /// Request headers allowed when `mode = enabled`.
+    /// Request headers allowed when `mode = configured`.
     #[schemars(
-        description = "The request headers allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list of header names. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "The request headers allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list of header names. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub allow_headers: HeaderRule,
-    /// Response headers exposed to the browser when `mode = enabled`.
+    /// Response headers exposed to the browser when `mode = configured`.
     #[schemars(
-        description = "The response headers a browser script may read: `\"any\"`, or a list of header names. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "The response headers a browser script may read: `\"any\"`, or a list of header names. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub expose_headers: ExposeRule,
     /// Whether credentialed requests (cookies, HTTP auth) are `allowed` or
@@ -257,13 +257,13 @@ pub struct CorsConfig {
     /// wildcard, which the broker refuses at configuration time rather than
     /// letting the CORS layer panic.
     #[schemars(
-        description = "Whether cookies and HTTP authentication may accompany a cross-origin request. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "Whether cookies and HTTP authentication may accompany a cross-origin request. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub credentials: CorsPermission,
     /// Whether `Access-Control-Allow-Private-Network` is granted to a
     /// private-network preflight: `allowed` or `refused`.
     #[schemars(
-        description = "Whether a private-network preflight is answered with `Access-Control-Allow-Private-Network`. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "Whether a private-network preflight is answered with `Access-Control-Allow-Private-Network`. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub private_network: CorsPermission,
     /// How long a browser may cache a preflight result
@@ -271,7 +271,7 @@ pub struct CorsConfig {
     /// the browser's own default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "How long a browser may cache a preflight answer, sent as `Access-Control-Max-Age`. Left out, the broker sends no `Access-Control-Max-Age` and the browser's own default applies. Read only when `http.cors.mode` is `\"enabled\"`."
+        description = "How long a browser may cache a preflight answer, sent as `Access-Control-Max-Age`. Left out, the broker sends no `Access-Control-Max-Age` and the browser's own default applies. Read only when `http.cors.mode` is `\"configured\"`."
     )]
     pub preflight_lifetime: Option<HumanDuration>,
 }
@@ -297,11 +297,11 @@ impl CorsConfig {
     ///
     /// Only the literal `any` wildcard conflicts: `mirror` reflects a concrete
     /// value per request and is valid with credentials, matching the CORS layer's
-    /// own `is_wildcard` test. The check applies only to `mode = enabled`, since
+    /// own `is_wildcard` test. The check applies only to `mode = configured`, since
     /// the profile modes never read these fields.
     #[must_use]
     pub const fn has_credentialed_wildcard(&self) -> bool {
-        if !matches!(self.mode, CorsMode::Enabled) || matches!(self.credentials, CorsPermission::Refused) {
+        if !matches!(self.mode, CorsMode::Configured) || matches!(self.credentials, CorsPermission::Refused) {
             return false;
         }
         matches!(self.allow_origins, OriginRule::Any)
@@ -335,10 +335,15 @@ mod tests {
 
     #[test]
     fn cors_mode_round_trips_through_toml() {
-        for token in ["disabled", "enabled", "permissive", "very-permissive"] {
+        for token in ["disabled", "configured", "permissive", "very-permissive"] {
             let holder: ModeHolder = toml::from_str(&format!("mode = \"{token}\"")).expect("mode parses");
             pretty_assertions::assert_eq!(holder.mode.to_string(), token);
         }
+    }
+
+    #[test]
+    fn a_cors_mode_of_enabled_is_refused() {
+        assert!(toml::from_str::<ModeHolder>("mode = \"enabled\"").is_err());
     }
 
     #[test]
@@ -365,9 +370,9 @@ expose = ["x-trace-id"]
     }
 
     #[test]
-    fn cors_enabled_credentials_with_wildcard_is_flagged() {
+    fn cors_configured_credentials_with_wildcard_is_flagged() {
         let config = CorsConfig {
-            mode: CorsMode::Enabled,
+            mode: CorsMode::Configured,
             credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::Any,
             ..CorsConfig::default()
@@ -376,9 +381,9 @@ expose = ["x-trace-id"]
     }
 
     #[test]
-    fn cors_enabled_credentials_with_explicit_origins_is_not_flagged() {
+    fn cors_configured_credentials_with_explicit_origins_is_not_flagged() {
         let config = CorsConfig {
-            mode: CorsMode::Enabled,
+            mode: CorsMode::Configured,
             credentials: CorsPermission::Allowed,
             allow_origins: OriginRule::List(vec!["https://ui.example".parse().expect("origin URL")]),
             allow_methods: MethodRule::List(Vec::new()),
@@ -392,7 +397,7 @@ expose = ["x-trace-id"]
     #[test]
     fn permissive_mode_never_flags_a_credentialed_wildcard() {
         // The profile modes ignore the credential and wildcard fields entirely,
-        // so a combination that is invalid under `enabled` is inert under them.
+        // so a combination that is invalid under `configured` is inert under them.
         let config = CorsConfig {
             mode: CorsMode::Permissive,
             credentials: CorsPermission::Allowed,

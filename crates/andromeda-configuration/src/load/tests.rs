@@ -141,7 +141,7 @@ fn a_list_set_from_the_environment_splits_on_commas() {
 #[serial]
 fn a_cors_method_list_set_from_the_environment_splits_on_commas() {
     unsafe {
-        env::set_var("ANDROMEDA__HTTP__CORS__MODE", "enabled");
+        env::set_var("ANDROMEDA__HTTP__CORS__MODE", "configured");
         env::set_var("ANDROMEDA__HTTP__CORS__ALLOW_METHODS", "GET,POST");
     };
     let config = load_env_only();

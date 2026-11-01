@@ -156,7 +156,7 @@ fn source_extras_holding_a_date_time_are_refused_at_load() {
 #[test]
 #[serial]
 fn a_cors_method_that_is_not_a_method_token_is_refused_at_load() {
-    let result = admitted("[http.cors]\nmode = \"enabled\"\nallow_methods = [\"G ET\"]\n");
+    let result = admitted("[http.cors]\nmode = \"configured\"\nallow_methods = [\"G ET\"]\n");
     assert!(
         matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::HttpCors(_)))),
         "{result:?}"

@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn listed_methods_and_header_names_read() {
         let config = policy(
-            "mode = \"enabled\"\nallow_methods = [\"GET\", \"POST\"]\nallow_headers = [\"content-type\"]\nexpose_headers = [\"x-trace-id\"]\nallow_origins = \"any\"\ncredentials = \"refused\"\nprivate_network = \"refused\"\n",
+            "mode = \"configured\"\nallow_methods = [\"GET\", \"POST\"]\nallow_headers = [\"content-type\"]\nexpose_headers = [\"x-trace-id\"]\nallow_origins = \"any\"\ncredentials = \"refused\"\nprivate_network = \"refused\"\n",
         );
         assert!(check_cors_tokens(&config).is_ok());
     }
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn a_method_with_a_space_is_refused() {
         let config = policy(
-            "mode = \"enabled\"\nallow_methods = [\"G ET\"]\nallow_origins = \"any\"\nallow_headers = \"any\"\nexpose_headers = []\ncredentials = \"refused\"\nprivate_network = \"refused\"\n",
+            "mode = \"configured\"\nallow_methods = [\"G ET\"]\nallow_origins = \"any\"\nallow_headers = \"any\"\nexpose_headers = []\ncredentials = \"refused\"\nprivate_network = \"refused\"\n",
         );
         assert!(matches!(check_cors_tokens(&config), Err(CorsTokenError::Method(_))));
     }
@@ -92,7 +92,7 @@ mod tests {
     fn an_allowed_or_exposed_header_name_with_a_colon_is_refused() {
         for (allow, expose) in [("[\"bad:name\"]", "[]"), ("\"any\"", "[\"bad:name\"]")] {
             let config = policy(&format!(
-                "mode = \"enabled\"\nallow_methods = \"any\"\nallow_origins = \"any\"\nallow_headers = {allow}\nexpose_headers = {expose}\ncredentials = \"refused\"\nprivate_network = \"refused\"\n"
+                "mode = \"configured\"\nallow_methods = \"any\"\nallow_origins = \"any\"\nallow_headers = {allow}\nexpose_headers = {expose}\ncredentials = \"refused\"\nprivate_network = \"refused\"\n"
             ));
             assert!(matches!(check_cors_tokens(&config), Err(CorsTokenError::HeaderName(_))), "{allow} {expose}");
         }

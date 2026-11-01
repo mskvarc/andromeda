@@ -24,7 +24,7 @@ pub(crate) const COMPOUND_RULES: [CompoundRule; 3] = [
             ConfigKey::HttpCorsAllowHeaders,
             ConfigKey::HttpCorsExposeHeaders,
         ],
-        statement: "With `http.cors.mode` at `\"enabled\"`, `http.cors.credentials` at `\"allowed\"` cannot be combined with `\"any\"` in an allow or expose list.",
+        statement: "With `http.cors.mode` at `\"configured\"`, `http.cors.credentials` at `\"allowed\"` cannot be combined with `\"any\"` in an allow or expose list.",
     },
     CompoundRule {
         keys: &[ConfigKey::HttpForwardedTrust, ConfigKey::HttpForwardedProxies],
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn credentials_beside_a_wildcard_are_refused_and_beside_listed_rules_accepted() {
         let mut config = BrokerConfig::default();
-        config.http.cors.mode = CorsMode::Enabled;
+        config.http.cors.mode = CorsMode::Configured;
         config.http.cors.credentials = CorsPermission::Allowed;
         config.http.cors.allow_origins = OriginRule::Any;
         assert_eq!(refusals(&config), [ConfigurationViolation::CorsCredentialsWithWildcard]);

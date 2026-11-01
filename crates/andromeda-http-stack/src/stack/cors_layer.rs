@@ -9,7 +9,7 @@ use url::Url;
 /// Build the CORS layer the configuration calls for, or `None` when CORS is off.
 ///
 /// `permissive` and `very-permissive` return the corresponding complete profiles
-/// and ignore every custom field; `enabled` builds the layer from the custom
+/// and ignore every custom field; `configured` builds the layer from the custom
 /// fields; `disabled` installs nothing.
 ///
 /// # Errors
@@ -21,12 +21,12 @@ pub(crate) fn build_cors_layer(config: &CorsConfig) -> Result<Option<CorsLayer>,
         CorsMode::Disabled => None,
         CorsMode::Permissive => Some(CorsLayer::permissive()),
         CorsMode::VeryPermissive => Some(CorsLayer::very_permissive()),
-        CorsMode::Enabled => Some(build_enabled_cors_layer(config)?),
+        CorsMode::Configured => Some(build_configured_cors_layer(config)?),
     })
 }
 
-/// Assemble the custom CORS layer from the `enabled`-mode fields.
-fn build_enabled_cors_layer(config: &CorsConfig) -> Result<CorsLayer, CorsTokenError> {
+/// Assemble the custom CORS layer from the `configured`-mode fields.
+fn build_configured_cors_layer(config: &CorsConfig) -> Result<CorsLayer, CorsTokenError> {
     let mut layer = CorsLayer::new()
         .allow_origin(origin_rule(&config.allow_origins))
         .allow_methods(method_rule(&config.allow_methods)?)
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn cors_permissive_ignores_custom_settings() {
-        // A credentialed wildcard would panic under `enabled`; the profile ignores
+        // A credentialed wildcard would panic under `configured`; the profile ignores
         // it, so building the permissive layer must succeed regardless.
         let config = CorsConfig {
             mode: CorsMode::Permissive,
@@ -125,10 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn cors_enabled_builds_from_custom_origins_methods_headers() {
+    fn cors_configured_builds_from_custom_origins_methods_headers() {
         let config: CorsConfig = toml::from_str(
             r#"
-mode = "enabled"
+mode = "configured"
 allow_origins = ["https://ui.example"]
 allow_methods = ["GET", "POST"]
 allow_headers = ["content-type"]
