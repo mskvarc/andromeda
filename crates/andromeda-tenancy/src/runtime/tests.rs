@@ -46,6 +46,8 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+mod periodic_eviction;
+
 /// What a [`FakeProbe`] answers with for every database.
 enum FakeProbeOutcome {
     /// A pending-work reading.
@@ -450,10 +452,26 @@ impl RuntimeActivity for Unobserved {
     fn record_activity(&self) {}
 }
 
+/// The instant a fake runtime reports its next periodic notification due at,
+/// settable after the runtime is built, as a periodic sweep publishes it.
+type PeriodicDueCell = Arc<StdMutex<Option<SystemTime>>>;
+
 /// A runtime that records the fact it was released.
 struct FakeRuntime {
     /// Incremented on shutdown.
     shutdowns: Arc<AtomicUsize>,
+    /// What [`TenantRuntime::next_periodic_due`] answers.
+    periodic_due: PeriodicDueCell,
+}
+
+impl FakeRuntime {
+    /// A runtime with no periodic notification scheduled.
+    fn unscheduled(shutdowns: &Arc<AtomicUsize>) -> FakeRuntime {
+        FakeRuntime {
+            shutdowns: Arc::clone(shutdowns),
+            periodic_due: PeriodicDueCell::default(),
+        }
+    }
 }
 
 #[async_trait]
@@ -465,6 +483,10 @@ impl TenantRuntime for FakeRuntime {
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(Unobserved)
     }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        self.periodic_due.lock().ok().and_then(|due| *due)
+    }
 }
 
 /// A factory recording which database each runtime was built against.
@@ -473,6 +495,37 @@ struct FakeFactory {
     shutdowns: Arc<AtomicUsize>,
     /// How many runtimes it has built.
     built: AtomicUsize,
+    /// The periodic due cell of each tenant, shared with every runtime built
+    /// for it.
+    periodic_due: StdMutex<Vec<(TenantRef, PeriodicDueCell)>>,
+}
+
+impl FakeFactory {
+    /// A factory whose runtimes count their shutdowns on `shutdowns`.
+    fn new(shutdowns: Arc<AtomicUsize>) -> FakeFactory {
+        FakeFactory {
+            shutdowns,
+            built: AtomicUsize::new(0),
+            periodic_due: StdMutex::new(Vec::new()),
+        }
+    }
+
+    /// The periodic due cell of `tenant`, created on first use.
+    fn periodic_due_cell(&self, tenant: &TenantRef) -> PeriodicDueCell {
+        let mut cells = self.periodic_due.lock().expect("the periodic due cells are readable");
+        if let Some((_, cell)) = cells.iter().find(|(held, _)| held == tenant) {
+            return Arc::clone(cell);
+        }
+        let cell = PeriodicDueCell::default();
+        cells.push((tenant.clone(), Arc::clone(&cell)));
+        cell
+    }
+
+    /// Have `tenant`'s runtime report its next periodic notification due at
+    /// `due`, as its periodic sweep does after a pass.
+    fn schedule_periodic(&self, tenant: &TenantRef, due: SystemTime) {
+        *self.periodic_due_cell(tenant).lock().expect("the periodic due cell is writable") = Some(due);
+    }
 }
 
 #[async_trait]
@@ -480,12 +533,13 @@ impl TenantStateFactory for FakeFactory {
     type State = String;
     type Runtime = FakeRuntime;
 
-    async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
+    async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
         self.built.fetch_add(1, Ordering::Relaxed);
         Ok((
             Arc::new(database.as_str().to_owned()),
             FakeRuntime {
                 shutdowns: Arc::clone(&self.shutdowns),
+                periodic_due: self.periodic_due_cell(tenant),
             },
         ))
     }
@@ -507,10 +561,7 @@ struct Harness {
 fn harness(registered: &[&str], enabled: bool, max_cached: usize) -> Harness {
     let registry = Arc::new(FakeRegistry::new(registered));
     let shutdowns = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::clone(&shutdowns),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
     let manager = TenantRuntimeManager::new(
         config(enabled, max_cached),
         Arc::clone(&registry),
@@ -569,12 +620,7 @@ impl TenantStateFactory for FlakyFactory {
                 cause: RuntimeBuildFailure::Persistence(PersistenceFailure::Unavailable),
             });
         }
-        Ok((
-            Arc::new(database.as_str().to_owned()),
-            FakeRuntime {
-                shutdowns: Arc::clone(&self.shutdowns),
-            },
-        ))
+        Ok((Arc::new(database.as_str().to_owned()), FakeRuntime::unscheduled(&self.shutdowns)))
     }
 }
 
@@ -631,12 +677,7 @@ impl TenantStateFactory for GatedFactory {
     async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
         self.built.fetch_add(1, Ordering::Relaxed);
         self.gate.notified().await;
-        Ok((
-            Arc::new(database.as_str().to_owned()),
-            FakeRuntime {
-                shutdowns: Arc::clone(&self.shutdowns),
-            },
-        ))
+        Ok((Arc::new(database.as_str().to_owned()), FakeRuntime::unscheduled(&self.shutdowns)))
     }
 }
 
@@ -898,10 +939,7 @@ async fn a_suspended_tenant_is_not_woken() {
     let registry = Arc::new(FakeRegistry::new(&["acme"]));
     registry.suspend("acme");
     let shutdowns = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::clone(&shutdowns),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
     let schedule = Arc::new(FakeSchedule::inert());
     let schedule_concrete = Arc::clone(&schedule);
     let schedule_handle: Arc<dyn TenantWakeSchedule> = schedule_concrete;
@@ -1003,10 +1041,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
     }
 
     let shutdowns = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::clone(&shutdowns),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
     let manager = TenantRuntimeManager::new(
         config(true, 64),
         Arc::new(UnreadableRegistry),
@@ -1160,12 +1195,7 @@ impl TenantStateFactory for BuildConcurrencyProbe {
         self.peak.fetch_max(concurrent, Ordering::SeqCst);
         sleep(self.hold).await;
         self.active.fetch_sub(1, Ordering::SeqCst);
-        Ok((
-            Arc::new(database.as_str().to_owned()),
-            FakeRuntime {
-                shutdowns: Arc::clone(&self.shutdowns),
-            },
-        ))
+        Ok((Arc::new(database.as_str().to_owned()), FakeRuntime::unscheduled(&self.shutdowns)))
     }
 }
 
@@ -1234,6 +1264,10 @@ impl TenantRuntime for ShutdownConcurrencyProbe {
 
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(Unobserved)
+    }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        None
     }
 }
 
@@ -1328,6 +1362,10 @@ impl TenantRuntime for GatedShutdownRuntime {
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(Unobserved)
     }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        None
+    }
 }
 
 /// A factory building [`GatedShutdownRuntime`]s that share one gate.
@@ -1420,10 +1458,7 @@ fn wake_manager(
 ) -> (Arc<TenantRuntimeManager<FakeRegistry, FakeFactory>>, Arc<FakeFactory>, Arc<AtomicUsize>) {
     let registry = Arc::new(FakeRegistry::new(registered));
     let shutdowns = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::clone(&shutdowns),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
     let manager = TenantRuntimeManager::new(config(true, max_cached), registry, Arc::clone(&factory), probe, schedule);
     (manager, factory, shutdowns)
 }
@@ -1555,10 +1590,7 @@ fn wake_manager_with_lifetime(
 ) -> (Arc<TenantRuntimeManager<FakeRegistry, FakeFactory>>, Arc<AtomicUsize>) {
     let registry = Arc::new(FakeRegistry::new(registered));
     let shutdowns = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::clone(&shutdowns),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
     let base = config(true, max_cached);
     let config = TenancyConfig {
         residency: ResidencyConfig {
@@ -1806,6 +1838,10 @@ impl TenantRuntime for CommitOnShutdownRuntime {
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(Unobserved)
     }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        None
+    }
 }
 
 /// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
@@ -1924,6 +1960,10 @@ impl TenantRuntime for LatchedShutdownRuntime {
 
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(Unobserved)
+    }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        None
     }
 }
 
@@ -2369,10 +2409,7 @@ async fn the_sweep_retires_nothing_when_the_registry_cannot_be_read() {
     let manager = TenantRuntimeManager::new(
         config(true, 64),
         Arc::new(UnreadableProvisionalRegistry),
-        Arc::new(FakeFactory {
-            shutdowns: Arc::new(AtomicUsize::new(0)),
-            built: AtomicUsize::new(0),
-        }),
+        Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
     );
@@ -2469,10 +2506,7 @@ async fn suspending_an_empty_provisional_tenant_finds_no_tenant() {
 async fn a_provisional_tenant_with_work_due_is_woken_and_stays_provisional() {
     let registry = Arc::new(FakeRegistry::new(&[]));
     registry.register_provisional("acme");
-    let factory = Arc::new(FakeFactory {
-        shutdowns: Arc::new(AtomicUsize::new(0)),
-        built: AtomicUsize::new(0),
-    });
+    let factory = Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0))));
     let manager = TenantRuntimeManager::new(
         config(true, 64),
         Arc::clone(&registry),

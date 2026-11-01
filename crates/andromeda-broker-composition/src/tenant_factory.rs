@@ -10,11 +10,12 @@ use crate::{
         background_pacer::{BackgroundPacer, TenantObligations},
         commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
+        periodic_due::PeriodicDue,
         runtime::BrokerTenantRuntime,
         services::{TenantServiceCollaborators, construct_services},
         spatial::indexed_commits,
         storage::initialize_storage,
-        tasks::{TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
+        tasks::{PeriodicPacing, TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
         temporal_history::compose_temporal_history,
         transport::construct_dispatcher,
     },
@@ -58,6 +59,7 @@ mod assembly_invariant;
 mod background_pacer;
 mod commit_consequence;
 mod error;
+mod periodic_due;
 /// Runtime ownership and ordered shutdown.
 pub mod runtime;
 mod services;
@@ -235,6 +237,7 @@ async fn build_tenant_state(
         config.expiry.sweep_interval.duration(),
         Arc::new(TenantObligations::new(&storage.pool)),
     ));
+    let periodic_due = Arc::new(PeriodicDue::default());
     let temporal = compose_temporal_history(
         &storage.pool,
         &storage.temporal_repo,
@@ -296,18 +299,15 @@ async fn build_tenant_state(
         snapshot_status_wake,
         snapshot_status_receiver,
         pacer: Arc::clone(&pacer), // clone: the tasks consult the pacer the runtime reports use to.
+        periodic: PeriodicPacing {
+            ceiling: config.notifications.periodic.max_poll_interval.duration(),
+            pacer: Arc::clone(&pacer),      // clone: the periodic sweeps consult the tenant's one pacer.
+            due: Arc::clone(&periodic_due), // clone: the sweeps publish into the cell the runtime answers from.
+        },
     };
     let supervision = supervise_tasks(config, &storage, &services, &writes, &dispatcher, task_supervisor, channels)?;
     Ok((
         services.state,
-        BrokerTenantRuntime::new(
-            storage.context_workers,
-            supervision.handles,
-            dispatcher,
-            storage.pool,
-            supervision.health_shutdown,
-            supervision.task_supervisor,
-            pacer,
-        ),
+        BrokerTenantRuntime::new(storage.context_workers, supervision, dispatcher, storage.pool, pacer, periodic_due),
     ))
 }

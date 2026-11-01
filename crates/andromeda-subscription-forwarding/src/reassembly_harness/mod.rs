@@ -11,8 +11,10 @@
 pub(crate) mod answering_source;
 pub(crate) mod forwarding_maps;
 pub(crate) mod held_entities;
+pub(crate) mod inert_ports;
 pub(crate) mod recording_subscriptions;
 pub(crate) mod scripted_registrations;
+pub(crate) mod stored_forms;
 pub(crate) mod subscribing_source;
 
 use crate::{
@@ -22,8 +24,10 @@ use crate::{
     reassembly_harness::{
         forwarding_maps::{DiscardingRouter, ForwardingMaps},
         held_entities::HeldEntities,
+        inert_ports::{AcceptingEndpoints, NoLocalTypes, offline_engine},
         recording_subscriptions::RecordingSubscriptions,
         scripted_registrations::ScriptedRegistrations,
+        stored_forms::{stored_companion, stored_subscription},
     },
     receiver::ReceiverEndpoint,
     service::SubscriptionForwardingService,
@@ -36,11 +40,11 @@ use andromeda_entity::{
     query::EntityQueryService,
     spatial_acceleration::SpatialAcceleration,
 };
-use andromeda_federation::{FederationService, local_entity_type::LocalEntityTypeResolver, local_source::LocalSource};
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_federation::{FederationService, local_source::LocalSource};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration, subscription::Subscription};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
@@ -48,16 +52,13 @@ use andromeda_ngsi_ld_query::{
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     deleted_members::DeletedMembers,
-    endpoint_admission::SubscriptionEndpointValidator,
-    endpoint_refusal::EndpointRefusal,
     error::SubscriptionError,
     filter_admission::SubscriptionFilterAdmission,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook},
     lifecycle::SubscriptionService,
 };
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
-use futures::future::BoxFuture;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use url::Url;
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
@@ -116,33 +117,6 @@ pub(crate) struct ReassemblyScene {
     returned: usize,
 }
 
-/// An endpoint validator for a broker that serves every scheme.
-struct AcceptingEndpoints;
-
-impl SubscriptionEndpointValidator for AcceptingEndpoints {
-    fn validate(&self, _endpoint: &Url, _notifier_info: Option<&[KeyValuePair]>, _receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {
-        Ok(())
-    }
-}
-
-/// A resolver for which no entity is held locally.
-struct NoLocalTypes;
-
-impl LocalEntityTypeResolver for NoLocalTypes {
-    fn local_entity_types<'resolver>(
-        &'resolver self,
-        _target: &'resolver ContextTarget,
-        _id: &'resolver Identifier,
-    ) -> BoxFuture<'resolver, Vec<EntityTypeName>> {
-        Box::pin(async { Vec::new() })
-    }
-}
-
-/// An engine that resolves what is embedded, never the network.
-fn offline_engine() -> JsonLdEngine {
-    JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds")
-}
-
 /// The identifier `text` names.
 pub(crate) fn identifier(text: &str) -> Identifier {
     text.parse().expect("a valid identifier")
@@ -167,40 +141,6 @@ pub(crate) fn sender_registration() -> Identifier {
 /// The companion subscription mirroring the local one.
 pub(crate) fn companion_subscription() -> Identifier {
     identifier("urn:ngsi-ld:Subscription:companion")
-}
-
-/// The stored form of the companion: it mirrors the selection of the local
-/// subscription as the default members describe it.
-fn stored_companion() -> Value {
-    json!({
-        "id": companion_subscription().as_str(),
-        "type": "Subscription",
-        "entities": [{"type": default_iri("Vehicle")}],
-        "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/v1/notifications"}},
-        "status": "active",
-        "createdAt": "2020-01-01T00:00:00Z",
-        "modifiedAt": "2020-01-01T00:00:00Z"
-    })
-}
-
-/// The stored form of the local subscription: it watches `Vehicle`, notifies
-/// `endpoint` in the normalized format, and takes `members` over. The
-/// endpoint is always the receiver's, whatever `members` say about it.
-fn stored_subscription(members: &Value, endpoint: &str) -> Value {
-    let mut stored = json!({
-        "id": local_subscription().as_str(),
-        "type": "Subscription",
-        "entities": [{"type": default_iri("Vehicle")}],
-        "notification": {"format": "normalized"},
-        "status": "active",
-        "createdAt": "2020-01-01T00:00:00Z",
-        "modifiedAt": "2020-01-01T00:00:00Z"
-    });
-    if let (Some(base), Some(replacements)) = (stored.as_object_mut(), members.as_object()) {
-        base.extend(replacements.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the stored form owns its members
-    }
-    stored["notification"]["endpoint"] = json!({"uri": endpoint});
-    stored
 }
 
 impl ReassemblyScene {

@@ -9,9 +9,12 @@
 
 use crate::tenant_factory::{
     assembly_invariant::AssemblyInvariant,
-    background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
-    tasks::notification_worker_failure::{ChangeChannel, channel_closed},
+    periodic_due::PeriodicSweep,
+    tasks::{
+        PeriodicPacing,
+        notification_worker_failure::{ChangeChannel, channel_closed},
+    },
 };
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_notification::error::NotificationError;
@@ -29,17 +32,25 @@ use andromeda_task_runtime::{
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver, WakeHandle},
 };
 use chrono::{DateTime, Utc};
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::{broadcast, broadcast::error::RecvError};
 
-/// Register `operation` as a wake-driven periodic sweep named `task_name`.
+/// Register `operation` as the wake-driven periodic sweep `sweep`, named
+/// `task_name`.
 ///
 /// The operation runs one sweep at `cutoff` and reports the earliest instant a
 /// subscription is next due, or `None` when none is. The drain then sleeps
 /// exactly until that instant, however soon it falls, waking early on `wake`
-/// and never sleeping past `ceiling`: clause 5.8.6 notifies when the interval
-/// is reached, and Table 5.2.12-1 admits any `timeInterval` greater than 0, so
-/// a grid point is never rounded up to a minimum sleep.
+/// and never sleeping past the pacing's ceiling: clause 5.8.6 notifies when
+/// the interval is reached, and Table 5.2.12-1 admits any `timeInterval`
+/// greater than 0, so a grid point is never rounded up to a minimum sleep.
+/// Every reported instant is also published, so the runtime cache keeps the
+/// tenant loaded while a notification falls due shortly. A pass that fails
+/// leaves the last published instant in place.
 ///
 /// # Errors
 ///
@@ -48,15 +59,16 @@ use tokio::sync::{broadcast, broadcast::error::RecvError};
 pub(super) fn register_notification_schedule<F, Fut>(
     supervisor: &TaskSupervisor,
     task_name: &'static str,
-    ceiling: Duration,
+    sweep: PeriodicSweep,
     wake: DrainWakeReceiver,
-    pacer: Arc<BackgroundPacer>,
+    pacing: PeriodicPacing,
     operation: F,
 ) -> Result<(), TenantAssemblyError>
 where
     F: Fn(DateTime<Utc>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<Option<DateTime<Utc>>, NotificationError>> + Send + 'static,
 {
+    let PeriodicPacing { ceiling, pacer, due } = pacing;
     // The floor starts the backoff of a sweep that knows no due instant; a
     // reported grid point is slept to directly, below the floor included.
     let floor = Duration::from_secs(1);
@@ -72,12 +84,15 @@ where
     let task = DrainTask::new(registration, fallback, move |execution| {
         let operation = Arc::clone(&operation); // clone: each bounded pass owns its operation while executing.
         let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let due = Arc::clone(&due); // clone: each pass publishes into the tenant's one cell.
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
                     let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    match operation(cutoff).await.map_err(classify_notification_failure)? {
-                        Some(next_due) => Ok(DrainPassOutcome::IdleUntil(next_due.into())),
+                    let next_due = operation(cutoff).await.map_err(classify_notification_failure)?.map(SystemTime::from);
+                    due.publish(sweep, next_due);
+                    match next_due {
+                        Some(next_due) => Ok(DrainPassOutcome::IdleUntil(next_due)),
                         None => Ok(DrainPassOutcome::Idle),
                     }
                 })
@@ -164,4 +179,91 @@ pub(super) const fn classify_notification_failure(error: NotificationError) -> T
         NotificationError::Invariant { .. } => FailureClass::InvariantViolation,
     };
     TaskFailure::new(class, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::{
+        background_pacer::{BackgroundPacer, ObligationSource},
+        error::TenantAssemblyError,
+        periodic_due::{PeriodicDue, PeriodicSweep},
+        tasks::{PeriodicPacing, notification_schedule::register_notification_schedule},
+    };
+    use andromeda_postgresql_context_store::error::ContextStoreError;
+    use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
+    use async_trait::async_trait;
+    use chrono::{DateTime, TimeDelta, Utc};
+    use std::{
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
+    use tokio::{
+        runtime::Handle,
+        time::{sleep, timeout},
+    };
+
+    /// A tenant with no outstanding obligation, so the pacer never holds a
+    /// pass back on its account.
+    struct NothingOutstanding;
+
+    #[async_trait]
+    impl ObligationSource for NothingOutstanding {
+        async fn earliest_due(&self) -> Result<Option<SystemTime>, ContextStoreError> {
+            Ok(None)
+        }
+    }
+
+    /// Register a context source sweep whose every pass reports `next_due`,
+    /// wake it once, and wait until `due` holds `expected`.
+    async fn run_one_pass(due: &Arc<PeriodicDue>, next_due: Option<DateTime<Utc>>, expected: Option<SystemTime>) -> Result<bool, TenantAssemblyError> {
+        let supervisor = TaskSupervisor::process(Handle::current());
+        let (wake, receiver) = wake_channel();
+        let pacing = PeriodicPacing {
+            ceiling: Duration::from_mins(1),
+            pacer: Arc::new(BackgroundPacer::new(Duration::from_secs(30), Arc::new(NothingOutstanding))),
+            due: Arc::clone(due), // clone: the test reads the cell the sweep publishes into
+        };
+        register_notification_schedule(
+            &supervisor,
+            "periodic-due-test",
+            PeriodicSweep::ContextSource,
+            receiver,
+            pacing,
+            move |_cutoff| async move { Ok(next_due) },
+        )?;
+        let _ = wake.wake();
+        let published = timeout(Duration::from_secs(5), async {
+            while due.earliest() != expected {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+        supervisor.shutdown().await;
+        Ok(published)
+    }
+
+    /// A new `timeInterval` Subscription wakes the sweep, and the pass that
+    /// follows makes its first notification visible to the runtime cache.
+    #[tokio::test]
+    async fn a_sweep_pass_publishes_the_instant_it_is_next_due() -> Result<(), TenantAssemblyError> {
+        let due = Arc::new(PeriodicDue::default());
+        let next_due = Utc::now() + TimeDelta::seconds(1);
+        let expected = SystemTime::from(DateTime::<Utc>::from_timestamp_millis(next_due.timestamp_millis()).unwrap_or(next_due));
+        assert!(
+            run_one_pass(&due, Some(next_due), Some(expected)).await?,
+            "the pass publishes its next due instant"
+        );
+        Ok(())
+    }
+
+    /// The last periodic Subscription deleted, the sweep has nothing scheduled
+    /// and the tenant no longer counts as having imminent work.
+    #[tokio::test]
+    async fn a_sweep_pass_with_nothing_scheduled_clears_what_it_published_before() -> Result<(), TenantAssemblyError> {
+        let due = Arc::new(PeriodicDue::default());
+        due.publish(PeriodicSweep::ContextSource, Some(SystemTime::now()));
+        assert!(run_one_pass(&due, None, None).await?, "the pass clears its published instant");
+        Ok(())
+    }
 }

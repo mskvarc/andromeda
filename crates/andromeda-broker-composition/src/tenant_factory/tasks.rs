@@ -20,6 +20,7 @@ use crate::tenant_factory::{
     TenantFactoryConfig,
     background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
+    periodic_due::PeriodicDue,
     services::ConstructedServices,
     storage::TenantStorage,
     tasks::{
@@ -55,7 +56,7 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     wake_trigger::{DrainWakeReceiver, WakeHandle},
 };
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
@@ -126,6 +127,21 @@ pub(super) struct TenantTaskChannels {
     /// Decides when the tenant's background passes run; every task consults
     /// the one pacer, so one obligation read serves them all.
     pub(super) pacer: Arc<BackgroundPacer>,
+    /// How the periodic notification sweeps are paced, and where they
+    /// publish when they are next due.
+    pub(super) periodic: PeriodicPacing,
+}
+
+/// How one tenant's periodic sweeps are paced, and where each publishes the
+/// instant it is next due.
+#[derive(Clone)]
+pub(super) struct PeriodicPacing {
+    /// The longest a sweep sleeps with nothing waking it.
+    pub(super) ceiling: Duration,
+    /// The tenant's one pacer, which every background pass consults.
+    pub(super) pacer: Arc<BackgroundPacer>,
+    /// Where each sweep publishes its next due instant for the runtime cache.
+    pub(super) due: Arc<PeriodicDue>,
 }
 
 /// Build the delivery signal the Snapshot service raises after enqueuing status
@@ -164,6 +180,7 @@ pub(super) fn supervise_tasks(
         snapshot_status_wake,
         snapshot_status_receiver,
         pacer,
+        periodic,
     } = channels;
     let TenantSignals {
         entity,
@@ -224,8 +241,7 @@ pub(super) fn supervise_tasks(
             transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
         },
         interval_subscription_changes,
-        config.notifications.periodic.max_poll_interval.duration(),
-        Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
+        periodic.clone(), // clone: both periodic sweeps consult the tenant's one pacer and publish into its one cell.
     )?;
     register_csource_notification_workers(
         &task_supervisor,
@@ -236,8 +252,7 @@ pub(super) fn supervise_tasks(
             registrations: registration_receiver,
             subscriptions: csource_subscription,
         },
-        config.notifications.periodic.max_poll_interval.duration(),
-        Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
+        periodic,
     )?;
     register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
     register_columnstore_conversion(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.

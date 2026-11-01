@@ -56,9 +56,11 @@ pub struct ResidencyConfig {
     /// runtime a request currently holds is never evicted, nor is a runtime
     /// woken for due work within `woken_lifetime`, so while every other runtime
     /// is held the cache overshoots it, trimmed back as requests complete and
-    /// those lifetimes end.
+    /// those lifetimes end. Room is made from the least recently used of the
+    /// others, taking a runtime whose periodic notification falls due within
+    /// `min_wake_interval` only once no runtime without one is left.
     #[schemars(
-        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end."
+        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too."
     )]
     pub max_resident: NonZeroUsize,
     /// How often idle and orphaned runtimes are swept, in human-readable form
@@ -71,9 +73,12 @@ pub struct ResidencyConfig {
     /// When a tenant is evicted its earliest due work is probed and a wake
     /// recorded for it; a due instant sooner than this is pushed back to it,
     /// so evicting a tenant that is only a little overdue and reloading it
-    /// cannot thrash. A failed probe records a retry this far out.
+    /// cannot thrash. A failed probe records a retry this far out. A runtime
+    /// with a periodic notification due within this interval is the last to
+    /// be unloaded to make room; one unloaded all the same notifies up to this
+    /// interval plus the waker's 5 s pass late.
     #[schemars(
-        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out."
+        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval plus 5 seconds."
     )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in

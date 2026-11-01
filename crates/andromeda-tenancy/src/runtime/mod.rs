@@ -5,6 +5,7 @@ pub mod lease;
 mod admission;
 mod cached_runtime;
 mod eviction;
+mod eviction_rank;
 mod provisional_sweep;
 mod shed_report;
 mod teardown;

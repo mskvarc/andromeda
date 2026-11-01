@@ -9,10 +9,11 @@
 
 use crate::tenant_factory::{
     assembly_invariant::AssemblyInvariant,
-    background_pacer::BackgroundPacer,
     error::TenantAssemblyError,
+    periodic_due::PeriodicSweep,
     storage::TenantStorage,
     tasks::{
+        PeriodicPacing,
         notification_schedule::{register_notification_schedule, register_periodic_wake},
         notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
     },
@@ -99,8 +100,7 @@ pub(super) fn register_csource_notification_workers(
     transport: &Arc<TransportDispatcher>,
     csource_subscriptions: Arc<dyn SubscriptionStore>,
     streams: CsourceNotificationStreams,
-    interval_max_sleep: Duration,
-    pacer: Arc<BackgroundPacer>,
+    pacing: PeriodicPacing,
 ) -> Result<(), TenantAssemblyError> {
     // Both streams change what a periodic csource notification would report: the
     // registrations it carries (clause 5.11.7) and the subscription set it is
@@ -140,8 +140,7 @@ pub(super) fn register_csource_notification_workers(
             receiver: interval_receiver,
             subscription_changes,
         },
-        interval_max_sleep,
-        pacer,
+        pacing,
     )
 }
 
@@ -245,8 +244,7 @@ fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,
     wake: IntervalWake,
-    interval_max_sleep: Duration,
-    pacer: Arc<BackgroundPacer>,
+    pacing: PeriodicPacing,
 ) -> Result<(), TenantAssemblyError> {
     let IntervalWake {
         handle,
@@ -263,9 +261,9 @@ fn register_csource_interval_notification(
     register_notification_schedule(
         supervisor,
         "csource-notification-interval",
-        interval_max_sleep,
+        PeriodicSweep::ContextSource,
         receiver,
-        pacer,
+        pacing,
         move |cutoff| {
             let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
             async move {

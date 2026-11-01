@@ -156,6 +156,10 @@ impl TenantRuntime for InertRuntime {
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(InertRuntime)
     }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        None
+    }
 }
 
 impl RuntimeActivity for InertRuntime {

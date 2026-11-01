@@ -4,7 +4,7 @@
 use crate::{
     database::TenantDatabase,
     pending_work::PendingWork,
-    runtime::{TenantRuntimeManager, teardown::next_wake_at},
+    runtime::{TenantRuntimeManager, eviction_rank::EvictionRank, teardown::next_wake_at},
     state_factory::TenantStateFactory,
     tenant_ref::TenantRef,
 };
@@ -178,7 +178,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// woken again for the same work. The cache may therefore transiently
     /// exceed `runtime_max_cached` while every other runtime is held; the next
     /// sweep or insert-trim brings it back down as leases drop and residencies
-    /// end.
+    /// end. The candidates are taken in [`EvictionRank`] order, so a runtime
+    /// with a periodic notification due within `min_wake_interval` goes only
+    /// once every runtime without one has.
     pub(super) fn excess_runtimes(&self) -> Vec<(TenantRef, Instant)> {
         let over = self.runtimes.len().saturating_sub(self.config.residency.max_resident.get());
         if over == 0 {
@@ -186,15 +188,15 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         }
 
         let now = Instant::now();
-        let mut candidates: Vec<(TenantRef, Instant)> = self
+        let horizon = self.eviction_horizon();
+        let mut candidates: Vec<(TenantRef, EvictionRank)> = self
             .runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now))
-            .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the eviction list outlives the iteration
+            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the eviction list outlives the iteration
             .collect();
-        candidates.sort_by_key(|(_, touched)| *touched);
-        candidates.truncate(over);
-        candidates
+        candidates.sort_by_key(|(_, rank)| *rank);
+        candidates.into_iter().take(over).map(|(tenant, rank)| (tenant, rank.last_used)).collect()
     }
 
     /// Release the least-recently-used named runtimes until the cache fits
@@ -216,24 +218,36 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.evict_all(excess, EvictionReason::Excess).await
     }
 
-    /// The least-recently-used named runtime other than `exclude` that no
-    /// request currently holds and that is past any wake residency, with the
-    /// last-used instant it was chosen at, or `None` when every such runtime is
-    /// leased or within its wake residency (or the cache holds only the
-    /// never-evicted unnamed default).
+    /// The lowest-ranked named runtime other than `exclude` that no request
+    /// currently holds and that is past any wake residency, with the last-used
+    /// instant it was chosen at, or `None` when every such runtime is leased or
+    /// within its wake residency (or the cache holds only the never-evicted
+    /// unnamed default).
     ///
     /// Used to free one slot for a tenant about to be loaded (a woken tenant
     /// whose work is due now, or a cold build) so the coldest unleased runtime
     /// yields to it. `exclude` is that tenant, which is never its own victim.
+    /// Candidates are ranked by [`EvictionRank`]: a runtime with a periodic
+    /// notification due within `min_wake_interval` is chosen only when every
+    /// candidate has one, and then the least recently used of them, so
+    /// `max_resident` stays a hard bound.
     pub(super) fn lru_unleased_named(&self, exclude: &TenantRef) -> Option<(TenantRef, Instant)> {
         let now = Instant::now();
+        let horizon = self.eviction_horizon();
         self.runtimes
             .iter()
             .filter(|entry| {
                 !entry.key().is_unnamed_default() && entry.key() != exclude && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now)
             })
-            .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the choice outlives the iteration
-            .min_by_key(|(_, touched)| *touched)
+            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the choice outlives the iteration
+            .min_by_key(|(_, rank)| *rank)
+            .map(|(tenant, rank)| (tenant, rank.last_used))
+    }
+
+    /// The instant before which a tenant unloaded now would not be woken
+    /// again: `min_wake_interval` from now.
+    fn eviction_horizon(&self) -> SystemTime {
+        SystemTime::now() + self.config.residency.min_wake_interval.duration()
     }
 
     /// Evict one unleased runtime to make room for a woken tenant, returning

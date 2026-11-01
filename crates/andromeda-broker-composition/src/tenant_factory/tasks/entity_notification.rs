@@ -12,11 +12,12 @@ use crate::{
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
-        background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
+        periodic_due::PeriodicSweep,
         storage::TenantStorage,
         tasks::{
             EntityNotificationDelivery,
+            PeriodicPacing,
             notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
             notification_schedule::{register_notification_schedule, register_periodic_wake},
             notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped, worker_notification_failure},
@@ -193,8 +194,7 @@ pub(super) fn register_interval_notification(
     storage: &TenantStorage,
     delivery: IntervalDelivery,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-    interval_max_sleep: Duration,
-    pacer: Arc<BackgroundPacer>,
+    pacing: PeriodicPacing,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(IntervalNotificationDeps {
         target: storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
@@ -214,7 +214,7 @@ pub(super) fn register_interval_notification(
         ChangeChannel::Subscription,
         subscription_changes,
     )?;
-    register_notification_schedule(supervisor, "notification-interval", interval_max_sleep, receiver, pacer, move |cutoff| {
+    register_notification_schedule(supervisor, "notification-interval", PeriodicSweep::Entity, receiver, pacing, move |cutoff| {
         let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
         async move {
             operation.execute(cutoff).await?;

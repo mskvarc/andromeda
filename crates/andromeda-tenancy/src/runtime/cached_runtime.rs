@@ -1,7 +1,13 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
-use crate::runtime::lease::LeaseOrigin;
+use crate::{
+    runtime::{
+        eviction_rank::{EvictionRank, PeriodicWork},
+        lease::LeaseOrigin,
+    },
+    state_factory::TenantRuntime,
+};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use std::{
     sync::{
@@ -9,7 +15,7 @@ use std::{
         LazyLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 /// The instant every last-used stamp is measured from.
@@ -181,6 +187,18 @@ impl<S, R> CachedRuntime<S, R> {
     /// longer be handed to a request.
     pub(super) fn is_retired(&self) -> bool {
         self.origin.is_retired()
+    }
+}
+
+impl<S, R: TenantRuntime> CachedRuntime<S, R> {
+    /// Where this runtime stands in the order runtimes are unloaded to make
+    /// room, given `horizon`, the instant before which an unloaded tenant is
+    /// not woken again.
+    pub(super) fn eviction_rank(&self, horizon: SystemTime) -> EvictionRank {
+        EvictionRank {
+            work: PeriodicWork::of(self.runtime.next_periodic_due(), horizon),
+            last_used: self.last_used_instant(),
+        }
     }
 }
 

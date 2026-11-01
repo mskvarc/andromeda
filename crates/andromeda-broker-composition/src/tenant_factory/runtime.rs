@@ -1,12 +1,12 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, storage::TenantContextWorkers};
+use crate::tenant_factory::{background_pacer::BackgroundPacer, periodic_due::PeriodicDue, storage::TenantContextWorkers, tasks::TaskSupervision};
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::state_factory::{RuntimeActivity, TenantRuntime};
 use async_trait::async_trait;
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{error, info};
 
@@ -20,26 +20,33 @@ pub struct BrokerTenantRuntime {
     task_supervisor: TaskSupervisor,
     /// Paces the tenant's sweeps; told of every use of the runtime.
     pacer: Arc<BackgroundPacer>,
+    /// When the tenant's periodic notification sweeps are next due.
+    periodic_due: Arc<PeriodicDue>,
 }
 
 impl BrokerTenantRuntime {
-    pub(super) const fn new(
+    pub(super) fn new(
         context_workers: TenantContextWorkers,
-        background_handles: Vec<JoinHandle<()>>,
+        supervision: TaskSupervision,
         transport: Arc<TransportDispatcher>,
         pool: PgPool,
-        health_shutdown: Option<watch::Sender<bool>>,
-        task_supervisor: TaskSupervisor,
         pacer: Arc<BackgroundPacer>,
+        periodic_due: Arc<PeriodicDue>,
     ) -> BrokerTenantRuntime {
+        let TaskSupervision {
+            handles,
+            health_shutdown,
+            task_supervisor,
+        } = supervision;
         BrokerTenantRuntime {
             context_workers,
-            background_handles,
+            background_handles: handles,
             transport,
             pool,
             health_shutdown,
             task_supervisor,
             pacer,
+            periodic_due,
         }
     }
 
@@ -67,6 +74,10 @@ impl TenantRuntime for BrokerTenantRuntime {
 
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::clone(&self.pacer) as Arc<dyn RuntimeActivity> // clone: the cache reports use to the pacer the tenant's tasks consult.
+    }
+
+    fn next_periodic_due(&self) -> Option<SystemTime> {
+        self.periodic_due.earliest()
     }
 }
 

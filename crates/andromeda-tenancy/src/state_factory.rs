@@ -3,7 +3,7 @@
 use crate::{error::TenancyError, tenant_ref::TenantRef};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 /// Everything one tenant runtime holds open.
 ///
@@ -28,6 +28,18 @@ pub trait TenantRuntime: Send + Sync + 'static {
     /// request lets it go, so a runtime pacing its background work by what is
     /// due learns of every request that may have changed that.
     fn activity(&self) -> Arc<dyn RuntimeActivity>;
+
+    /// The earliest instant a periodic notification of this tenant is next
+    /// due, as its periodic sweeps last reported it, or `None` when no sweep
+    /// has one scheduled.
+    ///
+    /// Read whenever room is made for another tenant, on the request path, so
+    /// it answers from memory and never reaches the database. A runtime with a
+    /// periodic notification due sooner than `min_wake_interval` is unloaded
+    /// only after every runtime without one: unloaded, it would notify no
+    /// earlier than that interval later (clause 5.8.6 notifies when the
+    /// interval is reached).
+    fn next_periodic_due(&self) -> Option<SystemTime>;
 }
 
 /// Told when requests reach for, and let go of, one tenant runtime.
