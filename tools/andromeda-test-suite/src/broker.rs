@@ -9,6 +9,7 @@ use crate::{
     eventually::{Poll, TimedOut, delivery_deadline, eventually},
     exchange_log::ExchangeLog,
     namespace::{Namespace, NamespaceError},
+    request_version::RequestVersion,
 };
 use ngsi_ld::{
     client::{Client, ClientError, ReqwestError, ReqwestTransport},
@@ -24,7 +25,7 @@ use url::Url;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The transport every test client shares.
-pub type SuiteTransport = ExchangeLog<ReqwestTransport>;
+pub type SuiteTransport = ExchangeLog<RequestVersion<ReqwestTransport>>;
 
 /// A client of one broker of the stack.
 pub type BrokerClient = Client<SuiteTransport>;
@@ -87,7 +88,7 @@ pub fn client_at(base_url: Url) -> Result<BrokerClient, BrokerError> {
         .map_err(BrokerError::Http)?;
     Client::builder()
         .base_url(base_url.clone())
-        .transport(ExchangeLog::new(ReqwestTransport::new(http)))
+        .transport(ExchangeLog::new(RequestVersion::as_written(ReqwestTransport::new(http))))
         .build()
         .map_err(|error| BrokerError::Endpoint(base_url, Box::new(error)))
 }

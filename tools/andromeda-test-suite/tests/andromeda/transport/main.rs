@@ -8,4 +8,6 @@
 
 mod http3;
 mod mutual_tls;
+mod rotation;
+mod terminator;
 mod tls;

@@ -1,2 +1,4 @@
 [build]
-rustflags = ["-Zhigher-ranked-assumptions"]
+# reqwest compiles its http3 feature, which the test suite's HTTP/3 client uses, only under the reqwest_unstable cfg. It
+# is set for the whole workspace: feature unification gives every build that includes the suite the same reqwest.
+rustflags = ["-Zhigher-ranked-assumptions", "--cfg", "reqwest_unstable"]

@@ -22,9 +22,11 @@ iri-rs = { version = "3.4.1", features = ["static", "serde"] }
 mediatype = "0.23.0"
 ngsi-ld = { version = "1.3.1", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 regex = "1.13.1"
-reqwest = { version = "0.13.5", default-features = false, features = ["http2", "rustls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["http2", "http3", "rustls"] }
 rumqttc = { version = "0.25.1", default-features = false }
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 serde_json_path = "0.7.2"

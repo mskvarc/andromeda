@@ -49,8 +49,21 @@ pub enum BrokerRole {
     NotRecorded,
     /// The andromeda stack broker that terminates TLS itself.
     Tls,
+    /// The TLS broker's API port addressed in plaintext.
+    TlsPlaintext,
     /// The management listener of the TLS broker.
     TlsManagement,
+    /// The TLS broker's management port addressed in plaintext.
+    TlsManagementPlaintext,
+    /// The andromeda stack broker that terminates TLS itself with a TLS 1.3 floor and serves only clients presenting a
+    /// certificate of the stack's client authority.
+    Mutual,
+    /// The andromeda stack broker that terminates TLS itself and whose identity a test rotates.
+    Rotating,
+    /// The TLS terminator in front of the edge broker.
+    Terminator,
+    /// The terminator's plaintext listener, which redirects to its TLS listener.
+    TerminatorPlaintext,
     /// The andromeda stack broker with multi-tenancy disabled, delivering notifications durably with a 1 KiB HTTP
     /// notification body limit and four attempts.
     SingleTenant,
@@ -207,6 +220,10 @@ pub struct SuiteConfig {
     /// names `localhost` is addressed as `localhost`, so the certificate matches, and reached at its own container.
     #[serde(default)]
     connect_to: BTreeMap<HostName, HostName>,
+    /// The directory a broker reads its TLS certificate and key from (`tls.crt`, `tls.key`), by role, as the test
+    /// process writes it: only a broker whose identity tests rewrite is named.
+    #[serde(default)]
+    identity_dirs: BTreeMap<BrokerRole, PathBuf>,
     /// The longest a positive wait waits, in seconds; `None` is
     /// [`crate::eventually::DEFAULT_DELIVERY_DEADLINE`].
     delivery_deadline_seconds: Option<u64>,
@@ -313,6 +330,18 @@ impl SuiteConfig {
         self.connect_to.iter()
     }
 
+    /// The directory the broker of `role` reads its TLS identity from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack names no such directory.
+    pub fn identity_dir(&self, role: BrokerRole) -> Result<&Path, ConfigError> {
+        self.identity_dirs
+            .get(&role)
+            .map(PathBuf::as_path)
+            .ok_or_else(|| missing("IDENTITY_DIRS", role.into()))
+    }
+
     /// The directory of the stack's files.
     ///
     /// # Errors
@@ -367,10 +396,11 @@ const fn missing(section: &'static str, name: &'static str) -> ConfigError {
 mod tests {
     use crate::{
         config::{BrokerRole, Budget, PeerRole, SuiteConfig},
-        config_error::ConfigError,
+        config_error::{ConfigError, ConfigKey},
     };
     use figment2::{Figment, providers::Serialized, value::Value};
     use googletest::prelude::*;
+    use std::path::Path;
     use url::{Host, Url};
 
     /// A figment holding `pairs` as the environment provider reads them: the key after the prefix lowercased and
@@ -413,6 +443,24 @@ mod tests {
         let config = SuiteConfig::read(&figment(&REQUIRED))?;
         let error = config.broker(BrokerRole::Conformance).err().or_fail()?;
         verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__BROKERS__CONFORMANCE"))
+    }
+
+    #[gtest]
+    fn an_identity_directory_is_read_by_role_and_an_absent_one_names_its_key() -> Result<()> {
+        let mut pairs = REQUIRED.to_vec();
+        pairs.push(("IDENTITY_DIRS__ROTATING", "/identities/rotating"));
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        expect_that!(config.identity_dir(BrokerRole::Rotating), ok(eq(&Path::new("/identities/rotating"))));
+        let Err(ConfigError::Missing(key)) = config.identity_dir(BrokerRole::Mutual) else {
+            return fail!("an identity directory the stack does not set was found");
+        };
+        verify_that!(
+            key,
+            eq(ConfigKey::Entry {
+                section: "IDENTITY_DIRS",
+                name: "MUTUAL"
+            })
+        )
     }
 
     #[gtest]

@@ -9,3 +9,7 @@ mod a_tls_tls_0006;
 mod a_tls_tls_0007;
 mod a_tls_tls_0008;
 mod a_tls_tls_0009;
+mod a_tls_tls_0010;
+mod a_tls_tls_0011;
+mod a_tls_tls_0012;
+mod a_tls_tls_0013;
