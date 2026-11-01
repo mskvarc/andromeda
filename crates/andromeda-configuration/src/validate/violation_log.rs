@@ -20,7 +20,7 @@ fn bound(limit: Limit, config: &BrokerConfig) -> Option<Bound> {
         Limit::Key(key) => key.reading(config).map(|value| Bound::Setting { key, value }),
         Limit::KeyPlusMargin(key, margin) => match key.reading(config)? {
             Quantity::Duration(value) => Some(Bound::SettingPlusMargin { key, value, margin }),
-            Quantity::Count(_) => None,
+            Quantity::Count(_) | Quantity::Bytes(_) => None,
         },
     }
 }
@@ -51,7 +51,7 @@ impl ViolationLog {
                 .map(|bound| ConfigurationViolation::OutOfRange { key, value, relation, bound }),
             Rule::WholeDays(key) => match value {
                 Quantity::Duration(value) if !is_positive_whole_days(HumanDuration::new(value)) => Some(ConfigurationViolation::NotWholeDays { key, value }),
-                Quantity::Duration(_) | Quantity::Count(_) => None,
+                Quantity::Duration(_) | Quantity::Count(_) | Quantity::Bytes(_) => None,
             },
         };
         self.0.extend(violation);

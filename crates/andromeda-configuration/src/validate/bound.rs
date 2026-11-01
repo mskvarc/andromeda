@@ -1,12 +1,14 @@
 //! What an ordering rule compares a configured value against.
 
 use crate::validate::config_key::ConfigKey;
+use bytesize::ByteSize;
 use derive_more::{Display, From};
 use humantime::format_duration;
 use serde::Serialize;
 use std::time::Duration;
 
-/// A configured value an ordering rule compares: a span of time or a count.
+/// A configured value an ordering rule compares: a span of time, a count or
+/// a byte size.
 ///
 /// A rule compares a value only with a bound of the same kind, so the derived
 /// order, which puts every duration before every count, never decides one.
@@ -14,10 +16,16 @@ use std::time::Duration;
 pub enum Quantity {
     /// A span of time, displayed in its `humantime` spelling.
     #[display("{}", format_duration(*_0))]
+    #[from]
     Duration(Duration),
-    /// A number of items or bytes.
+    /// A number of items.
     #[display("{_0}")]
+    #[from]
     Count(u64),
+    /// A number of bytes, displayed in its `bytesize` spelling.
+    #[display("{}", ByteSize::b(*_0))]
+    #[from(skip)]
+    Bytes(u64),
 }
 
 impl Quantity {
@@ -26,7 +34,7 @@ impl Quantity {
     pub const fn is_zero(self) -> bool {
         match self {
             Quantity::Duration(duration) => duration.is_zero(),
-            Quantity::Count(count) => count == 0,
+            Quantity::Count(count) | Quantity::Bytes(count) => count == 0,
         }
     }
 }

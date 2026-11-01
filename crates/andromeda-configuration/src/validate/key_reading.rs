@@ -42,11 +42,16 @@ impl ConfigKey {
             | ConfigKey::HttpForwardedProxies
             | ConfigKey::JsonLdPreloadedContextUrl
             | ConfigKey::TemporalStorageRetentionMode
+            | ConfigKey::FederationCooldownMode
             | ConfigKey::ObservabilityMetricsMode => None,
             ConfigKey::RequestLimitsTimeout => Some(span(config.request_limits.timeout)),
             ConfigKey::RequestLimitsMaxBody => Some(size(config.request_limits.max_body)),
+            ConfigKey::RequestLimitsMaxHeaderSection => Some(Quantity::Bytes(u64::from(config.request_limits.max_header_section.octets()))),
+            ConfigKey::RequestLimitsMaxAttributeNesting => Some(width(config.request_limits.max_attribute_nesting.get())),
+            ConfigKey::RequestLimitsMaxQNesting => Some(width(config.request_limits.max_q_nesting.get())),
             ConfigKey::HttpBodyDecodingBlockingThreshold => Some(size(config.http.body_decoding.blocking_threshold)),
             ConfigKey::DatabaseMaxConnections => Some(count(config.database.max_connections)),
+            ConfigKey::DatabaseWriteReservePercent => Some(count(u8::from(config.database.write_reserve_percent))),
             ConfigKey::DatabaseAcquireTimeout => Some(span(config.database.acquire_timeout)),
             ConfigKey::DatabaseNameCacheMaxSizePerDictionary => Some(size(config.database.name_cache.max_size_per_dictionary)),
             ConfigKey::DatabaseNameCacheIdleEvictionAfter => match config.database.name_cache.idle_eviction_after {
@@ -63,6 +68,8 @@ impl ConfigKey {
             ConfigKey::JsonLdFetchTimeout => Some(span(config.jsonld.fetch.timeout)),
             ConfigKey::JsonLdFetchMaxSize => Some(size(config.jsonld.fetch.max_size)),
             ConfigKey::JsonLdCacheHitFlushInterval => Some(span(config.jsonld.cache.hit_flush_interval)),
+            ConfigKey::JsonLdCacheDefaultLifetime => Some(Quantity::Duration(config.jsonld.cache.default_lifetime.as_duration())),
+            ConfigKey::JsonLdCacheHostedRevalidationInterval => Some(Quantity::Duration(config.jsonld.cache.hosted_revalidation_interval.as_duration())),
             ConfigKey::EntitySpatialIndexRebuildInterval => Some(span(config.entity.spatial_index.rebuild_interval)),
             ConfigKey::EntitySideEffectsDeadLetterAfter => Some(span(config.entity.side_effects.retention.dead_letter_after)),
             ConfigKey::EntitySideEffectsCleanupInterval => Some(span(config.entity.side_effects.retention.cleanup_interval)),
@@ -78,6 +85,9 @@ impl ConfigKey {
             ConfigKey::TemporalStorageRetentionSweepInterval => Some(span(config.temporal.storage.retention.sweep_interval)),
             ConfigKey::NotificationsDeliveryRequestTimeout => Some(span(config.notifications.delivery.request_timeout)),
             ConfigKey::NotificationsDeliveryMaxHttpBody => Some(size(config.notifications.delivery.max_http_body.byte_size())),
+            ConfigKey::NotificationsDeliveryMaxMqttPacket => Some(Quantity::Bytes(u64::from(config.notifications.delivery.max_mqtt_packet.octets()))),
+            ConfigKey::NotificationsDeliveryMaxConcurrent => Some(count(config.notifications.delivery.max_concurrent.get())),
+            ConfigKey::NotificationsDeliveryMaxErrorLength => Some(count(config.notifications.delivery.max_error_length.get())),
             ConfigKey::NotificationsDeliveryAcknowledgedAfter => Some(span(config.notifications.delivery.retention.acknowledged_after)),
             ConfigKey::NotificationsDeliveryDeadLetterAfter => Some(span(config.notifications.delivery.retention.dead_letter_after)),
             ConfigKey::NotificationsDeliveryOrphanEventAfter => Some(span(config.notifications.delivery.retention.orphan_event_after)),
@@ -87,6 +97,8 @@ impl ConfigKey {
             ConfigKey::FederationForwardingRequestTimeout => Some(span(config.federation.forwarding.request_timeout)),
             ConfigKey::FederationForwardingMaxQueryEntities => Some(count(config.federation.forwarding.max_query_entities.get())),
             ConfigKey::FederationForwardingMaxQuerySourceRows => Some(count(config.federation.forwarding.max_query_source_rows.get())),
+            ConfigKey::FederationCooldownRetryInterval => Some(span(config.federation.cooldown.retry_interval)),
+            ConfigKey::FederationCooldownMaxRetryInterval => Some(span(config.federation.cooldown.max_retry_interval)),
             ConfigKey::SnapshotDefaultLifetime => Some(span(config.snapshot.default_lifetime)),
             ConfigKey::SnapshotMaxLifetime => Some(span(config.snapshot.max_lifetime)),
             ConfigKey::SnapshotMaxStoragePerTenant => config.snapshot.quota.max_storage_per_tenant.map(size),
@@ -107,14 +119,15 @@ const fn queue(config: &BrokerConfig, name: QueueName) -> &DurableQueue {
 }
 
 /// The value one key of a queue table holds.
-const fn queue_reading(queue: &DurableQueue, key: QueueKey) -> Quantity {
-    span(match key {
-        QueueKey::PollInterval => queue.poll_interval,
-        QueueKey::MaxPollInterval => queue.max_poll_interval,
-        QueueKey::LeaseTimeout => queue.lease_timeout,
-        QueueKey::RetryInterval => queue.retry_interval,
-        QueueKey::MaxRetryInterval => queue.max_retry_interval,
-    })
+fn queue_reading(queue: &DurableQueue, key: QueueKey) -> Quantity {
+    match key {
+        QueueKey::PollInterval => span(queue.poll_interval),
+        QueueKey::MaxPollInterval => span(queue.max_poll_interval),
+        QueueKey::LeaseTimeout => span(queue.lease_timeout),
+        QueueKey::RetryInterval => span(queue.retry_interval),
+        QueueKey::MaxRetryInterval => span(queue.max_retry_interval),
+        QueueKey::MaxAttempts => count(queue.max_attempts.get()),
+    }
 }
 
 /// A duration as a quantity.
@@ -124,7 +137,13 @@ const fn span(duration: HumanDuration) -> Quantity {
 
 /// A byte size as a quantity.
 const fn size(size: HumanByteSize) -> Quantity {
-    Quantity::Count(size.as_u64())
+    Quantity::Bytes(size.as_u64())
+}
+
+/// A count held in a `usize` as a quantity, saturating on a platform whose
+/// address width passes 64 bits.
+fn width(count: usize) -> Quantity {
+    Quantity::Count(u64::try_from(count).unwrap_or(u64::MAX))
 }
 
 /// A count as a quantity.

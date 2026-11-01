@@ -14,6 +14,22 @@ use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
 use strum::{Display, EnumString};
 
+/// The most notifications `notifications.delivery.max_concurrent` may keep in
+/// flight at once.
+pub const MAX_CONCURRENT_DELIVERIES_CEILING: u32 = 1_024;
+
+/// The longest failure diagnostic `notifications.delivery.max_error_length`
+/// may keep: the longest failure summary the store holds.
+pub const MAX_ERROR_LENGTH_CEILING: u32 = 2_048;
+
+/// The most attempts `notifications.delivery.queue.max_attempts` may allow: the
+/// largest count the store's signed 32-bit attempt counter holds.
+pub const MAX_DELIVERY_ATTEMPTS_CEILING: u32 = 2_147_483_647;
+
+/// The longest claim `notifications.delivery.queue.lease_timeout` may hold:
+/// one day, the longest lease term the store accepts.
+pub const MAX_DELIVERY_LEASE: Duration = Duration::from_hours(24);
+
 /// How notifications are delivered to HTTP and MQTT subscribers.
 ///
 /// Both deliver every notification; they differ only in durability.
@@ -107,13 +123,13 @@ pub struct DeliveryConfig {
     /// many in flight for as long as the queue holds due deliveries, claiming
     /// one each time an attempt is acknowledged.
     #[schemars(
-        description = "The most notifications sent at once. A delivery pass keeps this many in flight for as long as the queue holds due deliveries, so a slow or unreachable endpoint holds only the slots its own attempts occupy. Between 1 and 1024."
+        description = "The most notifications sent at once. A delivery pass keeps this many in flight for as long as the queue holds due deliveries, so a slow or unreachable endpoint holds only the slots its own attempts occupy."
     )]
     pub max_concurrent: NonZeroU32,
     /// The most characters of a failure diagnostic kept when a failed attempt
     /// is recorded; at most the longest failure summary the store keeps.
     #[schemars(
-        description = "The most characters of a failure diagnostic kept with a failed delivery attempt. Between 1 and 2048, the longest failure summary the store keeps."
+        description = "The most characters of a failure diagnostic kept with a failed delivery attempt. It may be raised to the longest failure summary the store keeps."
     )]
     pub max_error_length: NonZeroU32,
     /// Whether an HTTP endpoint or an MQTT broker resolving into private or
@@ -146,7 +162,7 @@ pub struct DeliveryConfig {
     /// maximum lowers it for that connection. A larger notification fails
     /// without a retry.
     #[schemars(
-        description = "The largest MQTT packet a notification is published in, envelope and topic included, from 1 byte to 256 MiB. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry."
+        description = "The largest MQTT packet a notification is published in, envelope and topic included. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry."
     )]
     pub max_mqtt_packet: MqttPacketLimit,
     /// How the queue is polled, claimed and retried. A delivery is retried on

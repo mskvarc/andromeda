@@ -4,7 +4,13 @@
 use crate::{
     broker_config::BrokerConfig,
     human_duration::HumanDuration,
-    validate::{InvalidConfiguration, config_key::ConfigKey, validate, violation::ConfigurationViolation},
+    validate::{
+        InvalidConfiguration,
+        config_key::{ConfigKey, QueueKey, QueueName},
+        declared_rules,
+        validate,
+        violation::ConfigurationViolation,
+    },
 };
 use pretty_assertions::assert_eq;
 
@@ -65,5 +71,40 @@ fn the_refusal_lists_every_violation_on_its_own_line() {
     assert_eq!(
         message,
         Err("invalid configuration:\n  server.port must be greater than zero\n  expiry.sweep_interval must be greater than zero".to_owned())
+    );
+}
+
+/// What the declared rules over `key` state, in the order they are declared.
+fn declared_statements(key: ConfigKey) -> Vec<String> {
+    declared_rules().filter(|rule| rule.key() == key).map(|rule| rule.to_string()).collect()
+}
+
+/// A bound a value type also holds is declared as a rule, so the descriptor
+/// states it, and states it in the unit the key is written in.
+#[test]
+fn every_bound_a_value_type_holds_is_declared() {
+    assert_eq!(
+        declared_statements(ConfigKey::RequestLimitsMaxHeaderSection),
+        ["at least 8.0 KiB", "at most 32.0 KiB"]
+    );
+    assert_eq!(declared_statements(ConfigKey::DatabaseWriteReservePercent), ["below 100"]);
+    assert_eq!(
+        declared_statements(ConfigKey::NotificationsDeliveryMaxMqttPacket),
+        ["above zero", "at most 256.0 MiB"]
+    );
+    assert_eq!(declared_statements(ConfigKey::JsonLdCacheDefaultLifetime), ["at least 1s"]);
+    assert_eq!(declared_statements(ConfigKey::JsonLdCacheHostedRevalidationInterval), ["at least 1s"]);
+}
+
+/// The caps a domain type also holds are declared under their keys.
+#[test]
+fn every_cap_a_domain_type_holds_is_declared() {
+    assert_eq!(declared_statements(ConfigKey::RequestLimitsMaxAttributeNesting), ["at most 62"]);
+    assert_eq!(declared_statements(ConfigKey::RequestLimitsMaxQNesting), ["at most 64"]);
+    assert_eq!(declared_statements(ConfigKey::NotificationsDeliveryMaxConcurrent), ["at most 1024"]);
+    assert_eq!(declared_statements(ConfigKey::NotificationsDeliveryMaxErrorLength), ["at most 2048"]);
+    assert_eq!(
+        declared_statements(ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts)),
+        ["at most 2147483647"]
     );
 }

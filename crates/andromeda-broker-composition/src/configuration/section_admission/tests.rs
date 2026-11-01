@@ -69,25 +69,31 @@ fn a_source_id_past_the_identifier_bound_is_refused_at_load() {
     );
 }
 
+/// The configuration declares the domain's nesting ceilings, so the loader
+/// refuses past them before any domain reads the table.
 #[test]
 #[serial]
-fn an_attribute_nesting_past_the_decodable_ceiling_is_refused_at_load() {
-    let result = admitted("[request_limits]\nmax_attribute_nesting = 63\n");
+fn a_nesting_limit_past_its_ceiling_is_refused_at_load() {
+    let result = admitted("[request_limits]\nmax_attribute_nesting = 63\nmax_q_nesting = 65\n");
+    let expected = [
+        ConfigurationViolation::OutOfRange {
+            key: ConfigKey::RequestLimitsMaxAttributeNesting,
+            value: Quantity::Count(63),
+            relation: Relation::AtMost,
+            bound: Bound::Fixed(Quantity::Count(62)),
+        },
+        ConfigurationViolation::OutOfRange {
+            key: ConfigKey::RequestLimitsMaxQNesting,
+            value: Quantity::Count(65),
+            relation: Relation::AtMost,
+            bound: Bound::Fixed(Quantity::Count(64)),
+        },
+    ];
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::AttributeNesting(_)))),
+        matches!(&result, Err(ConfigurationError::Load(LoadError::Invalid(invalid))) if invalid.violations() == expected),
         "{result:?}"
     );
-}
-
-#[test]
-#[serial]
-fn a_filter_nesting_past_the_parsed_ceiling_is_refused_at_load() {
-    let result = admitted("[request_limits]\nmax_q_nesting = 65\n");
-    assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::FilterNesting(_)))),
-        "{result:?}"
-    );
-    assert!(admitted("[request_limits]\nmax_q_nesting = 64\n").is_ok());
+    assert!(admitted("[request_limits]\nmax_attribute_nesting = 62\nmax_q_nesting = 64\n").is_ok());
 }
 
 /// The queue table refuses the pair before any domain reads it.
@@ -112,8 +118,14 @@ fn a_side_effect_retry_ceiling_below_its_first_step_is_refused_at_load() {
 #[serial]
 fn a_delivery_concurrency_past_the_delivery_maximum_is_refused_at_load() {
     let result = admitted("[notifications.delivery]\nmax_concurrent = 4096\n");
+    let expected = [ConfigurationViolation::OutOfRange {
+        key: ConfigKey::NotificationsDeliveryMaxConcurrent,
+        value: Quantity::Count(4096),
+        relation: Relation::AtMost,
+        bound: Bound::Fixed(Quantity::Count(1024)),
+    }];
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::NotificationDelivery(_)))),
+        matches!(&result, Err(ConfigurationError::Load(LoadError::Invalid(invalid))) if invalid.violations() == expected),
         "{result:?}"
     );
 }
@@ -122,8 +134,11 @@ fn a_delivery_concurrency_past_the_delivery_maximum_is_refused_at_load() {
 #[serial]
 fn a_zero_federation_cooldown_window_is_refused_at_load() {
     let result = admitted("[federation.cooldown]\nmode = \"constant\"\nretry_interval = \"0s\"\n");
+    let expected = [ConfigurationViolation::Zero {
+        key: ConfigKey::FederationCooldownRetryInterval,
+    }];
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::FederationCooldown(_)))),
+        matches!(&result, Err(ConfigurationError::Load(LoadError::Invalid(invalid))) if invalid.violations() == expected),
         "{result:?}"
     );
 }

@@ -36,7 +36,7 @@ pub struct DurableQueue {
     /// form (`"30s"`). A worker that dies leaves its jobs unclaimable for the
     /// rest of the term.
     #[schemars(
-        description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. `notifications.delivery.queue` reads it in whole seconds, rounded down, and accepts at most one day."
+        description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. `notifications.delivery.queue` reads it in whole seconds, rounded down."
     )]
     pub lease_timeout: HumanDuration,
     /// Attempts after which a job that keeps failing is given up or reported:
@@ -45,7 +45,7 @@ pub struct DurableQueue {
     /// stays claimable, since it is the only record of notifications or
     /// history the broker accepted.
     #[schemars(
-        description = "Attempts after which a job that keeps failing is given up or reported. A notification delivery is dead-lettered. A side-effect job or a temporal history intent is reported stuck on each further failure and keeps being retried, never waiting longer than the longest retry delay, since it holds the notifications or the history of a write the broker already accepted. `notifications.delivery.queue` accepts at most 2147483647."
+        description = "Attempts after which a job that keeps failing is given up or reported. A notification delivery is dead-lettered. A side-effect job or a temporal history intent is reported stuck on each further failure and keeps being retried, never waiting longer than the longest retry delay, since it holds the notifications or the history of a write the broker already accepted."
     )]
     pub max_attempts: NonZeroU32,
     /// The delay before the first retry of a failed job, in human-readable

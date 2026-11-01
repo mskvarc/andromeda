@@ -101,8 +101,10 @@ impl CooldownEpisode {
 mod tests {
     use crate::cooldown_policy::{CooldownEpisode, CooldownPolicy, cooldown_schedule};
     use andromeda_configuration::{
+        broker_config::BrokerConfig,
         human_duration::HumanDuration,
         schema::federation::cooldown::{CooldownConfig, CooldownMode},
+        validate::validate,
     };
     use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
     use std::time::Duration;
@@ -167,6 +169,28 @@ mod tests {
             max_retry_interval: HumanDuration::from_secs(5),
         };
         pretty_assertions::assert_eq!(cooldown_schedule(&config).map(drop), Err(BackoffScheduleError::CeilingBelowFirst));
+    }
+
+    /// The configuration validator refuses a cooldown no schedule can be
+    /// built from, so the loader never asks this crate; at the edges it
+    /// admits, the schedule builds.
+    #[test]
+    fn every_cooldown_the_configuration_admits_at_its_edges_forms_a_schedule() {
+        let edges = [
+            (CooldownMode::Disabled, 0, 0),
+            (CooldownMode::Constant, 1, 0),
+            (CooldownMode::Exponential, 1, 1),
+        ];
+        for (mode, retry, max) in edges {
+            let mut config = BrokerConfig::default();
+            config.federation.cooldown = CooldownConfig {
+                mode,
+                retry_interval: HumanDuration::from_millis(retry),
+                max_retry_interval: HumanDuration::from_millis(max),
+            };
+            assert!(validate(&config).is_ok(), "{mode}");
+            assert!(cooldown_schedule(&config.federation.cooldown).is_ok(), "{mode}");
+        }
     }
 
     #[test]

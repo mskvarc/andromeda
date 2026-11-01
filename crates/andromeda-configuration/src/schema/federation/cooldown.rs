@@ -46,13 +46,11 @@ pub struct CooldownConfig {
     pub mode: CooldownMode,
     /// How long a source is held back after a failure, or after the first
     /// failure of an `exponential` episode, in human-readable form (`"1s"`).
-    #[schemars(
-        description = "The hold after a failure in `\"constant\"` mode, or after the first failure in `\"exponential\"` mode. Must be above zero unless `federation.cooldown.mode` is `\"disabled\"`."
-    )]
+    #[schemars(description = "The hold after a failure in `\"constant\"` mode, or after the first failure in `\"exponential\"` mode.")]
     pub retry_interval: HumanDuration,
     /// The longest an `exponential` hold grows to, in human-readable form
     /// (`"1day"`).
-    #[schemars(description = "The longest a hold grows to in `\"exponential\"` mode. In that mode it must be at least `federation.cooldown.retry_interval`.")]
+    #[schemars(description = "The longest a hold grows to in `\"exponential\"` mode.")]
     pub max_retry_interval: HumanDuration,
 }
 

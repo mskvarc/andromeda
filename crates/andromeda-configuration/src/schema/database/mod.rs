@@ -79,7 +79,7 @@ pub struct DatabaseConfig {
     /// however many reads queue. Rounded down: a pool too small to spare a
     /// whole connection keeps every one for reads. Below 100.
     #[schemars(
-        description = "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Rounded down to whole connections: a pool too small to spare one keeps every connection for reads. Must be below 100."
+        description = "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Rounded down to whole connections: a pool too small to spare one keeps every connection for reads."
     )]
     pub write_reserve_percent: WriteReserve,
     /// How long a request-path connection checkout waits for a free connection

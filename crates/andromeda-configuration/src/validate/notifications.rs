@@ -1,10 +1,14 @@
 //! The `[notifications]` rules.
 
-use crate::validate::{
-    bound::Relation,
-    config_key::{ConfigKey, QueueKey, QueueName},
-    durable_queue::queue_rules,
-    rule::{Limit, Rule},
+use crate::{
+    mqtt_packet_limit::MqttPacketLimit,
+    schema::notifications::delivery::{MAX_CONCURRENT_DELIVERIES_CEILING, MAX_DELIVERY_ATTEMPTS_CEILING, MAX_DELIVERY_LEASE, MAX_ERROR_LENGTH_CEILING},
+    validate::{
+        bound::{Quantity, Relation},
+        config_key::{ConfigKey, QueueKey, QueueName},
+        durable_queue::queue_rules,
+        rule::{Limit, Rule},
+    },
 };
 use std::time::Duration;
 
@@ -21,6 +25,8 @@ const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// An outbound notification needs a positive deadline, the queue the queue
 /// rules, its lease the margin over one attempt, and every retention a
 /// positive age and cadence, as the periodic drain a positive sleep bound.
+/// The ceilings are what the delivery store and the MQTT protocol hold, and
+/// the most slots one delivery pass may keep in flight.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [Rule::Positive(ConfigKey::NotificationsDeliveryRequestTimeout)]
         .into_iter()
@@ -36,7 +42,38 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
             Rule::Positive(ConfigKey::NotificationsDeliveryOrphanEventAfter),
             Rule::Positive(ConfigKey::NotificationsDeliveryCleanupInterval),
             Rule::Positive(ConfigKey::NotificationsPeriodicMaxPollInterval),
+            Rule::Ordered {
+                key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
+                relation: Relation::AtMost,
+                limit: Limit::Fixed(Quantity::Duration(MAX_DELIVERY_LEASE)),
+            },
+            at_most(
+                ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts),
+                Quantity::Count(u64::from(MAX_DELIVERY_ATTEMPTS_CEILING)),
+            ),
+            at_most(
+                ConfigKey::NotificationsDeliveryMaxConcurrent,
+                Quantity::Count(u64::from(MAX_CONCURRENT_DELIVERIES_CEILING)),
+            ),
+            at_most(
+                ConfigKey::NotificationsDeliveryMaxErrorLength,
+                Quantity::Count(u64::from(MAX_ERROR_LENGTH_CEILING)),
+            ),
+            Rule::Positive(ConfigKey::NotificationsDeliveryMaxMqttPacket),
+            at_most(
+                ConfigKey::NotificationsDeliveryMaxMqttPacket,
+                Quantity::Bytes(u64::from(MqttPacketLimit::MAXIMUM.octets())),
+            ),
         ])
+}
+
+/// `key` holds at most `ceiling`.
+const fn at_most(key: ConfigKey, ceiling: Quantity) -> Rule {
+    Rule::Ordered {
+        key,
+        relation: Relation::AtMost,
+        limit: Limit::Fixed(ceiling),
+    }
 }
 
 #[cfg(test)]
@@ -52,9 +89,47 @@ mod tests {
         },
     };
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::{num::NonZeroU32, time::Duration};
 
     const LEASE: ConfigKey = ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout);
+
+    /// The refusal of `key` holding `value` past `ceiling`.
+    fn past(key: ConfigKey, value: Quantity, ceiling: Quantity) -> ConfigurationViolation {
+        ConfigurationViolation::OutOfRange {
+            key,
+            value,
+            relation: Relation::AtMost,
+            bound: Bound::Fixed(ceiling),
+        }
+    }
+
+    #[test]
+    fn a_delivery_value_past_its_ceiling_is_refused_and_one_at_it_accepted() {
+        let attempts = ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts);
+        let mut config = BrokerConfig::default();
+        config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_401);
+        config.notifications.delivery.queue.max_attempts = NonZeroU32::MAX;
+        config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_024);
+        config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_048);
+        assert_eq!(
+            refusals(&config),
+            [
+                past(
+                    LEASE,
+                    Quantity::Duration(Duration::from_secs(86_401)),
+                    Quantity::Duration(Duration::from_hours(24))
+                ),
+                past(attempts, Quantity::Count(u64::from(u32::MAX)), Quantity::Count(2_147_483_647)),
+                past(ConfigKey::NotificationsDeliveryMaxConcurrent, Quantity::Count(1_025), Quantity::Count(1_024)),
+                past(ConfigKey::NotificationsDeliveryMaxErrorLength, Quantity::Count(2_049), Quantity::Count(2_048)),
+            ]
+        );
+        config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_400);
+        config.notifications.delivery.queue.max_attempts = NonZeroU32::MIN.saturating_add(2_147_483_646);
+        config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_023);
+        config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_047);
+        assert_accepted(&config);
+    }
 
     #[test]
     fn a_zero_request_timeout_retention_or_periodic_sleep_is_refused() {

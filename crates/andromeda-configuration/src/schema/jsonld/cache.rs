@@ -25,7 +25,7 @@ pub struct JsonLdCacheConfig {
     /// origin server specifies none. A span of zero or below one second is
     /// refused as the configuration is read.
     #[schemars(
-        description = "How long a downloaded `@context` is kept when its response sets no `Expires` and no `Cache-Control` `max-age` or `s-maxage`, and how long a term-cache entry lives. A response that sets one of those keeps its own lifetime. At least one second."
+        description = "How long a downloaded `@context` is kept when its response sets no `Expires` and no `Cache-Control` `max-age` or `s-maxage`, and how long a term-cache entry lives. A response that sets one of those keeps its own lifetime."
     )]
     pub default_lifetime: ConfiguredLifetime,
     /// How long this process uses its in-memory copy of an `@context` the
@@ -40,7 +40,7 @@ pub struct JsonLdCacheConfig {
     /// is refused as the configuration is read, since `max-age` states whole
     /// seconds.
     #[schemars(
-        description = "How long a broker process uses its in-memory copy of a `@context` the broker stores itself before reading it from the database again, since another process sharing the database may have deleted it. It is also the `max-age` sent when such a `@context` is served. At least one second."
+        description = "How long a broker process uses its in-memory copy of a `@context` the broker stores itself before reading it from the database again, since another process sharing the database may have deleted it. It is also the `max-age` sent when such a `@context` is served, in whole seconds."
     )]
     pub hosted_revalidation_interval: ConfiguredLifetime,
     /// How often the stored contexts' hit counters are written back, in

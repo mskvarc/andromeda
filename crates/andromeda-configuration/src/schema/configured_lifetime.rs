@@ -40,6 +40,9 @@ impl ConfiguredLifetime {
     /// minute.
     pub const HOSTED_REVALIDATION_DEFAULT: ConfiguredLifetime = ConfiguredLifetime(Duration::from_secs(60));
 
+    /// The shortest lifetime, one second: `max-age` states whole seconds.
+    pub const MINIMUM: Duration = Duration::from_secs(1);
+
     /// The span.
     #[must_use]
     pub const fn as_duration(self) -> Duration {
@@ -54,7 +57,7 @@ impl TryFrom<HumanDuration> for ConfiguredLifetime {
         let span = configured.duration();
         if span.is_zero() {
             Err(ConfiguredLifetimeError::Zero)
-        } else if span < Duration::from_secs(1) {
+        } else if span < ConfiguredLifetime::MINIMUM {
             Err(ConfiguredLifetimeError::SubSecond {
                 milliseconds: span.as_millis(),
             })

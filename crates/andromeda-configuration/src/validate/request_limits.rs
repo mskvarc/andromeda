@@ -1,18 +1,48 @@
 //! The `[request_limits]` rules.
 
 use crate::{
-    schema::request_limits::RequestLimitsConfig,
+    header_section_limit::HeaderSectionLimit,
+    schema::request_limits::{MAX_ATTRIBUTE_NESTING_CEILING, MAX_Q_NESTING_CEILING, RequestLimitsConfig},
     validate::{
+        bound::{Quantity, Relation},
         config_key::ConfigKey,
-        rule::{CompoundRule, Rule},
+        rule::{CompoundRule, Limit, Rule},
         violation::ConfigurationViolation,
         violation_log::ViolationLog,
     },
 };
 
-/// A request needs a positive deadline and a positive body ceiling.
+/// A request needs a positive deadline and a positive body ceiling. A header
+/// section limit outside its range is one some HTTP version cannot enforce
+/// alike, and a nesting limit past its ceiling admits what no stored value or
+/// parsed filter can hold.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
-    [Rule::Positive(ConfigKey::RequestLimitsTimeout), Rule::Positive(ConfigKey::RequestLimitsMaxBody)].into_iter()
+    [
+        Rule::Positive(ConfigKey::RequestLimitsTimeout),
+        Rule::Positive(ConfigKey::RequestLimitsMaxBody),
+        Rule::Ordered {
+            key: ConfigKey::RequestLimitsMaxHeaderSection,
+            relation: Relation::AtLeast,
+            limit: Limit::Fixed(Quantity::Bytes(u64::from(HeaderSectionLimit::MINIMUM.octets()))),
+        },
+        Rule::Ordered {
+            key: ConfigKey::RequestLimitsMaxHeaderSection,
+            relation: Relation::AtMost,
+            limit: Limit::Fixed(Quantity::Bytes(u64::from(HeaderSectionLimit::MAXIMUM.octets()))),
+        },
+        ceiling(ConfigKey::RequestLimitsMaxAttributeNesting, MAX_ATTRIBUTE_NESTING_CEILING),
+        ceiling(ConfigKey::RequestLimitsMaxQNesting, MAX_Q_NESTING_CEILING),
+    ]
+    .into_iter()
+}
+
+/// `key` holds at most the count `ceiling`.
+fn ceiling(key: ConfigKey, ceiling: usize) -> Rule {
+    Rule::Ordered {
+        key,
+        relation: Relation::AtMost,
+        limit: Limit::Fixed(Quantity::Count(u64::try_from(ceiling).unwrap_or(u64::MAX))),
+    }
 }
 
 /// What [`check_request_limits`] asks.
@@ -32,6 +62,10 @@ pub(crate) fn check_request_limits(limits: &RequestLimitsConfig, log: &mut Viola
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::{
         broker_config::BrokerConfig,
@@ -45,7 +79,34 @@ mod tests {
         },
     };
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::{num::NonZeroUsize, time::Duration};
+
+    #[test]
+    fn a_nesting_limit_past_its_ceiling_is_refused_and_one_at_it_accepted() {
+        let mut config = BrokerConfig::default();
+        config.request_limits.max_attribute_nesting = NonZeroUsize::new(63).expect("a positive depth");
+        config.request_limits.max_q_nesting = NonZeroUsize::new(65).expect("a positive depth");
+        assert_eq!(
+            refusals(&config),
+            [
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::RequestLimitsMaxAttributeNesting,
+                    value: Quantity::Count(63),
+                    relation: Relation::AtMost,
+                    bound: Bound::Fixed(Quantity::Count(62)),
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::RequestLimitsMaxQNesting,
+                    value: Quantity::Count(65),
+                    relation: Relation::AtMost,
+                    bound: Bound::Fixed(Quantity::Count(64)),
+                },
+            ]
+        );
+        config.request_limits.max_attribute_nesting = NonZeroUsize::new(62).expect("a positive depth");
+        config.request_limits.max_q_nesting = NonZeroUsize::new(64).expect("a positive depth");
+        assert_accepted(&config);
+    }
 
     /// A zero deadline is also not above any deadline that must stay below
     /// it.
@@ -113,9 +174,9 @@ mod tests {
         config.request_limits.max_body = HumanByteSize::b(u64::MAX);
         let notification_limit = ConfigurationViolation::OutOfRange {
             key: ConfigKey::NotificationsDeliveryMaxHttpBody,
-            value: Quantity::Count(134_217_728),
+            value: Quantity::Bytes(134_217_728),
             relation: Relation::Above,
-            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, u64::MAX),
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
         };
         if usize::try_from(u64::MAX).is_ok() {
             assert_eq!(refusals(&config), [notification_limit]);

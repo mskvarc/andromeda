@@ -28,6 +28,8 @@ pub enum QueueKey {
     PollInterval,
     /// `max_poll_interval`.
     MaxPollInterval,
+    /// `max_attempts`.
+    MaxAttempts,
     /// `lease_timeout`.
     LeaseTimeout,
     /// `retry_interval`.
@@ -72,6 +74,15 @@ pub enum ConfigKey {
     /// `request_limits.max_body`.
     #[display("request_limits.max_body")]
     RequestLimitsMaxBody,
+    /// `request_limits.max_header_section`.
+    #[display("request_limits.max_header_section")]
+    RequestLimitsMaxHeaderSection,
+    /// `request_limits.max_attribute_nesting`.
+    #[display("request_limits.max_attribute_nesting")]
+    RequestLimitsMaxAttributeNesting,
+    /// `request_limits.max_q_nesting`.
+    #[display("request_limits.max_q_nesting")]
+    RequestLimitsMaxQNesting,
     /// `http.body_decoding.blocking_threshold`.
     #[display("http.body_decoding.blocking_threshold")]
     HttpBodyDecodingBlockingThreshold,
@@ -99,6 +110,9 @@ pub enum ConfigKey {
     /// `database.max_connections`.
     #[display("database.max_connections")]
     DatabaseMaxConnections,
+    /// `database.write_reserve_percent`.
+    #[display("database.write_reserve_percent")]
+    DatabaseWriteReservePercent,
     /// `database.acquire_timeout`.
     #[display("database.acquire_timeout")]
     DatabaseAcquireTimeout,
@@ -138,6 +152,12 @@ pub enum ConfigKey {
     /// `jsonld.cache.hit_flush_interval`.
     #[display("jsonld.cache.hit_flush_interval")]
     JsonLdCacheHitFlushInterval,
+    /// `jsonld.cache.default_lifetime`.
+    #[display("jsonld.cache.default_lifetime")]
+    JsonLdCacheDefaultLifetime,
+    /// `jsonld.cache.hosted_revalidation_interval`.
+    #[display("jsonld.cache.hosted_revalidation_interval")]
+    JsonLdCacheHostedRevalidationInterval,
     /// `jsonld.preloaded_contexts.url`.
     #[display("jsonld.preloaded_contexts.url")]
     JsonLdPreloadedContextUrl,
@@ -189,6 +209,15 @@ pub enum ConfigKey {
     /// `notifications.delivery.max_http_body`.
     #[display("notifications.delivery.max_http_body")]
     NotificationsDeliveryMaxHttpBody,
+    /// `notifications.delivery.max_mqtt_packet`.
+    #[display("notifications.delivery.max_mqtt_packet")]
+    NotificationsDeliveryMaxMqttPacket,
+    /// `notifications.delivery.max_concurrent`.
+    #[display("notifications.delivery.max_concurrent")]
+    NotificationsDeliveryMaxConcurrent,
+    /// `notifications.delivery.max_error_length`.
+    #[display("notifications.delivery.max_error_length")]
+    NotificationsDeliveryMaxErrorLength,
     /// `notifications.delivery.retention.acknowledged_after`.
     #[display("notifications.delivery.retention.acknowledged_after")]
     NotificationsDeliveryAcknowledgedAfter,
@@ -216,6 +245,15 @@ pub enum ConfigKey {
     /// `federation.forwarding.max_query_source_rows`.
     #[display("federation.forwarding.max_query_source_rows")]
     FederationForwardingMaxQuerySourceRows,
+    /// `federation.cooldown.mode`.
+    #[display("federation.cooldown.mode")]
+    FederationCooldownMode,
+    /// `federation.cooldown.retry_interval`.
+    #[display("federation.cooldown.retry_interval")]
+    FederationCooldownRetryInterval,
+    /// `federation.cooldown.max_retry_interval`.
+    #[display("federation.cooldown.max_retry_interval")]
+    FederationCooldownMaxRetryInterval,
     /// `snapshot.default_lifetime`.
     #[display("snapshot.default_lifetime")]
     SnapshotDefaultLifetime,

@@ -21,6 +21,7 @@ use crate::{
         rule::{Limit, Rule},
     },
 };
+use bytesize::ByteSize;
 use humantime::format_duration;
 use serde::Serialize;
 
@@ -220,6 +221,9 @@ fn limit_descriptor(rule: Rule) -> LimitDescriptor {
                     value: format_duration(value).to_string(),
                 },
                 Limit::Fixed(Quantity::Count(value)) => BoundShape::Fixed { value: value.to_string() },
+                Limit::Fixed(Quantity::Bytes(value)) => BoundShape::Fixed {
+                    value: ByteSize::b(value).to_string(),
+                },
                 Limit::Key(key) => BoundShape::Key { key: key.to_string() },
                 Limit::KeyPlusMargin(key, margin) => BoundShape::KeyPlusMargin {
                     key: key.to_string(),

@@ -1,14 +1,27 @@
 //! The `[database]` rules.
 
-use crate::validate::{config_key::ConfigKey, rule::Rule};
+use crate::{
+    schema::database::write_reserve::WriteReserve,
+    validate::{
+        bound::{Quantity, Relation},
+        config_key::ConfigKey,
+        rule::{Limit, Rule},
+    },
+};
 
-/// The pool needs a connection and a positive acquire deadline. A name cache
-/// without capacity reads every name from its table, and a zero idle timeout
-/// evicts every name the moment it is cached.
+/// The pool needs a connection and a positive acquire deadline, and a write
+/// reserve that leaves reads one. A name cache without capacity reads every
+/// name from its table, and a zero idle timeout evicts every name the moment
+/// it is cached.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Positive(ConfigKey::DatabaseMaxConnections),
         Rule::Positive(ConfigKey::DatabaseAcquireTimeout),
+        Rule::Ordered {
+            key: ConfigKey::DatabaseWriteReservePercent,
+            relation: Relation::Below,
+            limit: Limit::Fixed(Quantity::Count(u64::from(WriteReserve::CEILING))),
+        },
         Rule::Positive(ConfigKey::DatabaseNameCacheMaxSizePerDictionary),
         Rule::Positive(ConfigKey::DatabaseNameCacheIdleEvictionAfter),
     ]

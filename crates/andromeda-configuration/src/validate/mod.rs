@@ -6,9 +6,10 @@
 //! configuration descriptor lists the rules the validator runs; a rule that is
 //! no single comparison is code, described beside it. Every rule runs on every
 //! pass and records what it finds, so one run reports every rule the
-//! configuration breaks. A check that needs a domain type belongs to the
-//! crate that owns the type, and the broker composition runs it on a
-//! configuration these rules accepted.
+//! configuration breaks. A bound a domain type also holds is declared here
+//! too, from a constant this crate owns, so the descriptor states it; a check
+//! that needs a domain type to decide belongs to the crate that owns the type,
+//! and the broker composition runs it on a configuration these rules accepted.
 
 pub mod bound;
 pub mod config_key;
@@ -38,6 +39,7 @@ use crate::{
     broker_config::BrokerConfig,
     validate::{
         cross_section::check_listeners,
+        federation::check_cooldown,
         http::check_http,
         jsonld::check_jsonld,
         request_limits::check_request_limits,
@@ -109,6 +111,7 @@ pub fn compound_rules() -> impl Iterator<Item = CompoundRule> {
         .chain(http::COMPOUND_RULES)
         .chain(jsonld::COMPOUND_RULES)
         .chain(temporal::COMPOUND_RULES)
+        .chain(federation::COMPOUND_RULES)
         .chain(cross_section::COMPOUND_RULES)
 }
 
@@ -126,6 +129,7 @@ pub fn validate(config: &BrokerConfig) -> Result<(), InvalidConfiguration> {
     check_http(&config.http, &mut log);
     check_jsonld(&config.jsonld, &mut log);
     check_retention(&config.temporal.storage, &mut log);
+    check_cooldown(config, &mut log);
     check_listeners(config, &mut log);
     log.into_result()
 }

@@ -10,39 +10,13 @@ use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use thiserror::Error;
 
-/// A delivery value the configuration names that the delivery layer cannot use.
+/// The retry delays of `[notifications.delivery.queue]` do not bound a retry
+/// schedule.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryPolicyError {
-    /// The attempt ceiling was outside the accepted range.
-    #[error("notifications.delivery.queue.max_attempts is invalid: {0}")]
-    AttemptCeiling(#[from] DeliveryAttemptCeilingError),
     /// The retry delays do not bound a retry schedule.
     #[error("notifications.delivery.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     RetrySchedule(#[source] BackoffScheduleError),
-    /// The claim lease term was outside the accepted range.
-    #[error("notifications.delivery.queue.lease_timeout is invalid: {0}")]
-    LeaseTerm(#[from] LeaseTermError),
-    /// The stored-diagnostic bound was outside the accepted range.
-    #[error("notifications.delivery.max_error_length is invalid: {0}")]
-    ErrorBound(#[from] DeliveryErrorBoundError),
-    /// The in-flight delivery bound was outside the accepted range.
-    #[error("notifications.delivery.max_concurrent is invalid: {0}")]
-    Concurrency(#[from] DeliveryConcurrencyError),
-}
-
-/// Read every delivery value the section names.
-///
-/// # Errors
-///
-/// Returns the [`DeliveryPolicyError`] of the first value the delivery layer
-/// cannot use; the configuration loader asks, so a broker never starts with one.
-pub fn check_delivery_policy(config: &DeliveryConfig) -> Result<(), DeliveryPolicyError> {
-    attempt_ceiling(config)?;
-    retry_schedule(config)?;
-    lease_term(config)?;
-    error_bound(config)?;
-    delivery_concurrency(config)?;
-    Ok(())
 }
 
 /// The configured in-flight delivery bound.
@@ -108,68 +82,50 @@ pub const fn error_bound(config: &DeliveryConfig) -> Result<DeliveryErrorBound, 
 #[cfg(test)]
 mod tests {
     use crate::{
-        delivery_attempt_ceiling::DeliveryAttemptCeilingError,
-        delivery_concurrency::DeliveryConcurrencyError,
-        delivery_error_bound::DeliveryErrorBoundError,
-        delivery_lease::LeaseTermError,
-        delivery_policy::{DeliveryPolicyError, check_delivery_policy},
+        delivery_attempt_ceiling::DeliveryAttemptCeiling,
+        delivery_concurrency::DeliveryConcurrency,
+        delivery_error_bound::DeliveryErrorBound,
+        delivery_lease::LeaseTerm,
+        delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
     };
-    use andromeda_configuration::{human_duration::HumanDuration, schema::notifications::delivery::DeliveryConfig};
-    use pretty_assertions::assert_eq;
+    use andromeda_configuration::schema::notifications::delivery::{
+        DeliveryConfig,
+        MAX_CONCURRENT_DELIVERIES_CEILING,
+        MAX_DELIVERY_ATTEMPTS_CEILING,
+        MAX_DELIVERY_LEASE,
+        MAX_ERROR_LENGTH_CEILING,
+    };
     use std::num::NonZeroU32;
 
     #[test]
     fn the_shipped_delivery_values_are_usable() {
-        assert_eq!(check_delivery_policy(&DeliveryConfig::default()), Ok(()));
+        let config = DeliveryConfig::default();
+        assert!(attempt_ceiling(&config).is_ok());
+        assert!(retry_schedule(&config).is_ok());
+        assert!(lease_term(&config).is_ok());
+        assert!(error_bound(&config).is_ok());
+        assert!(delivery_concurrency(&config).is_ok());
     }
 
+    /// The configuration refuses a delivery value past its declared ceiling,
+    /// so every value it admits must be one the delivery layer can hold.
     #[test]
-    fn an_attempt_ceiling_past_the_stored_range_is_rejected() {
-        let mut config = DeliveryConfig::default();
-        config.queue.max_attempts = NonZeroU32::MAX;
-        assert_eq!(
-            check_delivery_policy(&config),
-            Err(DeliveryPolicyError::AttemptCeiling(DeliveryAttemptCeilingError::AboveStoredRange {
-                attempts: u32::MAX,
-                maximum: i32::MAX,
-            }))
+    fn every_delivery_ceiling_the_configuration_declares_is_one_the_delivery_layer_holds() {
+        assert!(DeliveryConcurrency::from_count(MAX_CONCURRENT_DELIVERIES_CEILING).is_ok());
+        assert!(DeliveryErrorBound::from_characters(MAX_ERROR_LENGTH_CEILING).is_ok());
+        assert!(NonZeroU32::new(MAX_DELIVERY_ATTEMPTS_CEILING).is_some_and(|attempts| DeliveryAttemptCeiling::from_attempts(attempts).is_ok()));
+        assert!(u32::try_from(MAX_DELIVERY_LEASE.as_secs()).is_ok_and(|seconds| LeaseTerm::from_seconds(seconds).is_ok()));
+    }
+
+    /// Pinned from above too, so a ceiling the delivery layer raises is
+    /// raised in the configuration it is declared in.
+    #[test]
+    fn every_delivery_ceiling_the_configuration_declares_is_the_delivery_layers_own() {
+        assert!(DeliveryConcurrency::from_count(MAX_CONCURRENT_DELIVERIES_CEILING.saturating_add(1)).is_err());
+        assert!(DeliveryErrorBound::from_characters(MAX_ERROR_LENGTH_CEILING.saturating_add(1)).is_err());
+        assert!(
+            NonZeroU32::new(MAX_DELIVERY_ATTEMPTS_CEILING.saturating_add(1)).is_some_and(|attempts| DeliveryAttemptCeiling::from_attempts(attempts).is_err())
         );
-    }
-
-    #[test]
-    fn zero_lease_term_is_rejected() {
-        let mut config = DeliveryConfig::default();
-        config.queue.lease_timeout = HumanDuration::from_secs(0);
-        assert_eq!(check_delivery_policy(&config), Err(DeliveryPolicyError::LeaseTerm(LeaseTermError::ZeroSeconds)));
-    }
-
-    #[test]
-    fn an_error_bound_above_the_schema_maximum_is_rejected() {
-        let config = DeliveryConfig {
-            max_error_length: NonZeroU32::MIN.saturating_add(4_095),
-            ..DeliveryConfig::default()
-        };
-        assert_eq!(
-            check_delivery_policy(&config),
-            Err(DeliveryPolicyError::ErrorBound(DeliveryErrorBoundError::AboveSchemaMaximum {
-                characters: 4_096,
-                maximum: 2_048,
-            }))
-        );
-    }
-
-    #[test]
-    fn a_delivery_concurrency_above_the_maximum_is_rejected() {
-        let config = DeliveryConfig {
-            max_concurrent: NonZeroU32::MIN.saturating_add(1_024),
-            ..DeliveryConfig::default()
-        };
-        assert_eq!(
-            check_delivery_policy(&config),
-            Err(DeliveryPolicyError::Concurrency(DeliveryConcurrencyError::TooHigh {
-                concurrency: 1_025,
-                maximum: 1_024,
-            }))
-        );
+        assert!(u32::try_from(MAX_DELIVERY_LEASE.as_secs().saturating_add(1)).is_ok_and(|seconds| LeaseTerm::from_seconds(seconds).is_err()));
     }
 }

@@ -382,7 +382,6 @@ dependencies = [
  "strum",
  "thiserror 2.0.21",
  "tokio",
- "toml",
  "tracing",
  "typed-builder",
  "uuid",

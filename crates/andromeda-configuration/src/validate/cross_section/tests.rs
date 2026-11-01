@@ -147,9 +147,9 @@ fn a_notification_body_limit_at_the_request_body_limit_is_refused_and_one_byte_a
         refusals(&config),
         [ConfigurationViolation::OutOfRange {
             key: ConfigKey::NotificationsDeliveryMaxHttpBody,
-            value: Quantity::Count(67_108_864),
+            value: Quantity::Bytes(67_108_864),
             relation: Relation::Above,
-            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, 67_108_864_u64),
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(67_108_864)),
         }]
     );
     config.notifications.delivery.max_http_body = NotificationBodyLimit::try_from(HumanByteSize::b(67_108_865))?;

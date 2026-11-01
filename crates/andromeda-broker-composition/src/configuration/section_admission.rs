@@ -4,18 +4,14 @@
 //! whose rules belong to a domain type is checked by converting it into that
 //! type, which only the composition, seeing every domain crate, can do. Every
 //! conversion runs once while the configuration loads, so a broker never
-//! starts with a value a domain would refuse later. The derivations that read
-//! more than one table live here too.
+//! starts with a value a domain would refuse later. A cap a domain type holds
+//! that one comparison states is declared by the configuration instead, so
+//! its descriptor carries it, and the domain crate's tests pin the declared
+//! cap to its own. The derivations that read more than one table live here
+//! too.
 
 use andromeda_configuration::broker_config::BrokerConfig;
-use andromeda_entity::configured_policy::{
-    AttributeNestingAboveDecodable,
-    FilterNestingAboveParsed,
-    check_attribute_nesting,
-    check_filter_nesting,
-    side_effect_retry_schedule,
-};
-use andromeda_federation::cooldown_policy::cooldown_schedule;
+use andromeda_entity::configured_policy::side_effect_retry_schedule;
 use andromeda_http_stack::{
     cors_tokens::{CorsTokenError, check_cors_tokens},
     stack::helmet_layer::{SecurityHeadersError, check_security_headers},
@@ -25,7 +21,6 @@ use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
     identifier::{Identifier, IdentifierParseError},
 };
-use andromeda_notification::delivery_policy::{DeliveryPolicyError, check_delivery_policy};
 use andromeda_postgresql_context_store::database_defaults::{DatabaseDefaults, StatementTimeout};
 use andromeda_postgresql_maintenance::expected_deployment::{ColumnstoreConversion, ExpectedDeployment, HistoryRetention};
 use andromeda_retry::schedule_error::BackoffScheduleError;
@@ -45,26 +40,9 @@ pub enum SectionAdmissionError {
     /// schedule: the first is zero or the ceiling is below it.
     #[error("invalid configuration: temporal.history.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     TemporalIntentRetry(#[source] BackoffScheduleError),
-    /// `request_limits.max_attribute_nesting` passes the depth every stored
-    /// value reads back at.
-    #[error("invalid configuration: {0}")]
-    AttributeNesting(#[from] AttributeNestingAboveDecodable),
-    /// `request_limits.max_q_nesting` passes the depth a `q` filter's
-    /// parentheses are parsed at.
-    #[error("invalid configuration: {0}")]
-    FilterNesting(#[from] FilterNestingAboveParsed),
     /// The side-effect queue's retry delays do not bound a retry schedule.
     #[error("invalid configuration: entity.side_effects.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     EntitySideEffectRetry(#[source] BackoffScheduleError),
-    /// A cooldown that holds sources back needs a positive window, and an
-    /// exponential one a cap no shorter than its first window.
-    #[error(
-        "invalid configuration: federation.cooldown.retry_interval and max_retry_interval do not form a cooldown schedule unless federation.cooldown.mode is disabled: {0}"
-    )]
-    FederationCooldown(#[source] BackoffScheduleError),
-    /// A value of `[notifications.delivery]` is one the delivery layer cannot use.
-    #[error("invalid configuration: {0}")]
-    NotificationDelivery(#[from] DeliveryPolicyError),
     /// `federation.identity.source_id` is an IRI, but not one a stored
     /// resource can be identified by.
     #[error("invalid configuration: federation.identity.source_id: {0}")]
@@ -87,11 +65,7 @@ pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError
     check_cors_tokens(&config.http.cors)?;
     check_security_headers(&config.http.security_headers)?;
     intent_retry_schedule(&config.temporal.history).map_err(SectionAdmissionError::TemporalIntentRetry)?;
-    check_attribute_nesting(&config.request_limits)?;
-    check_filter_nesting(&config.request_limits)?;
     side_effect_retry_schedule(&config.entity.side_effects).map_err(SectionAdmissionError::EntitySideEffectRetry)?;
-    cooldown_schedule(&config.federation.cooldown).map_err(SectionAdmissionError::FederationCooldown)?;
-    check_delivery_policy(&config.notifications.delivery)?;
     let identity = &config.federation.identity;
     Identifier::try_from(&identity.source_id)?;
     ContextSourcePseudonym::try_from(&identity.source_alias)?;

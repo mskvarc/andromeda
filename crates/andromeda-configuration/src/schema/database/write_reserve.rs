@@ -27,7 +27,7 @@ impl TryFrom<u8> for WriteReserve {
     type Error = WriteReserveError;
 
     fn try_from(percent: u8) -> Result<WriteReserve, WriteReserveError> {
-        if percent < 100 {
+        if percent < WriteReserve::CEILING {
             Ok(WriteReserve(percent))
         } else {
             Err(WriteReserveError(percent))
@@ -38,6 +38,10 @@ impl TryFrom<u8> for WriteReserve {
 impl WriteReserve {
     /// A quarter of the pool.
     pub const DEFAULT: WriteReserve = WriteReserve(25);
+
+    /// The percentage every reserve stays below, so read requests always keep
+    /// a connection.
+    pub const CEILING: u8 = 100;
 
     /// How many connections of a pool of `max_connections` read requests may
     /// hold at once.

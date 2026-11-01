@@ -1,7 +1,7 @@
 //! The `[jsonld]` rules.
 
 use crate::{
-    schema::jsonld::JsonLdConfig,
+    schema::{configured_lifetime::ConfiguredLifetime, jsonld::JsonLdConfig},
     validate::{
         bound::{Quantity, Relation},
         config_key::ConfigKey,
@@ -17,7 +17,8 @@ use std::{collections::HashSet, time::Duration};
 const MIN_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// A download needs a deadline of a second and room for one byte, and the hit
-/// counters a positive flush cadence.
+/// counters a positive flush cadence. A cache lifetime is advertised as
+/// `max-age` in whole seconds, so it is at least one.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Ordered {
@@ -27,6 +28,16 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Positive(ConfigKey::JsonLdFetchMaxSize),
         Rule::Positive(ConfigKey::JsonLdCacheHitFlushInterval),
+        Rule::Ordered {
+            key: ConfigKey::JsonLdCacheDefaultLifetime,
+            relation: Relation::AtLeast,
+            limit: Limit::Fixed(Quantity::Duration(ConfiguredLifetime::MINIMUM)),
+        },
+        Rule::Ordered {
+            key: ConfigKey::JsonLdCacheHostedRevalidationInterval,
+            relation: Relation::AtLeast,
+            limit: Limit::Fixed(Quantity::Duration(ConfiguredLifetime::MINIMUM)),
+        },
     ]
     .into_iter()
 }

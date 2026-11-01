@@ -10,6 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
+/// The deepest `request_limits.max_attribute_nesting` may admit: the deepest
+/// nesting every stored value reads back at.
+pub const MAX_ATTRIBUTE_NESTING_CEILING: usize = 62;
+
+/// The deepest `request_limits.max_q_nesting` may admit: the deepest a `q`
+/// filter's parentheses are parsed at, whatever the limit holds.
+pub const MAX_Q_NESTING_CEILING: usize = 64;
+
 /// The default most JSON values one request payload may hold: four entities at
 /// the default entity budget, or one geometry of the default position budget
 /// (three values a position) with ample room around it.
@@ -60,7 +68,7 @@ pub struct RequestLimitsConfig {
     /// its value and 32 bytes. A request over it is answered 431. The
     /// management listener applies the same value.
     #[schemars(
-        description = "The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and HTTP/3 alike, from 8 KiB to 32 KiB. Every field, the method, target and authority included, costs its name, its value and 32 bytes. A request over it is answered a bare `431`. The management listener applies the same limit."
+        description = "The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and HTTP/3 alike. Every field, the method, target and authority included, costs its name, its value and 32 bytes. A request over it is answered a bare `431`. The management listener applies the same limit."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_header_section: HeaderSectionLimit,
@@ -97,7 +105,7 @@ pub struct RequestLimitsConfig {
     /// deeper is answered 400 `BadRequestData`. At most 62, the deepest every
     /// stored value reads back at.
     #[schemars(
-        description = "The deepest one written attribute may nest: each sub-attribute, each JSON object or list of a value, and each object or array inside a JSON literal is one level. An attribute nesting deeper is answered `400` `BadRequestData`. It is also the depth a `q` or `orderBy` path may walk. From 1 to 62, the deepest every stored value reads back at."
+        description = "The deepest one written attribute may nest: each sub-attribute, each JSON object or list of a value, and each object or array inside a JSON literal is one level. An attribute nesting deeper is answered `400` `BadRequestData`. It is also the depth a `q` or `orderBy` path may walk. It may be raised to the deepest every stored value reads back at."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_attribute_nesting: NonZeroUsize,
@@ -114,7 +122,7 @@ pub struct RequestLimitsConfig {
     /// answered 403 `TooComplexQuery`. At most 64, the deepest the parser
     /// admits parentheses at.
     #[schemars(
-        description = "How deep the `;` and `|` combinations of one `q` filter may nest, in an entity or temporal query, a delete by query, or a subscription: `a;b` nests one level, `a;(b|c)` and `a|b;c` two, and parentheses around a single Query Term add none. A filter nesting deeper is answered `403` `TooComplexQuery`. From 1 to 64; parentheses written more than 64 deep are refused whatever this holds."
+        description = "How deep the `;` and `|` combinations of one `q` filter may nest, in an entity or temporal query, a delete by query, or a subscription: `a;b` nests one level, `a;(b|c)` and `a|b;c` two, and parentheses around a single Query Term add none. A filter nesting deeper is answered `403` `TooComplexQuery`. It may be raised to the deepest parentheses are parsed at; parentheses written deeper are refused whatever this holds."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_q_nesting: NonZeroUsize,
