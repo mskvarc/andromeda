@@ -3,7 +3,7 @@
 use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
 
 compact_code_registry! {
-    /// A relation the opt-in PostgreSQL maintenance controller may act on.
+    /// A relation the PostgreSQL maintenance controller may act on.
     ///
     /// The labels are the relation names the controller inspects, which is how an
     /// operator recognises a target in the platform tables. A heap's planner

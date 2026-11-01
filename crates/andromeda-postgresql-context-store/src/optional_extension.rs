@@ -15,9 +15,9 @@
 /// stay the operator's decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sea_query::Iden, strum::Display, strum::EnumIter, strum::IntoStaticStr)]
 pub enum OptionalExtension {
-    /// `pgstattuple`, the relation bloat diagnostics the opt-in maintenance
-    /// controller measures with; without it the controller reports a
-    /// capability deferral for the database.
+    /// `pgstattuple`, the relation bloat diagnostics the maintenance
+    /// controller measures B-tree and `GiST` indexes with; without it those
+    /// indexes go unmeasured and every other maintenance step still runs.
     #[strum(serialize = "pgstattuple")]
     #[iden = "pgstattuple"]
     Pgstattuple,

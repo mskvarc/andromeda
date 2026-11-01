@@ -11,13 +11,13 @@ use strum::{Display, EnumString};
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum MaintenanceMode {
     /// Do not register or execute the controller.
-    #[default]
     #[schemars(description = "Do not run the controller.")]
     Disabled,
     /// Inspect and report decisions without executing maintenance statements.
     #[schemars(description = "Inspect the databases and report the maintenance the controller decides on, without carrying any of it out.")]
     Observe,
     /// Inspect and execute qualifying maintenance statements.
+    #[default]
     #[schemars(description = "Inspect the databases and carry out the maintenance the controller decides on.")]
     Automatic,
 }
@@ -43,7 +43,9 @@ pub enum MaintenanceProfile {
 #[schemars(deny_unknown_fields)]
 pub struct MaintenanceConfig {
     /// Whether inspection is disabled, observational, or automatic.
-    #[schemars(description = "Whether maintenance is off, only inspects and reports, or also acts on what it finds.")]
+    #[schemars(
+        description = "Whether maintenance is off, only inspects and reports, or also acts on what it finds. Acts by default, so a deployment nobody tunes still gets its wraparound and WAL retention warnings, its catch-up vacuums and its index rebuilds. An action whose right the broker's role lacks is only reported. Set `\"observe\"` where the database is maintained on its own schedule."
+    )]
     pub mode: MaintenanceMode,
     /// Fixed threshold and cadence profile.
     #[schemars(description = "How often the controller inspects, and how much evidence it needs before it acts.")]
@@ -56,9 +58,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn omitted_maintenance_configuration_is_disabled_and_conservative() {
+    fn omitted_maintenance_configuration_is_automatic_and_conservative() {
         let config = MaintenanceConfig::default();
-        assert_eq!(config.mode, MaintenanceMode::Disabled);
+        assert_eq!(config.mode, MaintenanceMode::Automatic);
         assert_eq!(config.profile, MaintenanceProfile::Conservative);
     }
 
