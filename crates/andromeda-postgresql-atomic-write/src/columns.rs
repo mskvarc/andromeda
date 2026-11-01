@@ -59,7 +59,7 @@ pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> R
         columns.push_attribute_name_keys(attribute_keys);
         columns.scopes.push(StagedScopes::of(&projection.scopes));
         let edit = RowEdit::between(record.replaces.as_deref(), state).map_err(|error| flatten_failure(&error))?;
-        rows.push(write.entity_id.as_ref(), edit.rows(keys).map_err(|error| flatten_failure(&error))?)
+        rows.push(write.entity_id.as_ref(), edit.rows(keys).map_err(|error| flatten_failure(&error))?, keys)
             .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         grains.push(write.entity_id.as_ref(), &edit, keys).map_err(|error| flatten_failure(&error))?;
         columns

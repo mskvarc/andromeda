@@ -22,13 +22,23 @@ pub struct NameKeys {
     attributes: ResolvedNames<AttributeName>,
     /// `entity_type_names` keys.
     types: ResolvedNames<EntityTypeName>,
+    /// The type IRI behind each key of `types`, which the equality keys of a
+    /// sub-attribute read an element's `valueType` from.
+    type_names: HashMap<EntityTypeNameKey, NgsiLdReference>,
 }
 
 impl NameKeys {
     /// The keys of the given attribute names and type IRIs.
     #[must_use]
-    pub const fn new(attributes: ResolvedNames<AttributeName>, types: ResolvedNames<EntityTypeName>) -> NameKeys {
-        NameKeys { attributes, types }
+    pub fn new(attributes: ResolvedNames<AttributeName>, types: ResolvedNames<EntityTypeName>) -> NameKeys {
+        let type_names = types.iter().map(|(name, key)| (key, NgsiLdReference::from(name))).collect();
+        NameKeys { attributes, types, type_names }
+    }
+
+    /// The type IRI behind the `entity_type_names` key `key`.
+    #[must_use]
+    pub fn type_reference(&self, key: EntityTypeNameKey) -> Option<&NgsiLdReference> {
+        self.type_names.get(&key)
     }
 
     /// The `attribute_names` key of `name`.
@@ -164,5 +174,26 @@ impl KeyNames {
     #[must_use]
     pub fn type_name(&self, key: EntityTypeNameKey) -> Option<&NgsiLdReference> {
         self.types.get(&key)
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod tests {
+    use crate::name_keys::NameKeys;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference};
+    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+
+    #[test]
+    fn a_resolved_type_key_names_its_type_iri() {
+        let iri = "http://www.w3.org/2001/XMLSchema#integer";
+        let name = iri.parse::<EntityTypeName>().expect("a type name");
+        let keys = NameKeys::new(ResolvedNames::default(), ResolvedNames::from_pairs([(name, EntityTypeNameKey::from(7))]));
+        let expected = iri.parse::<NgsiLdReference>().expect("a reference");
+        pretty_assertions::assert_eq!(keys.type_reference(EntityTypeNameKey::from(7)), Some(&expected));
+        pretty_assertions::assert_eq!(keys.type_reference(EntityTypeNameKey::from(8)), None);
     }
 }

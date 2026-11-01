@@ -100,6 +100,7 @@
 //! Value of such instances").
 
 pub mod attribute_names;
+pub mod declared_member;
 pub mod equality_term;
 pub mod extended_filter_pattern;
 pub mod history_aliases;

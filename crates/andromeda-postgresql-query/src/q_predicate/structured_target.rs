@@ -24,34 +24,46 @@
 //!
 //! # How the comparison is expressed
 //!
-//! JSONB containment, `@>`, *is* the clause 4.9 rule "Is included in the target
-//! value, if the latter is an array", and it is strict about JSON datatypes,
-//! which is the clause's other rule: "If there is no equality between the target
-//! value data type and the Query Term value data type, then it shall be
-//! considered as not matching", and, under `unequal`, "considered unequal".
-//! PostgreSQL also treats a bare scalar as contained in an array, so one
-//! operator serves both the elements that are value nodes and the elements that
-//! are plain URIs.
+//! JSONB containment, `@>`, is the clause 4.9 rule "Is included in the target
+//! value, if the latter is an array", and PostgreSQL treats a bare scalar as
+//! contained in an array, so one operator serves both the elements that are
+//! value nodes and the elements that are plain URIs. Two element shapes are
+//! probed: the bare element a `objectList`, a `vocab` list or an array
+//! Property value carries, and the `{"@value": …}` node a `languageMap` or a
+//! `valueList` carries. A target language is no structured target here:
+//! containment compares `@language` byte for byte, while RFC 5646 section
+//! 2.1.1 compares tags case-insensitively, so a language-selected path is
+//! decided over the map's entries instead.
 //!
-//! Two element shapes are therefore probed: the bare element a `objectList`, a
-//! `vocab` list or an array Property value carries, and the `{"@value": …}`
-//! node a `languageMap` or a `valueList` carries. A target language is no
-//! structured target here: containment compares `@language` byte for byte,
-//! while RFC 5646 section 2.1.1 compares tags case-insensitively, so a
-//! language-selected path is decided over the map's entries instead.
+//! Containment compares JSON types, and clause 4.9 compares data types: "If
+//! there is no equality between the target value data type and the Query Term
+//! value data type, then it shall be considered as not matching", and, under
+//! `unequal`, "considered unequal". A member's data type is its declared
+//! datatype, the instance's `valueType` before the member's own `@type`, so a
+//! JSON string may be a number, a Boolean or a time value. A number or a
+//! Boolean operand is therefore probed as its JSON value and as each JSON
+//! string a member declared as one is committed in (its canonical lexical
+//! forms), and a String operand as its text; [`some_member_equals`] then
+//! reads the members of each candidate under their declarations and decides
+//! it. Every probe stays a containment test the GIN index on `value_object`
+//! answers.
 //!
 //! A `DateTime`, `Date` or `Time` operand matches only a member declared as
-//! a value of its form (clause 4.9 matches a target only with an operand of
-//! its own data type). A declared member is committed in its one served
+//! a value of its form. A declared member is committed in its one served
 //! spelling, so the operand is contained once: as a value node carrying the
 //! form's `@type`, or as the plain text when the instance's `valueType` names
-//! the form, which declares every primitive member of its value (annex C.6).
+//! the form (annex C.6), and needs no reading of the members.
 
-use andromeda_ngsi_ld_lexicon::time::{
-    date::NgsiLdDate,
-    rendering::{instant_text, time_of_day_text},
-    value::TimeValueForm,
+use crate::q_predicate::declared_member::some_member_equals;
+use andromeda_ngsi_ld_lexicon::{
+    datatype::declared_value::NumberSpelling,
+    time::{
+        date::NgsiLdDate,
+        rendering::{instant_text, time_of_day_text},
+        value::TimeValueForm,
+    },
 };
+use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
@@ -77,10 +89,18 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuil
 #[must_use]
 pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Scalar) -> Condition {
     match member_text(scalar) {
-        MemberText::One(operand) => Condition::any()
-            // clone: each element shape is built around its own copy of the operand
-            .add(contains(column, bare_element(operand.clone())))
-            .add(contains(column, value_element(operand))),
+        MemberText::Read { native, spellings } => {
+            let probes = native
+                .into_iter()
+                .chain(spellings.into_iter().map(|text| cast(SeaExpr::val(text), PostgresType::Text)));
+            let candidate = probes.fold(Condition::any(), |candidate, operand| {
+                candidate
+                    // clone: each element shape is built around its own copy of the operand
+                    .add(contains(column, bare_element(operand.clone())))
+                    .add(contains(column, value_element(operand)))
+            });
+            Condition::all().add(candidate).add(some_member_equals(column, value_type, scalar))
+        }
         MemberText::Declared { form, text } => {
             let plain = Condition::any()
                 .add(contains(column, json_element(&format!("[\"{text}\"]"))))
@@ -100,11 +120,20 @@ pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Sc
     }
 }
 
-/// The text a member equal to a Query Term operand is held as.
+/// What a member equal to a Query Term operand holds.
 enum MemberText {
-    /// The one value a member equal to the operand holds, bound as the
-    /// PostgreSQL type its JSON counterpart is built from.
-    One(SimpleExpr),
+    /// An operand whose members are read under their declarations to decide
+    /// it ([`some_member_equals`]).
+    Read {
+        /// The JSON number or boolean a member equal to the operand holds,
+        /// bound as the PostgreSQL type its JSON counterpart is built from;
+        /// none for a String operand.
+        native: Option<SimpleExpr>,
+        /// The JSON strings a member equal to the operand may be: a String
+        /// operand's text, the canonical lexical forms of a number, the
+        /// spelling of a Boolean.
+        spellings: Vec<String>,
+    },
     /// The time value a member declared as one of `form` holds, as `text`,
     /// its one committed spelling.
     Declared {
@@ -167,15 +196,34 @@ fn value_element(operand: SimpleExpr) -> SimpleExpr {
 /// A number binds as `NUMERIC`, so an integer beyond 2^53 and an exact fraction
 /// reach the comparison as themselves and JSONB's own numeric equality decides
 /// it: `2` and `2.0` are one number there, as they are in the `value_number`
-/// column.
+/// column. A declared number is committed in the canonical lexical form of its
+/// datatype ([`NumberSpelling`]), of which there are two, often alike.
 fn member_text(scalar: &Scalar) -> MemberText {
     match scalar {
-        // clone: sea-query owns every value in its AST, so the exact decimal is
-        // cloned out of the borrowed query operand exactly as the typed column
-        // comparison clones it.
-        Scalar::Number(number) => MemberText::One(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric)),
-        Scalar::Bool(value) => MemberText::One(cast(SeaExpr::val(*value), PostgresType::Boolean)),
-        Scalar::Str(value) | Scalar::Uri(value) => MemberText::One(cast(SeaExpr::val(value.as_str()), PostgresType::Text)),
+        Scalar::Number(number) => {
+            // clone: the declared number the spellings are built from owns its value
+            let declared = DeclaredNumber::Finite(number.clone());
+            let mut spellings = vec![NumberSpelling::Decimal.spell(&declared)];
+            let floating = NumberSpelling::Floating.spell(&declared);
+            if !spellings.contains(&floating) {
+                spellings.push(floating);
+            }
+            MemberText::Read {
+                // clone: sea-query owns every value in its AST, so the exact
+                // decimal is cloned out of the borrowed query operand exactly as
+                // the typed column comparison clones it.
+                native: Some(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric)),
+                spellings,
+            }
+        }
+        Scalar::Bool(value) => MemberText::Read {
+            native: Some(cast(SeaExpr::val(*value), PostgresType::Boolean)),
+            spellings: vec![value.to_string()],
+        },
+        Scalar::Str(value) | Scalar::Uri(value) => MemberText::Read {
+            native: None,
+            spellings: vec![value.as_str().to_owned()],
+        },
         Scalar::DateTime(instant) => MemberText::Declared {
             form: TimeValueForm::DateTime,
             text: instant_text(*instant),
@@ -251,6 +299,37 @@ mod tests {
         let (sql, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Bool(true)));
         assert!(sql.contains("$1::boolean"), "{sql}");
         assert!(binds.iter().any(|bind| matches!(bind, Value::Bool(Some(true)))), "{binds:?}");
+    }
+
+    /// A declared number is committed as a JSON string in the canonical
+    /// lexical form of its datatype, so the operand is also probed as each
+    /// form, and the members of a candidate decide it.
+    #[test]
+    fn a_number_operand_is_probed_as_each_canonical_spelling_and_read_back() {
+        let number = "1E-7".parse::<JsonNumber>().expect("a JSON number");
+        let (sql, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Number(number)));
+        let texts: Vec<&str> = binds
+            .iter()
+            .filter_map(|bind| if let Value::String(Some(text)) = bind { Some(text.as_str()) } else { None })
+            .collect();
+        assert!(texts.contains(&"0.0000001") && texts.contains(&"1E-7"), "{binds:?}");
+        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ").count(), 6, "{sql}");
+        assert!(sql.contains("jsonb_array_elements"), "{sql}");
+    }
+
+    #[test]
+    fn a_number_spelled_alike_in_both_forms_is_probed_once_as_text() {
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ").count(), 4, "{sql}");
+    }
+
+    /// Clause 4.9: a JSON string declared as another data type is no String,
+    /// so containment of the text only narrows the candidates.
+    #[test]
+    fn a_string_operand_reads_the_members_of_a_candidate_under_their_declarations() {
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &Scalar::Str("4".to_owned())));
+        assert!(sql.contains(") AND EXISTS(SELECT 1 FROM jsonb_array_elements"), "{sql}");
+        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#integer'"), "{sql}");
     }
 
     /// The column naming the datatype the row's `valueType` declares.

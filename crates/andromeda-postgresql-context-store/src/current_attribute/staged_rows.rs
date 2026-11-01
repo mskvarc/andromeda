@@ -10,6 +10,7 @@
 use crate::current_attribute::row::{CurrentAttributeRow, row_column};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{
+    name_keys::NameKeys,
     stored_json::StoredJson,
     stored_members::InstanceMembers,
     stored_number::StoredNumber,
@@ -166,14 +167,15 @@ pub struct StagedRows<'a> {
 }
 
 impl<'a> StagedRows<'a> {
-    /// Stage the rows of the Entity `entity`.
+    /// Stage the rows of the Entity `entity`, whose names the write resolved
+    /// as `names`.
     ///
     /// # Errors
     ///
     /// Returns [`StagedRowError`] when a geometry, of a row or of an element,
     /// cannot be encoded as EWKB, or the equality keys of a sub-attribute tree
     /// cannot be computed.
-    pub fn push(&mut self, entity: &'a Identifier, rows: Vec<CurrentAttributeRow>) -> Result<(), StagedRowError> {
+    pub fn push(&mut self, entity: &'a Identifier, rows: Vec<CurrentAttributeRow>, names: &NameKeys) -> Result<(), StagedRowError> {
         for row in rows {
             let CurrentAttributeRow {
                 ordinal,
@@ -198,7 +200,7 @@ impl<'a> StagedRows<'a> {
             let language = value.language().map(|language| language.as_str().to_owned());
             let kind = ValueKind::code(value.kind());
             let values = ValueColumns::of(value)?;
-            let sub_eq_keys = sub_attribute_keys(attribute_name_key, &sub_attributes)?;
+            let sub_eq_keys = sub_attribute_keys(attribute_name_key, &sub_attributes, names)?;
             let elements = sub_attributes
                 .into_iter()
                 .map(SubAttributeRecord::try_from)
@@ -323,7 +325,7 @@ mod tests {
     fn staged<'a>(id: &'a Identifier, state: &EntityState) -> StagedRows<'a> {
         let (keys, _) = dictionary(state);
         let mut rows = StagedRows::default();
-        rows.push(id, flatten(state.attributes(), &keys).expect("a committed state flattens"))
+        rows.push(id, flatten(state.attributes(), &keys).expect("a committed state flattens"), &keys)
             .expect("every geometry encodes");
         rows
     }

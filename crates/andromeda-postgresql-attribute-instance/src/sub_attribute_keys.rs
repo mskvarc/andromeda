@@ -5,17 +5,19 @@
 //! which it reaches through `parent`. An element holding one scalar has its
 //! value's key; one holding an array has the key of every scalar member
 //! ([`stored_array_members`]); one holding a geometry or a structured object
-//! has none. A value declared as a time value is keyed under its kind, a
+//! has none. An array member is read under the element's `valueType`
+//! ([`stored_array_members`]). A value declared as a time value is keyed under its kind, a
 //! String under its own. A declared number keys as the number it names and a
 //! declared Boolean as the Boolean, so an equality operand probes one key for
 //! either; a number beyond the decimals equals no operand and has none.
 
 use crate::{
+    name_keys::NameKeys,
     stored_array_members::{ArrayMember, StoredArrayMemberError, stored_array_members},
     stored_value::StoredValue,
     sub_attribute::SubAttributeElement,
 };
-use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::value::TimeValue};
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{
@@ -41,17 +43,31 @@ pub enum SubAttributeKeyError {
         /// The parent it names.
         parent: i32,
     },
+    /// An element's `valueType` key names no type the write resolved.
+    #[error("sub-attribute element {position} holds the valueType key {key}, which names no resolved type")]
+    ValueType {
+        /// The 1-based array position of the element.
+        position: usize,
+        /// The key it holds.
+        key: i32,
+    },
 }
 
 /// The equality keys of `elements`, the sub-attribute tree of an instance of
 /// `attribute`, as the array literal `sub_eq_keys` is staged in; `None` when
-/// no element holds a keyed value.
+/// no element holds a keyed value. `names` are the keys the write resolved,
+/// which name each element's `valueType`.
 ///
 /// # Errors
 ///
 /// Returns [`SubAttributeKeyError`] when an element names a parent that does
-/// not precede it, or its array value does not read back.
-pub fn sub_attribute_keys(attribute: AttributeNameKey, elements: &[SubAttributeElement]) -> Result<Option<IntegerArrayLiteral>, SubAttributeKeyError> {
+/// not precede it or a `valueType` key `names` does not hold, or its array
+/// value does not read back.
+pub fn sub_attribute_keys(
+    attribute: AttributeNameKey,
+    elements: &[SubAttributeElement],
+    names: &NameKeys,
+) -> Result<Option<IntegerArrayLiteral>, SubAttributeKeyError> {
     let root = PathHash::ROOT.child(attribute);
     let mut paths = Vec::with_capacity(elements.len());
     let mut keys = Vec::new();
@@ -69,13 +85,29 @@ pub fn sub_attribute_keys(attribute: AttributeNameKey, elements: &[SubAttributeE
         })?;
         let path = parent.child(element.members.attribute_name_key);
         paths.push(path);
-        push_value_keys(path, &element.members.value, &mut keys)?;
+        let value_type = element
+            .members
+            .value_type_key
+            .map(|key| {
+                names.type_reference(key).ok_or(SubAttributeKeyError::ValueType {
+                    position: index + 1,
+                    key: key.get(),
+                })
+            })
+            .transpose()?;
+        push_value_keys(path, &element.members.value, value_type, &mut keys)?;
     }
     Ok((!keys.is_empty()).then(|| IntegerArrayLiteral::of(keys.into_iter().map(SubAttributeKey::get))))
 }
 
-/// Push the keys `value` has at `path` onto `keys`.
-fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttributeKey>) -> Result<(), StoredArrayMemberError> {
+/// Push the keys `value`, beside the `valueType` `value_type`, has at `path`
+/// onto `keys`.
+fn push_value_keys(
+    path: PathHash,
+    value: &StoredValue,
+    value_type: Option<&NgsiLdReference>,
+    keys: &mut Vec<SubAttributeKey>,
+) -> Result<(), StoredArrayMemberError> {
     let key = |value: KeyedValue<'_>| SubAttributeKey::of(path, value);
     match value {
         StoredValue::Number { number, .. }
@@ -90,7 +122,7 @@ fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttrib
         StoredValue::Time { time, .. } => keys.push(key(KeyedValue::Text(&time.to_string(), TextKind::Time))),
         StoredValue::Uri(uri) => keys.push(key(KeyedValue::Text(uri.as_str(), TextKind::Uri))),
         StoredValue::Object(json) => {
-            for member in stored_array_members(json)? {
+            for member in stored_array_members(json, value_type)? {
                 match member {
                     ArrayMember::Number(number) => keys.push(key(KeyedValue::Number(number.decimal()))),
                     ArrayMember::Text(text) => keys.push(key(KeyedValue::Text(&text, TextKind::String))),
@@ -117,6 +149,7 @@ fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttrib
 )]
 mod tests {
     use crate::{
+        name_keys::NameKeys,
         stored_json::StoredJson,
         stored_members::InstanceMembers,
         stored_value::{LiteralAnnotation, StoredValue},
@@ -124,10 +157,13 @@ mod tests {
         sub_attribute_keys::{SubAttributeKeyError, sub_attribute_keys},
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::attribute_kind::AttributeKind;
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
+        dictionary::resolved_names::ResolvedNames,
+        entity_type_name_key::EntityTypeNameKey,
         sub_attribute_key::{
             key::{KeyedValue, SubAttributeKey, TextKind},
             path_hash::PathHash,
@@ -183,9 +219,38 @@ mod tests {
         Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("a valid instant")
     }
 
+    /// The `entity_type_names` key of `xsd:integer` in [`names`].
+    const INTEGER: i32 = 11;
+
+    /// The `entity_type_names` key of `DateTime` in [`names`].
+    const DATE_TIME: i32 = 12;
+
+    /// The `entity_type_names` key of `xsd:boolean` in [`names`].
+    const BOOLEAN: i32 = 13;
+
+    /// The keys a write resolved for the `valueType` IRIs the tests declare.
+    fn names() -> NameKeys {
+        let typed = |iri: &str, key: i32| (iri.parse::<EntityTypeName>().expect("a type name"), EntityTypeNameKey::from(key));
+        NameKeys::new(
+            ResolvedNames::default(),
+            ResolvedNames::from_pairs([
+                typed("http://www.w3.org/2001/XMLSchema#integer", INTEGER),
+                typed("https://uri.etsi.org/ngsi-ld/DateTime", DATE_TIME),
+                typed("http://www.w3.org/2001/XMLSchema#boolean", BOOLEAN),
+            ]),
+        )
+    }
+
+    /// An element holding `value` beside the `valueType` keyed `value_type`.
+    fn declared(name: i32, value: StoredValue, value_type: i32) -> SubAttributeElement {
+        let mut declared = element(0, name, value);
+        declared.members.value_type_key = Some(EntityTypeNameKey::from(value_type));
+        declared
+    }
+
     /// The keys of `elements`, read back from their array literal.
     fn keys(elements: &[SubAttributeElement]) -> Option<Vec<i64>> {
-        sub_attribute_keys(AttributeNameKey::from(ATTRIBUTE), elements)
+        sub_attribute_keys(AttributeNameKey::from(ATTRIBUTE), elements, &names())
             .expect("the keys compute")
             .map(|literal| {
                 literal
@@ -276,6 +341,48 @@ mod tests {
         );
     }
 
+    /// Clause 4.5.2: a `valueType` declares every primitive member of the
+    /// value beside it, before a member's own `@type`.
+    #[test]
+    fn an_array_member_declared_a_number_by_the_value_type_carries_its_number_key() {
+        let (four, seven) = (BigDecimal::from(4), BigDecimal::from(7));
+        assert_eq!(
+            keys(&[declared(5, object(r#"["4",{"@value":"7"}]"#), INTEGER)]),
+            Some(vec![key_at(&[5], KeyedValue::Number(&four)), key_at(&[5], KeyedValue::Number(&seven))])
+        );
+    }
+
+    #[test]
+    fn an_array_member_typed_as_a_number_carries_its_number_key() {
+        let four = BigDecimal::from(4);
+        assert_eq!(
+            keys(&[element(0, 5, object(r#"[{"@value":"4","@type":"http://www.w3.org/2001/XMLSchema#integer"}]"#))]),
+            Some(vec![key_at(&[5], KeyedValue::Number(&four))])
+        );
+    }
+
+    #[test]
+    fn an_array_member_declared_a_time_value_by_the_value_type_carries_its_instant_key() {
+        assert_eq!(
+            keys(&[declared(5, object(r#"["2024-01-01T00:00:00Z"]"#), DATE_TIME)]),
+            Some(vec![key_at(&[5], KeyedValue::Instant(midnight()))])
+        );
+    }
+
+    #[test]
+    fn an_array_member_declared_a_boolean_by_the_value_type_carries_its_boolean_key() {
+        assert_eq!(
+            keys(&[declared(5, object(r#"["true","false"]"#), BOOLEAN)]),
+            Some(vec![key_at(&[5], KeyedValue::Boolean(true)), key_at(&[5], KeyedValue::Boolean(false))])
+        );
+    }
+
+    #[test]
+    fn a_value_type_key_no_resolved_type_names_is_refused() {
+        let refusal = sub_attribute_keys(AttributeNameKey::from(ATTRIBUTE), &[declared(5, object(r#"["4"]"#), 99)], &names());
+        assert!(matches!(refusal, Err(SubAttributeKeyError::ValueType { position: 1, key: 99 })), "{refusal:?}");
+    }
+
     #[test]
     fn a_language_map_carries_the_key_of_each_text() {
         let keys = keys(&[element(
@@ -324,7 +431,7 @@ mod tests {
 
     #[test]
     fn an_element_whose_parent_does_not_precede_it_is_refused() {
-        let refusal = sub_attribute_keys(AttributeNameKey::from(ATTRIBUTE), &[element(1, 5, number("1"))]);
+        let refusal = sub_attribute_keys(AttributeNameKey::from(ATTRIBUTE), &[element(1, 5, number("1"))], &names());
         assert!(matches!(refusal, Err(SubAttributeKeyError::Parent { position: 1, parent: 1 })), "{refusal:?}");
     }
 }

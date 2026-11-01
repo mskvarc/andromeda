@@ -6,11 +6,13 @@
 //! map, several Relationship objects) an equality matches a value the array
 //! includes, so each member that is a number, a string or a boolean is one
 //! value, and so is the `@value` of a member value node when it is one of
-//! those. A value node whose `@type` declares a clause 4.6.3 time value, an
-//! XSD number or an `xsd:boolean` is that value; a declared number beyond the
-//! decimals equals no operand and holds none. Every other member (`null`, an
-//! array, a node without such a `@value`) and a value that is not an array
-//! hold none.
+//! those. A string member is declared by the instance's `valueType` when it
+//! has one, which declares every primitive member of its value (clause
+//! 4.5.2), and by its own `@type` otherwise. One declared as a clause 4.6.3
+//! time value, an XSD number or an `xsd:boolean` is that value; a declared
+//! number beyond the decimals equals no operand and holds none. Every other
+//! member (`null`, an array, a node without such a `@value`) and a value that
+//! is not an array hold none.
 //!
 //! The members are read from the stored text: a member's JSON type is fixed by
 //! its first byte, and a number is read at arbitrary precision so it keys as
@@ -65,38 +67,56 @@ pub enum StoredArrayMemberError {
     Declared(#[from] DatatypeError),
 }
 
-/// The scalar members of `json`, in stored order; none when it is not an
-/// array.
+/// The scalar members of `json`, a value beside the `valueType`
+/// `value_type`, in stored order; none when it is not an array.
 ///
 /// # Errors
 ///
 /// Returns [`StoredArrayMemberError`] when the stored text does not read back
-/// as the JSON its codec writes.
-pub fn stored_array_members(json: &StoredJson) -> Result<Vec<ArrayMember>, StoredArrayMemberError> {
+/// as the JSON its codec writes, or a member is no value of the datatype it is
+/// declared as.
+pub fn stored_array_members(json: &StoredJson, value_type: Option<&NgsiLdReference>) -> Result<Vec<ArrayMember>, StoredArrayMemberError> {
     let text = json.get();
     if !text.starts_with('[') {
         return Ok(Vec::new());
     }
     serde_json::from_str::<Vec<&RawValue>>(text)?
         .into_iter()
-        .filter_map(|member| array_member(member).transpose())
+        .filter_map(|member| array_member(member, value_type).transpose())
         .collect()
 }
 
 /// The value `member` holds: itself when it is a scalar, its `@value` when it
-/// is a node whose `@value` is one, read as the value its `@type` declares.
-fn array_member(member: &RawValue) -> Result<Option<ArrayMember>, StoredArrayMemberError> {
+/// is a node whose `@value` is one, read as the value `value_type` or its own
+/// `@type` declares.
+fn array_member(member: &RawValue, value_type: Option<&NgsiLdReference>) -> Result<Option<ArrayMember>, StoredArrayMemberError> {
     if !member.get().starts_with('{') {
-        return scalar(member);
+        return scalar(member)?.map(|held| declared(held, None, value_type)).transpose().map(Option::flatten);
     }
     let node = serde_json::from_str::<ValueNode<'_>>(member.get())?;
     let datatype = node.datatype.and_then(|datatype| datatype.parse::<NgsiLdReference>().ok());
-    let held = node.value.map(scalar).transpose()?.flatten();
-    let Some(ArrayMember::Text(text)) = held else {
-        return Ok(held);
+    node.value
+        .map(scalar)
+        .transpose()?
+        .flatten()
+        .map(|held| declared(held, datatype.as_ref(), value_type))
+        .transpose()
+        .map(Option::flatten)
+}
+
+/// The member `held` is under its own `datatype` and the `value_type` beside
+/// it: a string they declare as another data type is that value, and every
+/// other member is itself.
+fn declared(
+    held: ArrayMember,
+    datatype: Option<&NgsiLdReference>,
+    value_type: Option<&NgsiLdReference>,
+) -> Result<Option<ArrayMember>, StoredArrayMemberError> {
+    let ArrayMember::Text(text) = held else {
+        return Ok(Some(held));
     };
     Ok(
-        match DeclaredValue::of(LiteralDeclaration::new(datatype.as_ref(), None), PrimitiveLiteral::String(&text)).transpose()? {
+        match DeclaredValue::of(LiteralDeclaration::new(datatype, value_type), PrimitiveLiteral::String(&text)).transpose()? {
             None => Some(ArrayMember::Text(text)),
             Some(DeclaredValue::Time(value)) => Some(ArrayMember::Time(value)),
             Some(DeclaredValue::Number {
@@ -143,7 +163,7 @@ mod tests {
 
     fn members(text: &str) -> Vec<ArrayMember> {
         let json = StoredJson::new(RawValue::from_string(text.to_owned()).expect("JSON"));
-        stored_array_members(&json).expect("the members read")
+        stored_array_members(&json, None).expect("the members read")
     }
 
     fn number(text: &str) -> ArrayMember {

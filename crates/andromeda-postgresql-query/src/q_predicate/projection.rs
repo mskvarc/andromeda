@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn an_equality_is_not_negated_at_all() {
         let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
-        assert!(!sql.contains("NOT COALESCE("), "{sql}");
+        assert!(!sql.contains("NOT COALESCE(("), "{sql}");
     }
 
     /// Clause 4.9's `unequal` over a value list: "The target value is neither
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn a_negated_value_list_negates_every_member_totally() {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one total negation per member: {sql}");
+        assert_eq!(sql.matches("NOT COALESCE((").count(), 2, "one total negation per member: {sql}");
         assert!(sql.contains(") AND ("), "the members are conjoined: {sql}");
     }
 
@@ -631,7 +631,11 @@ mod tests {
     #[test]
     fn inclusive_range_becomes_a_bounded_pair_inside_one_probe() {
         let (sql, binds) = render("\"https://example.com/temperature\"==10..20");
-        assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not two: {sql}");
+        assert_eq!(
+            sql.matches(r#"EXISTS(SELECT 1 FROM "current_attributes""#).count(),
+            1,
+            "one probe, not two: {sql}"
+        );
         assert!(sql.contains("\"ca\".\"value_number\" >="), "{sql}");
         assert!(sql.contains("\"ca\".\"value_number\" <="), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(12))));
@@ -650,7 +654,7 @@ mod tests {
     #[test]
     fn value_list_becomes_a_disjunction_inside_one_probe() {
         let (sql, _) = render("\"https://example.com/color\"==\"red\",\"blue\"");
-        assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
+        assert_eq!(sql.matches(r#"EXISTS(SELECT 1 FROM "current_attributes""#).count(), 1, "{sql}");
         assert!(sql.contains(" OR "), "{sql}");
     }
 
@@ -663,7 +667,7 @@ mod tests {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
         assert!(sql.contains("EXISTS"), "the attribute must still exist: {sql}");
         assert!(!sql.contains("NOT (EXISTS"), "{sql}");
-        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one negation per member: {sql}");
+        assert_eq!(sql.matches("NOT COALESCE((").count(), 2, "one negation per member: {sql}");
     }
 
     #[test]
@@ -772,7 +776,7 @@ mod tests {
     #[test]
     fn an_unqualified_inequality_negates_every_reading_of_the_target_value_at_once() {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\"");
-        assert_eq!(sql.matches("NOT COALESCE(").count(), 1, "{sql}");
+        assert_eq!(sql.matches("NOT COALESCE((").count(), 1, "{sql}");
         assert!(sql.contains("\"ca\".\"value_object\" @> "), "the structured readings are inside it: {sql}");
         assert!(sql.contains("\"ca\".\"value_string\" = "), "so are the typed columns: {sql}");
         assert!(sql.contains("EXISTS"), "{sql}");
@@ -785,7 +789,11 @@ mod tests {
     fn a_value_list_reaches_the_structured_value_column_once_per_member() {
         let (sql, _) = render("\"https://example.com/color\"==\"red\",\"blue\"");
         assert_eq!(sql.matches("\"ca\".\"value_object\" @> ").count(), 4, "two shapes per member: {sql}");
-        assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not one per member: {sql}");
+        assert_eq!(
+            sql.matches(r#"EXISTS(SELECT 1 FROM "current_attributes""#).count(),
+            1,
+            "one probe, not one per member: {sql}"
+        );
     }
 
     /// The `unequal` complement of the value list: none of the members may be
@@ -794,7 +802,7 @@ mod tests {
     fn a_negated_value_list_denies_the_structured_value_column_for_every_member() {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
         assert_eq!(sql.matches("\"ca\".\"value_object\" @> ").count(), 4, "two element shapes per member: {sql}");
-        assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one negation per member: {sql}");
+        assert_eq!(sql.matches("NOT COALESCE((").count(), 2, "one negation per member: {sql}");
     }
 
     /// Clause 4.9 requires a matching Entity to contain the target element,
@@ -854,7 +862,7 @@ mod tests {
     #[test]
     fn an_excluded_string_range_negates_the_strings_with_the_typed_column() {
         let (sql, _) = render("\"https://example.com/color\"!=\"a\"..\"m\"");
-        assert_eq!(sql.matches("NOT COALESCE(").count(), 1, "{sql}");
+        assert_eq!(sql.matches("NOT COALESCE((").count(), 1, "{sql}");
         let negated = sql.split("NOT COALESCE(").nth(1).unwrap_or_default();
         assert!(negated.contains("jsonb_array_elements"), "the strings sit inside the negation: {sql}");
     }
@@ -966,7 +974,11 @@ mod tests {
             "({}>1;\"https://example.com/b\"<2)|\"https://example.com/c\"==\"x\"",
             quoted("https://example.com/a")
         ));
-        assert_eq!(sql.matches("EXISTS").count(), 3, "one probe per predicate: {sql}");
+        assert_eq!(
+            sql.matches(r#"EXISTS(SELECT 1 FROM "current_attributes""#).count(),
+            3,
+            "one probe per predicate: {sql}"
+        );
         assert!(sql.contains(" AND "), "{sql}");
         assert!(sql.contains(" OR "), "{sql}");
     }
@@ -1096,7 +1108,7 @@ mod tests {
     #[test]
     fn a_conjunction_keeps_one_probe_per_term() {
         let (sql, _) = render("\"https://example.com/color\"==\"red\";\"https://example.com/name\"==\"x\"");
-        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
+        assert_eq!(sql.matches(r#"EXISTS(SELECT 1 FROM "current_attributes""#).count(), 2, "{sql}");
     }
 
     #[test]
@@ -1169,8 +1181,17 @@ mod tests {
                 r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
                 r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
                 r#"AND (("ca"."value_string" = $3 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $4 "#,
-                r#"OR (("ca"."value_object" @> jsonb_build_array($5::text)) "#,
-                r#"OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
+                r#"OR ((("ca"."value_object" @> jsonb_build_array($5::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text)))) "#,
+                r#"AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" "#,
+                r#"LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = "ca"."value_type_key" WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" "#,
+                r#"-> ('@value'), "dm"."value")) = ('string') AND (NOT COALESCE(COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', "#,
+                r#"'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', "#,
+                r#"'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', "#,
+                r#"'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', "#,
+                r#"'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', "#,
+                r#"'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', "#,
+                r#"'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = "#,
+                r#"('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $7))) "#,
                 r#"AND "ca"."entity_key" = "le1"."entity_key"))"#,
             )
         );

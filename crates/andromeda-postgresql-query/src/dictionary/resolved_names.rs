@@ -38,6 +38,11 @@ impl<N: InternedName> ResolvedNames<N> {
         self.keys.get::<N>(name).copied()
     }
 
+    /// Every resolved name with its dictionary key, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (&N, N::Key)> {
+        self.keys.iter().map(|(name, key)| (name, *key))
+    }
+
     /// Dictionary key for a name given as text, if the broker knows it.
     ///
     /// The query grammars carry some names in a sibling type — a type
@@ -82,6 +87,13 @@ mod tests {
         pretty_assertions::assert_eq!(resolved.get(&name), Some(EntityTypeNameKey::from(4)));
         pretty_assertions::assert_eq!(resolved.get_str("https://example.com/Vehicle"), Some(EntityTypeNameKey::from(4)));
         assert!(!resolved.is_empty());
+    }
+
+    #[test]
+    fn every_resolved_name_is_listed_with_its_key() {
+        let name: EntityTypeName = "https://example.com/Vehicle".parse().expect("valid name");
+        let resolved = ResolvedNames::from_pairs([(name.clone(), EntityTypeNameKey::from(4))]);
+        pretty_assertions::assert_eq!(resolved.iter().collect::<Vec<_>>(), vec![(&name, EntityTypeNameKey::from(4))]);
     }
 
     #[test]
