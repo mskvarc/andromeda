@@ -55,7 +55,6 @@ url = { version = "2.5.8", features = ["serde"] }
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-number.workspace = true
-bytes = "1.12.1"
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"
 tokio = { version = "1.54.1", features = ["macros", "rt"] }

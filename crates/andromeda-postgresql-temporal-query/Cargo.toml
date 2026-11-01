@@ -20,7 +20,6 @@ cefact-units = "1.0.0"
 chrono = "0.4.45"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
-strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]

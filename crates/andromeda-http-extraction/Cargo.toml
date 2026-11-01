@@ -9,7 +9,6 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-andromeda-configuration.workspace = true
 andromeda-context-space.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true

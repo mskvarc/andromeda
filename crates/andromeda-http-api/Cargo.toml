@@ -36,7 +36,6 @@ andromeda-architecture-checks.workspace = true
 andromeda-configuration.workspace = true
 andromeda-extensions.workspace = true
 andromeda-health.workspace = true
-andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true

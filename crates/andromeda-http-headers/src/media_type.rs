@@ -1,6 +1,6 @@
 //! The media type an NGSI-LD response is serialised as (clause 6.3.4).
 //!
-//! Distinct from [`ResponseFormat`](andromeda_ngsi_ld_representation::response_format::ResponseFormat),
+//! Distinct from the response format,
 //! which names the clause 4.5.1 rendering of an entity. The two are chosen
 //! independently: a `keyValues` entity can be answered as `application/json`,
 //! `application/ld+json` or, where the endpoint allows it, `application/geo+json`.
