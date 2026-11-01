@@ -103,8 +103,12 @@ pub struct DeliveryConfig {
         description = "The longest an outgoing notification may take before it is abandoned, live or queued. A subscription's own `timeout` can shorten it but not lengthen it."
     )]
     pub request_timeout: HumanDuration,
-    /// The most notifications one delivery pass sends at once.
-    #[schemars(description = "The most notifications one delivery pass sends at once. Between 1 and 1024.")]
+    /// The most queued notifications sent at once. A delivery pass keeps this
+    /// many in flight for as long as the queue holds due deliveries, claiming
+    /// one each time an attempt is acknowledged.
+    #[schemars(
+        description = "The most notifications sent at once. A delivery pass keeps this many in flight for as long as the queue holds due deliveries, so a slow or unreachable endpoint holds only the slots its own attempts occupy. Between 1 and 1024."
+    )]
     pub max_concurrent: NonZeroU32,
     /// The most characters of a failure diagnostic kept when a failed attempt
     /// is recorded; at most the longest failure summary the store keeps.
@@ -171,7 +175,6 @@ impl Default for DeliveryConfig {
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
             queue: DurableQueue {
-                batch_size: NonZeroU32::MIN.saturating_add(49),
                 retry_interval: HumanDuration::from_secs(5),
                 ..DurableQueue::default()
             },
@@ -207,7 +210,6 @@ mod tests {
         let config = DeliveryConfig::default();
         assert_eq!(config.mode, DeliveryMode::Live);
         assert_eq!(config.private_addresses, PrivateIpBlocking::Allowed);
-        assert_eq!(config.queue.batch_size.get(), 50);
     }
 
     #[test]

@@ -27,13 +27,18 @@ pub struct TemporalHistoryConfig {
         description = "Whether Core API writes add to the history of the entities they change. With `\"not-recorded\"` only the Temporal API writes history, for a producer that publishes its history there alone; Core writes change current state, and Core queries see them, either way."
     )]
     pub core_writes: CoreWriteHistory,
-    /// The queue of committed history intents. One pass applies its batch in
-    /// one transaction, so a wider batch spreads each statement's cost over
-    /// more intents. A failed intent is retried on a delay that grows
-    /// linearly from `retry_interval`, and one that keeps failing is reported
-    /// stuck after `max_attempts`, never discarded.
+    /// History intents one pass claims at most. The pass applies them in one
+    /// transaction, so a wider batch spreads each statement's cost over more
+    /// intents.
     #[schemars(
-        description = "The queue of committed history writes, including those of `respond-async` batches. One pass applies its batch in one transaction, so a larger `temporal.history.queue.batch_size` spreads each statement's cost over more writes. A write that keeps failing is reported stuck, never discarded, since it is history the broker has already accepted."
+        description = "The most history writes one pass claims. The pass applies them in one transaction, so a larger batch spreads each statement's cost over more writes."
+    )]
+    pub batch_size: NonZeroU32,
+    /// The queue of committed history intents. A failed intent is retried on
+    /// a delay that grows linearly from `retry_interval`, and one that keeps
+    /// failing is reported stuck after `max_attempts`, never discarded.
+    #[schemars(
+        description = "The queue of committed history writes, including those of `respond-async` batches. A write that keeps failing is reported stuck, never discarded, since it is history the broker has already accepted."
     )]
     pub queue: DurableQueue,
 }
@@ -42,8 +47,8 @@ impl Default for TemporalHistoryConfig {
     fn default() -> TemporalHistoryConfig {
         TemporalHistoryConfig {
             core_writes: CoreWriteHistory::Recorded,
+            batch_size: NonZeroU32::MIN.saturating_add(255),
             queue: DurableQueue {
-                batch_size: NonZeroU32::MIN.saturating_add(255),
                 max_attempts: NonZeroU32::MIN.saturating_add(9),
                 retry_interval: HumanDuration::from_secs(2),
                 ..DurableQueue::default()
@@ -62,7 +67,7 @@ mod tests {
     fn the_defaults_record_core_writes_and_drain_256_intents_a_pass() {
         let config = TemporalHistoryConfig::default();
         assert_eq!(config.core_writes, CoreWriteHistory::Recorded);
-        assert_eq!(config.queue.batch_size.get(), 256);
+        assert_eq!(config.batch_size.get(), 256);
         assert_eq!(config.queue.max_attempts.get(), 10);
     }
 }

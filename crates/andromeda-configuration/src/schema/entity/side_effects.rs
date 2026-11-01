@@ -4,6 +4,7 @@
 use crate::{human_duration::HumanDuration, schema::durable_queue::DurableQueue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 
 /// How long a dead-lettered side-effect job is kept.
 ///
@@ -37,12 +38,15 @@ impl Default for SideEffectRetentionConfig {
 }
 
 /// The durable queue of a committed batch's deferred side effects.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(
     description = "The durable queue of change events a `Prefer: respond-async` batch stores with its entities for a worker to turn into notifications."
 )]
 #[serde(deny_unknown_fields)]
 pub struct SideEffectsConfig {
+    /// Jobs one pass claims at most; the pass replays them one after another.
+    #[schemars(description = "The most jobs one pass claims. The pass replays them one after another before the worker claims again.")]
+    pub batch_size: NonZeroU32,
     /// How the queue is polled, claimed and retried. A job is retried on a
     /// delay that doubles from `retry_interval` up to `max_retry_interval`,
     /// however often it fails.
@@ -55,6 +59,16 @@ pub struct SideEffectsConfig {
     pub retention: SideEffectRetentionConfig,
 }
 
+impl Default for SideEffectsConfig {
+    fn default() -> SideEffectsConfig {
+        SideEffectsConfig {
+            batch_size: NonZeroU32::MIN.saturating_add(31),
+            queue: DurableQueue::default(),
+            retention: SideEffectRetentionConfig::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::schema::entity::side_effects::SideEffectsConfig;
@@ -63,6 +77,6 @@ mod tests {
     #[test]
     fn the_default_queue_claims_thirty_two_jobs_a_pass() {
         let config = SideEffectsConfig::default();
-        assert_eq!(config.queue.batch_size.get(), 32);
+        assert_eq!(config.batch_size.get(), 32);
     }
 }

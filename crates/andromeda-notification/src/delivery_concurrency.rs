@@ -1,10 +1,10 @@
 //! How many claimed notification deliveries one drain pass sends at once.
 //!
-//! A pass claims a batch and then waits on the transport for each delivery;
-//! sending them one after another makes the pass as slow as the sum of every
-//! endpoint's latency. The concurrency bound is the number of deliveries kept
-//! in flight together, and is capped so a single pass cannot open an unbounded
-//! number of outbound connections.
+//! A pass waits on the transport for each delivery it claims; sending them one
+//! after another makes the pass as slow as the sum of every endpoint's
+//! latency. The concurrency bound is the number of deliveries kept in flight
+//! together, and is capped so a single pass cannot open an unbounded number of
+//! outbound connections.
 
 use derive_more::Display;
 use std::num::NonZeroUsize;
@@ -57,8 +57,8 @@ impl DeliveryConcurrency {
 
     /// The bound as the number of deliveries kept in flight.
     #[must_use]
-    pub const fn get(self) -> usize {
-        self.0.get()
+    pub const fn get(self) -> NonZeroUsize {
+        self.0
     }
 }
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn concurrency_reports_its_in_flight_count() -> Result<(), DeliveryConcurrencyError> {
-        assert_eq!(DeliveryConcurrency::from_count(20)?.get(), 20);
+        assert_eq!(DeliveryConcurrency::from_count(20)?.get().get(), 20);
         Ok(())
     }
 }

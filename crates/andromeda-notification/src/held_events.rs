@@ -9,7 +9,9 @@
 //!
 //! The pass keeps a weak reference only: an event stays held exactly as long
 //! as one of its deliveries is in flight, so the pass never keeps a payload
-//! alive that no delivery is still sending.
+//! alive that no delivery is still sending. The acknowledgement of an event's
+//! last delivery in flight removes its entry, so the pass holds entries for
+//! no more events than it has deliveries in flight.
 
 use crate::notification_event::{NotificationEvent, NotificationEventKey};
 use andromeda_context_space::context_target::ContextTarget;
@@ -44,6 +46,31 @@ impl HeldEvents {
         };
         branch.insert(event.key, Arc::downgrade(event));
     }
+
+    /// Give up the reference an acknowledged delivery holds to `event`, read
+    /// from `target`'s branch, and stop holding the event once no delivery
+    /// still in flight carries it.
+    ///
+    /// A pass lasts as long as the queue supplies due deliveries, so an entry
+    /// left behind for every event the pass read would grow with the backlog.
+    /// A sibling delivery still in flight keeps its `Weak` upgradable, and so
+    /// keeps the entry.
+    pub(crate) fn release(&self, target: &ContextTarget, event: Arc<NotificationEvent>) {
+        let key = event.key;
+        drop(event);
+        if let Some(mut branch) = self.0.get_mut(target)
+            && branch.get(&key).is_some_and(|held| held.strong_count() == 0)
+        {
+            branch.remove(&key);
+        }
+        self.0.remove_if(target, |_, branch| branch.is_empty());
+    }
+
+    /// The events the pass holds an entry for, across every branch.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.iter().map(|branch| branch.len()).sum()
+    }
 }
 
 #[cfg(test)]
@@ -60,6 +87,7 @@ mod tests {
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use chrono::Utc;
+    use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -104,6 +132,42 @@ mod tests {
         let in_flight = event(3);
         held.hold(&ContextTarget::Live, &in_flight);
         assert!(held.get(&ContextTarget::Live, NotificationEventKey::from(4_i64)).is_none());
+    }
+
+    #[test]
+    fn the_last_delivery_of_an_event_releases_it() {
+        let held = HeldEvents::default();
+        let in_flight = event(3);
+        held.hold(&ContextTarget::Live, &in_flight);
+        held.release(&ContextTarget::Live, in_flight);
+        assert_eq!(held.len(), 0);
+        assert!(held.get(&ContextTarget::Live, NotificationEventKey::from(3_i64)).is_none());
+    }
+
+    #[test]
+    fn an_event_a_sibling_delivery_still_carries_stays_held() {
+        let held = HeldEvents::default();
+        let first = event(3);
+        let sibling = Arc::clone(&first); // clone: a second delivery of the same event, still in flight.
+        held.hold(&ContextTarget::Live, &first);
+        held.release(&ContextTarget::Live, first);
+        let found = held.get(&ContextTarget::Live, NotificationEventKey::from(3_i64)).expect("the sibling's event");
+        assert!(Arc::ptr_eq(&found, &sibling));
+        drop(found);
+        held.release(&ContextTarget::Live, sibling);
+        assert_eq!(held.len(), 0);
+    }
+
+    /// Releasing one event leaves every other event of the pass held.
+    #[test]
+    fn a_release_keeps_the_other_events_of_the_pass() {
+        let held = HeldEvents::default();
+        let (released, kept) = (event(3), event(4));
+        held.hold(&ContextTarget::Live, &released);
+        held.hold(&snapshot(), &kept);
+        held.release(&ContextTarget::Live, released);
+        assert_eq!(held.len(), 1);
+        assert!(held.get(&snapshot(), NotificationEventKey::from(4_i64)).is_some());
     }
 
     /// Each branch numbers its own events, so one key names a different event

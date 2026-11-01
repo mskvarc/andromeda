@@ -268,7 +268,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[entity]\npending_side_effects_batch_size = 8\n",
         "pending_side_effects_batch_size",
-        "[entity.side_effects.queue]\nbatch_size = 8\n",
+        "[entity.side_effects]\nbatch_size = 8\n",
     ),
     (
         "[entity]\npending_side_effects_max_attempts = 3\n",
@@ -325,7 +325,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[temporal]\nintent_batch_size = 10\n",
         "intent_batch_size",
-        "[temporal.history.queue]\nbatch_size = 10\n",
+        "[temporal.history]\nbatch_size = 10\n",
     ),
     (
         "[temporal]\nintent_lease = \"30s\"\n",
@@ -408,9 +408,14 @@ const MOVED: &[(&str, &str, &str)] = &[
         "[notifications.delivery.queue]\nmax_poll_interval = \"30s\"\n",
     ),
     (
-        "[notifications.delivery]\nbatch_size = 10\n",
+        "[entity.side_effects.queue]\nbatch_size = 8\n",
         "batch_size",
-        "[notifications.delivery.queue]\nbatch_size = 10\n",
+        "[entity.side_effects]\nbatch_size = 8\n",
+    ),
+    (
+        "[temporal.history.queue]\nbatch_size = 10\n",
+        "batch_size",
+        "[temporal.history]\nbatch_size = 10\n",
     ),
     (
         "[notifications.delivery]\nlease = \"30s\"\n",
@@ -615,6 +620,24 @@ fn every_moved_key_loads_at_its_new_path_and_its_old_path_is_refused_by_name() {
             load_file(new).is_ok(),
             "the new spelling {new:?} did not load: {:?}",
             load_file(new).map(|_| ())
+        );
+    }
+}
+
+/// A delivery pass keeps `max_concurrent` deliveries in flight until the queue
+/// holds no more due ones, so no batch bounds it and the delivery queue takes
+/// no `batch_size`, in either table it was ever written in.
+#[test]
+#[serial]
+fn a_notification_delivery_batch_size_is_refused_by_name() {
+    for removed in [
+        "[notifications.delivery]\nbatch_size = 10\n",
+        "[notifications.delivery.queue]\nbatch_size = 10\n",
+    ] {
+        let refused = load_file(removed).map(|_| ()).map_err(|error| error.to_string());
+        assert!(
+            refused.as_ref().is_err_and(|message| message.contains("batch_size")),
+            "{removed:?} was not refused by `batch_size`: {refused:?}"
         );
     }
 }

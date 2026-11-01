@@ -81,7 +81,7 @@ pub(super) fn register_temporal_intent_drain(
     let queue_config = &config.queue;
     let fallback =
         DrainFallbackPolicy::new(queue_config.poll_interval.duration(), queue_config.max_poll_interval.duration()).map_err(AssemblyInvariant::from)?;
-    let batch_size = TemporalIntentBatchSize::new(queue_config.batch_size);
+    let batch_size = TemporalIntentBatchSize::new(config.batch_size);
     let retry_policy = TemporalIntentRetryPolicy::new(
         intent_retry_schedule(config).map_err(AssemblyInvariant::IntentRetry)?,
         queue_config.max_attempts,

@@ -245,8 +245,8 @@ fn register_snapshot_status_delivery(
                             "snapshot status notification delivery completed"
                         );
                     }
-                    // A full batch may leave more waiting, so drain again immediately.
-                    if usize::try_from(drain.batch_size().get()).is_ok_and(|batch_size| outcome.claimed >= batch_size) {
+                    // A full claim may leave more waiting, so drain again immediately.
+                    if usize::try_from(drain.claim_width().get()).is_ok_and(|width| outcome.claimed >= width) {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
                         Ok(DrainPassOutcome::Idle)

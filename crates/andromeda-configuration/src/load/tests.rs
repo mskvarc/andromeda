@@ -87,10 +87,10 @@ fn env_overrides_database_url() {
 #[test]
 #[serial]
 fn env_reaches_a_key_three_tables_deep() {
-    unsafe { env::set_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__BATCH_SIZE", "64") };
+    unsafe { env::set_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__MAX_ATTEMPTS", "64") };
     let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__BATCH_SIZE") };
-    pretty_assertions::assert_eq!(config.entity.side_effects.queue.batch_size.get(), 64);
+    unsafe { env::remove_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__MAX_ATTEMPTS") };
+    pretty_assertions::assert_eq!(config.entity.side_effects.queue.max_attempts.get(), 64);
 }
 
 #[test]
@@ -580,7 +580,6 @@ macro_rules! zero_batch_size_is_refused_with_its_path {
 
 zero_batch_size_is_refused_with_its_path! {
     a_zero_expiry_batch_size_is_refused: "expiry",
-    a_zero_side_effect_batch_size_is_refused: "entity.side_effects.queue",
-    a_zero_temporal_history_batch_size_is_refused: "temporal.history.queue",
-    a_zero_notification_delivery_batch_size_is_refused: "notifications.delivery.queue",
+    a_zero_side_effect_batch_size_is_refused: "entity.side_effects",
+    a_zero_temporal_history_batch_size_is_refused: "temporal.history",
 }

@@ -1,16 +1,17 @@
-//! One bounded pass over the notification delivery queue.
+//! One pass over the notification delivery queue, kept full until the queue
+//! holds no more due deliveries.
 
 use crate::{
     delivery_acknowledgement::DeliveryAcknowledgement,
     delivery_attempt_ceiling::DeliveryAttemptCeiling,
     delivery_backoff::retry_due_at,
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
-    delivery_claim_budget::ClaimBudget,
     delivery_concurrency::DeliveryConcurrency,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
     delivery_lease::LeaseTerm,
     delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
+    delivery_queue_supply::QueueSupply,
     delivery_store::DeliveryStore,
     error::NotificationError,
     held_events::HeldEvents,
@@ -25,9 +26,13 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     sync::Arc,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-/// Outcome of one bounded notification delivery pass.
+/// Outcome of one notification delivery pass.
+///
+/// A pass that completes has found the queue out of due deliveries or was
+/// cancelled, so no other pass need follow it at once.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeliveryDrainOutcome {
     /// Number of deliveries claimed during the pass.
@@ -35,8 +40,6 @@ pub struct DeliveryDrainOutcome {
     /// Number of claimed deliveries whose lease had expired before the worker
     /// acknowledged them, so another worker owns their outcome.
     pub lease_lost: usize,
-    /// Whether another immediate pass could find work.
-    pub work_may_remain: bool,
 }
 
 /// Delivery classification that drives notification retry policy.
@@ -87,8 +90,6 @@ pub struct NotificationDeliveryDrain {
     acknowledgement: DeliveryAcknowledgement,
     error_bound: DeliveryErrorBound,
     concurrency: DeliveryConcurrency,
-    /// Deliveries one pass sends at most.
-    batch_size: NonZeroUsize,
     attempt_ceiling: DeliveryAttemptCeiling,
     /// The wait before a failed delivery is due again.
     retry_schedule: BackoffSchedule,
@@ -132,9 +133,8 @@ impl NotificationDeliveryDrain {
     /// # Errors
     ///
     /// Returns [`NotificationError::Invariant`] when the configured retry
-    /// schedule, lease term, stored
-    /// diagnostic bound, in-flight delivery bound, attempt ceiling or batch
-    /// size is out of range.
+    /// schedule, lease term, stored diagnostic bound, in-flight delivery bound
+    /// or attempt ceiling is out of range.
     pub fn new(
         store: Arc<dyn DeliveryStore>,
         transport: Arc<dyn NotificationDeliveryTransport>,
@@ -147,7 +147,6 @@ impl NotificationDeliveryDrain {
         let error_bound = error_bound(config).map_err(NotificationInvariant::from)?;
         let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
         let attempt_ceiling = attempt_ceiling(config).map_err(NotificationInvariant::from)?;
-        let batch_size = NonZeroUsize::try_from(config.queue.batch_size).map_err(|_| NotificationInvariant::BatchSizeExceedsAddressWidth)?;
         // clone: the acknowledgement records outcomes in the queue the drain claims from.
         let acknowledgement = DeliveryAcknowledgement::new(Arc::clone(&store), worker_id, delay, lease_term);
         Ok(NotificationDeliveryDrain {
@@ -158,36 +157,43 @@ impl NotificationDeliveryDrain {
             acknowledgement,
             error_bound,
             concurrency,
-            batch_size,
             attempt_ceiling,
             retry_schedule,
         })
     }
 
-    /// Execute one leased delivery pass that starts at `now`.
+    /// Execute one leased delivery pass that starts at `now`, until the queue
+    /// holds no more due deliveries or `cancellation` fires.
     ///
-    /// A pass keeps up to the configured concurrency of slots busy until it has
-    /// claimed its batch or the queue runs out. It opens by claiming one
-    /// delivery per slot, and each time a delivery is acknowledged it claims
-    /// one more for the slot that freed. A delivery is claimed only when a slot
-    /// is free to send it, so its lease starts as its attempt does and has to
-    /// outlast that one attempt -- which `request_timeout` bounds -- never the
-    /// deliveries sent before it; and no slot waits on a slow delivery in
-    /// another. A batch claimed under one lease and sent a few at a time would
-    /// instead still be waiting to be sent when that lease ran out, and a
-    /// second worker would claim and send it again.
+    /// A pass keeps every one of its slots busy for as long as the queue
+    /// supplies due deliveries. It opens by claiming one delivery per slot, and
+    /// each time a delivery is acknowledged it claims one more for the slot
+    /// that freed. It stops claiming once a claim comes back short, once a
+    /// claim or an acknowledgement fails, or once `cancellation` fires, and
+    /// returns when the last delivery in flight is acknowledged. A slow or
+    /// unreachable endpoint therefore holds only the slots its own attempts
+    /// occupy, and the slots wait on a last slow attempt only when nothing else
+    /// is due.
+    ///
+    /// A delivery is claimed only when a slot is free to send it, so its lease
+    /// starts as its attempt does and has to outlast that one attempt -- which
+    /// `request_timeout` bounds -- never the deliveries sent before it. A batch
+    /// claimed under one lease and sent a few at a time would instead still be
+    /// waiting to be sent when that lease ran out, and a second worker would
+    /// claim and send it again.
     ///
     /// The claims of one pass share the events they read: a claim hands over
     /// the event a delivery still in flight already carries instead of reading
     /// it again, so the deliveries of one event, claimed one slot at a time,
-    /// cost one event read between them.
+    /// cost one event read between them. The acknowledgement of an event's last
+    /// delivery in flight lets go of it, so the pass holds no more events than
+    /// it has slots, however long it runs.
     ///
     /// Every claimed delivery is driven to its acknowledgement even when
-    /// another one fails, so no lease this worker holds is abandoned
-    /// mid-flight; the first persistence failure is then surfaced, and no
-    /// further delivery is claimed once it occurred. A retry is scheduled one
-    /// backoff after the instant it is acknowledged, not after the start of the
-    /// pass, so it is never already due before the pass that scheduled it ends.
+    /// another one fails or the pass is cancelled, so no lease this worker
+    /// holds is abandoned mid-flight; the first persistence failure is then
+    /// surfaced. A retry is scheduled one backoff after the instant it is
+    /// acknowledged, not after the start of the pass.
     ///
     /// What one delivery does never ends the pass: a delivery whose row could
     /// not be read back, or whose transport reports it can never succeed, is
@@ -204,21 +210,23 @@ impl NotificationDeliveryDrain {
     /// claimed from, and [`NotificationError::Persistence`] when acknowledging a
     /// delivery outcome fails. A lease another worker reclaimed is counted in
     /// [`DeliveryDrainOutcome::lease_lost`] rather than surfaced as an error.
-    pub async fn execute(&self, now: DateTime<Utc>) -> Result<DeliveryDrainOutcome, NotificationError> {
+    pub async fn execute(&self, now: DateTime<Utc>, cancellation: &CancellationToken) -> Result<DeliveryDrainOutcome, NotificationError> {
         let clock = LeasePassClock::starting_at(now);
         let held = HeldEvents::default();
-        let mut budget = ClaimBudget::new(self.batch_size);
+        let mut supply = QueueSupply::MayHoldMore;
+        let mut claimed = 0_usize;
         let mut lease_lost = 0_usize;
         let mut failure: Option<NotificationError> = None;
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
-        if let Some(opening) = budget.reserve(self.concurrency.get()) {
-            slots.push(self.claim(opening, &clock, &held).boxed());
+        if !cancellation.is_cancelled() {
+            slots.push(self.claim(self.concurrency.get(), &clock, &held).boxed());
         }
         while let Some(event) = slots.next().await {
             match event {
                 SlotEvent::Claimed { asked, claims: Ok(claims) } => {
-                    budget.record(asked, claims.len());
-                    slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock).boxed()));
+                    supply = supply.after_claim(asked, claims.len());
+                    claimed += claims.len();
+                    slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
                 }
                 SlotEvent::Claimed { claims: Err(error), .. } => {
                     failure.get_or_insert(error);
@@ -232,22 +240,15 @@ impl NotificationDeliveryDrain {
                         }
                     }
                     // The acknowledged delivery freed its slot.
-                    if failure.is_none()
-                        && budget.can_claim_more()
-                        && let Some(refill) = budget.reserve(1)
-                    {
-                        slots.push(self.claim(refill, &clock, &held).boxed());
+                    if failure.is_none() && supply == QueueSupply::MayHoldMore && !cancellation.is_cancelled() {
+                        slots.push(self.claim(NonZeroUsize::MIN, &clock, &held).boxed());
                     }
                 }
             }
         }
         match failure {
             Some(error) => Err(error),
-            None => Ok(DeliveryDrainOutcome {
-                claimed: budget.claimed(),
-                lease_lost,
-                work_may_remain: budget.work_may_remain(),
-            }),
+            None => Ok(DeliveryDrainOutcome { claimed, lease_lost }),
         }
     }
 
@@ -269,12 +270,16 @@ impl NotificationDeliveryDrain {
         SlotEvent::Claimed { asked: width, claims }
     }
 
-    /// Attempt one claimed delivery and acknowledge its outcome.
-    async fn attempt(&self, claim: DeliveryClaim, clock: &LeasePassClock) -> SlotEvent {
+    /// Attempt one claimed delivery, acknowledge its outcome, and let go of
+    /// the event it carried.
+    async fn attempt(&self, claim: DeliveryClaim, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
         SlotEvent::Acknowledged(match claim {
             DeliveryClaim::Readable(entry) => {
                 trace_entry(&entry);
-                self.advance(&entry, clock).await
+                let acknowledgement = self.advance(&entry, clock).await;
+                let DeliveryEntry { target, event, .. } = *entry;
+                held.release(&target, event);
+                acknowledgement
             }
             DeliveryClaim::Unreadable(unreadable) => self.retire_unreadable(&unreadable, clock).await,
         })
@@ -412,6 +417,7 @@ mod tests {
         thread::sleep,
         time::Duration,
     };
+    use tokio_util::sync::CancellationToken;
 
     /// Whether the recorded store still honours the leases it handed out, or
     /// fails every acknowledgement as an unreachable queue would.
@@ -429,8 +435,14 @@ mod tests {
     /// One call the drain made on the recorded store, in the order it made it.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum StoreCall {
-        /// A claim of at most this many deliveries.
-        Claim(u32),
+        /// A claim that asked for at most `asked` deliveries and was granted
+        /// `granted` of them.
+        Claim {
+            /// Deliveries the claim asked for.
+            asked: u32,
+            /// Deliveries the queue handed over.
+            granted: u32,
+        },
         /// An acknowledgement of this delivery, whatever its outcome.
         Acknowledge(DeliveryKey),
     }
@@ -462,6 +474,8 @@ mod tests {
         /// Whether an [`LeaseState::UnrecordableOnce`] store has refused its
         /// one acknowledgement yet.
         refused_once: AtomicBool,
+        /// The most events the pass held at the end of any claim.
+        peak_held: AtomicUsize,
     }
 
     impl RecordingStore {
@@ -546,11 +560,21 @@ mod tests {
             self.calls.lock().expect("the call record lock is not poisoned").iter().copied().collect()
         }
 
+        fn acknowledged_keys(&self) -> Vec<DeliveryKey> {
+            self.recorded_calls()
+                .into_iter()
+                .filter_map(|call| match call {
+                    StoreCall::Acknowledge(key) => Some(key),
+                    StoreCall::Claim { .. } => None,
+                })
+                .collect()
+        }
+
         fn claim_widths(&self) -> Vec<u32> {
             self.recorded_calls()
                 .into_iter()
                 .filter_map(|call| match call {
-                    StoreCall::Claim(width) => Some(width),
+                    StoreCall::Claim { asked, .. } => Some(asked),
                     StoreCall::Acknowledge(_) => None,
                 })
                 .collect()
@@ -575,14 +599,16 @@ mod tests {
                 return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
             }
             self.claimed_with.lock().expect("the test lock is not poisoned").push(lease);
-            self.calls
-                .lock()
-                .expect("the test lock is not poisoned")
-                .push(StoreCall::Claim(batch_size.get()));
             let width = usize::try_from(batch_size.get()).expect("a claim width within the address width");
             let mut entries = self.entries.lock().expect("the test lock is not poisoned");
             let taken = width.min(entries.len());
-            Ok(entries.drain(..taken).map(|claim| self.hand_over(claim, held)).collect())
+            self.calls.lock().expect("the test lock is not poisoned").push(StoreCall::Claim {
+                asked: batch_size.get(),
+                granted: u32::try_from(taken).expect("a granted count within the claim width"),
+            });
+            let claims = entries.drain(..taken).map(|claim| self.hand_over(claim, held)).collect();
+            self.peak_held.fetch_max(held.len(), Ordering::SeqCst);
+            Ok(claims)
         }
 
         async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
@@ -715,12 +741,12 @@ mod tests {
     }
 
     fn config() -> DeliveryConfig {
-        sized(1, 4)
+        sized(4)
     }
 
-    /// The durable delivery table with `batch` deliveries a pass and
-    /// `concurrent` in flight at once.
-    fn sized(batch: u32, concurrent: u32) -> DeliveryConfig {
+    /// The durable delivery table with `concurrent` deliveries in flight at
+    /// once.
+    fn sized(concurrent: u32) -> DeliveryConfig {
         let mut config = DeliveryConfig {
             mode: DeliveryMode::Durable,
             request_timeout: HumanDuration::from_secs(10),
@@ -728,15 +754,19 @@ mod tests {
             max_error_length: NonZeroU32::new(8).expect("a positive bound"),
             ..DeliveryConfig::default()
         };
-        config.queue.batch_size = NonZeroU32::new(batch).expect("a positive batch");
         config.queue.retry_interval = HumanDuration::from_secs(5);
         config
     }
 
     fn entry() -> Result<DeliveryEntry, NotificationError> {
+        entry_of_event(1)
+    }
+
+    /// A delivery under key 1 of the event under `event_key`.
+    fn entry_of_event(event_key: i64) -> Result<DeliveryEntry, NotificationError> {
         let parse = |value: &str| Ok::<Identifier, NotificationError>(value.parse::<Identifier>().expect("a valid test identifier"));
         let event = NotificationEvent::builder()
-            .key(NotificationEventKey::from(1))
+            .key(NotificationEventKey::from(event_key))
             .write_id(WriteId::mint())
             .event_ordinal(WriteOrdinal::at(0))
             .change(EntityChange::new(EntityLifecycle::Modified, Vec::new()))
@@ -775,9 +805,9 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let transport = Arc::new(InFlightTransport::default());
-            let config = sized(10, 4);
+            let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
             let peak = transport.peak.load(Ordering::SeqCst);
@@ -793,7 +823,9 @@ mod tests {
     fn delivered_entries_are_acknowledged_only_after_delivery() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
-            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
             let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryKey::from(1)]);
@@ -811,7 +843,7 @@ mod tests {
                     detail: "transient".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             let failed_count = retry_store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 1);
@@ -823,7 +855,7 @@ mod tests {
                     detail: "permanent".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             let terminal = terminal_store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(terminal.len(), 1);
@@ -844,7 +876,7 @@ mod tests {
                     detail: "transient".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             let failed_count = store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 0, "the final attempt must not be rescheduled");
@@ -869,7 +901,7 @@ mod tests {
                     detail: "transient".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             let terminal_count = store.terminal.lock().expect("the terminal result lock is not poisoned").len();
             pretty_assertions::assert_eq!(terminal_count, 0);
@@ -889,7 +921,7 @@ mod tests {
                     detail: "endpoint refused the notification".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(failed.first().map(|(_, detail, _)| detail.as_str()), Some("endpoint"));
@@ -901,7 +933,9 @@ mod tests {
     fn claims_carry_the_configured_lease_term() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
-            drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
+            drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
             let claimed_with = store.claimed_with.lock().expect("the claim record lock is not poisoned");
             let expected = LeaseTerm::from_seconds(30).expect("a valid lease term");
             pretty_assertions::assert_eq!(claimed_with.as_slice(), &[expected]);
@@ -913,7 +947,9 @@ mod tests {
     fn an_expired_lease_is_reported_instead_of_acknowledged_silently() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
-            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
             let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
@@ -932,7 +968,7 @@ mod tests {
                     detail: "transient".to_owned(),
                 },
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
@@ -962,9 +998,9 @@ mod tests {
                 diagnostic: "notification delivery 2 references invalid entity URI `not a uri`".to_owned(),
             });
             let store = Arc::new(RecordingStore::with_claims([unreadable, DeliveryClaim::Readable(Box::new(entry()?))]));
-            let config = sized(2, 4);
+            let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 2);
             pretty_assertions::assert_eq!(outcome.lease_lost, 0);
@@ -987,9 +1023,9 @@ mod tests {
     fn a_delivery_that_can_never_succeed_does_not_hold_back_its_peers() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entries([entry_keyed(1)?, entry_keyed(2)?, entry_keyed(3)?]));
-            let config = sized(3, 4);
+            let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(PoisonedTransport(DeliveryKey::from(2_i64))), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
             let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned");
@@ -1014,7 +1050,7 @@ mod tests {
                 waits(),
                 &config(),
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
@@ -1022,19 +1058,23 @@ mod tests {
 
     /// A pass opens by claiming one delivery per slot and refills a slot with a
     /// claim of one delivery each time a delivery is acknowledged, so every
-    /// delivery is claimed only when a slot is free to send it.
+    /// delivery is claimed only when a slot is free to send it, until a claim
+    /// finds the queue empty.
     #[test]
-    fn a_pass_claims_one_delivery_per_free_slot() -> Result<(), NotificationError> {
+    fn a_pass_claims_one_delivery_per_free_slot_until_the_queue_runs_out() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=10_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(10, 4);
+            let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
-            assert!(outcome.work_may_remain, "the pass stopped at its batch bound");
-            pretty_assertions::assert_eq!(store.claim_widths(), vec![4, 1, 1, 1, 1, 1, 1]);
+            let widths = store.claim_widths();
+            pretty_assertions::assert_eq!(widths.first(), Some(&4));
+            assert!(widths.iter().skip(1).all(|width| *width == 1), "{widths:?}");
+            assert!(store.entries.lock().expect("the test lock is not poisoned").is_empty());
+            pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 10);
             Ok(())
         })
     }
@@ -1047,14 +1087,14 @@ mod tests {
         block_on(async {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(6, 2);
+            let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             let mut outstanding = 0_i64;
             for call in store.recorded_calls() {
                 outstanding += match call {
-                    StoreCall::Claim(width) => i64::from(width),
+                    StoreCall::Claim { granted, .. } => i64::from(granted),
                     StoreCall::Acknowledge(_) => -1,
                 };
                 assert!(outstanding <= 2, "{outstanding} deliveries were claimed but unacknowledged at once");
@@ -1071,18 +1111,11 @@ mod tests {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(5, 2);
+            let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
-            let acknowledged: Vec<DeliveryKey> = store
-                .recorded_calls()
-                .into_iter()
-                .filter_map(|call| match call {
-                    StoreCall::Acknowledge(key) => Some(key),
-                    StoreCall::Claim(_) => None,
-                })
-                .collect();
+            let acknowledged = store.acknowledged_keys();
             pretty_assertions::assert_eq!(acknowledged.len(), 5);
             pretty_assertions::assert_eq!(
                 acknowledged.last(),
@@ -1100,9 +1133,9 @@ mod tests {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(5, 2);
+            let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(store.reused_keys(), [2, 3, 4, 5].map(DeliveryKey::from));
             Ok(())
@@ -1117,29 +1150,29 @@ mod tests {
         block_on(async {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(3, 1);
+            let config = sized(1);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
-            pretty_assertions::assert_eq!(store.claim_widths(), vec![1, 1, 1]);
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![1, 1, 1, 1]);
             assert!(store.reused_keys().is_empty(), "{:?}", store.reused_keys());
             Ok(())
         })
     }
 
     /// A claim that comes back short means the queue ran out of due
-    /// deliveries: the pass claims no more and reports no remaining work.
+    /// deliveries: the pass claims no more and ends once the deliveries in
+    /// flight are acknowledged.
     #[test]
-    fn a_short_claim_ends_the_pass_with_no_work_remaining() -> Result<(), NotificationError> {
+    fn a_short_claim_ends_the_pass() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=3_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
-            let config = sized(10, 2);
+            let config = sized(2);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
-            assert!(!outcome.work_may_remain, "a refill found the queue empty");
             pretty_assertions::assert_eq!(store.claim_widths(), vec![2, 1, 1]);
             Ok(())
         })
@@ -1153,10 +1186,10 @@ mod tests {
         let store = Arc::new(RecordingStore::with_unrecordable_acknowledgements(
             (1..=4_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?,
         ));
-        let config = sized(4, 2);
+        let config = sized(2);
         let outcome = block_on(async {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(Utc::now())
+                .execute(Utc::now(), &CancellationToken::new())
                 .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
@@ -1186,7 +1219,7 @@ mod tests {
                 Arc::clone(&delay) as Arc<dyn RetryDelay>,
                 &config(),
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (1, 0));
             pretty_assertions::assert_eq!(
@@ -1211,11 +1244,11 @@ mod tests {
                 Arc::clone(&delay) as Arc<dyn RetryDelay>,
                 &config(),
             )?
-            .execute(Utc::now())
+            .execute(Utc::now(), &CancellationToken::new())
             .await?;
             pretty_assertions::assert_eq!(
                 store.recorded_calls(),
-                vec![StoreCall::Claim(1), StoreCall::Acknowledge(DeliveryKey::from(1_i64))]
+                vec![StoreCall::Claim { asked: 4, granted: 1 }, StoreCall::Acknowledge(DeliveryKey::from(1_i64))]
             );
             pretty_assertions::assert_eq!(delay.waits(), Vec::<Duration>::new());
             Ok(())
@@ -1232,7 +1265,7 @@ mod tests {
             let delay = Duration::from_millis(50);
             let now = Utc::now();
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowFailingTransport(delay)), waits(), &config())?
-                .execute(now)
+                .execute(now, &CancellationToken::new())
                 .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             let backoff = retry_schedule(&config()).expect("a valid retry schedule").delay(RetryNumber::FIRST);
@@ -1259,7 +1292,7 @@ mod tests {
                     detail: "transient".to_owned(),
                 },
             )?
-            .execute(now)
+            .execute(now, &CancellationToken::new())
             .await?;
             let first_step = retry_schedule(&config()).expect("a valid retry schedule").delay(RetryNumber::FIRST);
             let earliest = now + TimeDelta::from_std(first_step).expect("a representable delay");
@@ -1293,6 +1326,135 @@ mod tests {
                     })
                     .await;
                 }
+                DeliveryDisposition::Delivered
+            })
+        }
+    }
+
+    /// One delivery to an endpoint that never answers holds its slot until it
+    /// times out; the other slots claim and send the rest of the queue
+    /// meanwhile, so it is the last one acknowledged.
+    #[test]
+    fn a_delivery_held_until_its_timeout_does_not_hold_back_the_rest_of_the_queue() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=1_000_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let held = DeliveryKey::from(1_i64);
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(HeldOnceTransport(held)), waits(), &sized(4))?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
+            pretty_assertions::assert_eq!(outcome.claimed, 1_000);
+            let acknowledged = store.acknowledged_keys();
+            pretty_assertions::assert_eq!(acknowledged.len(), 1_000);
+            pretty_assertions::assert_eq!(acknowledged.last(), Some(&held), "the held delivery was not the last acknowledged");
+            pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 999);
+            let failed = store.failed.lock().expect("the retry result lock is not poisoned");
+            pretty_assertions::assert_eq!(failed.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(), vec![held]);
+            Ok(())
+        })
+    }
+
+    /// Cancelling the drain during a pass claims nothing further, and every
+    /// delivery already in flight is still acknowledged before the pass
+    /// returns.
+    #[test]
+    fn a_cancelled_pass_claims_nothing_further_and_acknowledges_what_is_in_flight() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=10_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let cancellation = CancellationToken::new();
+            // clone: the transport cancels the token the pass watches.
+            let transport = Arc::new(CancellingTransport(cancellation.clone()));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), transport, waits(), &sized(2))?
+                .execute(Utc::now(), &cancellation)
+                .await?;
+            pretty_assertions::assert_eq!(outcome.claimed, 2);
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![2]);
+            pretty_assertions::assert_eq!(store.acknowledged_keys().len(), 2);
+            pretty_assertions::assert_eq!(store.entries.lock().expect("the test lock is not poisoned").len(), 8);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_drain_cancelled_before_its_pass_claims_nothing() -> Result<(), NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_entry(entry()?));
+            let cancellation = CancellationToken::new();
+            cancellation.cancel();
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now(), &cancellation).await?;
+            pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (0, 0));
+            pretty_assertions::assert_eq!(store.recorded_calls(), Vec::<StoreCall>::new());
+            Ok(())
+        })
+    }
+
+    /// The acknowledgement of an event's last delivery lets go of it, so a
+    /// pass over many distinct events holds no more of them than it has slots.
+    #[test]
+    fn a_pass_holds_no_more_events_than_it_has_slots() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=10_000_i64)
+                .map(|key| {
+                    entry_of_event(key).map(|template| DeliveryEntry {
+                        key: DeliveryKey::from(key),
+                        ..template
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(4))?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
+            pretty_assertions::assert_eq!(outcome.claimed, 10_000);
+            pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 10_000);
+            let peak = store.peak_held.load(Ordering::SeqCst);
+            assert!(peak <= 4, "the pass held {peak} events with 4 slots");
+            Ok(())
+        })
+    }
+
+    /// The polls a held delivery stays unanswered for, the transport double's
+    /// stand-in for `request_timeout`: far more than the rest of the queue
+    /// takes to drain through the other slots.
+    const HELD_POLLS: u32 = 100_000;
+
+    /// A transport that answers every delivery at once except one, which it
+    /// holds unanswered for [`HELD_POLLS`] polls and then reports timed out.
+    struct HeldOnceTransport(DeliveryKey);
+
+    impl NotificationDeliveryTransport for HeldOnceTransport {
+        fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
+            Box::pin(async move {
+                if entry.key != self.0 {
+                    return DeliveryDisposition::Delivered;
+                }
+                let mut remaining = HELD_POLLS;
+                poll_fn(|context| {
+                    if remaining == 0 {
+                        Poll::Ready(())
+                    } else {
+                        remaining -= 1;
+                        context.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                })
+                .await;
+                DeliveryDisposition::RetryableFailure {
+                    detail: "timed out".to_owned(),
+                }
+            })
+        }
+    }
+
+    /// A transport that cancels the drain as it sends each delivery, and
+    /// delivers it.
+    struct CancellingTransport(CancellationToken);
+
+    impl NotificationDeliveryTransport for CancellingTransport {
+        fn deliver<'a>(&'a self, _entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
+            Box::pin(async move {
+                self.0.cancel();
                 DeliveryDisposition::Delivered
             })
         }

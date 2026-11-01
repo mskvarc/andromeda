@@ -21,7 +21,7 @@ use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use futures::{StreamExt, stream};
+use futures::future::join_all;
 use std::{num::NonZeroU32, sync::Arc};
 
 /// Delivers snapshot status notifications through the configured transport dispatcher.
@@ -55,8 +55,9 @@ pub struct SnapshotStatusDeliveryDrain {
     max_attempts: i32,
     /// The wait before a failed status notification is due again.
     retry_schedule: BackoffSchedule,
-    batch_size: NonZeroU32,
-    concurrency: usize,
+    /// Deliveries one pass claims and sends at once at most:
+    /// `notifications.delivery.max_concurrent`.
+    claim_width: NonZeroU32,
     error_bound: DeliveryErrorBound,
     delivered_retention: Duration,
     dead_retention: Duration,
@@ -79,8 +80,7 @@ impl SnapshotStatusDeliveryDrain {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule
             })?,
-            batch_size: config.queue.batch_size,
-            concurrency: usize::try_from(config.max_concurrent.get()).unwrap_or(usize::MAX),
+            claim_width: config.max_concurrent,
             error_bound: error_bound(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
                 SnapshotInvariant::NotificationErrorBound
@@ -90,15 +90,14 @@ impl SnapshotStatusDeliveryDrain {
         })
     }
 
-    /// Claim, deliver and acknowledge one bounded batch.
+    /// Claim, deliver and acknowledge up to `max_concurrent` deliveries, all
+    /// sent at once.
     ///
-    /// The whole batch is claimed under one lease, but deliveries run only
-    /// `max_concurrent` at a time, so a later delivery can wait out that lease
-    /// before its turn. Each delivery therefore renews its own lease when its
-    /// turn comes, and `request_timeout` plus the lease margin the
-    /// configuration enforces keeps that lease alive through the attempt. A
-    /// delivery whose renewal finds another worker holding it is not sent,
-    /// because the worker that reclaimed it sends it.
+    /// Each delivery renews its lease right before it is sent, and
+    /// `request_timeout` plus the lease margin the configuration enforces
+    /// keeps that lease alive through the attempt. A delivery whose renewal
+    /// finds another worker holding it is not sent, because the worker that
+    /// reclaimed it sends it.
     ///
     /// Retention cleanup is a separate concern on its own cadence
     /// ([`cleanup`](Self::cleanup)), so a wake-driven delivery pass issues no
@@ -112,13 +111,9 @@ impl SnapshotStatusDeliveryDrain {
     /// [`SnapshotStatusPassOutcome::lease_lost`] rather than surfaced as an error.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
         let clock = LeasePassClock::starting_at(now);
-        let entries = self.outbox.claim(self.worker, self.lease_deadline(clock.now())?, self.batch_size).await?;
+        let entries = self.outbox.claim(self.worker, self.lease_deadline(clock.now())?, self.claim_width).await?;
         let claimed = entries.len();
-        let results = stream::iter(entries)
-            .map(|entry| async move { self.deliver_one(entry, &clock).await })
-            .buffer_unordered(self.concurrency)
-            .collect::<Vec<_>>()
-            .await;
+        let results = join_all(entries.into_iter().map(|entry| self.deliver_one(entry, &clock))).await;
         let mut lease_lost = 0;
         for result in results {
             if result? == LeaseAcknowledgement::Lost {
@@ -128,13 +123,13 @@ impl SnapshotStatusDeliveryDrain {
         Ok(SnapshotStatusPassOutcome { claimed, lease_lost })
     }
 
-    /// The batch size one [`execute`](Self::execute) pass claims at most.
+    /// The deliveries one [`execute`](Self::execute) pass claims at most.
     ///
-    /// A pass that claimed a full batch may have more waiting, which is what
+    /// A pass that claimed that many may have more waiting, which is what
     /// lets the drain driver run another pass immediately rather than sleep.
     #[must_use]
-    pub const fn batch_size(&self) -> NonZeroU32 {
-        self.batch_size
+    pub const fn claim_width(&self) -> NonZeroU32 {
+        self.claim_width
     }
 
     /// Remove acknowledged and exhausted deliveries past their retention.

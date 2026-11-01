@@ -158,19 +158,17 @@ fn delivery(id: u128) -> SnapshotStatusDelivery {
     clippy::expect_used,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
-fn config(batch: u32) -> DeliveryConfig {
-    let mut config = DeliveryConfig {
+fn config(concurrent: u32) -> DeliveryConfig {
+    DeliveryConfig {
         mode: DeliveryMode::Durable,
         request_timeout: HumanDuration::from_secs(10),
-        max_concurrent: NonZeroU32::new(1).expect("a positive bound"),
+        max_concurrent: NonZeroU32::new(concurrent).expect("a positive bound"),
         ..DeliveryConfig::default()
-    };
-    config.queue.batch_size = NonZeroU32::new(batch).expect("a positive batch");
-    config
+    }
 }
 
-/// Run one pass over `count` due deliveries sent one at a time, and return what
-/// the drain did.
+/// Run one pass that claims all of `count` due deliveries, and return what the
+/// drain did.
 fn run_pass(count: u128, answer: Answer, takes_over_while_sending: BTreeMap<Uuid, Vec<Uuid>>) -> Result<(SnapshotStatusPassOutcome, Vec<Call>), SnapshotError> {
     let queue = Arc::new(RecordingQueue::holding((1..=count).map(delivery)));
     let receiver = SlowReceiver {
@@ -178,9 +176,9 @@ fn run_pass(count: u128, answer: Answer, takes_over_while_sending: BTreeMap<Uuid
         answer,
         takes_over_while_sending,
     };
-    let batch = u32::try_from(count).unwrap_or(u32::MAX);
+    let concurrent = u32::try_from(count).unwrap_or(u32::MAX);
     let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue); // clone: the drain and the assertions share one queue.
-    let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(batch))?;
+    let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(concurrent))?;
     let outcome = block_on(drain.execute(Utc::now()))?;
     Ok((outcome, queue.calls()))
 }
@@ -211,7 +209,7 @@ fn every_delivery_renews_its_lease_right_before_it_is_sent() -> Result<(), Snaps
 }
 
 #[test]
-fn a_batch_that_outlasts_its_lease_sends_only_the_deliveries_no_other_worker_took_over() -> Result<(), SnapshotError> {
+fn a_pass_sends_only_the_deliveries_no_other_worker_took_over_before_their_turn() -> Result<(), SnapshotError> {
     let takeovers = BTreeMap::from([(id(1), vec![id(2), id(3)])]);
     let (outcome, calls) = run_pass(3, Answer::Accepts, takeovers)?;
     assert_eq!(outcome, SnapshotStatusPassOutcome { claimed: 3, lease_lost: 2 });

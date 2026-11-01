@@ -2,10 +2,11 @@
 //!
 //! The entity side-effect queue, the temporal history queue and the
 //! notification delivery queue are drained the same way: a worker polls,
-//! claims a batch under a lease, and retries a failed job on a growing delay.
+//! claims jobs under a lease, and retries a failed job on a growing delay.
 //! They therefore share one table, so an operator tunes every queue with the
-//! same keys. How a queue's delay grows, and what happens to a job that runs
-//! out of attempts, belong to the queue's own domain.
+//! same keys. How many jobs a pass claims, how a queue's delay grows, and what
+//! happens to a job that runs out of attempts belong to the queue's own
+//! domain.
 
 use crate::human_duration::HumanDuration;
 use schemars::JsonSchema;
@@ -38,9 +39,6 @@ pub struct DurableQueue {
         description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. `notifications.delivery.queue` reads it in whole seconds, rounded down, and accepts at most one day."
     )]
     pub lease_timeout: HumanDuration,
-    /// Jobs one pass claims at most.
-    #[schemars(description = "The most jobs one pass claims.")]
-    pub batch_size: NonZeroU32,
     /// Attempts after which a job that keeps failing is given up or reported:
     /// a notification delivery is dead-lettered, while a side-effect job or a
     /// temporal history intent is reported stuck on every further failure and
@@ -68,7 +66,6 @@ impl Default for DurableQueue {
             poll_interval: HumanDuration::from_secs(1),
             max_poll_interval: HumanDuration::from_secs(30),
             lease_timeout: HumanDuration::from_secs(30),
-            batch_size: NonZeroU32::MIN.saturating_add(31),
             max_attempts: NonZeroU32::MIN.saturating_add(4),
             retry_interval: HumanDuration::from_secs(2),
             max_retry_interval: HumanDuration::from_secs(300),
