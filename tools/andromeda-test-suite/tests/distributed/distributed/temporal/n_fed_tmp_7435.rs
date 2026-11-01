@@ -17,7 +17,7 @@ use ngsi_ld::{
     http::headers::Accept,
     model::{EntityTypeName, Input, Property, evolution::TemporalEntity},
     query::temporal_query,
-    registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, TimeInterval},
+    registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationManagementInfo, TimeInterval},
 };
 
 /// The Entities whose history each domain holds.
@@ -31,6 +31,12 @@ const LAST_N: u64 = 5;
 
 /// The temporal queries sent at once.
 const CONCURRENT_QUERIES: usize = 64;
+
+/// The registrations' forwarding timeout in milliseconds, which takes precedence over the broker's 5 s default. Each
+/// domain answers its share of the [`CONCURRENT_QUERIES`] at once in about a second when its host is otherwise idle,
+/// and the tree's other tests share that host; the bound stays below the hub's own 30 s request timeout, so a domain
+/// that misses it is still reported in the answer.
+const FORWARDING_TIMEOUT_MS: u32 = 20_000;
 
 /// The history of the `number`-th Entity of `domain`: `speed` 0 to 19, observed at midnight of 1 to 20 January 2024.
 fn building_evolution(namespace: &Namespace, building_type: &EntityTypeName, domain: &Domain, number: u32) -> Result<TemporalEntity<Input>> {
@@ -56,8 +62,8 @@ async fn hold_evolutions(namespace: &Namespace, building_type: &EntityTypeName, 
 }
 
 /// Pins: 64 Query Temporal Evolution of Entities on broker A by type, between 2024-01-01 and 2024-02-01 with `lastN`
-/// 5, sent at once over `queryTemporal` registrations of brokers B to E holding 250 histories of 20 `speed`
-/// instances each, are each answered 200 with histories that each keep exactly the five latest instances
+/// 5, sent at once over `queryTemporal` registrations of brokers B to E with a 20 s `management.timeout`, holding 250
+/// histories of 20 `speed` instances each, are each answered 200 with histories that each keep exactly the five latest instances
 /// Clause: 5.7.4.4
 #[gtest]
 #[tokio::test]
@@ -75,6 +81,7 @@ async fn n_fed_tmp_7435_last_n_queries_sent_at_once_over_the_histories_of_four_d
                 .build()?])
             .operations([DistributedOperation::QueryTemporal])
             .observation_interval(TimeInterval::between("2024-01-01T00:00:00Z".parse()?, "2025-01-01T00:00:00Z".parse()?))
+            .management(RegistrationManagementInfo::builder().timeout(FORWARDING_TIMEOUT_MS).build()?)
             .build()?;
         hub.registrations().register(&registration).send().await?;
         // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
