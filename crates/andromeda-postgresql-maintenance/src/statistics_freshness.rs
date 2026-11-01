@@ -7,7 +7,8 @@
 //! or one running, already refreshes it.
 
 use crate::{
-    autovacuum_trigger::{TriggerColumn, autovacuum_triggers_statement, progress_reported, statistics_column},
+    analyzed_rows::latest_analyze,
+    autovacuum_trigger::{TABLE_STATISTICS, TriggerColumn, autovacuum_triggers_statement, progress_reported, statistics_column},
     branch::Branch,
     candidate::heap_target::HeapTarget,
     catalog_counter::{CatalogCounter, non_negative},
@@ -17,7 +18,7 @@ use crate::{
 };
 use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use sea_query::{ExprTrait, Func, Iden, SelectStatement};
+use sea_query::{ExprTrait, Iden, SelectStatement};
 use sqlx::{PgConnection, Row, postgres::PgRow};
 use std::str::FromStr;
 
@@ -116,10 +117,7 @@ enum FreshnessColumn {
 fn heap_statistics_statement(branch: Branch) -> SelectStatement {
     autovacuum_triggers_statement(branch)
         .expr_as(statistics_column("n_mod_since_analyze"), FreshnessColumn::ModifiedSinceAnalyze)
-        .expr_as(
-            Func::greatest([statistics_column("last_analyze"), statistics_column("last_autoanalyze")]),
-            FreshnessColumn::LastAnalyzed,
-        )
+        .expr_as(latest_analyze(TABLE_STATISTICS), FreshnessColumn::LastAnalyzed)
         .expr_as(progress_reported("pg_stat_progress_analyze"), FreshnessColumn::AnalyzeRunning)
         .to_owned()
 }

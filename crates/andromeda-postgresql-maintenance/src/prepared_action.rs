@@ -20,11 +20,14 @@ use crate::{
     branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     columnstore_partiality,
+    controller::heap_sampling,
     error::MaintenanceError,
-    inspection::{self, HeapSample},
+    heap_reading::{self, HeapSample},
+    inspection,
     policy::{DeferralReason, PolicyProfile, SafetyGates},
     rowstore_rebuild,
     safety_gate_inspection::{self, GateScope},
+    state::RegisteredTenant,
     statistics_freshness::{self, HeapStatistics, StatisticsFreshness},
 };
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, recompress_chunk};
@@ -58,7 +61,13 @@ pub(crate) enum Preparation {
 /// reading. A vacuum, an analyze or a recompression that no longer qualifies
 /// is [`Preparation::Lapsed`], with no gate measured; anything else measures
 /// its gates and keeps the reading as its baseline.
-pub(crate) async fn prepare_action(connection: &mut PgConnection, row: BranchTarget, profile: PolicyProfile) -> Result<Preparation, MaintenanceError> {
+pub(crate) async fn prepare_action(
+    platform: &mut PgConnection,
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    row: BranchTarget,
+    profile: PolicyProfile,
+) -> Result<Preparation, MaintenanceError> {
     let branch = row.branch();
     let prepared = match row.target() {
         MaintenanceTarget::Index(index) => PreparedAction {
@@ -71,7 +80,9 @@ pub(crate) async fn prepare_action(connection: &mut PgConnection, row: BranchTar
             relation: branch.qualified(index.relation_name()),
         },
         MaintenanceTarget::Heap(heap) => {
-            let sample = inspection::heap_sample(connection, branch, heap, profile).await?;
+            let Some(sample) = heap_sampling::heap_sample(platform, connection, tenant, branch, heap, profile).await? else {
+                return Ok(Preparation::Lapsed(DeferralReason::BelowThreshold));
+            };
             let before = match vacuum_baseline(sample, profile) {
                 Ok(before) => before,
                 Err(reason) => return Ok(Preparation::Lapsed(reason)),
@@ -144,7 +155,9 @@ fn analyze_baseline(statistics: HeapStatistics, now: DateTime<Utc>) -> Result<u6
 }
 
 /// Read the same measure in `branch` after the action and pair it with the
-/// baseline.
+/// baseline. A vacuum is measured by its dead tuples against the analyzed live
+/// rows it was judged with: it has just overwritten `n_live_tup` with its own
+/// extrapolation.
 pub(crate) async fn read_comparison(connection: &mut PgConnection, branch: Branch, baseline: ActionBaseline) -> Result<ActionComparison, MaintenanceError> {
     Ok(match baseline {
         ActionBaseline::Index { index, before_bytes } => ActionComparison::Index {
@@ -153,7 +166,10 @@ pub(crate) async fn read_comparison(connection: &mut PgConnection, branch: Branc
         },
         ActionBaseline::Heap { heap, before } => ActionComparison::Heap {
             before,
-            after: inspection::heap_tuple_counts(connection, branch, heap).await?,
+            after: TupleCounts {
+                dead: heap_reading::heap_dead_tuples(connection, branch, heap).await?,
+                live: before.live,
+            },
         },
         ActionBaseline::Statistics { heap, before_modified } => ActionComparison::Statistics {
             before_modified,
@@ -176,7 +192,7 @@ mod tests {
     use crate::{
         action_measurement::TupleCounts,
         candidate::heap_target::HeapTarget,
-        inspection::HeapSample,
+        heap_reading::HeapSample,
         observed_heap::WatchedHeap,
         policy::{DeferralReason, DegradationSample, PolicyProfile},
         prepared_action::{analyze_baseline, vacuum_baseline},

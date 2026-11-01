@@ -78,6 +78,13 @@ pub enum PostgresqlMaintenanceTargets {
     /// byte, set on its first observation and after each successful rebuild;
     /// NULL for every other target.
     BaselineDensity,
+    /// The row count a heap or a density-measured GIN is judged by, as its
+    /// table's latest analyze left it; NULL for every other target and until a
+    /// visit reads the target after an analyze.
+    AnalyzedRows,
+    /// The instant of the analyze `analyzed_rows` comes from, NULL exactly when
+    /// it is.
+    RowsAnalyzedAt,
 }
 
 /// The one row of maintenance state that belongs to the whole cluster.
@@ -113,6 +120,8 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::FirstBreachAt.to_string(), "first_breach_at");
         assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
         assert_eq!(PostgresqlMaintenanceTargets::BaselineDensity.to_string(), "baseline_density");
+        assert_eq!(PostgresqlMaintenanceTargets::AnalyzedRows.to_string(), "analyzed_rows");
+        assert_eq!(PostgresqlMaintenanceTargets::RowsAnalyzedAt.to_string(), "rows_analyzed_at");
         assert_eq!(PostgresqlMaintenanceTargets::SnapshotKey.to_string(), "snapshot_key");
         assert_eq!(PostgresqlMaintenanceFleet::Table.to_string(), "postgresql_maintenance_fleet");
         assert_eq!(PostgresqlMaintenanceFleet::Singleton.to_string(), "singleton");

@@ -39,6 +39,15 @@
 -- each successful rebuild. It stays NULL for every other target, and for a GIN
 -- whose covered rows the statistics do not yet describe.
 --
+-- `analyzed_rows` is the row count a target is judged by, as its table's
+-- latest analyze left it: the live rows of a heap, the rows holding a value in
+-- the column a density-measured GIN covers. `rows_analyzed_at` is the instant
+-- of that analyze. A vacuum extrapolates a table's row count from the pages it
+-- scanned, which under writes are the pages the writes touched, so the stored
+-- count is replaced only by a reading taken after an analyze newer than both
+-- the stored instant and the table's latest vacuum. Both stay NULL for every
+-- other target, and until a visit reads a target after an analyze.
+--
 -- A heap's planner statistics are a target of their own (targets 22 to 30
 -- and 38), refreshed by `ANALYZE`: an analyze row records no sample evidence
 -- and neither reading pair, only its decision, its pending action and its
@@ -128,11 +137,13 @@ create table postgresql_maintenance_targets (
     last_sampled_at timestamptz,
     cooldown_until timestamptz,
     last_action_at timestamptz,
+    rows_analyzed_at timestamptz,
     last_before_bytes bigint,
     last_after_bytes bigint,
     last_dead_tuples_before bigint,
     last_dead_tuples_after bigint,
     baseline_density bigint,
+    analyzed_rows bigint,
     last_relation_bytes bigint,
     last_reclaimable_bytes bigint,
     first_breach_at timestamptz,
@@ -154,6 +165,7 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0)),
     constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0),
+    constraint chk_postgresql_maintenance_targets_analyzed_rows check ((analyzed_rows is null) = (rows_analyzed_at is null) and (analyzed_rows is null or analyzed_rows >= 0)),
     constraint chk_postgresql_maintenance_targets_sample_non_negative check ((last_relation_bytes is null or last_relation_bytes >= 0) and (last_reclaimable_bytes is null or last_reclaimable_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_percentages check ((last_degraded_percent is null or last_degraded_percent between 0 and 100) and (last_threshold_percent is null or last_threshold_percent between 0 and 100)),
     constraint chk_postgresql_maintenance_targets_last_decision check (last_decision is null or last_decision between 1 and 14)

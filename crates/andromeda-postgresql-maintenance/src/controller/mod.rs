@@ -3,7 +3,11 @@
 mod action_rights;
 mod branch_sampling;
 mod catalog_sampling;
-mod density_sampling;
+/// Each density-measured GIN's density over the rows its table's latest
+/// analyze counted.
+pub(crate) mod density_sampling;
+/// Each heap's dead share over the live rows its latest analyze counted.
+pub(crate) mod heap_sampling;
 mod index_probing;
 mod probe_notices;
 mod probe_selection;

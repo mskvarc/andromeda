@@ -26,6 +26,9 @@ pub enum CatalogCounter {
     BlockSize,
     /// Rows a density-measured GIN covers, from `pg_class` and `pg_stats`.
     CoveredRows,
+    /// Rows a heap or a density-measured GIN is judged by, as its table's
+    /// latest analyze left them, stored on its target row.
+    AnalyzedRows,
     /// Free bytes a detailed index probe measured.
     IndexFreeBytes,
     /// Physical length a detailed index probe measured.

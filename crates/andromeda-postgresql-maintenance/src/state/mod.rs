@@ -7,9 +7,12 @@
 //! [`target_record`] what is recorded per target, [`pending_action`] which
 //! queued action a visit runs next, [`open_breach`] which breach runs triage
 //! waits on, [`branch_rows`] which context branch a
-//! target row belongs to and [`density_baseline`] the baseline a
-//! density-measured GIN is compared with.
+//! target row belongs to, [`density_baseline`] the baseline a
+//! density-measured GIN is compared with and [`analyzed_rows`] the row count a
+//! heap or a density-measured GIN is judged by.
 
+/// The analyzed row count stored on each heap and density-measured GIN.
+pub(crate) mod analyzed_rows;
 /// The cluster's run of passes that found every autovacuum worker busy.
 pub(crate) mod autovacuum_saturation;
 /// The context branch dimension of the target rows.

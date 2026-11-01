@@ -6,7 +6,7 @@ use crate::{
     artifact::{ArtifactOwner, RecoveryArtifact},
     branch::{Branch, BranchTarget},
     candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
-    controller::PassOutcome,
+    controller::{PassOutcome, density_sampling},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     gin_density::{self, Density, DensityReading},
@@ -90,7 +90,7 @@ pub(crate) async fn execute_pending(
 ) -> Result<PassOutcome, MaintenanceError> {
     let (branch, target) = (row.branch(), row.target());
     let action = target_action(target);
-    let prepared = match prepare_action(tenant_connection, row, profile).await? {
+    let prepared = match prepare_action(platform, tenant_connection, tenant, row, profile).await? {
         Preparation::Ready(prepared) => prepared,
         Preparation::Lapsed(reason) => return drop_lapsed(platform, tenant, row, reason).await,
     };
@@ -188,9 +188,9 @@ pub(crate) async fn execute_pending(
 }
 
 /// Record a rebuilt density-measured GIN's density as its new baseline, read
-/// the way a catalog sample reads it. A GIN whose covered rows the statistics
-/// no longer describe has its baseline cleared, so its next observation
-/// records one.
+/// the way a catalog sample reads it, over its analyzed covered rows. A GIN
+/// whose covered rows the statistics no longer describe has its baseline
+/// cleared, so its next observation records one.
 async fn reset_density_baseline(
     platform: &mut PgConnection,
     tenant_connection: &mut PgConnection,
@@ -199,7 +199,7 @@ async fn reset_density_baseline(
     index: IndexTarget,
 ) -> Result<(), MaintenanceError> {
     let sizes = inspection::index_sizes(tenant_connection, branch).await?;
-    let coverage = gin_density::gin_coverage(tenant_connection, branch).await?;
+    let coverage = density_sampling::settled_coverage(platform, tenant_connection, tenant, branch).await?;
     let baseline = gin_density::density_readings(&sizes, &coverage)
         .find(|reading| reading.target == index)
         .and_then(DensityReading::density);

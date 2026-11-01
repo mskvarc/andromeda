@@ -1,15 +1,15 @@
 //! Each density-measured GIN's density as a catalog sample against its
-//! recorded baseline.
+//! recorded baseline, over the rows its table's latest analyze counted.
 
 use crate::{
-    branch::Branch,
+    branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     controller::catalog_sampling::{CatalogSample, SampleEvidence},
     error::MaintenanceError,
     gin_density::{self, GinCoverage},
     inspection::IndexSize,
     policy::PolicyProfile,
-    state::{RegisteredTenant, density_baseline},
+    state::{RegisteredTenant, analyzed_rows, density_baseline},
 };
 use sqlx::PgConnection;
 use tracing::info;
@@ -48,4 +48,28 @@ pub(crate) async fn density_samples(
         }));
     }
     Ok(samples)
+}
+
+/// The covered rows of every density-measured GIN of `branch` the catalogs
+/// describe, as its table's latest analyze counted them; each reading taken
+/// after a newer analyze replaces the stored rows. A GIN read before its
+/// table's first analyze has none.
+pub(crate) async fn settled_coverage(
+    platform: &mut PgConnection,
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+) -> Result<Vec<GinCoverage>, MaintenanceError> {
+    let stored = analyzed_rows::stored_analyzed_rows(platform, tenant, branch).await?;
+    let mut coverage = Vec::new();
+    for reading in gin_density::gin_coverage_readings(connection, branch).await? {
+        let row = BranchTarget::new(branch, MaintenanceTarget::Index(reading.target))?;
+        if let Some(covered) = analyzed_rows::settled_rows(platform, tenant, row, reading.covered, stored.of(row.target())).await? {
+            coverage.push(GinCoverage {
+                target: reading.target,
+                covered_rows: covered.rows,
+            });
+        }
+    }
+    Ok(coverage)
 }

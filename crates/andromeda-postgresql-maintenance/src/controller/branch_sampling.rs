@@ -12,11 +12,11 @@ use crate::{
         action_rights::{self, ActionRights},
         catalog_sampling::{self, CatalogSample},
         density_sampling,
+        heap_sampling,
         probe_selection,
         visit_branches::VisitBranches,
     },
     error::MaintenanceError,
-    gin_density,
     inspection::{self, IndexSize},
     observation::ObservationLevel,
     observed_heap::WatchedHeap,
@@ -64,12 +64,12 @@ pub(crate) async fn sample_branches(
         overdue_relations += autovacuum_health::report_overdue_heaps(connection, tenant, branch).await?;
         let index_sizes = inspection::index_sizes(connection, branch).await?;
         let estimates = btree_estimate::btree_estimates(connection, branch).await?;
-        let heap_samples = inspection::heap_samples(connection, branch, profile).await?;
+        let heap_samples = heap_sampling::heap_samples(platform, connection, tenant, branch, profile).await?;
         let statistics = statistics_freshness::heap_statistics(connection, branch).await?;
         let partiality = columnstore_partiality::partiality_samples(connection, branch).await?;
         let rebuilds = rowstore_rebuild::rebuild_samples(connection, branch, profile).await?;
         let rights = action_rights::history_rights(platform, connection, tenant, visit, &partiality, &rebuilds, profile).await?;
-        let coverage = gin_density::gin_coverage(connection, branch).await?;
+        let coverage = density_sampling::settled_coverage(platform, connection, tenant, branch).await?;
         let probe_states = target_record::index_probe_states(platform, tenant, branch).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, branch, &index_sizes, &coverage, profile).await?;
         report_stale_observed_heaps(tenant, branch, &statistics);

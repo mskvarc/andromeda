@@ -24,6 +24,7 @@ macro_rules! observation_event {
 mod action;
 mod action_measurement;
 mod action_policy;
+mod analyzed_rows;
 mod artifact;
 mod autovacuum_health;
 mod autovacuum_trigger;
@@ -51,6 +52,7 @@ mod fleet_triage;
 mod freeze_policy;
 mod freeze_report;
 mod gin_density;
+mod heap_reading;
 mod history_chunk_policy;
 /// On-disk size of the history chunk each temporal hypertable converts next.
 pub mod history_chunk_size;
