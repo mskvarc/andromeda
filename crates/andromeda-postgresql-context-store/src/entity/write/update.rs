@@ -91,9 +91,10 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($15::text[], …) AS r(…)),
 ///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($42::text[], …) AS g(…)),
 ///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($46::text[]))
-///               AND NOT EXISTS (<a staged row of the same grain>)),
-///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND EXISTS (<a removed grain of the row>)),
-///      moved AS (UPDATE current_attributes SET ordinal = grains.ordinal FROM ents, grains WHERE grains.ordinal IS NOT NULL AND <the row's grain>),
+///               AND (<the row's grain>) NOT IN (<every staged grain>)),
+///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND ((<the row's grain>) IN (<the removed grains>)) IS TRUE),
+///      moved AS (UPDATE current_attributes SET ordinal = ((<the moved grains' ordinals by grain>) ->> (<the row's grain>)::text)::integer
+///                WHERE entity_key IN (<ents moving a grain>) AND ((<the row's grain>) IN (<the moved grains>)) IS TRUE),
 ///      attrs AS (INSERT INTO current_attributes (entity_key, …) SELECT ents.entity_key, instances.… FROM ents JOIN instances ON instances.id = ents.id
 ///                ON CONFLICT (entity_key, attribute_name_key, dataset_id) DO UPDATE SET ordinal = excluded.ordinal, …
 ///                WHERE (current_attributes.ordinal, …) IS DISTINCT FROM (excluded.ordinal, …)),
@@ -469,7 +470,13 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""moved" AS (UPDATE "current_attributes" SET "ordinal" = "grains"."ordinal" FROM "ents", "grains""#),
+            sql.contains(
+                r#""moved" AS (UPDATE "current_attributes" SET "ordinal" = ((SELECT jsonb_object_agg(("ents"."entity_key", "grains"."attribute_name_key""#
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NOT NULL)) IS TRUE)"#),
             "{sql}"
         );
         assert!(

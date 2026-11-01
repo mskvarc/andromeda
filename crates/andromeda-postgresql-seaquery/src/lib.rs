@@ -50,6 +50,7 @@ pub mod interval;
 pub mod introspection;
 pub mod json_type;
 pub mod jsonb;
+pub mod keyed_lookup;
 pub mod literal;
 pub mod ltree;
 pub mod maintenance;

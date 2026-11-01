@@ -12,9 +12,11 @@
 //! ([`RowEdit`](crate::current_attribute::row_edit::RowEdit)): the instances it
 //! writes whole are upserted, the rows that only move take their new ordinal,
 //! and the grains it removes are deleted. The four sets are disjoint, so the
-//! statements run together without touching a row twice. A deletion tests the
-//! stored rows against its staged grains as a hashed set, so its cost does not
-//! hang on statistics that may still describe the table before a large write.
+//! statements run together without touching a row twice. A move or a deletion
+//! tests the stored rows against its staged grains as a hashed set, and a move
+//! reads each new ordinal from its grains aggregated once, so neither joins the
+//! stored rows to the grains and neither cost hangs on statistics that may
+//! still describe the table before a large write.
 
 use crate::{
     current_attribute::{
@@ -29,16 +31,53 @@ use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     conflict_image::Excluded,
     hashed_membership::hashed_membership,
-    nullable_text_key::{nullable_text_key, same_nullable_text_key},
+    keyed_lookup::{keyed_map, keyed_value},
+    nullable_text_key::nullable_text_key,
     pg_array::any,
     pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    scalar_subquery::scalar_subquery,
 };
-use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
+use sea_query::{
+    DeleteStatement,
+    DynIden,
+    Expr,
+    ExprTrait,
+    Iden,
+    InsertStatement,
+    IntoIden,
+    JoinType,
+    OnConflict,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    UpdateStatement,
+};
 
-/// The identifiers of the Entities whose edit removes a grain, `removing`.
+/// The identifiers of the Entities whose edit stages a grain, `edited`.
 #[derive(Iden, Clone, Copy)]
-#[iden = "removing"]
-struct Removing;
+#[iden = "edited"]
+struct Edited;
+
+/// What an update does to the stored row of a grain it stages.
+#[derive(Clone, Copy)]
+enum GrainEdit {
+    /// The row takes the ordinal the grain carries.
+    Moved,
+    /// The row is deleted; the grain carries no ordinal.
+    Removed,
+}
+
+impl GrainEdit {
+    /// The grains staged for this edit.
+    fn staged(self) -> SimpleExpr {
+        let ordinal = Expr::col((Grains, CurrentAttributes::Ordinal));
+        match self {
+            GrainEdit::Moved => ordinal.is_not_null(),
+            GrainEdit::Removed => ordinal.is_null(),
+        }
+    }
+}
 
 /// The columns a stored row takes from the row an update writes in its place:
 /// every written column but the grain it is matched by and `created_at`, which
@@ -118,25 +157,31 @@ pub(crate) fn written_rows(target: &ContextTarget, anchor: impl IntoIden) -> Res
 
 /// The rows an update keeps as they are but at another written position, for
 /// every Entity `anchor` holds:
-/// `UPDATE current_attributes SET ordinal = grains.ordinal FROM anchor, grains
-/// WHERE grains.id = anchor.id AND grains.ordinal IS NOT NULL AND <the row's grain is the staged one>`.
+/// `UPDATE current_attributes SET ordinal = ((SELECT jsonb_object_agg((anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, ''))::text, grains.ordinal) FROM anchor JOIN grains ON grains.id = anchor.id WHERE grains.ordinal IS NOT NULL)
+/// ->> (entity_key, attribute_name_key, COALESCE(dataset_id, ''))::text)::integer
+/// WHERE entity_key IN (<the Entities moving a grain>) AND ((<the row's grain>) IN (<the moved grains>)) IS TRUE`.
+///
+/// The moved rows are found as the removed ones are ([`dropped_rows`]), and
+/// each reads its new ordinal from the moved grains aggregated once into an
+/// object keyed by grain ([`keyed_value`]), so no join between the stored rows
+/// and the grains is left for stale statistics to plan as a rescan.
 pub(crate) fn moved_rows(target: &ContextTarget, anchor: impl IntoIden) -> UpdateStatement {
     let anchor = anchor.into_iden();
+    let ordinals = scalar_subquery(
+        edited_grains(&anchor, GrainEdit::Moved)
+            .expr(keyed_map(staged_grain_parts(&anchor), Expr::col((Grains, CurrentAttributes::Ordinal))))
+            .take(),
+    );
     Query::update()
         .table(table_of(target, CurrentAttributes::Table))
-        .value(CurrentAttributes::Ordinal, Expr::col((Grains, CurrentAttributes::Ordinal)))
-        .from(anchor.clone()) // clone: the anchor names the source and both of its key columns
-        .from(Grains)
-        .cond_where(
-            Cond::all()
-                .add(Expr::col((Grains, CurrentAttributes::Ordinal)).is_not_null())
-                .add(staged_grain_of_the_row(anchor)),
-        )
+        .value(CurrentAttributes::Ordinal, keyed_value(ordinals, stored_grain_parts(), PostgresType::Integer))
+        .and_where(stored(CurrentAttributes::EntityKey).in_subquery(edited_entities(&anchor, GrainEdit::Moved)))
+        .and_where(hashed_membership(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Moved))))
         .take()
 }
 
 /// The stored rows an update removes, for every Entity `anchor` holds:
-/// `DELETE FROM current_attributes WHERE entity_key IN (SELECT anchor.entity_key FROM anchor JOIN (SELECT DISTINCT grains.id FROM grains WHERE grains.ordinal IS NULL) AS removing ON removing.id = anchor.id)
+/// `DELETE FROM current_attributes WHERE entity_key IN (SELECT anchor.entity_key FROM anchor JOIN (SELECT DISTINCT grains.id FROM grains WHERE grains.ordinal IS NULL) AS edited ON edited.id = anchor.id)
 /// AND ((entity_key, attribute_name_key, COALESCE(dataset_id, '')) IN (SELECT anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, '') FROM anchor JOIN grains ON grains.id = anchor.id WHERE grains.ordinal IS NULL)) IS TRUE`.
 ///
 /// Only the rows of an Entity that removes a grain are read, and each is
@@ -147,35 +192,58 @@ pub(crate) fn moved_rows(target: &ContextTarget, anchor: impl IntoIden) -> Updat
 /// thousands. No member of either grain is NULL.
 pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> DeleteStatement {
     let anchor = anchor.into_iden();
-    let removing = Query::select()
+    Query::delete()
+        .from_table(table_of(target, CurrentAttributes::Table))
+        .and_where(stored(CurrentAttributes::EntityKey).in_subquery(edited_entities(&anchor, GrainEdit::Removed)))
+        .and_where(hashed_membership(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Removed))))
+        .take()
+}
+
+/// The keys of the Entities `anchor` holds that stage a grain for `edit`:
+/// `SELECT anchor.entity_key FROM anchor JOIN (SELECT DISTINCT grains.id FROM grains WHERE <edit>) AS edited ON edited.id = anchor.id`.
+fn edited_entities(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
+    let edited = Query::select()
         .distinct()
         .column((Grains, Entities::Id))
         .from(Grains)
-        .and_where(Expr::col((Grains, CurrentAttributes::Ordinal)).is_null())
+        .and_where(edit.staged())
         .take();
-    let removing_entities = Query::select()
-        .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key, the source and the join
+    Query::select()
+        .column((anchor.clone(), Entities::EntityKey)) // clone: a reference-counted name
         .from(anchor.clone()) // clone: as above
         .join_subquery(
             JoinType::Join,
-            removing,
-            Removing,
-            Expr::col((Removing, Entities::Id)).equals((anchor.clone(), Entities::Id)), // clone: as above
+            edited,
+            Edited,
+            Expr::col((Edited, Entities::Id)).equals((anchor.clone(), Entities::Id)), // clone: as above
         )
-        .take();
-    let removed = Query::select()
-        .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key and the join
-        .column((Grains, CurrentAttributes::AttributeNameKey))
-        .expr(nullable_text_key(Expr::col((Grains, CurrentAttributes::DatasetId))))
-        .from(anchor.clone()) // clone: as above
-        .join(JoinType::Join, Grains, Expr::col((Grains, Entities::Id)).equals((anchor, Entities::Id)))
-        .and_where(Expr::col((Grains, CurrentAttributes::Ordinal)).is_null())
-        .take();
-    Query::delete()
-        .from_table(table_of(target, CurrentAttributes::Table))
-        .and_where(stored(CurrentAttributes::EntityKey).in_subquery(removing_entities))
-        .and_where(hashed_membership(stored_grain().in_subquery(removed)))
         .take()
+}
+
+/// The grains staged for `edit`, each as its index key:
+/// `SELECT anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, '') FROM anchor JOIN grains ON grains.id = anchor.id WHERE <edit>`.
+fn staged_grains(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
+    edited_grains(anchor, edit).exprs(staged_grain_parts(anchor)).take()
+}
+
+/// The grains staged for `edit`, each paired with its Entity, with nothing
+/// selected yet: `… FROM anchor JOIN grains ON grains.id = anchor.id WHERE <edit>`.
+fn edited_grains(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
+    Query::select()
+        .from(anchor.clone()) // clone: a reference-counted name
+        .join(JoinType::Join, Grains, Expr::col((Grains, Entities::Id)).equals((anchor.clone(), Entities::Id))) // clone: as above
+        .and_where(edit.staged())
+        .take()
+}
+
+/// A staged grain's index key, its Entity's key from `anchor`:
+/// `anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, '')`.
+fn staged_grain_parts(anchor: &DynIden) -> [SimpleExpr; 3] {
+    [
+        Expr::col((anchor.clone(), Entities::EntityKey)), // clone: a reference-counted name
+        Expr::col((Grains, CurrentAttributes::AttributeNameKey)),
+        nullable_text_key(Expr::col((Grains, CurrentAttributes::DatasetId))),
+    ]
 }
 
 /// The stored rows of every Entity `anchor` holds whose identifier is in
@@ -218,30 +286,21 @@ pub(crate) fn vanished_rows(target: &ContextTarget, anchor: impl IntoIden, overw
 /// A stored row's grain, as its index key:
 /// `(entity_key, attribute_name_key, COALESCE(dataset_id, ''))`.
 fn stored_grain() -> SimpleExpr {
-    Expr::tuple([
+    Expr::tuple(stored_grain_parts())
+}
+
+/// The parts of a stored row's grain: `entity_key, attribute_name_key, COALESCE(dataset_id, '')`.
+fn stored_grain_parts() -> [SimpleExpr; 3] {
+    [
         stored(CurrentAttributes::EntityKey),
         stored(CurrentAttributes::AttributeNameKey),
         nullable_text_key(stored(CurrentAttributes::DatasetId)),
-    ])
+    ]
 }
 
 /// A stored row's column, `current_attributes.<column>`.
 fn stored(column: CurrentAttributes) -> SimpleExpr {
     Expr::col((CurrentAttributes::Table, column))
-}
-
-/// The stored row is the one a staged grain names: the grain's Entity is the
-/// anchor row it pairs with by identifier, and the row has the grain's
-/// attribute name and `datasetId`.
-fn staged_grain_of_the_row(anchor: DynIden) -> Cond {
-    Cond::all()
-        .add(Expr::col((Grains, Entities::Id)).equals((anchor.clone(), Entities::Id))) // clone: the anchor names both of its key columns
-        .add(Expr::col((anchor, Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)))
-        .add(Expr::col((Grains, CurrentAttributes::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)))
-        .add(same_nullable_text_key(
-            Expr::col((Grains, CurrentAttributes::DatasetId)),
-            stored(CurrentAttributes::DatasetId),
-        ))
 }
 
 #[cfg(test)]
@@ -336,19 +395,25 @@ mod tests {
         assert!(sql.contains(r#""value_geometry_valid" = "excluded"."value_geometry_valid""#), "{sql}");
     }
 
-    /// A row that only moves takes its new ordinal and nothing else.
+    /// A row that only moves takes its new ordinal and nothing else. Only the
+    /// Entities that move a grain are read, their rows are picked by hashed
+    /// membership, and each reads its ordinal from the moved grains aggregated
+    /// once, so no join pairs the stored rows with the grains.
     #[test]
-    fn a_moved_row_takes_only_its_new_ordinal() {
+    fn a_moved_row_reads_its_new_ordinal_by_its_grain() {
         let sql = moved_rows(&ContextTarget::Live, anchor()).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(r#"UPDATE "current_attributes" SET "ordinal" = "grains"."ordinal" FROM "ins", "grains" WHERE "grains"."ordinal" IS NOT NULL"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""grains"."id" = "ins"."id""#), "{sql}");
-        assert!(sql.contains(r#""ins"."entity_key" = "current_attributes"."entity_key""#), "{sql}");
-        assert!(
-            sql.contains(r#"COALESCE("grains"."dataset_id", '') = COALESCE("current_attributes"."dataset_id", '')"#),
-            "{sql}"
+        assert_eq!(
+            sql,
+            concat!(
+                r#"UPDATE "current_attributes" SET "ordinal" = "#,
+                r#"((SELECT jsonb_object_agg(("ins"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", ''))::text, "grains"."ordinal") "#,
+                r#"FROM "ins" JOIN "grains" ON "grains"."id" = "ins"."id" WHERE "grains"."ordinal" IS NOT NULL) "#,
+                r#"->> (("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", ''))::text))::integer "#,
+                r#"WHERE "current_attributes"."entity_key" IN "#,
+                r#"(SELECT "ins"."entity_key" FROM "ins" JOIN (SELECT DISTINCT "grains"."id" FROM "grains" WHERE "grains"."ordinal" IS NOT NULL) AS "edited" ON "edited"."id" = "ins"."id") "#,
+                r#"AND ((("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN "#,
+                r#"(SELECT "ins"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ins" JOIN "grains" ON "grains"."id" = "ins"."id" WHERE "grains"."ordinal" IS NOT NULL)) IS TRUE)"#
+            )
         );
     }
 
@@ -363,7 +428,7 @@ mod tests {
             sql,
             concat!(
                 r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN "#,
-                r#"(SELECT "ins"."entity_key" FROM "ins" JOIN (SELECT DISTINCT "grains"."id" FROM "grains" WHERE "grains"."ordinal" IS NULL) AS "removing" ON "removing"."id" = "ins"."id") "#,
+                r#"(SELECT "ins"."entity_key" FROM "ins" JOIN (SELECT DISTINCT "grains"."id" FROM "grains" WHERE "grains"."ordinal" IS NULL) AS "edited" ON "edited"."id" = "ins"."id") "#,
                 r#"AND ((("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN "#,
                 r#"(SELECT "ins"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ins" JOIN "grains" ON "grains"."id" = "ins"."id" WHERE "grains"."ordinal" IS NULL)) IS TRUE)"#
             )
