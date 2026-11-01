@@ -80,22 +80,6 @@ pub enum LogCompression {
     Gzip,
 }
 
-/// Whether, and in which format, the broker exposes its metrics.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "Whether, and in which format, the broker exposes metrics.")]
-pub enum MetricsMode {
-    /// No recorder is installed and no scrape endpoint is mounted.
-    #[default]
-    #[schemars(description = "Records no metrics and serves no `/metrics` endpoint.")]
-    Disabled,
-    /// A Prometheus recorder is installed and served at `GET /metrics` on the
-    /// management plane.
-    #[schemars(description = "Serves Prometheus metrics at `GET /metrics` on the management endpoints.")]
-    Prometheus,
-}
-
 /// The structured log file.
 ///
 /// Off by default; on, a second tracing layer writes structured records to a
@@ -168,15 +152,30 @@ pub struct LogConfig {
     pub file: LogFileConfig,
 }
 
-/// Whether, and in which format, the broker exposes its metrics.
+/// The Prometheus exporter.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+#[schemars(description = "Prometheus metrics served at `GET /metrics` on the management endpoints.")]
+pub struct PrometheusMetricsConfig {
+    /// Whether a Prometheus recorder is installed and `GET /metrics` served.
+    #[schemars(description = "Whether metrics are recorded and served at `GET /metrics` on the management endpoints.")]
+    pub mode: FeatureMode,
+}
+
+impl Default for PrometheusMetricsConfig {
+    fn default() -> PrometheusMetricsConfig {
+        PrometheusMetricsConfig { mode: FeatureMode::Disabled }
+    }
+}
+
+/// Which exporters the broker's metrics go to, one table each.
 #[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-#[schemars(description = "Whether, and in which format, the broker exposes metrics.")]
+#[schemars(description = "Which exporters the broker's metrics go to, one table each.")]
 pub struct MetricsConfig {
-    /// `disabled`, or `prometheus` to serve `GET /metrics` on the management
-    /// plane.
-    #[schemars(description = "Whether metrics are recorded and served on the management endpoints.")]
-    pub mode: MetricsMode,
+    /// The Prometheus exporter.
+    #[schemars(description = "Prometheus metrics served at `GET /metrics` on the management endpoints.")]
+    pub prometheus: PrometheusMetricsConfig,
 }
 
 /// Logging and metrics.
@@ -200,7 +199,7 @@ pub struct ObservabilityConfig {
 mod tests {
     use crate::schema::{
         feature_mode::FeatureMode,
-        observability::{LogCompression, LogFileConfig, LogFileFormat, LogRotationInterval, MetricsMode, ObservabilityConfig},
+        observability::{LogCompression, LogFileConfig, LogFileFormat, LogRotationInterval, ObservabilityConfig},
     };
     use std::str::FromStr;
 
@@ -231,7 +230,7 @@ mod tests {
     fn the_default_toml_carries_the_file_logging_section() {
         let rendered = toml::to_string(&ObservabilityConfig::default()).expect("the defaults render");
         assert!(rendered.contains("[log.file]"), "{rendered}");
-        assert!(rendered.contains("[metrics]"), "{rendered}");
-        pretty_assertions::assert_eq!(ObservabilityConfig::default().metrics.mode, MetricsMode::Disabled);
+        assert!(rendered.contains("[metrics.prometheus]"), "{rendered}");
+        pretty_assertions::assert_eq!(ObservabilityConfig::default().metrics.prometheus.mode, FeatureMode::Disabled);
     }
 }

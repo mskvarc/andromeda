@@ -273,9 +273,9 @@ pub enum ConfigKey {
     /// `snapshot.preparation.scoped_operation_timeout`.
     #[display("snapshot.preparation.scoped_operation_timeout")]
     SnapshotPreparationScopedOperationTimeout,
-    /// `observability.metrics.mode`.
-    #[display("observability.metrics.mode")]
-    ObservabilityMetricsMode,
+    /// `observability.metrics.prometheus.mode`.
+    #[display("observability.metrics.prometheus.mode")]
+    ObservabilityMetricsPrometheusMode,
 }
 
 #[cfg(test)]

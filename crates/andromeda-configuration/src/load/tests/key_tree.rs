@@ -52,7 +52,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[management]\nmetrics = \"prometheus\"\n",
         "metrics",
-        "[observability.metrics]\nmode = \"prometheus\"\n",
+        "[observability.metrics.prometheus]\nmode = \"enabled\"\n",
     ),
     ("[management]\nmode = \"merged\"\n", "merged", "[management]\nmode = \"shared-port\"\n"),
     (
@@ -617,6 +617,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "temporal_aggregation_grouping_max_groups",
         "[extensions.temporal_aggregation_grouping]\nmax_groups = 10\n",
     ),
+    (
+        "[observability.metrics]\nmode = \"prometheus\"\n",
+        "mode",
+        "[observability.metrics.prometheus]\nmode = \"enabled\"\n",
+    ),
 ];
 
 /// Every extension that is one table with a `mode` that turns it on or off.
@@ -700,7 +705,7 @@ fn every_mode_refuses_a_value_it_does_not_define() {
         "federation.cooldown",
         "extensions",
         "observability.log.file",
-        "observability.metrics",
+        "observability.metrics.prometheus",
     ];
     let extensions = EXTENSION_TABLES.map(|extension| format!("extensions.{extension}"));
     tables.extend(extensions.iter().map(String::as_str));

@@ -75,7 +75,7 @@ pub enum ConfigurationViolation {
     },
     /// Metrics are enabled while no management plane exists to serve them.
     #[display(
-        "observability.metrics.mode is \"prometheus\" but management.mode is \"disabled\"; set management.mode to \"separate-port\" or \"shared-port\", or disable metrics"
+        "observability.metrics.prometheus.mode is \"enabled\" but management.mode is \"disabled\"; set management.mode to \"separate-port\" or \"shared-port\", or disable metrics"
     )]
     MetricsWithoutManagementPlane,
     /// The CORS policy allows credentials beside an `any` wildcard, which the

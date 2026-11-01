@@ -14,7 +14,7 @@ pub(crate) fn report_startup(config: &BrokerConfig) {
         notification_delivery_mode = %config.notifications.delivery.mode,
         log_level = %config.observability.log.level,
         management_mode = %config.management.mode,
-        metrics = %config.observability.metrics.mode,
+        prometheus_metrics = %config.observability.metrics.prometheus.mode,
         precedence = PRECEDENCE,
         "Starting Andromeda"
     );
@@ -30,12 +30,12 @@ fn report_management_plane(config: &BrokerConfig) {
         ManagementMode::SeparatePort => info!(
             data_plane = %data_plane,
             management_plane = %SocketAddr::from((config.management.host, config.management.port)),
-            metrics = %config.observability.metrics.mode,
+            prometheus_metrics = %config.observability.metrics.prometheus.mode,
             "Management plane on a separate port serves /livez, /readyz and, when enabled, /metrics"
         ),
         ManagementMode::SharedPort => info!(
             data_plane = %data_plane,
-            metrics = %config.observability.metrics.mode,
+            prometheus_metrics = %config.observability.metrics.prometheus.mode,
             "Management plane shares the data-plane port at /livez, /readyz and, when enabled, /metrics"
         ),
         ManagementMode::Disabled => info!(

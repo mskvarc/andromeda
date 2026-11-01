@@ -26,7 +26,7 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
-use andromeda_configuration::{broker_config::BrokerConfig, schema::observability::MetricsMode};
+use andromeda_configuration::{broker_config::BrokerConfig, schema::feature_mode::FeatureMode};
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
@@ -144,7 +144,7 @@ pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
     };
     report_startup(&config);
     let config = Arc::new(config);
-    let telemetry = match install_telemetry(config.observability.metrics.mode) {
+    let telemetry = match install_telemetry(config.observability.metrics.prometheus.mode) {
         Ok(telemetry) => telemetry,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
@@ -184,14 +184,14 @@ pub async fn run(config: BrokerConfig) -> ProcessExitOutcome {
     }
 }
 
-/// Install the process metrics recorder when exposure is enabled.
+/// Install the process metrics recorder when the Prometheus exporter is on.
 ///
 /// The recorder is installed before any pool or worker opens so the first
 /// statement the broker runs is already observed.
-fn install_telemetry(exposure: MetricsMode) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
-    match exposure {
-        MetricsMode::Disabled => Ok(None),
-        MetricsMode::Prometheus => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
+fn install_telemetry(prometheus: FeatureMode) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
+    match prometheus {
+        FeatureMode::Disabled => Ok(None),
+        FeatureMode::Enabled => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
     }
 }
 

@@ -43,7 +43,7 @@ impl ConfigKey {
             | ConfigKey::JsonLdPreloadedContextUrl
             | ConfigKey::TemporalStorageRetentionMode
             | ConfigKey::FederationCooldownMode
-            | ConfigKey::ObservabilityMetricsMode => None,
+            | ConfigKey::ObservabilityMetricsPrometheusMode => None,
             ConfigKey::RequestLimitsTimeout => Some(span(config.request_limits.timeout)),
             ConfigKey::RequestLimitsMaxBody => Some(size(config.request_limits.max_body)),
             ConfigKey::RequestLimitsMaxHeaderSection => Some(Quantity::Bytes(u64::from(config.request_limits.max_header_section.octets()))),

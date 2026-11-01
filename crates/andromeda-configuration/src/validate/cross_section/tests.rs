@@ -3,7 +3,7 @@ use crate::{
     human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
     notification_body_limit::{NotificationBodyLimit, NotificationBodyLimitError},
-    schema::{http3::Http3Mode, listener_transport::ListenerTransport, management::ManagementMode, observability::MetricsMode, tls::ClientAuthenticationMode},
+    schema::{feature_mode::FeatureMode, http3::Http3Mode, listener_transport::ListenerTransport, management::ManagementMode, tls::ClientAuthenticationMode},
     validate::{
         bound::{Bound, Quantity, Relation},
         config_key::{ConfigKey, QueueKey, QueueName},
@@ -222,7 +222,7 @@ fn a_shared_port_management_plane_never_collides() {
 #[test]
 fn metrics_without_a_management_plane_are_refused_and_on_a_shared_port_accepted() {
     let mut config = BrokerConfig::default();
-    config.observability.metrics.mode = MetricsMode::Prometheus;
+    config.observability.metrics.prometheus.mode = FeatureMode::Enabled;
     config.management.mode = ManagementMode::Disabled;
     assert_eq!(refusals(&config), [ConfigurationViolation::MetricsWithoutManagementPlane]);
     config.management.mode = ManagementMode::SharedPort;

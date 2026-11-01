@@ -3,10 +3,10 @@
 use crate::{
     broker_config::BrokerConfig,
     schema::{
+        feature_mode::FeatureMode,
         http3::Http3Mode,
         listener_transport::ListenerTransport,
         management::ManagementMode,
-        observability::MetricsMode,
         tls::{ClientAuthenticationMode, TlsConfig},
     },
     validate::{
@@ -93,8 +93,8 @@ pub(crate) const COMPOUND_RULES: [CompoundRule; 4] = [
         statement: "With `management.mode` at `\"separate-port\"`, `management.port` differs from `server.port`.",
     },
     CompoundRule {
-        keys: &[ConfigKey::ObservabilityMetricsMode, ConfigKey::ManagementMode],
-        statement: "Metrics are served on the management plane, so `observability.metrics.mode` at `\"prometheus\"` needs `management.mode` other than `\"disabled\"`.",
+        keys: &[ConfigKey::ObservabilityMetricsPrometheusMode, ConfigKey::ManagementMode],
+        statement: "Metrics are served on the management plane, so `observability.metrics.prometheus.mode` at `\"enabled\"` needs `management.mode` other than `\"disabled\"`.",
     },
     CompoundRule {
         keys: &[ConfigKey::TlsCertificate, ConfigKey::TlsPrivateKey],
@@ -114,9 +114,9 @@ pub(crate) fn check_listeners(config: &BrokerConfig, log: &mut ViolationLog) {
     if matches!(management.mode, ManagementMode::SeparatePort) && management.port == config.server.port {
         log.record(ConfigurationViolation::ManagementPortCollision { port: management.port });
     }
-    match (config.observability.metrics.mode, management.mode) {
-        (MetricsMode::Prometheus, ManagementMode::Disabled) => log.record(ConfigurationViolation::MetricsWithoutManagementPlane),
-        (MetricsMode::Prometheus | MetricsMode::Disabled, ManagementMode::SeparatePort | ManagementMode::SharedPort | ManagementMode::Disabled) => {}
+    match (config.observability.metrics.prometheus.mode, management.mode) {
+        (FeatureMode::Enabled, ManagementMode::Disabled) => log.record(ConfigurationViolation::MetricsWithoutManagementPlane),
+        (FeatureMode::Enabled | FeatureMode::Disabled, ManagementMode::SeparatePort | ManagementMode::SharedPort | ManagementMode::Disabled) => {}
     }
     if let Some(listener) = first_tls_listener(config) {
         check_tls(&config.tls, listener, log);
