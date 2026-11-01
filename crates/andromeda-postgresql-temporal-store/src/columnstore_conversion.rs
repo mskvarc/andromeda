@@ -84,18 +84,18 @@ const CONVERTED_HYPERTABLE: HypertableName = HypertableName::AttributeHistory;
 #[display("{relation}")]
 pub struct HistoryChunk {
     /// The relation as `format('%I.%I', chunk_schema, chunk_name)` renders it.
-    relation: String,
+    pub(crate) relation: String,
     /// The schema the relation lives in.
-    schema: String,
+    pub(crate) schema: String,
     /// The relation's name.
-    name: String,
+    pub(crate) name: String,
     /// The chunk's start on the time dimension, which names a kept chunk.
-    range_start: DateTime<Utc>,
+    pub(crate) range_start: DateTime<Utc>,
 }
 
 /// Where one chunk's rows are stored.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ChunkStorage {
+pub(crate) enum ChunkStorage {
     /// Uncompressed rows, as written.
     Rowstore,
     /// Converted to the columnstore.
@@ -104,13 +104,21 @@ enum ChunkStorage {
 
 /// One chunk as the catalogue reports it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ChunkState {
+pub(crate) struct ChunkState {
     /// The chunk.
-    chunk: HistoryChunk,
+    pub(crate) chunk: HistoryChunk,
     /// The first instant past the chunk on the time dimension.
-    range_end: DateTime<Utc>,
+    pub(crate) range_end: DateTime<Utc>,
     /// Where its rows are stored.
-    storage: ChunkStorage,
+    pub(crate) storage: ChunkStorage,
+}
+
+impl ChunkState {
+    /// Whether the sweep converts the chunk once it passes the horizon: it is
+    /// still in the rowstore and `kept` does not list it.
+    pub(crate) fn awaits_conversion(&self, kept: &[DateTime<Utc>]) -> bool {
+        self.storage == ChunkStorage::Rowstore && !kept.contains(&self.chunk.range_start)
+    }
 }
 
 /// The age past which a history chunk is converted.
@@ -134,6 +142,12 @@ impl ColumnstoreHorizon {
         TimeDelta::try_days(i64::from(self.0.get()))
             .and_then(|span| now.checked_sub_signed(span))
             .ok_or(ColumnstoreHorizonOutOfRange)
+    }
+
+    /// The instant a chunk whose range ends at `range_end` falls due for
+    /// conversion, `None` past the representable range.
+    pub(crate) fn due_at(self, range_end: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        TimeDelta::try_days(i64::from(self.0.get())).and_then(|span| range_end.checked_add_signed(span))
     }
 }
 
@@ -315,7 +329,7 @@ fn count(value: i64) -> u64 {
 }
 
 /// Read every chunk of the converted hypertable.
-async fn read_chunk_states(connection: &mut PgConnection) -> Result<Vec<ChunkState>, sqlx::Error> {
+pub(crate) async fn read_chunk_states(connection: &mut PgConnection) -> Result<Vec<ChunkState>, sqlx::Error> {
     let rows = chunk_states_statement(CONVERTED_HYPERTABLE.into()).to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
@@ -335,7 +349,7 @@ async fn read_chunk_states(connection: &mut PgConnection) -> Result<Vec<ChunkSta
 }
 
 /// Read the starts of the chunks kept in the rowstore.
-async fn read_kept_chunks(connection: &mut PgConnection) -> Result<Vec<DateTime<Utc>>, sqlx::Error> {
+pub(crate) async fn read_kept_chunks(connection: &mut PgConnection) -> Result<Vec<DateTime<Utc>>, sqlx::Error> {
     kept_chunks_statement().to_query_scalar().fetch_all(connection).await
 }
 
@@ -344,7 +358,7 @@ async fn read_kept_chunks(connection: &mut PgConnection) -> Result<Vec<DateTime<
 fn past_horizon(states: Vec<ChunkState>, kept: &[DateTime<Utc>], cutoff: DateTime<Utc>) -> Vec<HistoryChunk> {
     states
         .into_iter()
-        .filter(|state| state.storage == ChunkStorage::Rowstore && state.range_end <= cutoff && !kept.contains(&state.chunk.range_start))
+        .filter(|state| state.range_end <= cutoff && state.awaits_conversion(kept))
         .map(|state| state.chunk)
         .collect()
 }

@@ -45,6 +45,8 @@ pub(crate) mod evolution_vacancy;
 pub(crate) mod held_shape_read;
 /// Deciding which relations of a branch a temporal read takes history from.
 mod history_branch;
+/// When a tenant's history next owes the conversion or the retention sweep work.
+pub mod history_due;
 /// What a history row stores beside its value, keyed as current state keys it.
 pub mod history_members;
 /// Removing the history of whole streams or of one entity's Scope.
@@ -53,6 +55,8 @@ pub(crate) mod history_removal;
 pub(crate) mod history_row_decode;
 /// The identity and column reads the two history hypertables share.
 pub(crate) mod history_row_identity;
+/// Answering the wake loop for the history a dormant tenant owes its sweeps.
+pub mod history_work_probe;
 /// The temporal hypertables whose storage policy is reconciled, and their columnstore layout.
 pub mod hypertable_policy;
 /// Reading the instances a split query's filters read in effect when its
@@ -158,6 +162,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-retry",
         "andromeda-telemetry",
         "andromeda-temporal",
+        "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-postgresql-pool",

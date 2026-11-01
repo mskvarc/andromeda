@@ -1819,15 +1819,19 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
+ "andromeda-ngsi-ld-lexicon",
  "andromeda-persistence-failure",
  "andromeda-postgresql-seaquery",
  "andromeda-retry",
+ "andromeda-tenancy",
  "derive_more",
  "pretty_assertions",
  "sea-query",
  "sqlx",
  "strum",
+ "thiserror 2.0.21",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -1938,6 +1942,7 @@ dependencies = [
  "andromeda-retry",
  "andromeda-telemetry",
  "andromeda-temporal",
+ "andromeda-tenancy",
  "async-trait",
  "bigdecimal",
  "cefact-units",

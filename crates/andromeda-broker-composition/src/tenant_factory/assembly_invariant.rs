@@ -31,9 +31,6 @@ pub(super) enum RetentionSetting {
     /// How long a side-effect job retired for an unreadable payload is kept.
     #[display("pending side-effect dead-letter age")]
     SideEffectDeadLetter,
-    /// How far back temporal history is retained.
-    #[display("temporal retention horizon")]
-    TemporalHorizon,
 }
 
 /// A part of a tenant runtime that refused to be constructed.

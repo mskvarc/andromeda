@@ -26,13 +26,12 @@ use crate::{
     pending_work::due_sources::{branch_delivery_due_select, least_due_select},
     store_fault::persistence_failure,
     subscription_store::{delivery_state::interval_anchor_select, periodic_due::unexpired_at, status_code::status_is},
-    tenant_database::DatabaseUrl,
     tenant_migration::{TenantSchemaState, tenant_schema_state},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated, sql_state::SqlState};
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, pending_work_failure::pending_work_failure, pool_options::configure_pool_options};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
@@ -64,27 +63,6 @@ impl PostgresPendingWorkProbe {
     pub const fn new(request_url: DatabaseUrl, acquire_timeout: Duration) -> PostgresPendingWorkProbe {
         PostgresPendingWorkProbe { request_url, acquire_timeout }
     }
-
-    /// Classify a `sqlx` failure the probe hit as saturation, a gone database,
-    /// or a genuine fault.
-    fn classify(error: &sqlx::Error, database: &TenantDatabaseName) -> PendingWorkError {
-        if is_pool_saturated(error) {
-            PendingWorkError::Saturated { database: database.clone() } // clone: the error outlives this borrow
-        } else if is_undefined_database(error) {
-            PendingWorkError::DatabaseGone { database: database.clone() } // clone: the error outlives this borrow
-        } else {
-            PendingWorkError::ProbeFailed {
-                database: database.clone(), // clone: the error outlives this borrow
-                cause: persistence_failure(&error),
-            }
-        }
-    }
-}
-
-/// Whether a failure says the database the probe tried to open does not exist,
-/// which a deprovisioned tenant's stale wake-schedule row produces on connect.
-fn is_undefined_database(error: &sqlx::Error) -> bool {
-    SqlState::of(error) == Some(SqlState::InvalidCatalogName)
 }
 
 #[async_trait]
@@ -94,7 +72,7 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
         let pool = configure_pool_options(1, self.acquire_timeout)
             .connect(url.as_str())
             .await
-            .map_err(|error| Self::classify(&error, database))?;
+            .map_err(|error| pending_work_failure(&error, database))?;
 
         let earliest = Self::earliest_over(&pool, database).await;
         pool.close().await;
@@ -128,7 +106,7 @@ impl PostgresPendingWorkProbe {
             ContextStoreError::Saturated => PendingWorkError::Saturated {
                 database: database.clone(), // clone: the error outlives this borrow
             },
-            ContextStoreError::Database(error) => Self::classify(&error, database),
+            ContextStoreError::Database(error) => pending_work_failure(&error, database),
             error @ (ContextStoreError::SchemaContract(_)
             | ContextStoreError::UniqueViolation(_)
             | ContextStoreError::InvalidRegex(_)
@@ -258,7 +236,7 @@ fn interval_probe_select() -> SelectStatement {
 mod tests {
     use crate::{
         error::ContextStoreError,
-        pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, is_undefined_database, readable},
+        pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, readable},
         tenant_migration::TenantSchemaState,
     };
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
@@ -266,37 +244,6 @@ mod tests {
     use andromeda_tenancy::pending_work::PendingWorkError;
     use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
-    use sqlx::Error as SqlxError;
-
-    #[test]
-    fn a_probe_error_is_classified_database_gone_for_3d000() {
-        // SQLSTATE 3D000 (invalid_catalog_name) is the deprovisioned-tenant signal.
-        assert!(is_undefined_database(&FakeDatabaseError::new("no database", "3D000").into_sqlx()));
-        assert!(
-            !is_undefined_database(&FakeDatabaseError::new("no table", "42P01").into_sqlx()),
-            "an undefined relation is not a gone database"
-        );
-        assert!(
-            !is_undefined_database(&SqlxError::RowNotFound),
-            "an error with no SQLSTATE is not a gone database"
-        );
-
-        // A pool-acquire timeout stays saturation; any other non-3D000 fault stays
-        // a generic probe failure.
-        let database = TenantDatabaseName::from("andromeda_tenant_gone".to_string());
-        assert!(matches!(
-            PostgresPendingWorkProbe::classify(&FakeDatabaseError::new("no database", "3D000").into_sqlx(), &database),
-            PendingWorkError::DatabaseGone { .. }
-        ));
-        assert!(matches!(
-            PostgresPendingWorkProbe::classify(&SqlxError::PoolTimedOut, &database),
-            PendingWorkError::Saturated { .. }
-        ));
-        assert!(matches!(
-            PostgresPendingWorkProbe::classify(&SqlxError::RowNotFound, &database),
-            PendingWorkError::ProbeFailed { .. }
-        ));
-    }
 
     #[test]
     fn a_tenant_whose_migrations_are_running_is_not_read_for_obligations() {

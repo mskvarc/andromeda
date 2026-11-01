@@ -18,6 +18,8 @@ pub(crate) enum ObservationDecision {
     OrphanTenantDatabase,
     /// A history chunk past the columnstore horizon is still in the rowstore.
     ColumnstoreOverdue,
+    /// A history chunk past the retention age is still stored.
+    RetentionOverdue,
     /// A `TimescaleDB` job exists that the broker did not create.
     TimescaledbJobUnexpected,
     /// A replication slot keeps WAL beyond `max_wal_size`.
@@ -88,6 +90,7 @@ mod tests {
             (ObservationDecision::FreezePressure, "freeze-pressure"),
             (ObservationDecision::OrphanTenantDatabase, "orphan-tenant-database"),
             (ObservationDecision::ColumnstoreOverdue, "columnstore-overdue"),
+            (ObservationDecision::RetentionOverdue, "retention-overdue"),
             (ObservationDecision::TimescaledbJobUnexpected, "timescaledb-job-unexpected"),
             (ObservationDecision::ReplicationSlotRetainingWal, "replication-slot-retaining-wal"),
             (ObservationDecision::ReplicationSlotLost, "replication-slot-lost"),

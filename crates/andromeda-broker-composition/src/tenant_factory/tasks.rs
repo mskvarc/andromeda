@@ -20,6 +20,7 @@ use crate::{
     event::entity_change_sink::QueuedEntityChangeSink,
     tenant_factory::{
         TenantFactoryConfig,
+        assembly_invariant::AssemblyInvariant,
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
         periodic_due::PeriodicDue,
@@ -46,11 +47,13 @@ use crate::{
         },
     },
 };
+use andromeda_configuration::schema::temporal::storage::TemporalStorageConfig;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::pending_change::{PendingChange, PendingCommits};
 use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+use andromeda_postgresql_temporal_store::{history_due::HistorySchedule, repo::TemporalRepository};
 use andromeda_snapshot::status_delivery_signal::StatusDeliverySignal;
 use andromeda_subscription::{
     change::{CsourceSubscriptionChange, SubscriptionChange},
@@ -60,6 +63,7 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     wake_trigger::{DrainWakeReceiver, WakeHandle},
 };
+use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, broadcast, mpsc, watch},
@@ -260,8 +264,7 @@ pub(super) fn supervise_tasks(
         },
         periodic,
     )?;
-    register_temporal_retention(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
-    register_columnstore_conversion(&task_supervisor, Arc::clone(&storage.temporal_repo), &config.temporal)?; // clone: the sweep and the read stores share one repository.
+    register_history_sweeps(&task_supervisor, &storage.temporal_repo, &config.temporal.storage)?;
     register_snapshot_workers(
         &task_supervisor,
         &storage.pool,
@@ -283,6 +286,33 @@ pub(super) fn supervise_tasks(
         health_shutdown,
         task_supervisor,
     })
+}
+
+/// Register the history sweeps, conversion and retention, under the horizons
+/// `storage` names.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError::Invariant`] when `storage` names no usable
+/// horizon or cadence, or when the supervisor refuses a task.
+fn register_history_sweeps(
+    supervisor: &TaskSupervisor,
+    repository: &Arc<TemporalRepository>,
+    storage: &TemporalStorageConfig,
+) -> Result<(), TenantAssemblyError> {
+    let history = HistorySchedule::try_from(&TemporalStoragePolicy::try_from(storage).map_err(AssemblyInvariant::from)?).map_err(AssemblyInvariant::from)?;
+    register_temporal_retention(
+        supervisor,
+        Arc::clone(repository), // clone: the sweep and the read stores share one repository.
+        history.retention,
+        &storage.retention,
+    )?;
+    register_columnstore_conversion(
+        supervisor,
+        Arc::clone(repository), // clone: the sweep and the read stores share one repository.
+        history.columnstore,
+        &storage.columnstore,
+    )
 }
 
 #[cfg(test)]

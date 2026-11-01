@@ -34,6 +34,7 @@ andromeda-postgresql-temporal-query.workspace = true
 andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
+andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 cefact-units = "1.0.0"
 chrono = "0.4.45"

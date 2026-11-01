@@ -102,6 +102,12 @@ impl TemporalRetentionHorizon {
     pub fn cutoff(self, now: DateTime<Utc>) -> Result<DateTime<Utc>, TemporalRetentionHorizonInvalid> {
         now.checked_sub_signed(self.0).ok_or(TemporalRetentionHorizonInvalid)
     }
+
+    /// The instant a chunk whose range ends at `range_end` falls behind the
+    /// horizon and is dropped, `None` past the representable range.
+    pub(crate) fn due_at(self, range_end: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        range_end.checked_add_signed(self.0)
+    }
 }
 
 /// A configured retention span does not name a usable cutoff.

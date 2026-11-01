@@ -33,14 +33,11 @@ use crate::{
     rowstore_rebuild,
     state::{self, RegisteredTenant, branch_rows, open_breach, pending_action, tenant_inspection},
     statement_statistics,
-    timescale_observation,
+    timescale_observation::{self, HistorySweeps},
 };
 use andromeda_configuration::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode};
-use andromeda_postgresql_context_store::{
-    schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract},
-    tenant_database::DatabaseUrl,
-};
-use andromeda_postgresql_pool::pool_options::configure_pool_options;
+use andromeda_postgresql_context_store::schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract};
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options};
 use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::Utc;
@@ -196,7 +193,16 @@ impl MaintenanceController {
         if let Some(database) = observed {
             freeze_report::report_freeze_pressure(&mut connection, tenant, database.freeze).await?;
         }
-        timescale_observation::report_timescale_state(&mut connection, tenant, self.expected.columnstore_conversion, Utc::now()).await?;
+        timescale_observation::report_timescale_state(
+            &mut connection,
+            tenant,
+            HistorySweeps {
+                conversion: self.expected.columnstore_conversion,
+                retention: self.expected.history_retention,
+            },
+            Utc::now(),
+        )
+        .await?;
         extension_observation::report_extension_updates(&mut connection, tenant).await?;
         statement_statistics::report_statement_statistics(&mut connection, tenant).await?;
         let capability = capability::probe_capability(&mut connection).await?;

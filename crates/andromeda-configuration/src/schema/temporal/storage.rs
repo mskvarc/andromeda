@@ -79,8 +79,10 @@ pub struct RetentionConfig {
     )]
     pub delete_after: Option<HumanDuration>,
     /// How often history past `delete_after` is deleted, in human-readable
-    /// form (`"1h"`).
-    #[schemars(description = "How often history past `temporal.storage.retention.delete_after` is deleted while retention is enabled.")]
+    /// form (`"1h"`). The first sweep runs when a tenant opens.
+    #[schemars(
+        description = "How often history past `temporal.storage.retention.delete_after` is deleted while retention is enabled. The first sweep runs when a tenant opens."
+    )]
     pub sweep_interval: HumanDuration,
 }
 
@@ -126,6 +128,9 @@ pub enum StorageDaysError {
     /// `columnstore.convert_after` is not a positive whole number of days.
     #[error("temporal.storage.columnstore.convert_after must be a positive whole number of days")]
     ConvertAfter,
+    /// `retention.delete_after` is not a positive whole number of days.
+    #[error("temporal.storage.retention.delete_after must be a positive whole number of days")]
+    DeleteAfter,
 }
 
 /// Whether a duration is a positive whole number of days.
@@ -164,6 +169,19 @@ impl TemporalStorageConfig {
     /// positive whole number of days, which validation refuses first.
     pub fn convert_after_days(&self) -> Result<NonZeroU32, StorageDaysError> {
         whole_days(self.columnstore.convert_after).ok_or(StorageDaysError::ConvertAfter)
+    }
+
+    /// The whole days past which history is deleted, absent while retention
+    /// is off.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageDaysError::DeleteAfter`] for a value that is not a
+    /// positive whole number of days, which validation refuses first.
+    pub fn delete_after_days(&self) -> Result<Option<NonZeroU32>, StorageDaysError> {
+        self.retention_age()
+            .map(|delete_after| whole_days(delete_after).ok_or(StorageDaysError::DeleteAfter))
+            .transpose()
     }
 
     /// The age past which history is deleted, absent while retention is off.
@@ -217,5 +235,16 @@ mod tests {
         config.columnstore.convert_after = HumanDuration::from_days(0);
         assert_eq!(config.chunk_interval_days(), Err(StorageDaysError::ChunkInterval));
         assert_eq!(config.convert_after_days(), Err(StorageDaysError::ConvertAfter));
+    }
+
+    #[test]
+    fn the_retention_age_reads_as_whole_days_only_while_enabled() {
+        let mut config = TemporalStorageConfig::default();
+        config.retention.delete_after = Some(HumanDuration::from_days(30));
+        assert_eq!(config.delete_after_days(), Ok(None));
+        config.retention.mode = FeatureMode::Enabled;
+        assert_eq!(config.delete_after_days(), Ok(NonZeroU32::new(30)));
+        config.retention.delete_after = Some(HumanDuration::from_secs(3600));
+        assert_eq!(config.delete_after_days(), Err(StorageDaysError::DeleteAfter));
     }
 }

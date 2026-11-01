@@ -12,7 +12,6 @@ use crate::{
     error::ContextStoreError,
     extension_update::update_extensions,
     store_fault::{persistence_failure, undecodable},
-    tenant_database::DatabaseUrl,
     tenant_migration::{migrate_platform_db, open_schema_change_pool},
     tenant_registry::{
         statements::{
@@ -31,7 +30,10 @@ use andromeda_configuration::schema::tenancy::TenantDatabasesConfig;
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
-use andromeda_postgresql_pool::saturation::is_pool_saturated;
+use andromeda_postgresql_pool::{
+    database_url::{DatabaseUrl, DatabaseUrlUnnamed},
+    saturation::is_pool_saturated,
+};
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::{
     database::TenantDatabase,
@@ -105,7 +107,7 @@ impl PostgresTenantRegistry {
         defaults: &DatabaseDefaults,
         acquire_timeout: Duration,
     ) -> Result<PostgresTenantRegistry, ContextStoreError> {
-        let default_database = direct_url.database_name()?;
+        let default_database = direct_url.database_name().map_err(|DatabaseUrlUnnamed| ContextStoreError::DatabaseUrlUnnamed)?;
 
         // Migrate the platform database over a direct, one-connection pool: the
         // migrator's session advisory lock is unsafe through a pooler, so it

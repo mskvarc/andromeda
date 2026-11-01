@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 /// How temporal history is laid out on disk over time.
 ///
-/// Both values are day counts. The chunk interval is an override an operator
+/// Every value is a day count. The chunk interval is an override an operator
 /// may set, and an absent value keeps the interval the schema declares. The
 /// columnstore lag is always stated: no migration configures the columnstore,
 /// so the backend enables it, where the edition has one, under this lag. The
@@ -18,4 +18,7 @@ pub struct TemporalStoragePolicy {
     /// column-oriented form; history younger than this is expected to be
     /// mutated in place, history older is read as an archive.
     pub columnstore_after_days: NonZeroU32,
+    /// The age past which a partition is dropped, absent while retention is
+    /// off.
+    pub retention_after_days: Option<NonZeroU32>,
 }

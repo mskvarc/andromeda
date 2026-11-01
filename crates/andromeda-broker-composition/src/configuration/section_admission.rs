@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_notification::delivery_policy::{DeliveryPolicyError, check_delivery_policy};
 use andromeda_postgresql_context_store::database_defaults::{DatabaseDefaults, StatementTimeout};
-use andromeda_postgresql_maintenance::expected_deployment::{ColumnstoreConversion, ExpectedDeployment};
+use andromeda_postgresql_maintenance::expected_deployment::{ColumnstoreConversion, ExpectedDeployment, HistoryRetention};
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use andromeda_temporal::configured_policy::intent_retry_schedule;
 use thiserror::Error;
@@ -112,7 +112,7 @@ pub(crate) const fn database_defaults(config: &BrokerConfig) -> DatabaseDefaults
 
 /// What the maintenance controller checks the cluster against: the prefix of
 /// every tenant database name, and how temporal history is converted to the
-/// columnstore.
+/// columnstore and aged out.
 #[must_use]
 pub(crate) fn expected_deployment(config: &BrokerConfig) -> ExpectedDeployment {
     let columnstore = &config.temporal.storage.columnstore;
@@ -122,6 +122,14 @@ pub(crate) fn expected_deployment(config: &BrokerConfig) -> ExpectedDeployment {
             after: columnstore.convert_after.duration(),
             sweep_interval: columnstore.sweep_interval.duration(),
         },
+        history_retention: config
+            .temporal
+            .storage
+            .retention_age()
+            .map_or(HistoryRetention::Disabled, |delete_after| HistoryRetention::Enabled {
+                delete_after: delete_after.duration(),
+                sweep_interval: config.temporal.storage.retention.sweep_interval.duration(),
+            }),
     }
 }
 

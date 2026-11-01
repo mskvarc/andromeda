@@ -8,7 +8,7 @@
 use crate::error::ContextStoreError;
 use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
-use andromeda_postgresql_pool::{sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_schema::tenancy::DATABASE_NAME_BYTE_LIMIT;
 use andromeda_postgresql_seaquery::{
     command::Command,
@@ -25,42 +25,6 @@ use std::{
     num::NonZeroU32,
     time::Duration,
 };
-use url::Url;
-
-/// Parsed database URL wrapper used by tenancy helpers.
-#[derive(Debug, Clone)]
-pub struct DatabaseUrl(Url);
-
-impl DatabaseUrl {
-    /// Wrap a validated database URL.
-    #[must_use]
-    pub const fn new(url: Url) -> DatabaseUrl {
-        DatabaseUrl(url)
-    }
-
-    /// Return the database name from the URL path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the URL carries no
-    /// path segment, so it names no database.
-    pub fn database_name(&self) -> Result<TenantDatabaseName, ContextStoreError> {
-        let path = self.0.path().trim_start_matches('/');
-        if path.is_empty() {
-            return Err(ContextStoreError::DatabaseUrlUnnamed);
-        }
-        Ok(TenantDatabaseName::from(path.to_string()))
-    }
-
-    /// Build a full URL with a replaced database name.
-    #[must_use]
-    pub fn with_database_name(&self, database_name: &TenantDatabaseName) -> Url {
-        // clone: `Url::set_path` mutates, and the base URL is reused per tenant
-        let mut url = self.0.clone();
-        url.set_path(&format!("/{database_name}"));
-        url
-    }
-}
 
 /// Replace non-alphanumeric characters with underscores, lowercase, and
 /// collapse consecutive underscores.
@@ -215,14 +179,8 @@ fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
-    use crate::tenant_database::{CREATE_DATABASE_RETRY, DatabaseUrl, database_exists_statement, is_database_already_exists, is_transient_create_failure};
-    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
+    use crate::tenant_database::{CREATE_DATABASE_RETRY, database_exists_statement, is_database_already_exists, is_transient_create_failure};
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_retry::schedule::BackoffSchedule;
     use sea_query::PostgresQueryBuilder;
@@ -239,28 +197,6 @@ mod tests {
         assert!(sql.contains(r#"FROM "pg_database""#), "{sql}");
         assert!(sql.contains(r#""datname" = $1"#), "{sql}");
         assert_eq!(values.0.len(), 1, "the name is bound, not interpolated: {sql}");
-    }
-
-    #[test]
-    fn database_url_newtype_roundtrip() {
-        let raw = "postgres://postgres:postgres@localhost:5432/postgres";
-        let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
-
-        let database_name = match parsed.database_name() {
-            Ok(value) => value,
-            Err(err) => panic!("unexpected db name error: {err}"),
-        };
-        pretty_assertions::assert_eq!(database_name.as_str(), "postgres");
-
-        let rebuilt = parsed.with_database_name(&TenantDatabaseName::from("tenant_db".to_owned()));
-        assert!(rebuilt.as_str().ends_with("/tenant_db"));
-    }
-
-    #[test]
-    fn database_url_rejects_missing_db() {
-        let raw = "postgres://postgres:postgres@localhost:5432";
-        let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
-        assert!(parsed.database_name().is_err());
     }
 
     #[test]

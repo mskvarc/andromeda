@@ -2,12 +2,13 @@
 //!
 //! A dormant tenant answers no requests, so nothing touches its runtime and its
 //! clause-5.8.6 periodic notifications, durable-delivery retries, snapshot
-//! preparation and status outbox, pending side effects, temporal append intents
-//! and `expiresAt` sweeps would otherwise never run. The wake loop asks this
-//! port for the single earliest instant a tenant has an obligation due, and
-//! loads the tenant only when one exists. The port is SQL-free: which of those
-//! obligations is outstanding is the store's concern, and the cache needs only
-//! the instant.
+//! preparation and status outbox, pending side effects, temporal append
+//! intents, `expiresAt` sweeps, and the columnstore conversion and retention of
+//! its history would otherwise never run. The wake loop asks this port for the
+//! single earliest instant a tenant has an obligation due, and loads the
+//! tenant only when one exists. The port is SQL-free: which of those
+//! obligations is outstanding is each store's concern, every store answers for
+//! its own, and the cache needs only the instant.
 
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -19,7 +20,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingWork {
     /// Nothing is outstanding: no retry, no expiry, no periodic notification,
-    /// no snapshot preparation.
+    /// no snapshot preparation, no history past a sweep horizon.
     None,
     /// The earliest instant at which some obligation becomes due.
     ///

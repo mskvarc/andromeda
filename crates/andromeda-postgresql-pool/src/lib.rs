@@ -18,9 +18,13 @@
 
 /// Returning a connection to its pool after its request let go of it.
 pub mod connection_release;
+/// The base URL every tenant database connection is derived from.
+pub mod database_url;
 /// A database error the tests can construct without a live driver connection.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_database_error;
+/// How a driver error a pending-work probe hit reaches the wake loop.
+pub mod pending_work_failure;
 /// How a `sqlx` error is classified into the failure a port carries.
 pub mod persistence_classification;
 /// The broker's shared pool tuning.
@@ -46,6 +50,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-configuration",
         "andromeda-persistence-failure", "andromeda-postgresql-seaquery",
         "andromeda-retry",
+        "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],

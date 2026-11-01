@@ -43,6 +43,7 @@ impl TryFrom<&TemporalStorageConfig> for TemporalStoragePolicy {
         Ok(TemporalStoragePolicy {
             chunk_interval_days: config.chunk_interval_days()?,
             columnstore_after_days: config.convert_after_days()?,
+            retention_after_days: config.delete_after_days()?,
         })
     }
 }
@@ -56,10 +57,13 @@ mod tests {
     use crate::{configured_policy::intent_retry_schedule, instance_limits::TemporalInstanceLimits, storage_policy::TemporalStoragePolicy};
     use andromeda_configuration::{
         human_duration::HumanDuration,
-        schema::temporal::{
-            history::TemporalHistoryConfig,
-            query::TemporalQueryConfig,
-            storage::{ColumnstoreConfig, TemporalStorageConfig},
+        schema::{
+            feature_mode::FeatureMode,
+            temporal::{
+                history::TemporalHistoryConfig,
+                query::TemporalQueryConfig,
+                storage::{ColumnstoreConfig, RetentionConfig, TemporalStorageConfig},
+            },
         },
     };
     use andromeda_retry::schedule_error::BackoffScheduleError;
@@ -107,12 +111,13 @@ mod tests {
     }
 
     #[test]
-    fn the_storage_policy_carries_the_chunk_override_and_the_columnstore_lag() {
+    fn the_storage_policy_carries_the_chunk_override_the_columnstore_lag_and_the_retention_age() {
         assert_eq!(
             TemporalStoragePolicy::try_from(&TemporalStorageConfig::default()),
             Ok(TemporalStoragePolicy {
                 chunk_interval_days: None,
                 columnstore_after_days: NonZeroU32::new(30).expect("thirty days"),
+                retention_after_days: None,
             })
         );
         let overridden = TemporalStorageConfig {
@@ -121,13 +126,18 @@ mod tests {
                 convert_after: HumanDuration::from_days(3),
                 ..ColumnstoreConfig::default()
             },
-            ..TemporalStorageConfig::default()
+            retention: RetentionConfig {
+                mode: FeatureMode::Enabled,
+                delete_after: Some(HumanDuration::from_days(90)),
+                ..RetentionConfig::default()
+            },
         };
         assert_eq!(
             TemporalStoragePolicy::try_from(&overridden),
             Ok(TemporalStoragePolicy {
                 chunk_interval_days: NonZeroU32::new(1),
                 columnstore_after_days: NonZeroU32::new(3).expect("three days"),
+                retention_after_days: NonZeroU32::new(90),
             })
         );
     }

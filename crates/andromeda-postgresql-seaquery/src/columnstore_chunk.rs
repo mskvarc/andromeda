@@ -14,7 +14,7 @@ use crate::{
     maintenance::{indexes_size, relation_size},
     pg_type::PostgresType,
     setting::Setting,
-    timescale::{ChunkRelationColumn, Chunks, TimescaleInformation},
+    timescale::{ChunkRelationColumn, Chunks, TimescaleInformation, aged_chunks_statement},
 };
 use sea_query::{Alias, Asterisk, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableName};
 
@@ -86,13 +86,8 @@ impl ListedChunks {
 /// catalogue name bound as a value; the cutoff is a bound value.
 #[must_use]
 pub fn overdue_rowstore_chunks_statement(hypertable: &str, cutoff: SimpleExpr, kept: &ListedChunks) -> SelectStatement {
-    Query::select()
-        .expr_as(Func::count(Expr::col(Asterisk)), OverdueChunks)
-        .expr_as(Func::min(Expr::col(Chunks::RangeEnd)), OldestRangeEnd)
-        .from((TimescaleInformation, Chunks::Table))
-        .and_where(Expr::col(Chunks::HypertableName).eq(hypertable))
+    aged_chunks_statement(hypertable, cutoff)
         .and_where(Expr::col(Chunks::IsCompressed).not())
-        .and_where(Expr::col(Chunks::RangeEnd).lte(cast(cutoff, PostgresType::Timestamptz)))
         .and_where(kept.excludes(Expr::col(Chunks::RangeStart)))
         .to_owned()
 }
@@ -277,7 +272,7 @@ mod tests {
             concat!(
                 r#"SELECT COUNT(*) AS "overdue_chunks", MIN("range_end") AS "oldest_range_end" "#,
                 r#"FROM "timescaledb_information"."chunks" "#,
-                r#"WHERE "hypertable_name" = $1 AND (NOT "is_compressed") AND "range_end" <= ($2::timestamptz) "#,
+                r#"WHERE "hypertable_name" = $1 AND "range_end" <= ($2::timestamptz) AND (NOT "is_compressed") "#,
                 r#"AND "range_start" NOT IN (SELECT "since" FROM "kept")"#
             )
         );

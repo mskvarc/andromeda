@@ -26,6 +26,7 @@ pub mod database;
 pub mod error;
 pub mod lifecycle;
 pub mod pending_work;
+pub mod pending_work_sources;
 pub mod provisional;
 pub mod registered_tenant;
 pub mod residency;

@@ -1,13 +1,14 @@
 //! Process-scoped PostgreSQL maintenance task registration.
 
 use andromeda_configuration::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode};
-use andromeda_postgresql_context_store::{error::ContextStoreError, migration_set::branch::current_branch_version, tenant_database::DatabaseUrl};
+use andromeda_postgresql_context_store::{error::ContextStoreError, migration_set::branch::current_branch_version};
 use andromeda_postgresql_maintenance::{
     controller::MaintenanceController,
     error::MaintenanceError,
     expected_deployment::ExpectedDeployment,
     policy::PolicyProfile,
 };
+use andromeda_postgresql_pool::database_url::DatabaseUrl;
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,

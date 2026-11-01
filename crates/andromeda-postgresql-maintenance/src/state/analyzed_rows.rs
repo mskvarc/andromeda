@@ -125,7 +125,7 @@ mod tests {
             analyzed_rows::{StoredAnalyzedRows, analyzed_rows_upsert},
         },
     };
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;

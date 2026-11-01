@@ -6,8 +6,14 @@
 //! the one crate sanctioned to write a dialect fragment, with every
 //! caller-supplied value passed as a bound expression rather than interpolated.
 
-use crate::{cast::cast, columnstore_chunk::ListedChunks, literal::text_literal, maintenance::total_relation_size, pg_type::PostgresType};
-use sea_query::{CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
+use crate::{
+    cast::cast,
+    columnstore_chunk::{ListedChunks, OldestRangeEnd, OverdueChunks},
+    literal::text_literal,
+    maintenance::total_relation_size,
+    pg_type::PostgresType,
+};
+use sea_query::{Asterisk, CaseStatement, Expr, ExprTrait, Func, Iden, JoinType, Keyword, Order, Query, SelectStatement, SimpleExpr};
 
 /// The `time_bucket(width, ts, origin)` bucketing function.
 #[derive(Iden, Clone, Copy)]
@@ -25,6 +31,23 @@ struct TimeBucket;
 #[must_use]
 pub fn time_bucket(width: SimpleExpr, ts: SimpleExpr, origin: SimpleExpr) -> SimpleExpr {
     Func::cust(TimeBucket).args([width, ts, origin]).into()
+}
+
+/// How many chunks of `hypertable`, in either storage, ended at or before
+/// `cutoff`, and the earliest such end.
+///
+/// Projects `overdue_chunks` and `oldest_range_end` (NULL when there is none)
+/// from `timescaledb_information.chunks`. The hypertable name is a fixed
+/// catalogue name bound as a value; the cutoff is a bound value.
+#[must_use]
+pub fn aged_chunks_statement(hypertable: &str, cutoff: SimpleExpr) -> SelectStatement {
+    Query::select()
+        .expr_as(Func::count(Expr::col(Asterisk)), OverdueChunks)
+        .expr_as(Func::min(Expr::col(Chunks::RangeEnd)), OldestRangeEnd)
+        .from((TimescaleInformation, Chunks::Table))
+        .and_where(Expr::col(Chunks::HypertableName).eq(hypertable))
+        .and_where(Expr::col(Chunks::RangeEnd).lte(cast(cutoff, PostgresType::Timestamptz)))
+        .to_owned()
 }
 
 /// `TimescaleDB`: `drop_chunks(hypertable, older_than => cutoff::timestamptz)` -
@@ -262,6 +285,7 @@ mod tests {
     use crate::{
         columnstore_chunk::ListedChunks,
         timescale::{
+            aged_chunks_statement,
             chunk_interval_statement,
             chunk_span_statement,
             chunk_states_statement,
@@ -347,6 +371,19 @@ mod tests {
                 r#"WHERE "ch"."hypertable_name" IN ($1, $2) AND (NOT "ch"."is_compressed") AND "ht"."compression_enabled" "#,
                 r#"AND "ch"."range_start" NOT IN (SELECT "since" FROM "kept") "#,
                 r#"GROUP BY "ch"."hypertable_name""#
+            )
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
+    }
+
+    #[test]
+    fn aged_chunks_are_counted_in_either_storage_with_a_bound_cutoff() {
+        let (sql, values) = aged_chunks_statement("attribute_history", Expr::val("2026-01-01T00:00:00Z")).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT COUNT(*) AS "overdue_chunks", MIN("range_end") AS "oldest_range_end" FROM "timescaledb_information"."chunks" "#,
+                r#"WHERE "hypertable_name" = $1 AND "range_end" <= ($2::timestamptz)"#
             )
         );
         assert_eq!(values.0.len(), 2, "{sql}");

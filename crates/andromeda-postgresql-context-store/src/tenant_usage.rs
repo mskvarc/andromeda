@@ -5,12 +5,12 @@
 //! permanent backend and never makes the tenant resident -- the expensive
 //! `?options=usage` half of tenant introspection stays off the dormancy path.
 
-use crate::{store_fault::persistence_failure, tenant_database::DatabaseUrl};
+use crate::store_fault::persistence_failure;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_pool::pool_options::configure_pool_options;
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options};
 use andromeda_postgresql_schema::{current::EntitySearch, snapshot::Snapshots};
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,

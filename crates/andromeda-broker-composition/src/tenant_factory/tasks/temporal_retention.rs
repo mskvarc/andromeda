@@ -6,16 +6,17 @@
 //! a dropped retention chunk is storage the operator decided not to keep and
 //! raises nothing. The task is therefore registered only once a horizon has been
 //! configured, and no broker runs it by default.
+//!
+//! The first sweep runs when the tenant opens. A tenant the wake loop loaded
+//! for history past the horizon stays loaded only briefly, and a tenant used
+//! in short bursts may never stay a full interval, so a first sweep one
+//! interval later would never run on either.
 
-use crate::tenant_factory::{
-    assembly_invariant::{AssemblyInvariant, RetentionSetting},
-    error::TenantAssemblyError,
-    tasks::temporal_sweep_failure::classify_sweep_failure,
-};
-use andromeda_configuration::schema::temporal::TemporalConfig;
+use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, tasks::temporal_sweep_failure::classify_sweep_failure};
+use andromeda_configuration::schema::temporal::storage::RetentionConfig;
 use andromeda_postgresql_temporal_store::{
     repo::TemporalRepository,
-    retention_sweep::{TemporalRetention, TemporalRetentionHorizon, TemporalRetentionOutcome},
+    retention_sweep::{TemporalRetention, TemporalRetentionOutcome},
 };
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_task_runtime::{
@@ -28,36 +29,29 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use std::sync::Arc;
 
-/// Register the retention sweep when the operator has configured a horizon.
+/// Register the retention sweep when the operator has enabled retention.
 ///
-/// Returns without registering anything when no horizon is configured, which is
+/// Returns without registering anything while retention is disabled, which is
 /// how a broker behaves unless retention is turned on.
 ///
 /// # Errors
 ///
-/// Returns [`TenantAssemblyError::Invariant`] when the configured horizon or
-/// cadence names no usable schedule, or when the supervisor refuses the task.
+/// Returns [`TenantAssemblyError::Invariant`] when the configured cadence
+/// names no usable schedule, or when the supervisor refuses the task.
 pub(super) fn register_temporal_retention(
     supervisor: &TaskSupervisor,
     repository: Arc<TemporalRepository>,
-    config: &TemporalConfig,
+    retention: TemporalRetention,
+    config: &RetentionConfig,
 ) -> Result<(), TenantAssemblyError> {
-    let Some(horizon) = config.storage.retention_age() else {
+    if retention == TemporalRetention::Disabled {
         return Ok(());
-    };
-    // A validated retention age is a whole number of days, so integer
-    // division recovers it exactly.
-    let horizon_days =
-        i64::try_from(horizon.duration().as_secs() / 86_400).map_err(|_| AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon))?;
-    let span = TimeDelta::try_days(horizon_days).ok_or(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon))?;
-    let retention = TemporalRetention::Enabled {
-        horizon: TemporalRetentionHorizon::new(span).map_err(AssemblyInvariant::from)?,
-    };
-    let cadence = config.storage.retention.sweep_interval.duration();
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    }
+    let cadence = config.sweep_interval.duration();
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("temporal-retention").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,

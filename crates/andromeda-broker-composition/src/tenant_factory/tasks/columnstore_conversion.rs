@@ -3,14 +3,15 @@
 //! On an edition with a columnstore, every tenant converts its aged history
 //! chunks itself, beside retention, instead of relying on a `TimescaleDB`
 //! background job that a server with more databases than background workers
-//! never runs. The first sweep runs when the tenant is opened, so a tenant that
-//! was idle past a horizon converts what became due while it was not loaded.
+//! never runs. The first sweep runs when the tenant is opened, so a tenant the
+//! wake loop loaded for a chunk past the horizon converts it while it stays
+//! loaded.
 //! A sweep stops between chunks once its tenant is shutting down. After the
 //! chunks it then rebuilds the rowstore indexes converted chunks left at full
 //! size.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError, tasks::temporal_sweep_failure::classify_sweep_failure};
-use andromeda_configuration::schema::temporal::TemporalConfig;
+use andromeda_configuration::schema::temporal::storage::ColumnstoreConfig;
 use andromeda_postgresql_temporal_store::{
     columnstore_capability::ColumnstoreSupport,
     columnstore_conversion::{ChunkConversion, ColumnstoreHorizon, ConversionCandidates},
@@ -28,7 +29,6 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use chrono::Utc;
 use std::{future::Future, sync::Arc};
 use tokio_util::sync::CancellationToken;
@@ -59,23 +59,19 @@ impl ConversionTally {
 ///
 /// # Errors
 ///
-/// Returns [`TenantAssemblyError::Invariant`] when the configured horizon or
-/// cadence names no usable schedule, or when the supervisor refuses the task.
+/// Returns [`TenantAssemblyError::Invariant`] when the configured cadence
+/// names no usable schedule, or when the supervisor refuses the task.
 pub(super) fn register_columnstore_conversion(
     supervisor: &TaskSupervisor,
     repository: Arc<TemporalRepository>,
-    config: &TemporalConfig,
+    horizon: ColumnstoreHorizon,
+    config: &ColumnstoreConfig,
 ) -> Result<(), TenantAssemblyError> {
     match repository.columnstore() {
         ColumnstoreSupport::Absent => return Ok(()),
         ColumnstoreSupport::Present => {}
     }
-    let horizon = ColumnstoreHorizon::of_days(
-        TemporalStoragePolicy::try_from(&config.storage)
-            .map_err(AssemblyInvariant::from)?
-            .columnstore_after_days,
-    );
-    let cadence = config.storage.columnstore.sweep_interval.duration();
+    let cadence = config.sweep_interval.duration();
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("temporal-columnstore-conversion").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(

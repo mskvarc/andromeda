@@ -25,10 +25,48 @@ impl ColumnstoreConversion {
     /// a sweep that deferred it on a lock wait tries again one interval later.
     /// Past `after` plus two sweep intervals the sweep has missed it.
     pub(crate) fn overdue_cutoff(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let after = ChronoDuration::from_std(self.after).ok()?;
-        let sweeps = ChronoDuration::from_std(self.sweep_interval).ok()?.checked_mul(2)?;
-        now.checked_sub_signed(after.checked_add(&sweeps)?)
+        overdue_cutoff(self.after, self.sweep_interval, now)
     }
+}
+
+/// How the broker ages temporal history out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryRetention {
+    /// `temporal.storage.retention.mode = "disabled"`: no history is dropped.
+    Disabled,
+    /// History is dropped once it is older than `delete_after`.
+    Enabled {
+        /// `temporal.storage.retention.delete_after`: a chunk is due once its
+        /// range ended this long ago.
+        delete_after: Duration,
+        /// `temporal.storage.retention.sweep_interval`: how often the sweep of
+        /// each open tenant runs.
+        sweep_interval: Duration,
+    },
+}
+
+impl HistoryRetention {
+    /// The latest range end a chunk may still be stored with at `now` without
+    /// being overdue, `None` while retention is disabled or when the
+    /// configured spans reach past the representable instants.
+    ///
+    /// A chunk falls due `delete_after` its range ends, and the next sweep
+    /// drops it. Past `delete_after` plus two sweep intervals the sweep has
+    /// missed it.
+    pub(crate) fn overdue_cutoff(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        match self {
+            HistoryRetention::Disabled => None,
+            HistoryRetention::Enabled { delete_after, sweep_interval } => overdue_cutoff(delete_after, sweep_interval, now),
+        }
+    }
+}
+
+/// The latest range end a chunk a sweep acts on `after` its range ends may
+/// still be untouched with at `now`: two sweep intervals past its due instant.
+fn overdue_cutoff(after: Duration, sweep_interval: Duration, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let after = ChronoDuration::from_std(after).ok()?;
+    let sweeps = ChronoDuration::from_std(sweep_interval).ok()?.checked_mul(2)?;
+    now.checked_sub_signed(after.checked_add(&sweeps)?)
 }
 
 /// What the controller expects of the deployment it watches.
@@ -39,6 +77,8 @@ pub struct ExpectedDeployment {
     pub tenant_database_prefix: DbNamePrefix,
     /// How history is converted to the columnstore.
     pub columnstore_conversion: ColumnstoreConversion,
+    /// How history is aged out.
+    pub history_retention: HistoryRetention,
 }
 
 #[cfg(test)]
@@ -47,7 +87,7 @@ pub struct ExpectedDeployment {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::expected_deployment::ColumnstoreConversion;
+    use crate::expected_deployment::{ColumnstoreConversion, HistoryRetention};
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -60,6 +100,17 @@ mod tests {
         };
         let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).single().expect("a valid instant");
         assert_eq!(conversion.overdue_cutoff(now), Some(now - ChronoDuration::days(30) - ChronoDuration::hours(2)));
+    }
+
+    #[test]
+    fn a_chunk_is_overdue_for_retention_past_its_age_and_two_sweep_intervals() {
+        let retention = HistoryRetention::Enabled {
+            delete_after: Duration::from_hours(30 * 24),
+            sweep_interval: Duration::from_hours(1),
+        };
+        let now = Utc.with_ymd_and_hms(2026, 10, 17, 12, 0, 0).single().expect("a valid instant");
+        assert_eq!(retention.overdue_cutoff(now), Some(now - ChronoDuration::days(30) - ChronoDuration::hours(2)));
+        assert_eq!(HistoryRetention::Disabled.overdue_cutoff(now), None);
     }
 
     #[test]

@@ -101,7 +101,7 @@ mod tests {
         assert!(TenantAssemblyError::Database(SqlxError::PoolTimedOut).is_saturation());
         assert!(TenantAssemblyError::ContextStore(ContextStoreError::Saturated).is_saturation());
         assert!(!TenantAssemblyError::Database(SqlxError::RowNotFound).is_saturation());
-        assert!(!TenantAssemblyError::from(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon)).is_saturation());
+        assert!(!TenantAssemblyError::from(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::SideEffectDeadLetter)).is_saturation());
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
                 "{refused:?}"
             );
         }
-        let fault = TenantAssemblyError::from(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::TemporalHorizon)).into_tenancy_error(&tenant);
+        let fault = TenantAssemblyError::from(AssemblyInvariant::RetentionOutOfRange(RetentionSetting::SideEffectDeadLetter)).into_tenancy_error(&tenant);
         assert!(
             matches!(
                 fault,

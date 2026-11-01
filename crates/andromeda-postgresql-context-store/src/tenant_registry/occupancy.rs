@@ -10,11 +10,11 @@
 //! tenant exists exactly when one of those tables holds a row on the live
 //! branch. An Entity and a Temporal Evolution share one identity row.
 
-use crate::{error::ContextStoreError, tenant_database::DatabaseUrl};
+use crate::error::ContextStoreError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_pool::sql_state::SqlState;
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, sql_state::SqlState};
 use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions};
 use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use sea_query::{Expr, ExprTrait, Query, SelectStatement, TableRef};

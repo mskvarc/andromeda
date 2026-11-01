@@ -14,7 +14,7 @@
 
 use andromeda_postgresql_seaquery::{columnstore_chunk::columnstore_licensed, statement::Statement};
 use sea_query::{Alias, Query, SelectStatement};
-use sqlx::PgPool;
+use sqlx::PgExecutor;
 
 /// Whether the attached `TimescaleDB` edition provides the hypercore columnstore.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -34,9 +34,9 @@ impl ColumnstoreSupport {
     ///
     /// # Errors
     ///
-    /// Returns [`sqlx::Error`] when the probe cannot be executed against the pool.
-    pub async fn detect(pool: &PgPool) -> Result<ColumnstoreSupport, sqlx::Error> {
-        let licensed: bool = detect_statement().to_query_scalar().fetch_one(pool).await?;
+    /// Returns [`sqlx::Error`] when the probe cannot be executed.
+    pub async fn detect<'e>(executor: impl PgExecutor<'e>) -> Result<ColumnstoreSupport, sqlx::Error> {
+        let licensed: bool = detect_statement().to_query_scalar().fetch_one(executor).await?;
         Ok(ColumnstoreSupport::of_license(licensed))
     }
 
