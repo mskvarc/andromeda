@@ -6,6 +6,7 @@ use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
     evolution_matcher::has_evolution,
+    header_matcher::absent,
     hub_domains::{DOMAINS, Domain},
     namespace::Namespace,
     outcome::Upserted,
@@ -35,7 +36,7 @@ const CONCURRENT_QUERIES: usize = 64;
 /// The registrations' forwarding timeout in milliseconds, which takes precedence over the broker's 5 s default. Each
 /// domain answers its share of the [`CONCURRENT_QUERIES`] at once in about a second when its host is otherwise idle,
 /// and the tree's other tests share that host; the bound stays below the hub's own 30 s request timeout, so a domain
-/// that misses it is still reported in the answer.
+/// that misses it is still reported in the answer, as a 199 `NGSILD-Warning` the test fails on.
 const FORWARDING_TIMEOUT_MS: u32 = 20_000;
 
 /// The history of the `number`-th Entity of `domain`: `speed` 0 to 19, observed at midnight of 1 to 20 January 2024.
@@ -63,7 +64,8 @@ async fn hold_evolutions(namespace: &Namespace, building_type: &EntityTypeName, 
 
 /// Pins: 64 Query Temporal Evolution of Entities on broker A by type, between 2024-01-01 and 2024-02-01 with `lastN`
 /// 5, sent at once over `queryTemporal` registrations of brokers B to E with a 20 s `management.timeout`, holding 250
-/// histories of 20 `speed` instances each, are each answered 200 with histories that each keep exactly the five latest instances
+/// histories of 20 `speed` instances each, are each answered 200 without an `NGSILD-Warning`, every domain having
+/// answered, with histories that each keep exactly the five latest instances
 /// Clause: 5.7.4.4
 #[gtest]
 #[tokio::test]
@@ -110,6 +112,8 @@ async fn n_fed_tmp_7435_last_n_queries_sent_at_once_over_the_histories_of_four_d
         each(some(eq(&StatusCode::OK)))
     );
     for answered in answers.iter().flatten() {
+        // A domain that misses the timeout is left out of the answer and named in a 199 warning (clause 6.3.17).
+        expect_that!(answered.outcome.warnings(), absent());
         // lastN keeps the latest instances: those of 16 to 20 January, `speed` 15 to 19.
         expect_that!(
             answered.outcome.items(),
