@@ -21,9 +21,12 @@ pub struct JsonLdFetchConfig {
         description = "Whether a context that is neither embedded, preloaded, stored nor cached may be downloaded. With `\"disabled\"` nothing is downloaded: only the core `@context`, preloaded documents, stored `@context`s and what is already cached are used."
     )]
     pub mode: FeatureMode,
-    /// How long one download may take, in human-readable form (`"30s"`); at
-    /// least one second.
-    #[schemars(description = "How long one download may take.")]
+    /// How long one download attempt may take, in human-readable form
+    /// (`"10s"`); at least one second and below the request deadline. An
+    /// attempt that times out is not retried.
+    #[schemars(
+        description = "How long one download may take, its redirects included. A download that times out is not retried and is answered `504` `LdContextNotAvailable`. A JSON-LD alternate is a download of its own, and a request naming several remote `@context`s waits for each, so keep it well below `request_limits.timeout`."
+    )]
     pub timeout: HumanDuration,
     /// How many redirects one download may follow.
     #[schemars(
@@ -58,7 +61,7 @@ impl Default for JsonLdFetchConfig {
     fn default() -> JsonLdFetchConfig {
         JsonLdFetchConfig {
             mode: FeatureMode::Enabled,
-            timeout: HumanDuration::from_secs(30),
+            timeout: HumanDuration::from_secs(10),
             max_redirects: 5,
             max_size: HumanByteSize::mib(2),
             private_addresses: PrivateAddresses::Allowed,
@@ -81,16 +84,18 @@ mod tests {
     use crate::{
         address_rule::AddressRule,
         human_byte_size::HumanByteSize,
+        human_duration::HumanDuration,
         schema::{jsonld::fetch::JsonLdFetchConfig, private_addresses::PrivateAddresses},
     };
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
     #[test]
-    fn the_default_downloads_up_to_two_mebibytes_within_thirty_seconds() {
+    fn the_default_downloads_up_to_two_mebibytes_within_ten_seconds() {
         let config = JsonLdFetchConfig::default();
         assert!(config.is_enabled());
         assert_eq!(config.max_size, HumanByteSize::mib(2));
+        assert_eq!(config.timeout, HumanDuration::from_secs(10));
     }
 
     #[test]

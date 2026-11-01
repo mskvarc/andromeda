@@ -76,7 +76,7 @@ impl JsonLdEngineBuilder {
             registry: Arc::new(ContextRegistry::new()),
             l2_cache: None,
             allow_remote: RemoteContextFetch::Allow,
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(10),
             max_redirects: 5,
             addresses: AddressPolicy::default(),
             cache_capacity: 1024,

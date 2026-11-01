@@ -103,6 +103,40 @@ fn a_build_admission_timeout_at_the_request_timeout_is_refused_and_one_step_belo
 }
 
 #[test]
+fn a_scoped_operation_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
+    let mut config = BrokerConfig::default();
+    config.snapshot.preparation.scoped_operation_timeout = HumanDuration::from_secs(30);
+    assert_eq!(
+        refusals(&config),
+        [against_request_timeout(
+            ConfigKey::SnapshotPreparationScopedOperationTimeout,
+            Duration::from_secs(30),
+            Relation::Below,
+            Duration::from_secs(30)
+        )]
+    );
+    config.snapshot.preparation.scoped_operation_timeout = HumanDuration::from_millis(29_999);
+    assert_accepted(&config);
+}
+
+#[test]
+fn a_context_fetch_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
+    let mut config = BrokerConfig::default();
+    config.jsonld.fetch.timeout = HumanDuration::from_secs(30);
+    assert_eq!(
+        refusals(&config),
+        [against_request_timeout(
+            ConfigKey::JsonLdFetchTimeout,
+            Duration::from_secs(30),
+            Relation::Below,
+            Duration::from_secs(30)
+        )]
+    );
+    config.jsonld.fetch.timeout = HumanDuration::from_millis(29_999);
+    assert_accepted(&config);
+}
+
+#[test]
 fn a_provisional_tenant_lifetime_at_the_request_timeout_is_refused_and_one_step_above_accepted() {
     let mut config = BrokerConfig::default();
     config.tenancy.provisional_tenant_lifetime = HumanDuration::from_secs(30);

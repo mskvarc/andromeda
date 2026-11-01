@@ -47,8 +47,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
-    /// A zero deadline is also not above either deadline that must stay
-    /// below it.
+    /// A zero deadline is also not above any deadline that must stay below
+    /// it.
     #[test]
     fn a_zero_request_timeout_is_refused_with_the_deadlines_it_must_exceed() {
         let mut config = BrokerConfig::default();
@@ -69,6 +69,18 @@ mod tests {
                 ConfigurationViolation::OutOfRange {
                     key: ConfigKey::TenancyBuildAdmissionTimeout,
                     value: Quantity::Duration(Duration::from_secs(20)),
+                    relation: Relation::Below,
+                    bound: zero,
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::SnapshotPreparationScopedOperationTimeout,
+                    value: Quantity::Duration(Duration::from_secs(20)),
+                    relation: Relation::Below,
+                    bound: zero,
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::JsonLdFetchTimeout,
+                    value: Quantity::Duration(Duration::from_secs(10)),
                     relation: Relation::Below,
                     bound: zero,
                 },

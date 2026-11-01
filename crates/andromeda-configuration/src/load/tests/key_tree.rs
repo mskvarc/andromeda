@@ -209,7 +209,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "allow_remote_contexts",
         "[jsonld.fetch]\nmode = \"disabled\"\n",
     ),
-    ("[jsonld]\ntimeout = \"30s\"\n", "timeout", "[jsonld.fetch]\ntimeout = \"30s\"\n"),
+    ("[jsonld]\ntimeout = \"10s\"\n", "timeout", "[jsonld.fetch]\ntimeout = \"10s\"\n"),
     (
         "[federation.forwarding]\nprivate_ip_blocking = \"refused\"\n",
         "private_ip_blocking",
@@ -533,9 +533,9 @@ const MOVED: &[(&str, &str, &str)] = &[
         "[snapshot.preparation]\nmax_concurrent = 2\n",
     ),
     (
-        "[snapshot]\nscoped_operation_wait = \"30s\"\n",
+        "[snapshot]\nscoped_operation_wait = \"20s\"\n",
         "scoped_operation_wait",
-        "[snapshot.preparation]\nscoped_operation_timeout = \"30s\"\n",
+        "[snapshot.preparation]\nscoped_operation_timeout = \"20s\"\n",
     ),
     (
         "[snapshot]\npreparation_lease = \"30s\"\n",

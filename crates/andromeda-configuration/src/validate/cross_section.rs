@@ -30,9 +30,11 @@ use std::time::Duration;
 /// statement itself, before another worker could reclaim the job.
 const SIDE_EFFECT_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
-/// A saturated pool and a tenant cold build each answer 503 with
-/// `Retry-After` before the request deadline races them, and a side-effect
-/// lease outlasts the wait for its replay's connection. A provisional tenant
+/// A saturated pool, a tenant cold build and a Snapshot still being prepared
+/// each answer 503 with `Retry-After`, and a `@context` that cannot be
+/// downloaded answers 504 `LdContextNotAvailable`, only if their waits end
+/// before the request deadline answers 500 in their place. A side-effect lease
+/// outlasts the wait for its replay's connection. A provisional tenant
 /// outlives the longest creating request, or a request still running could
 /// find its database gone.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
@@ -49,6 +51,16 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Ordered {
             key: ConfigKey::TenancyBuildAdmissionTimeout,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+        Rule::Ordered {
+            key: ConfigKey::SnapshotPreparationScopedOperationTimeout,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+        Rule::Ordered {
+            key: ConfigKey::JsonLdFetchTimeout,
             relation: Relation::Below,
             limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
         },

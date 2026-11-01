@@ -47,8 +47,11 @@ pub struct PreparationConfig {
     )]
     pub recovery_interval: HumanDuration,
     /// How long a scoped operation waits for capture or clone promotion, in
-    /// human-readable form (`"30s"`).
-    #[schemars(description = "How long a request scoped to a Snapshot waits for its capture or clone to finish.")]
+    /// human-readable form (`"20s"`); below the request deadline, so the wait
+    /// answers 503 before the deadline answers 500.
+    #[schemars(
+        description = "How long a request scoped to a Snapshot waits for its capture or clone to finish. A request still waiting then is answered `503` with `Retry-After`."
+    )]
     pub scoped_operation_timeout: HumanDuration,
 }
 
@@ -59,7 +62,7 @@ impl Default for PreparationConfig {
             max_concurrent: NonZeroUsize::MIN.saturating_add(3),
             lease_timeout: HumanDuration::from_secs(30),
             recovery_interval: HumanDuration::from_secs(30),
-            scoped_operation_timeout: HumanDuration::from_secs(30),
+            scoped_operation_timeout: HumanDuration::from_secs(20),
         }
     }
 }

@@ -13,7 +13,7 @@ impl LoaderSettings {
     pub(crate) fn offline() -> LoaderSettings {
         LoaderSettings::builder()
             .allow_remote(RemoteContextFetch::Deny)
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(10))
             .max_redirects(5)
             .addresses(AddressPolicy::default())
             .cache_capacity(1024)

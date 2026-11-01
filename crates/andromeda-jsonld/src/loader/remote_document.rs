@@ -221,14 +221,19 @@ pub(crate) async fn fetch_and_parse_retrying(
 /// Whether a loader failure is a transient transport error worth retrying.
 ///
 /// Only a network- or transport-level request failure recovers on a retry, a
-/// failed resolution by the address guard included. A refused address, a
-/// non-success HTTP status, an oversized body, an unparseable document, a
-/// disabled fetch, or a degraded durable cache are all deterministic given the
-/// same request, so retrying them only delays the inevitable report.
-const fn is_transient_transport_failure(error: &LoaderError) -> bool {
+/// failed resolution by the address guard included. An attempt that timed out
+/// is not retried: it already spent the whole download deadline, and two more
+/// would carry the request past its own. A refused address, a non-success HTTP
+/// status, an oversized body, an unparseable document, a disabled fetch, or a
+/// degraded durable cache are all deterministic given the same request, so
+/// retrying them only delays the inevitable report.
+fn is_transient_transport_failure(error: &LoaderError) -> bool {
     matches!(
+        &error.kind,
+        LoaderErrorKind::Unavailable(ContextUnavailable::Request(source)) if !source.is_timeout()
+    ) || matches!(
         error.kind,
-        LoaderErrorKind::Unavailable(ContextUnavailable::Request(_) | ContextUnavailable::Refused(EndpointRefusal::DnsFailed { .. }))
+        LoaderErrorKind::Unavailable(ContextUnavailable::Refused(EndpointRefusal::DnsFailed { .. }))
     )
 }
 
@@ -287,8 +292,16 @@ mod tests {
         error::JsonLdError,
         loader::{
             cache_lifetime::CacheLifetime,
+            context_client::ContextClient,
             error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
-            remote_document::{RemoteContextDocument, fetch_and_parse, is_json_like, is_transient_transport_failure, ld_json_media_type},
+            remote_document::{
+                RemoteContextDocument,
+                fetch_and_parse,
+                fetch_and_parse_retrying,
+                is_json_like,
+                is_transient_transport_failure,
+                ld_json_media_type,
+            },
             test_origin::{TestOrigin, client, ok, redirect, untyped},
         },
         test_documents::{as_value, literal},
@@ -304,6 +317,7 @@ mod tests {
         io,
         net::{IpAddr, Ipv4Addr},
         sync::Arc,
+        time::Duration,
     };
 
     /// A context document naming one term.
@@ -542,6 +556,25 @@ mod tests {
 
         assert!(is_refusal_of(&error, ELSEWHERE), "{error:?}");
         assert_eq!(error.url, origin.url("/page"), "the failure is reported under the URL that was asked for");
+    }
+
+    #[tokio::test]
+    async fn a_download_that_times_out_is_not_retried() {
+        let origin = TestOrigin::start().await;
+        origin
+            .stage("/slow.jsonld", ok("application/ld+json", TERMS, &[]).set_delay(Duration::from_secs(2)))
+            .await;
+        let impatient = ContextClient::new(AddressPolicy::default(), Duration::from_millis(200), 5).expect("a buildable context client");
+
+        let error = fetch_and_parse_retrying(&impatient, &origin.url("/slow.jsonld"), 2_000_000, CacheLifetime::DEFAULT)
+            .await
+            .expect_err("the download times out");
+
+        assert!(
+            matches!(&error.kind, LoaderErrorKind::Unavailable(ContextUnavailable::Request(source)) if source.is_timeout()),
+            "{error:?}"
+        );
+        assert_eq!(origin.requests("/slow.jsonld").await, 1);
     }
 
     #[test]
