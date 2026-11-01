@@ -1,27 +1,38 @@
 //! The `[extensions.cursor_pagination]` table: opaque, keyset-backed
 //! pagination pointers.
 
+use crate::schema::feature_mode::FeatureMode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// Whether cursors are offered, and whether a fresh request walks by one.
+/// How a request that names neither `offset` nor `cursor` is paged while
+/// cursors are offered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "Whether opaque `cursor` page pointers are offered, and whether a request that names neither `offset` nor `cursor` walks by one.")]
+#[schemars(description = "How a request that names neither `offset` nor `cursor` is paged.")]
+pub enum FreshRequestPaging {
+    /// It walks by cursor; `offset` and `cursor=` both remain available.
+    #[default]
+    #[schemars(description = "It walks by cursor; `offset` and an empty `cursor=` both remain available.")]
+    Cursor,
+    /// It pages by offset; an empty `cursor=` opts into a walk.
+    #[schemars(description = "It pages by offset; an empty `cursor=` opts into a cursor walk.")]
+    Offset,
+}
+
+/// What a broker's collections serve, as `[extensions.cursor_pagination]`
+/// names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum CursorPaginationMode {
     /// Only offsets (clause 5.5.9.2): a `cursor` parameter is refused with
     /// `InvalidRequest`.
-    #[schemars(description = "Collections page by offset only; a `cursor` parameter is refused with `InvalidRequest`.")]
     Disabled,
     /// A fresh request pages by offset; an empty `cursor=` opts into a walk.
-    #[schemars(description = "A fresh request pages by offset; an empty `cursor=` opts into a cursor walk.")]
     Available,
     /// A fresh request walks by cursor; `offset` and `cursor=` both remain
     /// available.
-    #[default]
-    #[schemars(description = "A fresh request walks by cursor; `offset` and `cursor=` both remain available.")]
     Default,
 }
 
@@ -37,12 +48,38 @@ pub enum CursorPaginationMode {
     description = "Opaque, keyset-backed pagination pointers: collections hand out `prev`, `next` and `last` links carrying an opaque `cursor` token. The one extension a default broker serves, since NGSI-LD permits pointers implemented in a completely opaque way."
 )]
 pub struct CursorPaginationConfig {
-    /// Whether cursors are offered, and whether a fresh request walks by one:
-    /// `disabled`, `available` or `default`.
+    /// Whether cursors are offered.
     #[schemars(
-        description = "Whether cursors are offered, and whether a fresh request walks by one. With `extensions.mode` set to `\"conformance\"`, collections page by offset whatever this says."
+        description = "Whether cursors are offered. Off, collections page by offset only and a `cursor` parameter is refused with `InvalidRequest`. With `extensions.mode` set to `\"conformance\"`, collections page by offset whatever this says."
     )]
-    pub mode: CursorPaginationMode,
+    pub mode: FeatureMode,
+    /// How a request naming neither `offset` nor `cursor` is paged while
+    /// cursors are offered.
+    #[schemars(
+        description = "How a request that names neither `offset` nor `cursor` is paged while cursors are offered. Read only when `extensions.cursor_pagination.mode` is `\"enabled\"`."
+    )]
+    pub fresh_requests: FreshRequestPaging,
+}
+
+impl From<&CursorPaginationConfig> for CursorPaginationMode {
+    fn from(config: &CursorPaginationConfig) -> CursorPaginationMode {
+        match (config.mode, config.fresh_requests) {
+            (FeatureMode::Disabled, FreshRequestPaging::Cursor | FreshRequestPaging::Offset) => CursorPaginationMode::Disabled,
+            (FeatureMode::Enabled, FreshRequestPaging::Offset) => CursorPaginationMode::Available,
+            (FeatureMode::Enabled, FreshRequestPaging::Cursor) => CursorPaginationMode::Default,
+        }
+    }
+}
+
+impl From<CursorPaginationMode> for CursorPaginationConfig {
+    fn from(served: CursorPaginationMode) -> CursorPaginationConfig {
+        let (mode, fresh_requests) = match served {
+            CursorPaginationMode::Disabled => (FeatureMode::Disabled, FreshRequestPaging::default()),
+            CursorPaginationMode::Available => (FeatureMode::Enabled, FreshRequestPaging::Offset),
+            CursorPaginationMode::Default => (FeatureMode::Enabled, FreshRequestPaging::Cursor),
+        };
+        CursorPaginationConfig { mode, fresh_requests }
+    }
 }
 
 #[cfg(test)]
@@ -53,22 +90,35 @@ pub struct CursorPaginationConfig {
 mod tests {
     use crate::schema::extensions::cursor_pagination::{CursorPaginationConfig, CursorPaginationMode};
     use pretty_assertions::assert_eq;
-    use std::str::FromStr;
 
     #[test]
     fn a_default_broker_walks_by_cursor() {
-        assert_eq!(CursorPaginationConfig::default().mode, CursorPaginationMode::Default);
+        assert_eq!(CursorPaginationMode::from(&CursorPaginationConfig::default()), CursorPaginationMode::Default);
     }
 
     #[test]
-    fn the_three_modes_read_and_any_other_value_is_refused() {
-        for (token, mode) in [
-            ("disabled", CursorPaginationMode::Disabled),
-            ("available", CursorPaginationMode::Available),
-            ("default", CursorPaginationMode::Default),
+    fn each_table_names_what_its_collections_serve() {
+        for (table, served) in [
+            ("mode = \"disabled\"\nfresh_requests = \"cursor\"\n", CursorPaginationMode::Disabled),
+            ("mode = \"disabled\"\nfresh_requests = \"offset\"\n", CursorPaginationMode::Disabled),
+            ("mode = \"enabled\"\nfresh_requests = \"offset\"\n", CursorPaginationMode::Available),
+            ("mode = \"enabled\"\nfresh_requests = \"cursor\"\n", CursorPaginationMode::Default),
         ] {
-            assert_eq!(CursorPaginationMode::from_str(token).expect("a mode"), mode);
+            let config: CursorPaginationConfig = toml::from_str(table).expect("a table");
+            assert_eq!(CursorPaginationMode::from(&config), served, "{table}");
         }
-        assert!(toml::from_str::<CursorPaginationConfig>("mode = \"enabled\"\n").is_err());
+    }
+
+    #[test]
+    fn what_a_broker_serves_is_named_by_one_table() {
+        for served in [CursorPaginationMode::Disabled, CursorPaginationMode::Available, CursorPaginationMode::Default] {
+            assert_eq!(CursorPaginationMode::from(&CursorPaginationConfig::from(served)), served);
+        }
+    }
+
+    #[test]
+    fn a_mode_that_is_not_on_or_off_is_refused() {
+        assert!(toml::from_str::<CursorPaginationConfig>("mode = \"available\"\nfresh_requests = \"cursor\"\n").is_err());
+        assert!(toml::from_str::<CursorPaginationConfig>("mode = \"default\"\nfresh_requests = \"cursor\"\n").is_err());
     }
 }

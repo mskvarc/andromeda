@@ -365,7 +365,7 @@ mod tests {
             },
             decompression: DecompressionConfig {
                 algorithms: EnumSet::empty(),
-                unaccepted_encoding: UnacceptedEncoding::Refuse,
+                unaccepted_encoding: UnacceptedEncoding::Refused,
             },
             forwarded: ForwardedConfig::default(),
             server_timing: ServerTimingConfig {

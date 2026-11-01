@@ -1,6 +1,7 @@
 //! Configuration tables, their mode enums and their defaults.
 
 pub mod apply_mode;
+pub mod ceiling;
 pub mod configured_lifetime;
 pub mod content_coding;
 pub mod database;

@@ -80,7 +80,7 @@ pub struct DeliveryRetentionConfig {
     /// form (`"5m"`). A pass runs only when the tenant may have written since
     /// the last one.
     #[schemars(description = "How often expired deliveries and events are removed. A pass runs only for a tenant that may have written since the last one.")]
-    pub cleanup_interval: HumanDuration,
+    pub sweep_interval: HumanDuration,
 }
 
 impl Default for DeliveryRetentionConfig {
@@ -89,7 +89,7 @@ impl Default for DeliveryRetentionConfig {
             acknowledged_after: HumanDuration::from_days(1),
             dead_letter_after: HumanDuration::from_days(7),
             orphan_event_after: HumanDuration::from_days(1),
-            cleanup_interval: HumanDuration::from_secs(300),
+            sweep_interval: HumanDuration::from_secs(300),
         }
     }
 }

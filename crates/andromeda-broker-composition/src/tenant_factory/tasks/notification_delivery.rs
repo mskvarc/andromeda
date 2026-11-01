@@ -172,7 +172,7 @@ fn register_delivery_cleanup(
     config: &DeliveryConfig,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let cadence = config.retention.cleanup_interval.duration().max(Duration::from_secs(1));
+    let cadence = config.retention.sweep_interval.duration().max(Duration::from_secs(1));
     let retention = CleanupRetention::configured(config)?;
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("notification-delivery-cleanup").map_err(AssemblyInvariant::from)?;

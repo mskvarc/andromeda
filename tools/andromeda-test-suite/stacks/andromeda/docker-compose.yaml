@@ -296,8 +296,10 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-edge"
       ANDROMEDA__HTTP__FORWARDED__TRUST: "proxies"
       ANDROMEDA__HTTP__FORWARDED__PROXIES: "0.0.0.0/0,::/0"
-      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "available"
-      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-ranges"
+      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__FRESH_REQUESTS: "offset"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-ranges"
       ANDROMEDA__FEDERATION__FORWARDING__FEDERATED_AGGREGATION: "instances"
 
   # Terminates TLS in front of the edge broker, the clause 6.2 model where a proxy meets the requirement for a
@@ -342,7 +344,8 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-prefixed"
       ANDROMEDA__SERVER__PUBLIC_URL: "https://gw.example.com/broker"
       ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "disabled"
-      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "language-tags"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "enabled"
+      ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-tags"
 
   runner:
     extends:

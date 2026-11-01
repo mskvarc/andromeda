@@ -217,10 +217,10 @@ pub enum CorsPermission {
     /// The browser is granted it.
     #[schemars(description = "Grants it.")]
     Allowed,
-    /// The browser is not granted it.
+    /// The browser is refused it.
     #[default]
-    #[schemars(description = "Does not grant it.")]
-    Disallowed,
+    #[schemars(description = "Refuses it.")]
+    Refused,
 }
 
 /// CORS policy configuration for the broker edge.
@@ -253,7 +253,7 @@ pub struct CorsConfig {
     )]
     pub expose_headers: ExposeRule,
     /// Whether credentialed requests (cookies, HTTP auth) are `allowed` or
-    /// `disallowed`. The Fetch standard forbids allowing them with an `any`
+    /// `refused`. The Fetch standard forbids allowing them with an `any`
     /// wildcard, which the broker refuses at configuration time rather than
     /// letting the CORS layer panic.
     #[schemars(
@@ -261,7 +261,7 @@ pub struct CorsConfig {
     )]
     pub credentials: CorsPermission,
     /// Whether `Access-Control-Allow-Private-Network` is granted to a
-    /// private-network preflight: `allowed` or `disallowed`.
+    /// private-network preflight: `allowed` or `refused`.
     #[schemars(
         description = "Whether a private-network preflight is answered with `Access-Control-Allow-Private-Network`. Read only when `http.cors.mode` is `\"enabled\"`."
     )]
@@ -284,8 +284,8 @@ impl Default for CorsConfig {
             allow_methods: MethodRule::Any,
             allow_headers: HeaderRule::Any,
             expose_headers: ExposeRule::List(Vec::new()),
-            credentials: CorsPermission::Disallowed,
-            private_network: CorsPermission::Disallowed,
+            credentials: CorsPermission::Refused,
+            private_network: CorsPermission::Refused,
             preflight_lifetime: None,
         }
     }
@@ -301,7 +301,7 @@ impl CorsConfig {
     /// the profile modes never read these fields.
     #[must_use]
     pub const fn has_credentialed_wildcard(&self) -> bool {
-        if !matches!(self.mode, CorsMode::Enabled) || matches!(self.credentials, CorsPermission::Disallowed) {
+        if !matches!(self.mode, CorsMode::Enabled) || matches!(self.credentials, CorsPermission::Refused) {
             return false;
         }
         matches!(self.allow_origins, OriginRule::Any)

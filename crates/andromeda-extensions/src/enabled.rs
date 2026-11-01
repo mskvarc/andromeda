@@ -6,7 +6,7 @@
 //! every gate is what keeps the conformance override in one place: no code path
 //! reads the raw per-feature field, so none of them can forget the override.
 
-use andromeda_configuration::schema::extensions::{ExtensionsConfig, QTargetLanguages, cursor_pagination::CursorPaginationMode};
+use andromeda_configuration::schema::extensions::{ExtensionsConfig, QTargetLanguages};
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use enumset::{EnumSet, EnumSetType, enum_set};
 
@@ -66,10 +66,7 @@ impl From<&ExtensionsConfig> for EnabledExtensions {
             (config.temporal_aggregation_grouping.mode.is_enabled(), Extension::TemporalAggregationGrouping),
             (config.temporal_linked_retrieval.is_requested(), Extension::TemporalLinkedRetrieval),
             (config.tenant_management.is_requested(), Extension::TenantManagement),
-            (
-                !matches!(config.cursor_pagination.mode, CursorPaginationMode::Disabled),
-                Extension::CursorPagination,
-            ),
+            (config.cursor_pagination.mode.is_enabled(), Extension::CursorPagination),
             (config.near_distance_band.is_requested(), Extension::NearDistanceBand),
             (config.accept_language.is_requested(), Extension::AcceptLanguage),
         ] {
@@ -78,7 +75,7 @@ impl From<&ExtensionsConfig> for EnabledExtensions {
             }
         }
         EnabledExtensions {
-            enabled: enabled | target_language_extensions(config.q_target_languages.mode),
+            enabled: enabled | target_language_extensions(QTargetLanguages::from(&config.q_target_languages)),
         }
     }
 }
@@ -217,14 +214,10 @@ mod tests {
             },
             temporal_linked_retrieval: ExtensionSwitch::new(FeatureMode::Enabled),
             tenant_management: ExtensionSwitch::new(FeatureMode::Enabled),
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Default,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Default),
             near_distance_band: ExtensionSwitch::new(FeatureMode::Enabled),
             accept_language: ExtensionSwitch::new(FeatureMode::Enabled),
-            q_target_languages: QTargetLanguagesConfig {
-                mode: QTargetLanguages::LanguageRanges,
-            },
+            q_target_languages: QTargetLanguagesConfig::from(QTargetLanguages::LanguageRanges),
         }
     }
 
@@ -310,15 +303,13 @@ mod tests {
             (QTargetLanguages::LanguageRanges, LanguageTargeting::LanguageRanges),
         ] {
             let config = ExtensionsConfig {
-                q_target_languages: QTargetLanguagesConfig { mode: level },
+                q_target_languages: QTargetLanguagesConfig::from(level),
                 ..ExtensionsConfig::default()
             };
             pretty_assertions::assert_eq!(EnabledExtensions::from(&config).language_targeting(), targeting, "{level:?}");
         }
         let tags = EnabledExtensions::from(&ExtensionsConfig {
-            q_target_languages: QTargetLanguagesConfig {
-                mode: QTargetLanguages::LanguageTags,
-            },
+            q_target_languages: QTargetLanguagesConfig::from(QTargetLanguages::LanguageTags),
             ..ExtensionsConfig::default()
         });
         assert!(tags.language_tags_enabled());
@@ -331,9 +322,7 @@ mod tests {
     fn conformance_mode_forces_the_specification_target_languages() {
         let config = ExtensionsConfig {
             mode: ExtensionsMode::Conformance,
-            q_target_languages: QTargetLanguagesConfig {
-                mode: QTargetLanguages::LanguageRanges,
-            },
+            q_target_languages: QTargetLanguagesConfig::from(QTargetLanguages::LanguageRanges),
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(EnabledExtensions::from(&config).language_targeting(), LanguageTargeting::Specification);

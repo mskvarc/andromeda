@@ -253,14 +253,10 @@ mod tests {
             },
             temporal_linked_retrieval: ExtensionSwitch::new(FeatureMode::Enabled),
             tenant_management: ExtensionSwitch::new(FeatureMode::Enabled),
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Default,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Default),
             near_distance_band: ExtensionSwitch::new(FeatureMode::Enabled),
             accept_language: ExtensionSwitch::new(FeatureMode::Enabled),
-            q_target_languages: QTargetLanguagesConfig {
-                mode: QTargetLanguages::LanguageRanges,
-            },
+            q_target_languages: QTargetLanguagesConfig::from(QTargetLanguages::LanguageRanges),
         })
     }
 
@@ -287,9 +283,7 @@ mod tests {
     fn tenant_management_is_advertised_only_when_it_is_enabled() {
         let config = ExtensionsConfig {
             tenant_management: ExtensionSwitch::new(FeatureMode::Enabled),
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Disabled,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -299,9 +293,7 @@ mod tests {
 
         // With the extension off, nothing about it is advertised.
         let neither = ExtensionsConfig {
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Disabled,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
             ..ExtensionsConfig::default()
         };
         assert!(extras(None, EnabledExtensions::from(&neither)).is_none());
@@ -311,9 +303,7 @@ mod tests {
     fn temporal_linked_retrieval_is_advertised_only_when_enabled() {
         let config = ExtensionsConfig {
             temporal_linked_retrieval: ExtensionSwitch::new(FeatureMode::Enabled),
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Disabled,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -332,9 +322,7 @@ mod tests {
     fn accept_language_is_advertised_only_when_enabled() {
         let config = ExtensionsConfig {
             accept_language: ExtensionSwitch::new(FeatureMode::Enabled),
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Disabled,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
             ..ExtensionsConfig::default()
         };
         pretty_assertions::assert_eq!(
@@ -359,10 +347,8 @@ mod tests {
             ),
         ] {
             let config = ExtensionsConfig {
-                q_target_languages: QTargetLanguagesConfig { mode: level },
-                cursor_pagination: CursorPaginationConfig {
-                    mode: CursorPaginationMode::Disabled,
-                },
+                q_target_languages: QTargetLanguagesConfig::from(level),
+                cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
                 ..ExtensionsConfig::default()
             };
             let advertised = extras(None, EnabledExtensions::from(&config)).expect("extras present");

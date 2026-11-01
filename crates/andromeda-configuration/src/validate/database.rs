@@ -33,7 +33,7 @@ mod tests {
     use crate::{
         broker_config::BrokerConfig,
         human_byte_size::HumanByteSize,
-        schema::database::name_cache::{IdleEviction, Unlimited},
+        schema::ceiling::{Ceiling, Unlimited},
         validate::{
             config_key::ConfigKey,
             rule_tests::{assert_accepted, assert_positive_duration, refusals},
@@ -78,11 +78,11 @@ mod tests {
     #[test]
     fn a_zero_name_idle_timeout_is_refused_and_unlimited_accepted() {
         assert_positive_duration(
-            |config, value| config.database.name_cache.idle_eviction_after = IdleEviction::After(value),
+            |config, value| config.database.name_cache.idle_eviction_after = Ceiling::At(value),
             ConfigKey::DatabaseNameCacheIdleEvictionAfter,
         );
         let mut config = BrokerConfig::default();
-        config.database.name_cache.idle_eviction_after = IdleEviction::Never(Unlimited::Unlimited);
+        config.database.name_cache.idle_eviction_after = Ceiling::Unlimited(Unlimited::Unlimited);
         assert_accepted(&config);
     }
 }

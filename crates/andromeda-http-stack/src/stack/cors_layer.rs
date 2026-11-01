@@ -134,7 +134,7 @@ allow_methods = ["GET", "POST"]
 allow_headers = ["content-type"]
 expose_headers = ["x-trace-id"]
 credentials = "allowed"
-private_network = "disallowed"
+private_network = "refused"
 "#,
         )
         .expect("cors config parses");

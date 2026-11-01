@@ -103,7 +103,10 @@ mod tests {
     use andromeda_configuration::{
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
-        schema::database::name_cache::{IdleEviction, NameCacheConfig, Unlimited},
+        schema::{
+            ceiling::{Ceiling, Unlimited},
+            database::name_cache::NameCacheConfig,
+        },
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
@@ -120,7 +123,7 @@ mod tests {
     fn the_cache_is_bounded_by_the_configured_bytes_and_idle_timeout() {
         let keys = bounded_keys::<AttributeName>(&NameCacheConfig {
             max_size_per_dictionary: HumanByteSize::mib(4),
-            idle_eviction_after: IdleEviction::After(HumanDuration::from_secs(90)),
+            idle_eviction_after: Ceiling::At(HumanDuration::from_secs(90)),
             ..NameCacheConfig::default()
         });
         assert_eq!(keys.policy().max_capacity(), Some(4 * 1024 * 1024));
@@ -132,7 +135,7 @@ mod tests {
     fn the_cache_of_names_by_key_has_the_budget_and_idle_timeout_of_the_cache_of_keys() {
         let config = NameCacheConfig {
             max_size_per_dictionary: HumanByteSize::mib(4),
-            idle_eviction_after: IdleEviction::After(HumanDuration::from_secs(90)),
+            idle_eviction_after: Ceiling::At(HumanDuration::from_secs(90)),
             ..NameCacheConfig::default()
         };
         let names = bounded_names::<AttributeName>(&config);
@@ -144,7 +147,7 @@ mod tests {
     #[test]
     fn unlimited_idle_eviction_sets_no_idle_timeout() {
         let keys = bounded_keys::<AttributeName>(&NameCacheConfig {
-            idle_eviction_after: IdleEviction::Never(Unlimited::Unlimited),
+            idle_eviction_after: Ceiling::Unlimited(Unlimited::Unlimited),
             ..NameCacheConfig::default()
         });
         assert_eq!(keys.policy().time_to_idle(), None);
@@ -217,7 +220,7 @@ mod tests {
     fn a_name_unused_past_the_idle_timeout_is_counted_as_an_idle_eviction() {
         let recorder = TelemetryRecorder::detached().expect("recorder");
         let keys = bounded_keys::<AttributeName>(&NameCacheConfig {
-            idle_eviction_after: IdleEviction::After(HumanDuration::from_millis(1)),
+            idle_eviction_after: Ceiling::At(HumanDuration::from_millis(1)),
             ..NameCacheConfig::default()
         });
         recorder.record_locally(|| {

@@ -96,7 +96,7 @@ pub(super) fn register_snapshot_workers(
         .max(config.queue.poll_interval.duration())
         .max(Duration::from_secs(1));
     register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver, pacer)?; // clone: delivery and cleanup share one drain.
-    register_snapshot_status_cleanup(supervisor, drain, config.retention.cleanup_interval.duration().max(Duration::from_secs(1)))
+    register_snapshot_status_cleanup(supervisor, drain, config.retention.sweep_interval.duration().max(Duration::from_secs(1)))
 }
 
 /// Register the sweep that removes Snapshots past their `expiresAt`.

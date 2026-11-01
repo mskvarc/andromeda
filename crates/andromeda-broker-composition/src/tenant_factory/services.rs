@@ -333,8 +333,8 @@ fn compose_snapshot_services(
             capture_page_size: snapshot.preparation.page_size.get(),
             max_per_pass: snapshot.preparation.max_concurrent.get(),
             lease_duration: snapshot.preparation.lease_timeout.duration(),
-            tenant_count_quota: snapshot.quota.max_per_tenant.map(NonZeroUsize::get),
-            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.map(HumanByteSize::as_u64),
+            tenant_count_quota: snapshot.quota.max_per_tenant.limit().map(NonZeroUsize::get),
+            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.limit().map(HumanByteSize::as_u64),
             attribute_nesting: payload_budget(&config.request_limits).attribute_nesting,
         },
     ));
@@ -346,8 +346,8 @@ fn compose_snapshot_services(
             default_lifetime: snapshot.default_lifetime.duration(),
             maximum_lifetime: snapshot.max_lifetime.duration(),
             scoped_operation_wait: snapshot.preparation.scoped_operation_timeout.duration(),
-            tenant_count_quota: snapshot.quota.max_per_tenant.map(NonZeroUsize::get),
-            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.map(HumanByteSize::as_u64),
+            tenant_count_quota: snapshot.quota.max_per_tenant.limit().map(NonZeroUsize::get),
+            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.limit().map(HumanByteSize::as_u64),
         },
     ));
     (preparation, service)

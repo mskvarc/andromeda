@@ -37,7 +37,7 @@ impl From<&ExtensionsConfig> for PaginationPolicy {
     /// The policy `extensions.cursor_pagination.mode` names, or offsets alone
     /// under the conformance override, which forces every extension off.
     fn from(extensions: &ExtensionsConfig) -> PaginationPolicy {
-        match (extensions.mode, extensions.cursor_pagination.mode) {
+        match (extensions.mode, CursorPaginationMode::from(&extensions.cursor_pagination)) {
             (ExtensionsMode::Conformance, CursorPaginationMode::Disabled | CursorPaginationMode::Available | CursorPaginationMode::Default)
             | (ExtensionsMode::Configured, CursorPaginationMode::Disabled) => PaginationPolicy::OffsetOnly,
             (ExtensionsMode::Configured, CursorPaginationMode::Available) => PaginationPolicy::OffsetDefault,
@@ -239,7 +239,7 @@ mod tests {
     fn resolved(mode: ExtensionsMode, cursor: CursorPaginationMode) -> PaginationPolicy {
         PaginationPolicy::from(&ExtensionsConfig {
             mode,
-            cursor_pagination: CursorPaginationConfig { mode: cursor },
+            cursor_pagination: CursorPaginationConfig::from(cursor),
             ..ExtensionsConfig::default()
         })
     }

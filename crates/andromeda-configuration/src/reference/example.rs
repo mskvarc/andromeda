@@ -3,7 +3,6 @@
 
 use crate::{
     broker_config::BrokerConfig,
-    human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
     reference::ReferenceError,
     schema::{database::pooler::PoolerConfig, jsonld::PreloadedContext, source_extras::SourceExtras},
@@ -34,8 +33,6 @@ pub(crate) fn example_configuration() -> Result<BrokerConfig, ReferenceError> {
     config.temporal.storage.chunk_interval = Some(HumanDuration::from_days(7));
     config.temporal.storage.retention.delete_after = Some(HumanDuration::from_days(365));
     config.federation.identity.extras = Some(toml::from_str::<SourceExtras>("operator = \"Example Operator\"\n")?);
-    config.snapshot.quota.max_per_tenant = NonZeroUsize::new(100);
-    config.snapshot.quota.max_storage_per_tenant = Some(HumanByteSize::gib(10));
     config.observability.log.file.directory = Some(PathBuf::from("/var/log/andromeda"));
     Ok(config)
 }

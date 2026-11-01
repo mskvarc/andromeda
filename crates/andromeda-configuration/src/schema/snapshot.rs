@@ -1,27 +1,38 @@
 //! The `[snapshot]` tables: how long a Snapshot lives, how many a tenant may
 //! keep, and how one is prepared.
 
-use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+use crate::{
+    human_byte_size::HumanByteSize,
+    human_duration::HumanDuration,
+    schema::ceiling::{Ceiling, Unlimited},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 
-/// How many Snapshots one tenant may keep. Each key left out is no limit.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// How many Snapshots one tenant may keep; `"unlimited"` lifts a quota.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(
     description = "How many Snapshots, and how much storage, one tenant may keep. Over a quota, Snapshots are deleted until the tenant is within it again: the lowest `snapshotPriority` first, then the one expiring soonest, then the one used least recently."
 )]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotQuotaConfig {
-    /// The most Snapshots one tenant keeps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "The most Snapshots one tenant keeps. Left out, the count is not limited.")]
-    pub max_per_tenant: Option<NonZeroUsize>,
+    /// The most Snapshots one tenant keeps, or `"unlimited"`.
+    #[schemars(description = "The most Snapshots one tenant keeps, or `\"unlimited\"` to keep any number.")]
+    pub max_per_tenant: Ceiling<NonZeroUsize>,
     /// The most storage one tenant's Snapshots hold, in human-readable form
-    /// (`"10 GiB"`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "The most storage one tenant's Snapshots take. Left out, their storage is not limited.")]
-    pub max_storage_per_tenant: Option<HumanByteSize>,
+    /// (`"10 GiB"`), or `"unlimited"`.
+    #[schemars(description = "The most storage one tenant's Snapshots take, or `\"unlimited\"` to let them take any amount.")]
+    pub max_storage_per_tenant: Ceiling<HumanByteSize>,
+}
+
+impl Default for SnapshotQuotaConfig {
+    fn default() -> SnapshotQuotaConfig {
+        SnapshotQuotaConfig {
+            max_per_tenant: Ceiling::Unlimited(Unlimited::Unlimited),
+            max_storage_per_tenant: Ceiling::Unlimited(Unlimited::Unlimited),
+        }
+    }
 }
 
 /// How a Snapshot is prepared.
@@ -109,6 +120,6 @@ mod tests {
     fn the_defaults_set_no_quota() {
         let config = SnapshotConfig::default();
         assert_eq!(config.quota, SnapshotQuotaConfig::default());
-        assert_eq!(config.quota.max_per_tenant, None);
+        assert_eq!(config.quota.max_per_tenant.limit(), None);
     }
 }

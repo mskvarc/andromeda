@@ -223,7 +223,12 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dy
     Arc::new(PostgresTenantUsageProbe::new(
         request_url,
         config.database.acquire_timeout(),
-        config.snapshot.quota.max_per_tenant.map(|quota| u64::try_from(quota.get()).unwrap_or(u64::MAX)),
+        config
+            .snapshot
+            .quota
+            .max_per_tenant
+            .limit()
+            .map(|quota| u64::try_from(quota.get()).unwrap_or(u64::MAX)),
     ))
 }
 

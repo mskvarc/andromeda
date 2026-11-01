@@ -165,9 +165,9 @@ pub enum ConfigKey {
     /// `entity.side_effects.retention.dead_letter_after`.
     #[display("entity.side_effects.retention.dead_letter_after")]
     EntitySideEffectsDeadLetterAfter,
-    /// `entity.side_effects.retention.cleanup_interval`.
-    #[display("entity.side_effects.retention.cleanup_interval")]
-    EntitySideEffectsCleanupInterval,
+    /// `entity.side_effects.retention.sweep_interval`.
+    #[display("entity.side_effects.retention.sweep_interval")]
+    EntitySideEffectsRetentionSweepInterval,
     /// A key of one durable queue table.
     #[display("{_0}.{_1}")]
     Queue(QueueName, QueueKey),
@@ -228,9 +228,9 @@ pub enum ConfigKey {
     /// `notifications.delivery.retention.orphan_event_after`.
     #[display("notifications.delivery.retention.orphan_event_after")]
     NotificationsDeliveryOrphanEventAfter,
-    /// `notifications.delivery.retention.cleanup_interval`.
-    #[display("notifications.delivery.retention.cleanup_interval")]
-    NotificationsDeliveryCleanupInterval,
+    /// `notifications.delivery.retention.sweep_interval`.
+    #[display("notifications.delivery.retention.sweep_interval")]
+    NotificationsDeliveryRetentionSweepInterval,
     /// `notifications.periodic.max_poll_interval`.
     #[display("notifications.periodic.max_poll_interval")]
     NotificationsPeriodicMaxPollInterval,

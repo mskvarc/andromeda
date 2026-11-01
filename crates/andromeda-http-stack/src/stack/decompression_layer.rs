@@ -31,7 +31,7 @@ pub(crate) fn build_decompression_layer(config: &DecompressionConfig) -> Option<
     if !config.algorithms.contains(ContentCoding::Zstd) {
         layer = layer.no_zstd();
     }
-    Some(layer.pass_through_unaccepted(matches!(config.unaccepted_encoding, UnacceptedEncoding::PassThrough)))
+    Some(layer.pass_through_unaccepted(matches!(config.unaccepted_encoding, UnacceptedEncoding::Allowed)))
 }
 
 /// Record the `Content-Length` a request was received with, ahead of the
@@ -58,7 +58,7 @@ mod tests {
     fn empty_algorithms_builds_no_layer() {
         let config = DecompressionConfig {
             algorithms: EnumSet::empty(),
-            unaccepted_encoding: UnacceptedEncoding::Refuse,
+            unaccepted_encoding: UnacceptedEncoding::Refused,
         };
         assert!(build_decompression_layer(&config).is_none());
     }
@@ -67,7 +67,7 @@ mod tests {
     fn a_non_empty_selection_builds_a_layer() {
         let config = DecompressionConfig {
             algorithms: ContentCoding::Gzip | ContentCoding::Brotli,
-            unaccepted_encoding: UnacceptedEncoding::PassThrough,
+            unaccepted_encoding: UnacceptedEncoding::Allowed,
         };
         assert!(build_decompression_layer(&config).is_some());
     }

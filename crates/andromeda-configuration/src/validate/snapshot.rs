@@ -32,6 +32,7 @@ mod tests {
         broker_config::BrokerConfig,
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
+        schema::ceiling::Ceiling,
         validate::{
             bound::{Bound, Quantity, Relation},
             config_key::ConfigKey,
@@ -101,14 +102,14 @@ mod tests {
     #[test]
     fn a_storage_quota_of_no_bytes_is_refused_and_one_byte_accepted() {
         let mut config = BrokerConfig::default();
-        config.snapshot.quota.max_storage_per_tenant = Some(HumanByteSize::b(0));
+        config.snapshot.quota.max_storage_per_tenant = Ceiling::At(HumanByteSize::b(0));
         assert_eq!(
             refusals(&config),
             [ConfigurationViolation::Zero {
                 key: ConfigKey::SnapshotMaxStoragePerTenant
             }]
         );
-        config.snapshot.quota.max_storage_per_tenant = Some(HumanByteSize::b(1));
+        config.snapshot.quota.max_storage_per_tenant = Ceiling::At(HumanByteSize::b(1));
         assert_accepted(&config);
     }
 }

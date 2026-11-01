@@ -98,18 +98,18 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[http.cors]\nallow_credentials = false\n",
         "allow_credentials",
-        "[http.cors]\ncredentials = \"disallowed\"\n",
+        "[http.cors]\ncredentials = \"refused\"\n",
     ),
     (
         "[http.cors]\nallow_private_network = false\n",
         "allow_private_network",
-        "[http.cors]\nprivate_network = \"disallowed\"\n",
+        "[http.cors]\nprivate_network = \"refused\"\n",
     ),
     ("[http.cors]\nmax_age = \"10m\"\n", "max_age", "[http.cors]\npreflight_lifetime = \"10m\"\n"),
     (
         "[http.decompression]\npass_through_unaccepted = true\n",
         "pass_through_unaccepted",
-        "[http.decompression]\nunaccepted_encoding = \"pass-through\"\n",
+        "[http.decompression]\nunaccepted_encoding = \"allowed\"\n",
     ),
     ("[http.helmet]\nmode = \"enabled\"\n", "helmet", "[http.security_headers]\nmode = \"enabled\"\n"),
     (
@@ -298,7 +298,12 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[entity]\npending_side_effects_cleanup_interval = \"5m\"\n",
         "pending_side_effects_cleanup_interval",
+        "[entity.side_effects.retention]\nsweep_interval = \"5m\"\n",
+    ),
+    (
         "[entity.side_effects.retention]\ncleanup_interval = \"5m\"\n",
+        "cleanup_interval",
+        "[entity.side_effects.retention]\nsweep_interval = \"5m\"\n",
     ),
     (
         "[spatial]\nconsistency = \"watermark\"\n",
@@ -455,7 +460,12 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[notifications.delivery]\ncleanup_interval = \"5m\"\n",
         "cleanup_interval",
+        "[notifications.delivery.retention]\nsweep_interval = \"5m\"\n",
+    ),
+    (
         "[notifications.delivery.retention]\ncleanup_interval = \"5m\"\n",
+        "cleanup_interval",
+        "[notifications.delivery.retention]\nsweep_interval = \"5m\"\n",
     ),
     (
         "[notifications.delivery]\ndead_letter_after = \"7days\"\n",
@@ -595,7 +605,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[pagination]\ndefault_mode = \"offset\"\n",
         "pagination",
-        "[extensions.cursor_pagination]\nmode = \"available\"\n",
+        "[extensions.cursor_pagination]\nmode = \"enabled\"\nfresh_requests = \"offset\"\n",
     ),
     (
         "[extensions]\ntemporal_delete_by_query_max_matches = 10\n",
@@ -609,7 +619,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Every extension that is one table with a `mode`.
+/// Every extension that is one table with a `mode` that turns it on or off.
 const EXTENSION_TABLES: [&str; 9] = [
     "cursor_pagination",
     "temporal_delete_by_query",
@@ -667,19 +677,7 @@ fn an_extension_switch_written_as_a_scalar_is_refused() {
             .map(|_| ())
             .map_err(|error| error.to_string());
         assert!(refused.as_ref().is_err_and(|message| message.contains(extension)), "{extension}: {refused:?}");
-        assert!(
-            load_file(&format!("[extensions.{extension}]\nmode = \"{}\"\n", enabled_value(extension))).is_ok(),
-            "{extension}"
-        );
-    }
-}
-
-/// The value that switches `extension` on.
-fn enabled_value(extension: &str) -> &'static str {
-    match extension {
-        "cursor_pagination" => "available",
-        "q_target_languages" => "language-tags",
-        _ => "enabled",
+        assert!(load_file(&format!("[extensions.{extension}]\nmode = \"enabled\"\n")).is_ok(), "{extension}");
     }
 }
 

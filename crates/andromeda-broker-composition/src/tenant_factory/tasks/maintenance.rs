@@ -106,7 +106,7 @@ pub(super) fn register_entity_side_effects(
     register_entity_side_effect_reap(
         supervisor,
         drain,
-        side_effects.retention.cleanup_interval.duration(),
+        side_effects.retention.sweep_interval.duration(),
         retention_duration(
             side_effects.retention.dead_letter_after.duration().as_secs(),
             RetentionSetting::SideEffectDeadLetter,

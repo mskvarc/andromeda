@@ -40,7 +40,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
             Rule::Positive(ConfigKey::NotificationsDeliveryAcknowledgedAfter),
             Rule::Positive(ConfigKey::NotificationsDeliveryDeadLetterAfter),
             Rule::Positive(ConfigKey::NotificationsDeliveryOrphanEventAfter),
-            Rule::Positive(ConfigKey::NotificationsDeliveryCleanupInterval),
+            Rule::Positive(ConfigKey::NotificationsDeliveryRetentionSweepInterval),
             Rule::Positive(ConfigKey::NotificationsPeriodicMaxPollInterval),
             Rule::Ordered {
                 key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
@@ -150,8 +150,8 @@ mod tests {
             ConfigKey::NotificationsDeliveryOrphanEventAfter,
         );
         assert_positive_duration(
-            |config, value| config.notifications.delivery.retention.cleanup_interval = value,
-            ConfigKey::NotificationsDeliveryCleanupInterval,
+            |config, value| config.notifications.delivery.retention.sweep_interval = value,
+            ConfigKey::NotificationsDeliveryRetentionSweepInterval,
         );
         assert_positive_duration(
             |config, value| config.notifications.periodic.max_poll_interval = value,

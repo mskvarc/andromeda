@@ -15,10 +15,13 @@ pub mod bounded;
 pub mod cursor_pagination;
 pub mod switch;
 
-use crate::schema::extensions::{
-    bounded::{TemporalAggregationGroupingConfig, TemporalDeleteByQueryConfig},
-    cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
-    switch::ExtensionSwitch,
+use crate::schema::{
+    extensions::{
+        bounded::{TemporalAggregationGroupingConfig, TemporalDeleteByQueryConfig},
+        cursor_pagination::CursorPaginationConfig,
+        switch::ExtensionSwitch,
+    },
+    feature_mode::FeatureMode,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,38 +46,87 @@ pub enum ExtensionsMode {
 }
 
 /// What a `q` bracket may name as a target language, each level admitting
-/// everything the one before it does.
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, Display, EnumString, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "What a `q` bracket may name as a target language, each level admitting everything the one before it does.")]
+/// everything the one before it does: what a broker admits, as
+/// `[extensions.q_target_languages]` names it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Display)]
 pub enum QTargetLanguages {
     /// The clause 4.9 ABNF alone: `[en]`, never `[en-GB]`.
     #[default]
-    #[schemars(description = "Only an attribute name, as the NGSI-LD `q` grammar defines: `[en]` is admitted, `[en-GB]` is refused with `BadRequestData`.")]
     Specification,
     /// Every RFC 5646 language tag, matched by tag equality.
+    LanguageTags,
+    /// Every RFC 5646 tag and RFC 4647 extended range, matched by extended
+    /// filtering.
+    LanguageRanges,
+}
+
+/// What a `q` bracket may name beyond the specification's grammar while the
+/// extension is on, each level admitting everything the one before it does.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, Display, EnumString, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+#[schemars(description = "What a `q` bracket may name as a target language while the extension is on, each level admitting everything the one before it does.")]
+pub enum QTargetLanguageLevel {
+    /// Every RFC 5646 language tag, matched by tag equality.
+    #[default]
     #[schemars(description = "Every RFC 5646 language tag, matched by case-insensitive tag equality.")]
     LanguageTags,
     /// Every RFC 5646 tag and RFC 4647 extended range, matched by extended
     /// filtering.
     #[schemars(
-        description = "Every RFC 5646 tag and RFC 4647 extended range, matched by extended filtering, so `[en]` selects `en-GB` too. This changes what some queries valid under `\"specification\"` select."
+        description = "Every RFC 5646 tag and RFC 4647 extended range, matched by extended filtering, so `[en]` selects `en-GB` too. This changes what some queries the specification's grammar admits select."
     )]
     LanguageRanges,
 }
 
 /// The `[extensions.q_target_languages]` table.
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[schemars(description = "What a `q` bracket may name as a target language.")]
 pub struct QTargetLanguagesConfig {
-    /// What a `q` bracket may name: `specification`, `language-tags` or
-    /// `language-ranges`.
+    /// Whether a `q` bracket may name more than the specification's grammar.
     #[schemars(
-        description = "What a `q` bracket may name as a target language. A query carrying a target language is held to the level every context source it reaches advertises."
+        description = "Whether a `q` bracket may name a language tag. Off, a bracket names only what the NGSI-LD `q` grammar defines: `[en]` is admitted, `[en-GB]` is refused with `BadRequestData`. A query carrying a target language is held to the level every context source it reaches advertises."
     )]
-    pub mode: QTargetLanguages,
+    pub mode: FeatureMode,
+    /// What a bracket may name while the extension is on.
+    #[schemars(description = "What a `q` bracket may name while the extension is on. Read only when `extensions.q_target_languages.mode` is `\"enabled\"`.")]
+    pub level: QTargetLanguageLevel,
+}
+
+impl Default for QTargetLanguagesConfig {
+    fn default() -> QTargetLanguagesConfig {
+        QTargetLanguagesConfig {
+            mode: FeatureMode::Disabled,
+            level: QTargetLanguageLevel::default(),
+        }
+    }
+}
+
+impl From<&QTargetLanguagesConfig> for QTargetLanguages {
+    fn from(config: &QTargetLanguagesConfig) -> QTargetLanguages {
+        match (config.mode, config.level) {
+            (FeatureMode::Disabled, QTargetLanguageLevel::LanguageTags | QTargetLanguageLevel::LanguageRanges) => QTargetLanguages::Specification,
+            (FeatureMode::Enabled, QTargetLanguageLevel::LanguageTags) => QTargetLanguages::LanguageTags,
+            (FeatureMode::Enabled, QTargetLanguageLevel::LanguageRanges) => QTargetLanguages::LanguageRanges,
+        }
+    }
+}
+
+impl From<QTargetLanguages> for QTargetLanguagesConfig {
+    fn from(admitted: QTargetLanguages) -> QTargetLanguagesConfig {
+        match admitted {
+            QTargetLanguages::Specification => QTargetLanguagesConfig::default(),
+            QTargetLanguages::LanguageTags => QTargetLanguagesConfig {
+                mode: FeatureMode::Enabled,
+                level: QTargetLanguageLevel::LanguageTags,
+            },
+            QTargetLanguages::LanguageRanges => QTargetLanguagesConfig {
+                mode: FeatureMode::Enabled,
+                level: QTargetLanguageLevel::LanguageRanges,
+            },
+        }
+    }
 }
 
 /// Andromeda's opt-in, non-standard features.
@@ -201,8 +253,8 @@ impl ExtensionsConfig {
             || self.tenant_management.is_requested()
             || self.near_distance_band.is_requested()
             || self.accept_language.is_requested()
-            || !matches!(self.cursor_pagination.mode, CursorPaginationMode::Disabled)
-            || !matches!(self.q_target_languages.mode, QTargetLanguages::Specification)
+            || self.cursor_pagination.mode.is_enabled()
+            || self.q_target_languages.mode.is_enabled()
     }
 }
 
@@ -216,6 +268,7 @@ mod tests {
         extensions::{
             ExtensionsConfig,
             ExtensionsMode,
+            QTargetLanguageLevel,
             QTargetLanguages,
             QTargetLanguagesConfig,
             cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
@@ -229,7 +282,7 @@ mod tests {
     fn every_extension_but_cursor_pagination_is_off_by_default() {
         let config = ExtensionsConfig::default();
         assert_eq!(config.mode, ExtensionsMode::Configured);
-        assert_eq!(config.cursor_pagination.mode, CursorPaginationMode::Default);
+        assert_eq!(CursorPaginationMode::from(&config.cursor_pagination), CursorPaginationMode::Default);
         assert_eq!(config.temporal_delete_by_query.mode, FeatureMode::Disabled);
         assert_eq!(config.temporal_aggregation_grouping.mode, FeatureMode::Disabled);
         for switch in [
@@ -242,7 +295,7 @@ mod tests {
             assert_eq!(switch, ExtensionSwitch::default());
             assert!(!switch.is_requested());
         }
-        assert_eq!(config.q_target_languages.mode, QTargetLanguages::Specification);
+        assert_eq!(QTargetLanguages::from(&config.q_target_languages), QTargetLanguages::Specification);
     }
 
     #[test]
@@ -270,13 +323,26 @@ mod tests {
     #[test]
     fn the_target_language_levels_are_spelled_in_kebab_case() {
         for (level, token) in [
-            (QTargetLanguages::Specification, "specification"),
-            (QTargetLanguages::LanguageTags, "language-tags"),
-            (QTargetLanguages::LanguageRanges, "language-ranges"),
+            (QTargetLanguageLevel::LanguageTags, "language-tags"),
+            (QTargetLanguageLevel::LanguageRanges, "language-ranges"),
         ] {
-            let parsed: QTargetLanguagesConfig = toml::from_str(&format!("mode = \"{token}\"\n")).expect("a level");
-            assert_eq!(parsed.mode, level);
+            let parsed: QTargetLanguagesConfig = toml::from_str(&format!("mode = \"enabled\"\nlevel = \"{token}\"\n")).expect("a level");
+            assert_eq!(parsed.level, level);
         }
+    }
+
+    #[test]
+    fn what_a_broker_admits_in_a_q_bracket_is_named_by_one_table() {
+        for admitted in [
+            QTargetLanguages::Specification,
+            QTargetLanguages::LanguageTags,
+            QTargetLanguages::LanguageRanges,
+        ] {
+            assert_eq!(QTargetLanguages::from(&QTargetLanguagesConfig::from(admitted)), admitted);
+        }
+        let disabled: QTargetLanguagesConfig = toml::from_str("mode = \"disabled\"\nlevel = \"language-ranges\"\n").expect("a table");
+        assert_eq!(QTargetLanguages::from(&disabled), QTargetLanguages::Specification);
+        assert!(toml::from_str::<QTargetLanguagesConfig>("mode = \"language-tags\"\nlevel = \"language-tags\"\n").is_err());
     }
 
     #[test]
@@ -295,9 +361,7 @@ mod tests {
     #[test]
     fn requested_features_are_read_off_every_table() {
         let mut config = ExtensionsConfig {
-            cursor_pagination: CursorPaginationConfig {
-                mode: CursorPaginationMode::Disabled,
-            },
+            cursor_pagination: CursorPaginationConfig::from(CursorPaginationMode::Disabled),
             ..ExtensionsConfig::default()
         };
         assert!(!config.any_feature_requested());
@@ -306,9 +370,7 @@ mod tests {
         assert!(ExtensionsConfig::default().any_feature_requested());
         let languages = ExtensionsConfig {
             cursor_pagination: config.cursor_pagination,
-            q_target_languages: QTargetLanguagesConfig {
-                mode: QTargetLanguages::LanguageRanges,
-            },
+            q_target_languages: QTargetLanguagesConfig::from(QTargetLanguages::LanguageRanges),
             ..ExtensionsConfig::default()
         };
         assert!(languages.any_feature_requested());

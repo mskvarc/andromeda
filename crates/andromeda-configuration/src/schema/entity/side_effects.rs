@@ -25,14 +25,14 @@ pub struct SideEffectRetentionConfig {
     /// How often expired dead-lettered jobs are removed, in human-readable
     /// form (`"5m"`).
     #[schemars(description = "How often dead-lettered jobs older than `entity.side_effects.retention.dead_letter_after` are removed.")]
-    pub cleanup_interval: HumanDuration,
+    pub sweep_interval: HumanDuration,
 }
 
 impl Default for SideEffectRetentionConfig {
     fn default() -> SideEffectRetentionConfig {
         SideEffectRetentionConfig {
             dead_letter_after: HumanDuration::from_days(7),
-            cleanup_interval: HumanDuration::from_secs(300),
+            sweep_interval: HumanDuration::from_secs(300),
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::validate::{
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     queue_rules(QueueName::EntitySideEffects).into_iter().chain([
         Rule::Positive(ConfigKey::EntitySideEffectsDeadLetterAfter),
-        Rule::Positive(ConfigKey::EntitySideEffectsCleanupInterval),
+        Rule::Positive(ConfigKey::EntitySideEffectsRetentionSweepInterval),
         Rule::Positive(ConfigKey::EntitySpatialIndexRebuildInterval),
     ])
 }
@@ -28,8 +28,8 @@ mod tests {
             ConfigKey::EntitySideEffectsDeadLetterAfter,
         );
         assert_positive_duration(
-            |config, value| config.entity.side_effects.retention.cleanup_interval = value,
-            ConfigKey::EntitySideEffectsCleanupInterval,
+            |config, value| config.entity.side_effects.retention.sweep_interval = value,
+            ConfigKey::EntitySideEffectsRetentionSweepInterval,
         );
         assert_positive_duration(
             |config, value| config.entity.spatial_index.rebuild_interval = value,
