@@ -102,6 +102,12 @@ create table notification_deliveries (
     lease_until timestamptz,
     delivered_at timestamptz,
     exhausted_at timestamptz,
+    -- The instant the delivery was set aside behind the probe of its
+    -- Subscription's hold, NULL while it waits its turn in the claim order. A
+    -- held delivery leaves the claim index, so a backlog behind an endpoint
+    -- that fails costs a claim nothing, and it keeps its attempt count and its
+    -- due instant for when the hold is released.
+    held_at timestamptz,
     claimed_by uuid,
     last_error text compression lz4 collate "C",
     constraint pk_notification_deliveries primary key (delivery_key),
@@ -115,6 +121,7 @@ create table notification_deliveries (
     constraint chk_notification_deliveries_attempt_count_non_negative check (attempt_count >= 0),
     constraint chk_notification_deliveries_claim_coherent check (num_nonnulls(claimed_at, claimed_by, lease_until) in (0, 3)),
     constraint chk_notification_deliveries_exhausted_state check (exhausted_at is null or (delivered_at is null and num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
+    constraint chk_notification_deliveries_held_state check (held_at is null or (delivered_at is null and exhausted_at is null and num_nonnulls(claimed_at, claimed_by, lease_until) = 0)),
     constraint chk_notification_deliveries_last_error_length check (last_error is null or char_length(last_error) <= 2048)
 )
 with (
@@ -127,12 +134,13 @@ with (
     autovacuum_vacuum_cost_delay = 0
 );
 
--- The claim: rows still in the queue, due and unheld, in the order they became
--- claimable. The expression is the later of when a row is due and when its
--- lease lapses, so a claim is one range scan as deep as its batch.
+-- The claim: rows still in the queue and not held behind a probe, in the
+-- order they became claimable. The expression is the later of when a row is
+-- due and when its lease lapses, so a claim is one range scan as deep as its
+-- batch.
 create index idx_notification_deliveries_claim on notification_deliveries (greatest(next_attempt_at, coalesce(lease_until, '-infinity'::timestamptz)), delivery_key)
 where
-    delivered_at is null and exhausted_at is null;
+    delivered_at is null and exhausted_at is null and held_at is null;
 
 -- The reap of delivered rows.
 create index idx_notification_deliveries_delivered_at on notification_deliveries (delivered_at)
@@ -144,4 +152,39 @@ create index idx_notification_deliveries_exhausted_at on notification_deliveries
 where
     exhausted_at is not null;
 
-create index idx_notification_deliveries_subscription on notification_deliveries (subscription_key);
+-- One Subscription's deliveries: the cascade of its deletion, the rows a hold
+-- sets aside (`held_at` NULL) and releases (`held_at` set), and the held row
+-- that probes next, the one set aside first.
+create index idx_notification_deliveries_subscription on notification_deliveries (subscription_key, held_at, delivery_key);
+
+-- One row per Subscription whose endpoint failed its last attempt and has not
+-- answered since. Its probe is the one delivery of the Subscription a claim may
+-- take; every other one is held (`held_at`) until an attempt to the endpoint
+-- succeeds, which deletes the hold and releases them. An endpoint that never
+-- answers therefore costs one slot per retry step, however long its backlog,
+-- instead of every slot of the tenant's drain for one `request_timeout` after
+-- another.
+--
+-- The probe reference has no action of its own: a probe is always still
+-- queued, because the attempt that delivers it deletes the hold and the
+-- attempt that exhausts it hands the hold to the next held delivery in the
+-- same statement, so only the Subscription's deletion removes it, and that
+-- cascade removes the hold with it.
+create table notification_delivery_holds (
+    subscription_key bigint not null,
+    -- The probe: the one delivery of the Subscription a claim may take.
+    delivery_key bigint not null,
+    constraint pk_notification_delivery_holds primary key (subscription_key),
+    constraint uq_notification_delivery_holds_delivery unique (delivery_key),
+    constraint fk_notification_delivery_holds_subscription foreign key (subscription_key) references subscriptions (subscription_key) on delete cascade,
+    constraint fk_notification_delivery_holds_delivery foreign key (delivery_key) references notification_deliveries (delivery_key)
+)
+with (
+    vacuum_truncate = false,
+    fillfactor = 50,
+    autovacuum_vacuum_scale_factor = 0,
+    autovacuum_vacuum_threshold = 100,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 100,
+    autovacuum_vacuum_cost_delay = 0
+);

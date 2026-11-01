@@ -5,6 +5,8 @@
 //! that produced the change. `notification_deliveries` is the mutable work
 //! queue built from those events — one row per matched subscription, carrying
 //! the lease a worker claims it under and the retry bookkeeping.
+//! `notification_delivery_holds` names, for each Subscription whose endpoint is
+//! failing, the one delivery a claim may still take.
 
 use sea_query::Iden;
 
@@ -64,6 +66,8 @@ pub enum NotificationDeliveries {
     DeliveredAt,
     /// Instant the worker gave the delivery up for good, `NULL` unless dead-lettered
     ExhaustedAt,
+    /// Instant the delivery was set aside behind its Subscription's probe, `NULL` while it is claimable
+    HeldAt,
     /// Diagnostic recorded by the last failed attempt (shared claimable-queue contract)
     LastError,
     /// Instant the current lease was taken
@@ -74,9 +78,20 @@ pub enum NotificationDeliveries {
     LeaseUntil,
 }
 
+/// The `notification_delivery_holds` table - the probe of each Subscription whose endpoint is failing.
+#[derive(Iden, Clone, Copy)]
+pub enum NotificationDeliveryHolds {
+    /// Table name: `notification_delivery_holds`
+    Table,
+    /// The held Subscription, also the primary key
+    SubscriptionKey,
+    /// The probe: the one delivery of the Subscription a claim may take while the hold lasts
+    DeliveryKey,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::notification::{NotificationDeliveries, NotificationEvents};
+    use crate::notification::{NotificationDeliveries, NotificationDeliveryHolds, NotificationEvents};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -110,9 +125,17 @@ mod tests {
         assert_eq!(NotificationDeliveries::NextAttemptAt.to_string(), "next_attempt_at");
         assert_eq!(NotificationDeliveries::DeliveredAt.to_string(), "delivered_at");
         assert_eq!(NotificationDeliveries::ExhaustedAt.to_string(), "exhausted_at");
+        assert_eq!(NotificationDeliveries::HeldAt.to_string(), "held_at");
         assert_eq!(NotificationDeliveries::LastError.to_string(), "last_error");
         assert_eq!(NotificationDeliveries::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(NotificationDeliveries::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(NotificationDeliveries::LeaseUntil.to_string(), "lease_until");
+    }
+
+    #[test]
+    fn notification_delivery_holds_table_and_columns() {
+        assert_eq!(NotificationDeliveryHolds::Table.to_string(), "notification_delivery_holds");
+        assert_eq!(NotificationDeliveryHolds::SubscriptionKey.to_string(), "subscription_key");
+        assert_eq!(NotificationDeliveryHolds::DeliveryKey.to_string(), "delivery_key");
     }
 }

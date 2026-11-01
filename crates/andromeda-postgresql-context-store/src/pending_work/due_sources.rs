@@ -247,11 +247,15 @@ fn subscription_expiry_min() -> SimpleExpr {
     scalar(select)
 }
 
-/// An unfinished durable delivery: neither delivered nor exhausted.
+/// A durable delivery a claim may reach: neither delivered nor exhausted, nor
+/// set aside behind its Subscription's probe. The probe is the obligation of a
+/// held Subscription; what it holds back is due only once it is released.
+/// This is the predicate of the claim index, which the read goes through.
 fn unfinished_delivery() -> SimpleExpr {
     Expr::col(NotificationDeliveries::DeliveredAt)
         .is_null()
         .and(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
+        .and(Expr::col(NotificationDeliveries::HeldAt).is_null())
 }
 
 /// An unfinished snapshot status notification: neither delivered nor exhausted.

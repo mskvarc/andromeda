@@ -77,10 +77,17 @@ impl DeliveryAcknowledgement {
     }
 
     /// Record the delivery `key` of the branch `target` exhausted, with its
-    /// diagnostic `detail`.
-    pub(crate) async fn exhausted(&self, key: DeliveryKey, detail: &str, target: &ContextTarget) -> Result<LeaseAcknowledgement, NotificationError> {
+    /// diagnostic `detail`, the next probe of its Subscription due at
+    /// `next_probe_at` if it was the probe.
+    pub(crate) async fn exhausted(
+        &self,
+        key: DeliveryKey,
+        detail: &str,
+        next_probe_at: DateTime<Utc>,
+        target: &ContextTarget,
+    ) -> Result<LeaseAcknowledgement, NotificationError> {
         self.record(key, QueueOutcome::Exhausted, async || {
-            self.store.mark_terminal(key, &self.worker_id, detail, target).await
+            self.store.mark_terminal(key, &self.worker_id, detail, next_probe_at, target).await
         })
         .await
     }

@@ -96,8 +96,15 @@ impl DeliveryStore for NotificationDeliveryQueue {
         held(outcome, key, worker_id)
     }
 
-    async fn mark_terminal(&self, key: DeliveryKey, worker_id: &LeaseHolder, failure: &str, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_exhausted(&self.pool, key.into_inner(), *worker_id, failure, target)
+    async fn mark_terminal(
+        &self,
+        key: DeliveryKey,
+        worker_id: &LeaseHolder,
+        failure: &str,
+        next_probe_at: DateTime<Utc>,
+        target: &ContextTarget,
+    ) -> Result<(), DeliveryLeaseError> {
+        let outcome = acknowledge::mark_exhausted(&self.pool, key.into_inner(), *worker_id, failure, next_probe_at, target)
             .await
             .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
         held(outcome, key, worker_id)

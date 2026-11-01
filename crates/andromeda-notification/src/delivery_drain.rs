@@ -276,7 +276,7 @@ impl NotificationDeliveryDrain {
                 trace_entry(&entry);
                 self.advance(&entry, clock).await
             }
-            DeliveryClaim::Unreadable(unreadable) => self.retire_unreadable(&unreadable).await,
+            DeliveryClaim::Unreadable(unreadable) => self.retire_unreadable(&unreadable, clock).await,
         })
     }
 
@@ -286,6 +286,11 @@ impl NotificationDeliveryDrain {
     /// that reaches the ceiling is acknowledged as exhausted, exactly like a
     /// terminal failure, so the store never has to know the ceiling to keep an
     /// exhausted delivery out of the claimable set.
+    ///
+    /// A retryable failure holds the rest of the Subscription's queue behind
+    /// the failed delivery, which the store does with the acknowledgement, and
+    /// an exhausted probe hands the hold to a delivery due one first retry step
+    /// later, as a delivery failing for the first time would be.
     async fn advance(&self, entry: &DeliveryEntry, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, NotificationError> {
         match self.transport.deliver(entry).await {
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => self.acknowledgement.delivered(entry.key, &entry.target).await,
@@ -296,9 +301,17 @@ impl NotificationDeliveryDrain {
             }
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
-                self.acknowledgement.exhausted(entry.key, &detail, &entry.target).await
+                self.acknowledgement
+                    .exhausted(entry.key, &detail, self.next_probe_at(clock)?, &entry.target)
+                    .await
             }
         }
+    }
+
+    /// The instant the next probe of a held Subscription is due when the
+    /// delivery being exhausted was its probe: one first retry step from now.
+    fn next_probe_at(&self, clock: &LeasePassClock) -> Result<DateTime<Utc>, NotificationError> {
+        Ok(retry_due_at(&self.retry_schedule, 0, clock.now()).map_err(NotificationInvariant::AttemptCount)?)
     }
 
     /// Retire a claimed delivery whose stored row could not be read back.
@@ -307,14 +320,16 @@ impl NotificationDeliveryDrain {
     /// is acknowledged as exhausted with the reason it could not be read as its
     /// recorded failure, exactly like a delivery whose transport reported a
     /// terminal failure.
-    async fn retire_unreadable(&self, unreadable: &UnreadableDelivery) -> Result<LeaseAcknowledgement, NotificationError> {
+    async fn retire_unreadable(&self, unreadable: &UnreadableDelivery, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, NotificationError> {
         error!(
             delivery_key = %unreadable.key,
             error = %unreadable.diagnostic,
             event = "notification_delivery_unreadable"
         );
         let detail = self.error_bound.truncate(&unreadable.diagnostic);
-        self.acknowledgement.exhausted(unreadable.key, &detail, &unreadable.target).await
+        self.acknowledgement
+            .exhausted(unreadable.key, &detail, self.next_probe_at(clock)?, &unreadable.target)
+            .await
     }
 
     /// Purge acknowledged deliveries before an explicit retention cutoff.
@@ -438,6 +453,8 @@ mod tests {
         delivered: Mutex<Vec<DeliveryKey>>,
         failed: Mutex<Vec<(DeliveryKey, String, DateTime<Utc>)>>,
         terminal: Mutex<Vec<(DeliveryKey, String)>>,
+        /// The next probe instant each terminal acknowledgement carried.
+        next_probes: Mutex<Vec<DateTime<Utc>>>,
         claimed_with: Mutex<Vec<LeaseTerm>>,
         calls: Mutex<Vec<StoreCall>>,
         lease_state: LeaseState,
@@ -587,9 +604,17 @@ mod tests {
             Ok(())
         }
 
-        async fn mark_terminal(&self, key: DeliveryKey, worker_id: &LeaseHolder, error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        async fn mark_terminal(
+            &self,
+            key: DeliveryKey,
+            worker_id: &LeaseHolder,
+            error: &str,
+            next_probe_at: DateTime<Utc>,
+            _target: &ContextTarget,
+        ) -> Result<(), DeliveryLeaseError> {
             self.lease_check(key, worker_id)?;
             self.terminal.lock().map_err(poisoned)?.push((key, error.to_owned()));
+            self.next_probes.lock().map_err(poisoned)?.push(next_probe_at);
             Ok(())
         }
 
@@ -1214,6 +1239,36 @@ mod tests {
             let earliest = now + TimeDelta::from_std(backoff + delay).expect("a representable delay");
             let scheduled = failed.first().map(|(_, _, next_attempt_at)| *next_attempt_at);
             assert!(scheduled.is_some_and(|at| at >= earliest), "{scheduled:?} is earlier than {earliest}");
+            Ok(())
+        })
+    }
+
+    /// An exhausted delivery may be its Subscription's probe, so the store is
+    /// told when the next probe is due: one first retry step after the
+    /// exhaustion, as for a delivery failing for the first time.
+    #[test]
+    fn an_exhausted_delivery_names_the_next_probe_one_first_retry_step_away() -> Result<(), NotificationError> {
+        block_on(async {
+            let mut final_attempt = entry()?;
+            final_attempt.attempt_count = 4;
+            let store = Arc::new(RecordingStore::with_entry(final_attempt));
+            let now = Utc::now();
+            drain(
+                store.clone(),
+                DeliveryDisposition::RetryableFailure {
+                    detail: "transient".to_owned(),
+                },
+            )?
+            .execute(now)
+            .await?;
+            let first_step = retry_schedule(&config()).expect("a valid retry schedule").delay(RetryNumber::FIRST);
+            let earliest = now + TimeDelta::from_std(first_step).expect("a representable delay");
+            let probes = store.next_probes.lock().expect("the probe record lock is not poisoned").clone();
+            pretty_assertions::assert_eq!(probes.len(), 1);
+            assert!(
+                probes.iter().all(|at| *at >= earliest && *at < earliest + TimeDelta::seconds(5)),
+                "{probes:?} against {earliest}"
+            );
             Ok(())
         })
     }

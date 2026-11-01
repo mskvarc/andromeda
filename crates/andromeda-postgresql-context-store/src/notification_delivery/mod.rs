@@ -32,6 +32,8 @@ pub mod cleanup;
 pub mod event_commit;
 /// Writing one write's notification events and their deliveries.
 pub mod event_insert;
+/// The hold a failing endpoint puts on the rest of its Subscription's queue.
+pub(crate) mod hold;
 /// The queue behind the notification-owned store port.
 pub mod queue;
 /// Validated notification delivery records and their mapper errors.

@@ -21,7 +21,7 @@ use andromeda_postgresql_branch::{snapshot_schema, snapshot_schema_name};
 use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
     current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
-    notification::{NotificationDeliveries, NotificationEvents},
+    notification::{NotificationDeliveries, NotificationDeliveryHolds, NotificationEvents},
     subscriptions::{SubscriptionDeliveryState, Subscriptions},
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, ScopeHistory, StreamTypeCensus, TemporalAttributeStreams},
 };
@@ -42,7 +42,7 @@ use sqlx::PgConnection;
 /// (parents before children), which the relations a clone copies keep. The
 /// branch migrations create them; this list only orders the truncation and
 /// the copies.
-pub(crate) fn branch_tables() -> [DynIden; 16] {
+pub(crate) fn branch_tables() -> [DynIden; 17] {
     [
         Entities::Table.into_iden(),
         Subscriptions::Table.into_iden(),
@@ -60,6 +60,7 @@ pub(crate) fn branch_tables() -> [DynIden; 16] {
         AttributeHistoryInstanceClaims::Table.into_iden(),
         SubscriptionDeliveryState::Table.into_iden(),
         NotificationDeliveries::Table.into_iden(),
+        NotificationDeliveryHolds::Table.into_iden(),
     ]
 }
 

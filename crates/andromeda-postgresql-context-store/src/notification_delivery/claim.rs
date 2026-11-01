@@ -29,7 +29,11 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_notification::{delivery_entry::DeliveryEntry, delivery_lease::LeaseTerm, held_events::HeldEvents};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::{notification::NotificationDeliveries, snapshot::Snapshots, subscriptions::Subscriptions};
+use andromeda_postgresql_schema::{
+    notification::{NotificationDeliveries, NotificationDeliveryHolds},
+    snapshot::Snapshots,
+    subscriptions::Subscriptions,
+};
 use andromeda_postgresql_seaquery::{
     interval::make_interval_secs,
     queue::{claimable_at, is_claimed_from},
@@ -182,13 +186,21 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// The attempt ceiling is not part of the predicate: a delivery that has run
 /// out of attempts is stamped `exhausted_at` by the worker that made the last
 /// attempt, so the queue never needs to know the configured maximum.
+///
+/// A delivery set aside behind its Subscription's probe has left the index
+/// already (`held_at`). One that reached the queue while the hold was being
+/// taken, or that failed alongside the probe, is not yet set aside: the hold
+/// itself keeps it out until the next failed attempt sets it aside, so the
+/// probe stays the one attempt the Subscription's endpoint receives.
 fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: NonZeroU32, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
         .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
         .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
         .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
+        .and_where(Expr::col(NotificationDeliveries::HeldAt).is_null())
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
+        .and_where(Expr::exists(held_behind_another_probe(target)).not())
         .order_by_expr(delivery_claimable_at(), Order::Asc)
         .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
         .limit(u64::from(batch_size.get()))
@@ -218,6 +230,23 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::NextAttemptAt)),
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
         ]))
+        .to_owned()
+}
+
+/// `SELECT 1 FROM notification_delivery_holds WHERE` the candidate's
+/// Subscription is held and the candidate is not its probe.
+fn held_behind_another_probe(target: &ContextTarget) -> SelectStatement {
+    Query::select()
+        .expr(Expr::val(1))
+        .from(table_of(target, NotificationDeliveryHolds::Table))
+        .and_where(
+            Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::SubscriptionKey))
+                .equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
+        )
+        .and_where(
+            Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::DeliveryKey))
+                .ne(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey))),
+        )
         .to_owned()
 }
 
@@ -293,12 +322,32 @@ mod tests {
         let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
         assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
+        assert!(sql.contains(r#""held_at" IS NULL"#), "{sql}");
         assert!(
             sql.contains(r#"GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) <= CURRENT_TIMESTAMP"#),
             "{sql}"
         );
         let predicate = sql.split(" RETURNING ").next().unwrap_or_default();
         assert!(!predicate.contains("attempt_count"), "the claim must not repeat the attempt ceiling: {sql}");
+    }
+
+    #[test]
+    fn a_held_subscription_offers_only_its_probe_to_the_claim() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(
+            sql.contains(concat!(
+                r#"AND (NOT EXISTS(SELECT 1 FROM "notification_delivery_holds" WHERE "notification_delivery_holds"."subscription_key" = "#,
+                r#""notification_deliveries"."subscription_key" AND "notification_delivery_holds"."delivery_key" <> "#,
+                r#""notification_deliveries"."delivery_key")) ORDER BY"#
+            )),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_branch_claim_reads_the_holds_of_its_own_branch() {
+        let sql = claim_sql(&snapshot());
+        assert!(sql.contains(r#"FROM "snap_5"."notification_delivery_holds""#), "{sql}");
     }
 
     #[test]

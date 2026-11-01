@@ -26,7 +26,7 @@ use ngsi_ld::{
 use wiremock::{
     Mock,
     ResponseTemplate,
-    matchers::{method, path},
+    matchers::{body_string_contains, method, path},
 };
 
 /// Pins: under durable delivery an Entity update whose first delivery failed is retried after the Entity was deleted,
@@ -43,9 +43,13 @@ async fn a_ntf_pay_0023_a_durable_update_delivered_after_its_entity_was_deleted_
     let building_type = namespace.entity_type("Building")?;
     let building_id = format!("urn:ngsi-ld:Building:{namespace}").parse::<EntityId>()?;
     let renamed = [BodyPattern::Contains("Tour Eiffel".to_owned())];
+    // `entityUpdated` covers `attributeCreated` (clause 5.2.12), so the creation is notified too. Only the update is
+    // refused: a refused creation would be the delivery the update waits behind, since a failing endpoint is retried
+    // one delivery at a time.
     sink.mount(
         Mock::given(method("POST"))
             .and(path("/notify/1"))
+            .and(body_string_contains("Tour Eiffel"))
             .respond_with(ResponseTemplate::new(500))
             .with_priority(5),
     )

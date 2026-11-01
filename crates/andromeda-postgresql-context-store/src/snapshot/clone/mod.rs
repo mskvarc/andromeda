@@ -34,7 +34,7 @@ use crate::{
     },
 };
 use andromeda_postgresql_schema::{
-    notification::{NotificationDeliveries, NotificationEvents},
+    notification::{NotificationDeliveries, NotificationDeliveryHolds, NotificationEvents},
     subscriptions::{SubscriptionDeliveryState, Subscriptions},
 };
 use andromeda_postgresql_seaquery::{command::Command, relation_copy::RelationCopy};
@@ -43,12 +43,13 @@ use sqlx::PgConnection;
 
 /// The branch relations a clone leaves empty: the Snapshot-scoped
 /// subscriptions, their delivery state and their notification queue.
-fn uncloned_tables() -> [DynIden; 4] {
+fn uncloned_tables() -> [DynIden; 5] {
     [
         Subscriptions::Table.into_iden(),
         NotificationEvents::Table.into_iden(),
         SubscriptionDeliveryState::Table.into_iden(),
         NotificationDeliveries::Table.into_iden(),
+        NotificationDeliveryHolds::Table.into_iden(),
     ]
 }
 

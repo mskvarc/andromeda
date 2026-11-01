@@ -320,7 +320,14 @@ mod tests {
             Ok(())
         }
 
-        async fn mark_terminal(&self, _key: DeliveryKey, _worker_id: &LeaseHolder, _error: &str, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
+        async fn mark_terminal(
+            &self,
+            _key: DeliveryKey,
+            _worker_id: &LeaseHolder,
+            _error: &str,
+            _next_probe_at: DateTime<Utc>,
+            _target: &ContextTarget,
+        ) -> Result<(), DeliveryLeaseError> {
             Ok(())
         }
 

@@ -18,6 +18,15 @@
 //! addresses one delivery, whose identifier is unique only within its branch, so
 //! `mark_delivered`/`mark_failed`/`mark_terminal` take the delivery's
 //! [`ContextTarget`] to name the branch its row lives in.
+//!
+//! An endpoint that fails holds its Subscription's queue: a retryable failure
+//! makes the failed delivery the Subscription's probe, the one delivery of the
+//! Subscription a claim still returns, and sets the others aside with their
+//! attempt counts unchanged. A delivered attempt releases them in the order
+//! they were queued, and a probe that is exhausted hands the hold to the
+//! delivery set aside first. However long the backlog behind an endpoint that
+//! never answers, it costs one attempt per retry step, and the deliveries of
+//! every other Subscription keep the slots.
 
 use crate::{
     delivery_claim::DeliveryClaim,
@@ -88,7 +97,8 @@ pub trait DeliveryStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Record a failed attempt, release the lease and schedule the next attempt,
-    /// provided `worker_id` still holds that lease.
+    /// provided `worker_id` still holds that lease, and hold the rest of the
+    /// delivery's Subscription behind it.
     ///
     /// `error` arrives already truncated to the bound the schema accepts, so an
     /// implementation stores it verbatim rather than trimming it again.
@@ -110,7 +120,8 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// Record a terminal failure — a failure no retry can fix, or the failure
     /// of the attempt that reached the configured ceiling — stamp the delivery
     /// exhausted, release the lease and make it permanently ineligible for
-    /// claims, provided `worker_id` still holds that lease.
+    /// claims, provided `worker_id` still holds that lease. When the delivery
+    /// was its Subscription's probe, the next probe is due at `next_probe_at`.
     ///
     /// `error` arrives already truncated to the bound the schema accepts.
     fn mark_terminal<'life0, 'life1, 'life2, 'life3, 'async_trait>(
@@ -118,6 +129,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
         key: DeliveryKey,
         worker_id: &'life1 LeaseHolder,
         error: &'life2 str,
+        next_probe_at: DateTime<Utc>,
         target: &'life3 ContextTarget,
     ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
     where
