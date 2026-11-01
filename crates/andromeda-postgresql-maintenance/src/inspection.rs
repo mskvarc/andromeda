@@ -239,7 +239,7 @@ fn heap_tuple_counts_statement(branch: Branch, heap: HeapTarget) -> SelectStatem
 }
 
 /// Detailed physical tuple query against one bound `regclass`.
-fn pgstattuple_statement(relation: &str) -> SelectStatement {
+pub(crate) fn pgstattuple_statement(relation: &str) -> SelectStatement {
     Query::select()
         .columns([Alias::new(CatalogColumn::FreeSpace.as_str()), Alias::new(CatalogColumn::TableLength.as_str())])
         .from_function(pgstattuple(to_regclass(Expr::val(relation))), Alias::new("physical"))

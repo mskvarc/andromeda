@@ -154,7 +154,7 @@ mod tests {
         branch::Branch,
         candidate::{heap_target::HeapTarget, index_target::IndexTarget},
         capability::{ProbeCapability, maintain_privilege_statement, maintain_probe, ownership_statement, probe_privilege_statement, server_version_statement},
-        inspection::IndexSize,
+        inspection::{IndexSize, pgstattuple_statement},
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
@@ -251,6 +251,22 @@ mod tests {
             probe_privilege_statement().to_string(PostgresQueryBuilder),
             "SELECT has_function_privilege(current_user, to_regprocedure('pgstattuple(regclass)'), 'EXECUTE')"
         );
+    }
+
+    #[test]
+    fn every_function_the_probe_privilege_check_names_is_one_a_probe_calls() {
+        let privilege = probe_privilege_statement().to_string(PostgresQueryBuilder);
+        let probe = pgstattuple_statement("public.pk_ca_grain").to_string(PostgresQueryBuilder);
+        let named: Vec<&str> = privilege
+            .split("to_regprocedure('")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("(regclass)')"))
+            .map(|(function, _)| function)
+            .collect();
+        assert_eq!(named, ["pgstattuple"]);
+        for function in named {
+            assert!(probe.contains(&format!("{function}(to_regclass(")), "{function}: {probe}");
+        }
     }
 
     #[test]
