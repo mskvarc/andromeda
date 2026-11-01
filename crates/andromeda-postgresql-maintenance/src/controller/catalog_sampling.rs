@@ -4,10 +4,10 @@
 //! chunks awaiting a rebuild of each history hypertable.
 
 use crate::{
-    branch::{Branch, BranchTarget},
+    branch::BranchTarget,
     candidate::{MaintenanceTarget, heap_target::HeapTarget},
     columnstore_partiality::ColumnstorePartiality,
-    controller::{PassOutcome, idle_gates},
+    controller::{PassOutcome, action_rights::ActionRights, idle_gates, visit_branches::VisitBranch},
     error::MaintenanceError,
     history_chunk_policy::{decide_recompression, decide_rowstore_rebuild},
     inspection::HeapSample,
@@ -16,7 +16,6 @@ use crate::{
     state::{RegisteredTenant, target_record},
     statistics_freshness::HeapStatistics,
 };
-use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use chrono::Utc;
 use sqlx::PgConnection;
 use tracing::info;
@@ -77,20 +76,23 @@ impl CatalogSample {
     }
 }
 
-/// Persist the cheap catalog evidence of `branch` without executing newly
-/// queued work in this pass.
+/// Persist the cheap catalog evidence of the branch of `visit` without
+/// executing newly queued work in this pass. A target whose right the role
+/// lacks, by `rights`, is decided under observe mode.
 pub(crate) async fn record_catalog_samples(
-    mode: MaintenanceMode,
+    visit: VisitBranch,
+    rights: &ActionRights,
     platform: &mut PgConnection,
     tenant: &RegisteredTenant,
-    branch: Branch,
     samples: &[CatalogSample],
     profile: PolicyProfile,
 ) -> Result<Option<PassOutcome>, MaintenanceError> {
+    let branch = visit.branch;
     let mut outcome = None;
     for sample in samples {
         let target = sample.target;
         let row = BranchTarget::new(branch, target)?;
+        let mode = rights.mode(row, visit.mode);
         let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
         let decision = match sample.evidence {

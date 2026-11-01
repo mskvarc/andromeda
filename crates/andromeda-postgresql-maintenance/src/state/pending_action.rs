@@ -10,13 +10,18 @@
 //! never queues, and an action queued before automatic mode lost the branch's
 //! `MAINTAIN` would otherwise be reached on every visit and end it before its
 //! index probes. Such a branch's queued actions are withdrawn instead, and
-//! queued again by a later sample once the branch is acted in.
+//! queued again by a later sample once the branch is acted in. An action whose
+//! own right the role lacks, beyond the branch's `MAINTAIN`, is withdrawn the
+//! same way, alone.
 
 use crate::{
     branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     error::MaintenanceError,
-    evidence::{recorded_decision::RecordedDecision, target_code::target_of},
+    evidence::{
+        recorded_decision::RecordedDecision,
+        target_code::{stored_target, target_of},
+    },
     policy::PolicyDecision,
     state::{
         RegisteredTenant,
@@ -89,7 +94,22 @@ pub(crate) async fn withdraw_actions(
     tenant: &RegisteredTenant,
     branch: Branch,
 ) -> Result<Vec<MaintenanceTarget>, MaintenanceError> {
-    let rows = withdraw_actions_update(tenant.key, branch).to_query().fetch_all(connection).await?;
+    withdrawn_targets(connection, &withdraw_actions_update(tenant.key, branch)).await
+}
+
+/// Withdraw the action queued on `row`, recording it as one automatic mode
+/// would act on, and return the target if it was queued.
+pub(crate) async fn withdraw_action(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    row: BranchTarget,
+) -> Result<Vec<MaintenanceTarget>, MaintenanceError> {
+    withdrawn_targets(connection, &withdraw_action_update(tenant.key, row)).await
+}
+
+/// Run a withdrawal and decode the targets it cleared.
+async fn withdrawn_targets(connection: &mut PgConnection, statement: &UpdateStatement) -> Result<Vec<MaintenanceTarget>, MaintenanceError> {
+    let rows = statement.to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
             Ok(target_of(MaintenanceTargetCode::try_from(
@@ -115,6 +135,13 @@ fn withdraw_actions_update(tenant: TenantKey, branch: Branch) -> UpdateStatement
         .and_where(branch_rows(branch))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
         .returning_col(PostgresqlMaintenanceTargets::Target)
+        .to_owned()
+}
+
+/// Build the update clearing the pending action of `tenant`'s `row` alone.
+fn withdraw_action_update(tenant: TenantKey, row: BranchTarget) -> UpdateStatement {
+    withdraw_actions_update(tenant, row.branch())
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(row.target()).code()))
         .to_owned()
 }
 
@@ -206,11 +233,19 @@ fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<Mainte
 )]
 mod tests {
     use crate::{
-        branch::Branch,
-        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
+        branch::{Branch, BranchTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
         state::{
             TenantKey,
-            pending_action::{PendingAction, PendingRow, due_tenants, first_pending, pending_actions_statement, withdraw_actions_update},
+            pending_action::{
+                PendingAction,
+                PendingRow,
+                due_tenants,
+                first_pending,
+                pending_actions_statement,
+                withdraw_action_update,
+                withdraw_actions_update,
+            },
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -314,6 +349,16 @@ mod tests {
         );
         let live = withdraw_actions_update(TenantKey(4), Branch::Live).to_string(PostgresQueryBuilder);
         assert!(live.contains(r#""snapshot_key" = 0 AND"#), "{live}");
+    }
+
+    /// Target code 35 is `attribute_history_columnstore`.
+    #[test]
+    fn withdrawing_one_action_clears_only_that_target_of_its_branch() {
+        let row = BranchTarget::new(Branch::Live, MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory)).expect("live branch holds the hypertable");
+        assert_eq!(
+            withdraw_action_update(TenantKey(4), row).to_string(PostgresQueryBuilder),
+            r#"UPDATE "postgresql_maintenance_targets" SET "is_action_pending" = FALSE, "last_decision" = 3, "consecutive_failures" = 0 WHERE "tenant_key" = 4 AND "snapshot_key" = 0 AND "is_action_pending" = TRUE AND "target" = 35 RETURNING "target""#
+        );
     }
 
     #[test]

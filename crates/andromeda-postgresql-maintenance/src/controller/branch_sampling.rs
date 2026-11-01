@@ -9,10 +9,11 @@ use crate::{
     columnstore_partiality,
     controller::{
         PassOutcome,
+        action_rights::{self, ActionRights},
         catalog_sampling::{self, CatalogSample},
         density_sampling,
         probe_selection,
-        visit_branches::{VisitBranch, VisitBranches},
+        visit_branches::VisitBranches,
     },
     error::MaintenanceError,
     gin_density,
@@ -37,11 +38,14 @@ pub(crate) struct BranchSampling {
     /// The indexes to probe: each branch's in its probe order, the branches in
     /// the order they were sampled.
     pub(crate) probe_candidates: Vec<IndexSize>,
+    /// The actions of every branch whose right the role lacks.
+    pub(crate) rights: ActionRights,
 }
 
 /// Record the catalog samples of every branch in `branches`, in order and
-/// each under its own mode, report the heaps autovacuum has missed in each,
-/// and collect each branch's probe candidates.
+/// each under its own mode, every action whose right the role lacks under
+/// observe mode, report the heaps autovacuum has missed in each, and collect
+/// each branch's probe candidates.
 pub(crate) async fn sample_branches(
     platform: &mut PgConnection,
     connection: &mut PgConnection,
@@ -52,9 +56,11 @@ pub(crate) async fn sample_branches(
     let mut sampling = BranchSampling {
         flagged: None,
         probe_candidates: Vec::new(),
+        rights: ActionRights::default(),
     };
     let mut overdue_relations = 0;
-    for VisitBranch { branch, mode } in branches.iter() {
+    for visit in branches.iter() {
+        let branch = visit.branch;
         overdue_relations += autovacuum_health::report_overdue_heaps(connection, tenant, branch).await?;
         let index_sizes = inspection::index_sizes(connection, branch).await?;
         let estimates = btree_estimate::btree_estimates(connection, branch).await?;
@@ -62,6 +68,7 @@ pub(crate) async fn sample_branches(
         let statistics = statistics_freshness::heap_statistics(connection, branch).await?;
         let partiality = columnstore_partiality::partiality_samples(connection, branch).await?;
         let rebuilds = rowstore_rebuild::rebuild_samples(connection, branch, profile).await?;
+        let rights = action_rights::history_rights(platform, connection, tenant, visit, &partiality, &rebuilds, profile).await?;
         let coverage = gin_density::gin_coverage(connection, branch).await?;
         let probe_states = target_record::index_probe_states(platform, tenant, branch).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, branch, &index_sizes, &coverage, profile).await?;
@@ -77,8 +84,9 @@ pub(crate) async fn sample_branches(
             .chain(partiality.into_iter().map(CatalogSample::of_partiality))
             .chain(rebuilds.into_iter().map(CatalogSample::of_rebuild))
             .collect::<Vec<_>>();
-        let flagged = catalog_sampling::record_catalog_samples(mode, platform, tenant, branch, &samples, profile).await?;
+        let flagged = catalog_sampling::record_catalog_samples(visit, &rights, platform, tenant, &samples, profile).await?;
         sampling.flagged = strongest(sampling.flagged, flagged);
+        sampling.rights.extend(rights);
         sampling
             .probe_candidates
             .extend(probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, Utc::now()));

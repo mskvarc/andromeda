@@ -5,7 +5,9 @@
 //! execute it, a visit probes no index and runs every other check, all of
 //! which read the statistics views and the catalogs. The privilege to maintain
 //! a branch's heaps is checked per branch and only decides whether automatic
-//! mode acts there; a branch without it is still sampled.
+//! mode acts there; a branch without it is still sampled. The right one
+//! action needs on the relation it works on, beyond the heaps it vacuums, is
+//! checked on that relation alone.
 //!
 //! PostgreSQL 17 grants maintenance through `MAINTAIN`, which owners and
 //! superusers hold implicitly. An earlier server has no such privilege: there
@@ -57,6 +59,18 @@ pub(crate) enum MaintainPrivilege {
     NotGranted,
 }
 
+/// The right a statement needs on the relation it works on, named in a log
+/// after its absence.
+#[derive(Clone, Copy, Debug, Eq, IntoStaticStr, PartialEq)]
+pub(crate) enum MaintainRight {
+    /// Ownership of the relation, direct or inherited.
+    #[strum(serialize = "missing-ownership")]
+    Ownership,
+    /// The PostgreSQL 17 `MAINTAIN` privilege on the relation.
+    #[strum(serialize = "missing-maintain")]
+    Maintain,
+}
+
 /// Whether the optional `pgstattuple` extension is installed and the role may
 /// execute the one function an index probe calls.
 pub(crate) async fn probe_capability(connection: &mut PgConnection) -> Result<ProbeCapability, MaintenanceError> {
@@ -74,17 +88,47 @@ const MAINTAIN_PRIVILEGE_VERSION: PostgresVersion = PostgresVersion::new(170_000
 
 /// Whether the role may maintain each of `branches`, in order.
 pub(crate) async fn maintain_privileges(connection: &mut PgConnection, branches: &[Branch]) -> Result<Vec<(Branch, MaintainPrivilege)>, MaintenanceError> {
-    let server = PostgresVersion::new(server_version_statement().to_query_scalar::<i32>().fetch_one(&mut *connection).await?);
+    let server = server_version(connection).await?;
     let mut privileges = Vec::with_capacity(branches.len());
     for &branch in branches {
-        let privilege = if maintain_probe(server, branch).to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
-            MaintainPrivilege::Held
-        } else {
-            MaintainPrivilege::NotGranted
-        };
-        privileges.push((branch, privilege));
+        privileges.push((branch, privilege_of(connection, &maintain_probe(server, branch)).await?));
     }
     Ok(privileges)
+}
+
+/// The running server's version.
+pub(crate) async fn server_version(connection: &mut PgConnection) -> Result<PostgresVersion, MaintenanceError> {
+    Ok(PostgresVersion::new(
+        server_version_statement().to_query_scalar::<i32>().fetch_one(connection).await?,
+    ))
+}
+
+/// Whether the role owns `relation`, directly or through a role it inherits.
+pub(crate) async fn ownership(connection: &mut PgConnection, relation: &str) -> Result<MaintainPrivilege, MaintenanceError> {
+    privilege_of(connection, &relation_ownership_statement(relation)).await
+}
+
+/// Whether the role may maintain `relation` on a server at version `server`.
+pub(crate) async fn relation_maintain(connection: &mut PgConnection, server: PostgresVersion, relation: &str) -> Result<MaintainPrivilege, MaintenanceError> {
+    privilege_of(connection, &relation_maintain_probe(server, relation)).await
+}
+
+/// The right `relation_maintain` asks for on a server at version `server`.
+pub(crate) fn maintain_right(server: PostgresVersion) -> MaintainRight {
+    if server >= MAINTAIN_PRIVILEGE_VERSION {
+        MaintainRight::Maintain
+    } else {
+        MaintainRight::Ownership
+    }
+}
+
+/// Run a privilege query answering one boolean.
+async fn privilege_of(connection: &mut PgConnection, statement: &SelectStatement) -> Result<MaintainPrivilege, MaintenanceError> {
+    Ok(if statement.to_query_scalar::<bool>().fetch_one(connection).await? {
+        MaintainPrivilege::Held
+    } else {
+        MaintainPrivilege::NotGranted
+    })
 }
 
 /// The running server's `server_version_num`.
@@ -111,6 +155,23 @@ fn ownership_statement(branch: Branch) -> SelectStatement {
         .map(|heap| current_user_owns_relation(Expr::val(branch.qualified(heap.relation_name()))))
         .fold(Expr::val(true), ExprTrait::and);
     Query::select().expr(owned).to_owned()
+}
+
+/// Ownership, direct or inherited, of `relation`, which a superuser always
+/// passes.
+fn relation_ownership_statement(relation: &str) -> SelectStatement {
+    Query::select().expr(current_user_owns_relation(Expr::val(relation))).to_owned()
+}
+
+/// The query whether the role may maintain `relation` on a server at version
+/// `server`: `MAINTAIN` from PostgreSQL 17 on, ownership before.
+fn relation_maintain_probe(server: PostgresVersion, relation: &str) -> SelectStatement {
+    match maintain_right(server) {
+        MaintainRight::Maintain => Query::select()
+            .expr(current_user_has_table_privilege(Expr::val(relation), Expr::val("MAINTAIN")))
+            .to_owned(),
+        MaintainRight::Ownership => relation_ownership_statement(relation),
+    }
 }
 
 /// `pg_extension` presence query.
@@ -153,7 +214,18 @@ mod tests {
     use crate::{
         branch::Branch,
         candidate::{heap_target::HeapTarget, index_target::IndexTarget},
-        capability::{ProbeCapability, maintain_privilege_statement, maintain_probe, ownership_statement, probe_privilege_statement, server_version_statement},
+        capability::{
+            MaintainRight,
+            ProbeCapability,
+            maintain_privilege_statement,
+            maintain_probe,
+            maintain_right,
+            ownership_statement,
+            probe_privilege_statement,
+            relation_maintain_probe,
+            relation_ownership_statement,
+            server_version_statement,
+        },
         inspection::{IndexSize, pgstattuple_statement},
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -267,6 +339,35 @@ mod tests {
         for function in named {
             assert!(probe.contains(&format!("{function}(to_regclass(")), "{function}: {probe}");
         }
+    }
+
+    #[test]
+    fn a_relation_is_maintained_through_maintain_from_postgresql_17_and_through_ownership_before() {
+        let chunk = "_timescaledb_internal._hyper_1_2_chunk";
+        assert_eq!(
+            relation_maintain_probe(PostgresVersion::new(170_000), chunk).to_string(PostgresQueryBuilder),
+            "SELECT has_table_privilege(current_user, '_timescaledb_internal._hyper_1_2_chunk', 'MAINTAIN')"
+        );
+        assert_eq!(
+            relation_maintain_probe(PostgresVersion::new(160_004), chunk).to_string(PostgresQueryBuilder),
+            relation_ownership_statement(chunk).to_string(PostgresQueryBuilder)
+        );
+        assert_eq!(maintain_right(PostgresVersion::new(170_000)), MaintainRight::Maintain);
+        assert_eq!(maintain_right(PostgresVersion::new(160_004)), MaintainRight::Ownership);
+    }
+
+    #[test]
+    fn relation_ownership_counts_membership_in_the_owning_role() {
+        assert_eq!(
+            relation_ownership_statement("public.attribute_history").to_string(PostgresQueryBuilder),
+            r#"SELECT pg_has_role(current_user, (SELECT "relowner" FROM "pg_class" WHERE "oid" = ('public.attribute_history'::regclass)), 'USAGE')"#
+        );
+    }
+
+    #[test]
+    fn a_missing_right_is_named_after_what_is_missing() {
+        assert_eq!(<&str>::from(MaintainRight::Ownership), "missing-ownership");
+        assert_eq!(<&str>::from(MaintainRight::Maintain), "missing-maintain");
     }
 
     #[test]

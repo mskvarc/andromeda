@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceCommand, drop_index_concurrently};
 use sea_query::Alias;
+use std::borrow::Cow;
 
 /// PostgreSQL's documented invalid concurrent-reindex artifact class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,6 +71,15 @@ impl ArtifactIndexName {
         match &self.owner {
             ArtifactOwner::Index { branch, .. } => *branch,
             ArtifactOwner::Chunk { .. } => Branch::Live,
+        }
+    }
+
+    /// The table the artifact indexes, whose owner owns the artifact and alone
+    /// may drop it: an allowlisted index's heap in its branch, or the chunk.
+    pub(crate) fn table(&self) -> Cow<'_, str> {
+        match &self.owner {
+            ArtifactOwner::Index { branch, index } => Cow::Owned(branch.qualified(index.heap().relation_name())),
+            ArtifactOwner::Chunk { chunk, .. } => Cow::Borrowed(&chunk.relation),
         }
     }
 
@@ -245,6 +255,21 @@ mod tests {
 
     /// A chunk rebuild also rebuilds the index of the chunk's TOAST table, so
     /// an interruption leaves its `_ccnew` in `pg_toast`, dropped from there.
+    #[test]
+    fn an_artifact_is_owned_through_the_table_it_indexes() {
+        let snapshot = Branch::Snapshot(SnapshotKey::try_from(7).expect("positive snapshot key"));
+        let index = RecoveryArtifact::parse(snapshot, "idx_ca_value_number_ccnew").expect("allowlisted artifact");
+        assert_eq!(index.name.table(), "snap_7.current_attributes");
+        let chunk_artifact = RecoveryArtifact::of_chunk(
+            HistoryTable::AttributeHistory,
+            chunk(),
+            "_timescaledb_internal".to_owned(),
+            "_hyper_1_2_chunk_idx_ccnew",
+        )
+        .expect("chunk artifact");
+        assert_eq!(chunk_artifact.name.table(), chunk().relation);
+    }
+
     #[test]
     fn a_chunk_toast_artifact_is_dropped_from_pg_toast() {
         let Some(artifact) = RecoveryArtifact::of_chunk(HistoryTable::AttributeHistory, chunk(), "pg_toast".to_owned(), "pg_toast_29697_index_ccnew") else {

@@ -1,5 +1,6 @@
 //! One bounded, fleet-serialized PostgreSQL maintenance controller pass.
 
+mod action_rights;
 mod branch_sampling;
 mod catalog_sampling;
 mod density_sampling;
@@ -13,7 +14,7 @@ use crate::{
     autovacuum_health,
     branch::Branch,
     branch_selection,
-    capability,
+    capability::{self, MaintainPrivilege},
     controller::{probe_notices::ProbeNotices, visit_branches::VisitBranches},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
@@ -218,11 +219,16 @@ impl MaintenanceController {
             Some(artifact) => Some(artifact),
             None => rowstore_rebuild::chunk_artifacts(&mut connection).await?.into_iter().next(),
         };
+        let mut flagged = sampling.flagged;
         if let Some(artifact) = artifact {
             let mode = branches.mode(artifact.name.branch());
-            return action::recover_artifact(mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
+            if mode != MaintenanceMode::Automatic || action_rights::artifact_drop_privilege(&mut connection, &artifact).await? == MaintainPrivilege::Held {
+                return action::recover_artifact(mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
+            }
+            action_rights::report_undroppable_artifact(tenant, &artifact);
+            flagged = flagged.or(Some(PassOutcome::WouldAct));
         }
-        if let Some(row) = pending_before_sampling {
+        if let Some(row) = pending_before_sampling.filter(|&row| sampling.rights.privilege(row) == MaintainPrivilege::Held) {
             let mode = branches.mode(row.branch());
             return action::execute_pending(mode, platform, &mut connection, tenant, row, profile, cancellation).await;
         }
@@ -230,7 +236,7 @@ impl MaintenanceController {
         let candidates = capability.probe_candidates(sampling.probe_candidates);
         let outcome = index_probing::probe_indexes(&branches, platform, &mut connection, tenant, &candidates, profile, cancellation)
             .await?
-            .pass_outcome(sampling.flagged);
+            .pass_outcome(flagged);
         if outcome != PassOutcome::Cancelled {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         }
