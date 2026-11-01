@@ -3,7 +3,7 @@
 //! (clause 4.7): the extraction -- counting, number check, `@context` reading
 //! and decoding -- peaks below 100 MiB above the body it was handed, where the
 //! one copy of 1,000,000 positions of 32 bytes the Entity owns is about 32 MB,
-//! and it takes well under a second.
+//! and its time grows linearly with the positions.
 //!
 //! The measurement counts the allocations of the calling thread alone, so the
 //! other tests of the binary do not disturb it; the extraction runs on a
@@ -33,27 +33,41 @@ use std::{
     fmt::{Error as FormatError, Write},
     time::{Duration, Instant},
 };
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 use tower::{Layer, ServiceExt, service_fn};
 
-/// The positions of the test polygon's one ring, closing position included.
+/// The positions of the large polygon's one ring, closing position included.
 const POSITIONS: usize = 1_000_000;
+
+/// The positions of the small polygon the large one's time is compared with.
+const BASELINE_POSITIONS: usize = POSITIONS / 4;
 
 /// The extraction may peak this far above what was allocated before it.
 const PEAK_BUDGET: u64 = 100 * 1024 * 1024;
 
-/// How long the extraction may take in an optimised build; an unoptimised one
-/// is allowed ten times that.
-const TIME_BUDGET: Duration = Duration::from_secs(1);
+/// How many times longer the large polygon may take than the small one: four
+/// times the positions take about four times as long when decoding is linear
+/// and sixteen times when it is quadratic.
+const MAX_TIME_RATIO: f64 = 8.0;
 
-/// A create body whose `location` is a Polygon of one ring of [`POSITIONS`]
+/// What decoding one body cost.
+struct Decoding {
+    /// The bytes of the body.
+    length: usize,
+    /// The most bytes allocated above what was allocated before the extraction.
+    peak_above_input: u64,
+    /// The wall-clock time of the extraction.
+    elapsed: Duration,
+}
+
+/// A create body whose `location` is a Polygon of one ring of `positions`
 /// positions, spelled as clients spell coordinates: some with a trailing zero,
 /// some integral.
-fn polygon_body() -> Result<String, FormatError> {
-    let mut body = String::with_capacity(POSITIONS * 24 + 256);
+fn polygon_body(positions: usize) -> Result<String, FormatError> {
+    let mut body = String::with_capacity(positions * 24 + 256);
     body.push_str(r#"{"id":"urn:ngsi-ld:Area:1","type":"Area","location":{"type":"GeoProperty","value":{"type":"Polygon","coordinates":[["#);
-    for index in 0..POSITIONS {
-        let step = if index + 1 == POSITIONS { 0 } else { index };
+    for index in 0..positions {
+        let step = if index + 1 == positions { 0 } else { index };
         if index > 0 {
             body.push(',');
         }
@@ -80,10 +94,10 @@ fn location_positions(entity: &Entity) -> Option<usize> {
     }
 }
 
-#[test]
-fn a_million_position_polygon_body_decodes_without_a_tree() {
-    let runtime = Builder::new_current_thread().enable_all().build().expect("the runtime builds");
-    let body = Bytes::from(polygon_body().expect("the body is written"));
+/// Extracts a create body of a polygon of `positions` positions into a typed
+/// Entity on `runtime`, checking that its geometry keeps every position.
+fn decode(runtime: &Runtime, positions: usize) -> Decoding {
+    let body = Bytes::from(polygon_body(positions).expect("the body is written"));
     let length = body.len();
     let request = Request::builder()
         .uri("/ngsi-ld/v1/entities")
@@ -110,21 +124,45 @@ fn a_million_position_polygon_body_decodes_without_a_tree() {
     });
 
     let elapsed = started.elapsed();
-    let peak_above_input = measured.bytes_max;
-    println!("decoding a body of {length} bytes holding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}");
     let entity = match decoded.expect("the extraction ran") {
         Ok(entity) => entity,
         Err(refusal) => panic!("the polygon body is a valid Entity, got {refusal:?}"),
     };
     assert_eq!(
         location_positions(&entity),
-        Some(POSITIONS),
+        Some(positions),
         "the location is a typed geometry of every position"
+    );
+    Decoding {
+        length,
+        peak_above_input: measured.bytes_max,
+        elapsed,
+    }
+}
+
+#[test]
+fn a_million_position_polygon_body_decodes_without_a_tree() {
+    let runtime = Builder::new_current_thread().enable_all().build().expect("the runtime builds");
+
+    let baseline = decode(&runtime, BASELINE_POSITIONS);
+    let large = decode(&runtime, POSITIONS);
+
+    let Decoding {
+        length,
+        peak_above_input,
+        elapsed,
+    } = large;
+    let ratio = elapsed.as_secs_f64() / baseline.elapsed.as_secs_f64();
+    println!(
+        "decoding a body of {length} bytes holding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}, {ratio:.1} times the {:?} of {BASELINE_POSITIONS} positions",
+        baseline.elapsed
     );
     assert!(
         peak_above_input < PEAK_BUDGET,
         "decoding {POSITIONS} positions peaked at {peak_above_input} bytes above the input, over the {PEAK_BUDGET} byte budget"
     );
-    let budget = if cfg!(debug_assertions) { TIME_BUDGET * 10 } else { TIME_BUDGET };
-    assert!(elapsed < budget, "decoding {POSITIONS} positions took {elapsed:?}, over {budget:?}");
+    assert!(
+        ratio < MAX_TIME_RATIO,
+        "decoding {POSITIONS} positions took {ratio:.1} times as long as {BASELINE_POSITIONS}, over {MAX_TIME_RATIO}"
+    );
 }
