@@ -145,6 +145,12 @@ mod tests {
                     relation: Relation::Below,
                     bound: zero,
                 },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::FederationForwardingRequestTimeout,
+                    value: Quantity::Duration(Duration::from_secs(5)),
+                    relation: Relation::Below,
+                    bound: zero,
+                },
             ]
         );
         config.request_limits.timeout = HumanDuration::from_millis(20_001);

@@ -12,13 +12,19 @@ use crate::{
 };
 
 /// Connecting to a source and a forwarded request each need a positive
-/// deadline. Every distinct entity a source answers is a row it sent, so a
+/// deadline, and the request deadline includes connecting, so a connect
+/// deadline past it would never be the one that ends a wait. Every distinct entity a source answers is a row it sent, so a
 /// row ceiling below the entity limit would refuse a query the entity limit
 /// admits.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Positive(ConfigKey::FederationForwardingConnectTimeout),
         Rule::Positive(ConfigKey::FederationForwardingRequestTimeout),
+        Rule::Ordered {
+            key: ConfigKey::FederationForwardingConnectTimeout,
+            relation: Relation::AtMost,
+            limit: Limit::Key(ConfigKey::FederationForwardingRequestTimeout),
+        },
         Rule::Ordered {
             key: ConfigKey::FederationQueryMaxSourceRows,
             relation: Relation::AtLeast,
@@ -81,15 +87,69 @@ mod tests {
     use std::{num::NonZeroU32, time::Duration};
 
     #[test]
-    fn a_zero_connect_or_request_timeout_is_refused() {
+    fn a_zero_connect_timeout_is_refused() {
         assert_positive_duration(
             |config, value| config.federation.forwarding.connect_timeout = value,
             ConfigKey::FederationForwardingConnectTimeout,
         );
-        assert_positive_duration(
-            |config, value| config.federation.forwarding.request_timeout = value,
-            ConfigKey::FederationForwardingRequestTimeout,
+    }
+
+    /// A zero request deadline is also below the connect deadline it must
+    /// cover.
+    #[test]
+    fn a_zero_request_timeout_is_refused_with_the_connect_timeout_it_must_cover() {
+        let mut config = BrokerConfig::default();
+        config.federation.forwarding.request_timeout = HumanDuration::from_secs(0);
+        assert_eq!(
+            refusals(&config),
+            [
+                ConfigurationViolation::Zero {
+                    key: ConfigKey::FederationForwardingRequestTimeout
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::FederationForwardingConnectTimeout,
+                    value: Quantity::Duration(Duration::from_secs(3)),
+                    relation: Relation::AtMost,
+                    bound: Bound::setting(ConfigKey::FederationForwardingRequestTimeout, Duration::ZERO),
+                },
+            ]
         );
+        config.federation.forwarding.request_timeout = HumanDuration::from_secs(3);
+        assert_accepted(&config);
+    }
+
+    #[test]
+    fn a_connect_timeout_past_the_request_timeout_is_refused_and_an_equal_one_accepted() {
+        let mut config = BrokerConfig::default();
+        config.federation.forwarding.connect_timeout = HumanDuration::from_millis(5_001);
+        assert_eq!(
+            refusals(&config),
+            [ConfigurationViolation::OutOfRange {
+                key: ConfigKey::FederationForwardingConnectTimeout,
+                value: Quantity::Duration(Duration::from_millis(5_001)),
+                relation: Relation::AtMost,
+                bound: Bound::setting(ConfigKey::FederationForwardingRequestTimeout, Duration::from_secs(5)),
+            }]
+        );
+        config.federation.forwarding.connect_timeout = HumanDuration::from_secs(5);
+        assert_accepted(&config);
+    }
+
+    #[test]
+    fn a_forwarded_request_timeout_at_the_request_deadline_is_refused_and_one_below_it_accepted() {
+        let mut config = BrokerConfig::default();
+        config.federation.forwarding.request_timeout = HumanDuration::from_secs(30);
+        assert_eq!(
+            refusals(&config),
+            [ConfigurationViolation::OutOfRange {
+                key: ConfigKey::FederationForwardingRequestTimeout,
+                value: Quantity::Duration(Duration::from_secs(30)),
+                relation: Relation::Below,
+                bound: Bound::setting(ConfigKey::RequestLimitsTimeout, Duration::from_secs(30)),
+            }]
+        );
+        config.federation.forwarding.request_timeout = HumanDuration::from_millis(29_999);
+        assert_accepted(&config);
     }
 
     #[test]

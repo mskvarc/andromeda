@@ -34,7 +34,9 @@ const REPLAY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// A saturated pool, a tenant cold build and a Snapshot still being prepared
 /// each answer 503 with `Retry-After`, and a `@context` that cannot be
 /// downloaded answers 504 `LdContextNotAvailable`, only if their waits end
-/// before the request deadline answers 500 in their place. An HTTP
+/// before the request deadline answers 500 in their place; a forwarded request
+/// likewise counts as a failed source, answered as the operation answers one,
+/// only if it gives up before the request does. An HTTP
 /// notification carries in full the entities a change wrote, so its body limit
 /// exceeds the largest body a request may send. A side-effect or history
 /// lease outlasts the wait for its transaction's connection. A provisional
@@ -69,6 +71,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Ordered {
             key: ConfigKey::JsonLdFetchTimeout,
+            relation: Relation::Below,
+            limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+        Rule::Ordered {
+            key: ConfigKey::FederationForwardingRequestTimeout,
             relation: Relation::Below,
             limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
         },
