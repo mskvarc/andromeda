@@ -17,7 +17,7 @@ use andromeda_outbound_http::{
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use reqwest::{Client, Response, header::HeaderMap};
-use std::{sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 /// A client that downloads `@context` documents only from addresses the
 /// policy admits.
@@ -54,17 +54,25 @@ impl ContextClient {
 
     /// Request `target` as JSON-LD.
     ///
+    /// The download is returned as a boxed `dyn Future + Send`. Every future
+    /// that resolves a `@context` holds it, and proving one of those `Send`
+    /// would otherwise walk the guard's lookup, the `reqwest` request and the
+    /// runtime driver types inside them, which exceeds the trait solver's
+    /// recursion limit where those types are deep (the epoll driver on Linux).
+    ///
     /// # Errors
     ///
     /// Returns [`ContextUnavailable::Refused`] when the policy refuses `target`
     /// or a redirect it leads to, and [`ContextUnavailable::Request`] for any
     /// other failure to obtain a response.
-    pub(crate) async fn get(&self, target: &IriBuf) -> Result<Response, ContextUnavailable> {
-        let mut request_headers = HeaderMap::new();
-        request_headers.typed_insert(JsonLdAccept);
-        let request = self.client.get(target.as_str()).headers(request_headers).build().map_err(request_failure)?;
-        self.guard.check(request.url()).await.map_err(ContextUnavailable::Refused)?;
-        self.client.execute(request).await.map_err(request_failure)
+    pub(crate) fn get<'a>(&'a self, target: &'a IriBuf) -> Pin<Box<dyn Future<Output = Result<Response, ContextUnavailable>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut request_headers = HeaderMap::new();
+            request_headers.typed_insert(JsonLdAccept);
+            let request = self.client.get(target.as_str()).headers(request_headers).build().map_err(request_failure)?;
+            self.guard.check(request.url()).await.map_err(ContextUnavailable::Refused)?;
+            self.client.execute(request).await.map_err(request_failure)
+        })
     }
 }
 
