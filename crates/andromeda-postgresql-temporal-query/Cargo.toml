@@ -28,3 +28,4 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 pretty_assertions = "1.4.1"
 serde_json = "1.0.154"
+strum = "0.28.0"

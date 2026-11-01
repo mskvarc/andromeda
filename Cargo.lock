@@ -1902,6 +1902,7 @@ dependencies = [
  "pretty_assertions",
  "sea-query",
  "serde_json",
+ "strum",
  "thiserror 2.0.21",
 ]
 
