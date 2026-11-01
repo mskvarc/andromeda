@@ -220,7 +220,6 @@ dependencies = [
  "enumset",
  "etcetera",
  "figment2",
- "humantime",
  "humantime-serde",
  "ipnet",
  "iri-rs",

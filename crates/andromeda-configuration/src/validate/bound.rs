@@ -1,9 +1,8 @@
 //! What an ordering rule compares a configured value against.
 
-use crate::validate::config_key::ConfigKey;
+use crate::{human_duration::HumanDuration, validate::config_key::ConfigKey};
 use bytesize::ByteSize;
 use derive_more::{Display, From};
-use humantime::format_duration;
 use serde::Serialize;
 use std::time::Duration;
 
@@ -15,7 +14,7 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, Display, Eq, From, Ord, PartialEq, PartialOrd)]
 pub enum Quantity {
     /// A span of time, displayed in its `humantime` spelling.
-    #[display("{}", format_duration(*_0))]
+    #[display("{}", HumanDuration::new(*_0))]
     #[from]
     Duration(Duration),
     /// A number of items.
@@ -85,7 +84,7 @@ pub enum Bound {
         value: Quantity,
     },
     /// Another configured duration with a margin the broker fixes on top.
-    #[display("{key} ({}) plus {}", format_duration(*value), format_duration(*margin))]
+    #[display("{key} ({}) plus {}", HumanDuration::new(*value), HumanDuration::new(*margin))]
     SettingPlusMargin {
         /// The key the bound is read from.
         key: ConfigKey,

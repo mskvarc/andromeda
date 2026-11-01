@@ -5,6 +5,7 @@
 //! compares the refusal itself rather than its wording.
 
 use crate::{
+    human_duration::HumanDuration,
     schema::{http::forwarded::ForwardedTrust, tls::ClientAuthenticationMode},
     validate::{
         bound::{Bound, Quantity, Relation},
@@ -12,7 +13,6 @@ use crate::{
     },
 };
 use derive_more::Display;
-use humantime::format_duration;
 use std::time::Duration;
 use url::Url;
 
@@ -38,7 +38,7 @@ pub enum ConfigurationViolation {
         bound: Bound,
     },
     /// A day-grained duration is not a positive whole number of days.
-    #[display("{key} ({}) must be a positive whole number of days", format_duration(*value))]
+    #[display("{key} ({}) must be a positive whole number of days", HumanDuration::new(*value))]
     NotWholeDays {
         /// The key holding the duration.
         key: ConfigKey,

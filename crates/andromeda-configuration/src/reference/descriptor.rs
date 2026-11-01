@@ -8,6 +8,7 @@
 //! settings.
 
 use crate::{
+    human_duration::HumanDuration,
     load::ENVIRONMENT_PREFIX,
     redact::SENSITIVE_KEYS,
     reference::{
@@ -22,7 +23,6 @@ use crate::{
     },
 };
 use bytesize::ByteSize;
-use humantime::format_duration;
 use serde::Serialize;
 
 /// Every table and key of the configuration, in the order the file holds
@@ -218,7 +218,7 @@ fn limit_descriptor(rule: Rule) -> LimitDescriptor {
             relation,
             bound: match limit {
                 Limit::Fixed(Quantity::Duration(value)) => BoundShape::Fixed {
-                    value: format_duration(value).to_string(),
+                    value: HumanDuration::new(value).to_string(),
                 },
                 Limit::Fixed(Quantity::Count(value)) => BoundShape::Fixed { value: value.to_string() },
                 Limit::Fixed(Quantity::Bytes(value)) => BoundShape::Fixed {
@@ -227,7 +227,7 @@ fn limit_descriptor(rule: Rule) -> LimitDescriptor {
                 Limit::Key(key) => BoundShape::Key { key: key.to_string() },
                 Limit::KeyPlusMargin(key, margin) => BoundShape::KeyPlusMargin {
                     key: key.to_string(),
-                    margin: format_duration(margin).to_string(),
+                    margin: HumanDuration::new(margin).to_string(),
                 },
             },
         },

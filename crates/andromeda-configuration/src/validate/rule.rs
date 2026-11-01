@@ -7,12 +7,14 @@
 //! requires, is checked by code and described by a [`CompoundRule`] beside
 //! that code.
 
-use crate::validate::{
-    bound::{Quantity, Relation},
-    config_key::ConfigKey,
+use crate::{
+    human_duration::HumanDuration,
+    validate::{
+        bound::{Quantity, Relation},
+        config_key::ConfigKey,
+    },
 };
 use derive_more::Display;
-use humantime::format_duration;
 use std::time::Duration;
 
 /// One comparison a configured value must pass, displayed as the condition
@@ -58,7 +60,7 @@ pub enum Limit {
     #[display("`{_0}`")]
     Key(ConfigKey),
     /// The duration another key holds, plus a margin the broker fixes.
-    #[display("`{_0}` plus {}", format_duration(*_1))]
+    #[display("`{_0}` plus {}", HumanDuration::new(*_1))]
     KeyPlusMargin(ConfigKey, Duration),
 }
 

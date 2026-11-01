@@ -3,7 +3,21 @@
 use humantime_serde as humantime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::time::Duration;
+use std::{
+    fmt::{self, Display, Formatter},
+    time::Duration,
+};
+
+/// The units a duration is written in, largest first, each with the seconds
+/// or nanoseconds it spans and its `humantime` spellings for one and for more.
+///
+/// Days are the largest: `humantime` would render a month as 30.44 days and a
+/// year as 365.25, which no calendar month or year is, so a whole number of
+/// days is written as days.
+const SECOND_UNITS: [(u64, &str, &str); 4] = [(86_400, "day", "days"), (3_600, "h", "h"), (60, "m", "m"), (1, "s", "s")];
+
+/// The sub-second units, largest first, with the nanoseconds each spans.
+const NANOSECOND_UNITS: [(u32, &str); 3] = [(1_000_000, "ms"), (1_000, "us"), (1, "ns")];
 
 /// A [`Duration`] whose wire form is the human-readable `humantime` spelling
 /// (`"30s"`, `"1h"`, `"7days"`) rather than the `{ secs, nanos }` shape serde
@@ -61,12 +75,42 @@ impl HumanDuration {
     }
 }
 
+// Manual: the spelling is computed from the duration, unit by unit, which no
+// derive expresses.
+impl Display for HumanDuration {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        if self.0.is_zero() {
+            return formatter.write_str("0s");
+        }
+        let mut seconds = self.0.as_secs();
+        let mut nanos = self.0.subsec_nanos();
+        let mut separator = "";
+        for (span, one, many) in SECOND_UNITS {
+            let count = seconds / span;
+            seconds %= span;
+            if count > 0 {
+                write!(formatter, "{separator}{count}{}", if count == 1 { one } else { many })?;
+                separator = " ";
+            }
+        }
+        for (span, unit) in NANOSECOND_UNITS {
+            let count = nanos / span;
+            nanos %= span;
+            if count > 0 {
+                write!(formatter, "{separator}{count}{unit}")?;
+                separator = " ";
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Serialize for HumanDuration {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        humantime::serialize(&self.0, serializer)
+        serializer.collect_str(self)
     }
 }
 
@@ -116,6 +160,29 @@ mod tests {
         };
         let rendered = toml::to_string(&holder).expect("holder serialises");
         assert!(rendered.contains("span = \"500ms\""), "{rendered}");
+    }
+
+    /// A month and a year are no fixed number of days, so a whole number of
+    /// days is written in days whatever its length.
+    #[test]
+    fn a_whole_number_of_days_is_written_in_days() {
+        for (days, written) in [(1, "1day"), (7, "7days"), (30, "30days"), (180, "180days"), (365, "365days")] {
+            pretty_assertions::assert_eq!(HumanDuration::from_days(days).to_string(), written);
+        }
+    }
+
+    #[test]
+    fn each_unit_down_to_the_nanosecond_is_written_and_reads_back() {
+        let span = Duration::new(86_400 + 2 * 3_600 + 3 * 60 + 4, 5_006_007);
+        let written = HumanDuration::new(span).to_string();
+        pretty_assertions::assert_eq!(written, "1day 2h 3m 4s 5ms 6us 7ns");
+        let holder: Holder = toml::from_str(&format!("span = \"{written}\"")).expect("the spelling parses");
+        pretty_assertions::assert_eq!(holder.span.duration(), span);
+    }
+
+    #[test]
+    fn zero_is_written_as_zero_seconds() {
+        pretty_assertions::assert_eq!(HumanDuration::from_secs(0).to_string(), "0s");
     }
 
     #[test]
