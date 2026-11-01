@@ -1,6 +1,8 @@
 use crate::{
     broker_config::BrokerConfig,
+    human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
+    notification_body_limit::{NotificationBodyLimit, NotificationBodyLimitError},
     schema::{http3::Http3Mode, listener_transport::ListenerTransport, management::ManagementMode, observability::MetricsMode, tls::ClientAuthenticationMode},
     validate::{
         bound::{Bound, Quantity, Relation},
@@ -134,6 +136,25 @@ fn a_context_fetch_timeout_at_the_request_timeout_is_refused_and_one_step_below_
     );
     config.jsonld.fetch.timeout = HumanDuration::from_millis(29_999);
     assert_accepted(&config);
+}
+
+#[test]
+fn a_notification_body_limit_at_the_request_body_limit_is_refused_and_one_byte_above_accepted() -> Result<(), NotificationBodyLimitError> {
+    let mut config = BrokerConfig::default();
+    config.request_limits.max_body = HumanByteSize::mib(64);
+    config.notifications.delivery.max_http_body = NotificationBodyLimit::try_from(HumanByteSize::mib(64))?;
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::OutOfRange {
+            key: ConfigKey::NotificationsDeliveryMaxHttpBody,
+            value: Quantity::Count(67_108_864),
+            relation: Relation::Above,
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, 67_108_864_u64),
+        }]
+    );
+    config.notifications.delivery.max_http_body = NotificationBodyLimit::try_from(HumanByteSize::b(67_108_865))?;
+    assert_accepted(&config);
+    Ok(())
 }
 
 #[test]

@@ -33,7 +33,9 @@ const SIDE_EFFECT_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// A saturated pool, a tenant cold build and a Snapshot still being prepared
 /// each answer 503 with `Retry-After`, and a `@context` that cannot be
 /// downloaded answers 504 `LdContextNotAvailable`, only if their waits end
-/// before the request deadline answers 500 in their place. A side-effect lease
+/// before the request deadline answers 500 in their place. An HTTP
+/// notification carries in full the entities a change wrote, so its body limit
+/// exceeds the largest body a request may send. A side-effect lease
 /// outlasts the wait for its replay's connection. A provisional tenant
 /// outlives the longest creating request, or a request still running could
 /// find its database gone.
@@ -63,6 +65,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
             key: ConfigKey::JsonLdFetchTimeout,
             relation: Relation::Below,
             limit: Limit::Key(ConfigKey::RequestLimitsTimeout),
+        },
+        Rule::Ordered {
+            key: ConfigKey::NotificationsDeliveryMaxHttpBody,
+            relation: Relation::Above,
+            limit: Limit::Key(ConfigKey::RequestLimitsMaxBody),
         },
         Rule::Ordered {
             key: ConfigKey::TenancyProvisionalTenantLifetime,

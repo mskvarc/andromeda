@@ -105,20 +105,30 @@ mod tests {
     }
 
     /// The address width is checked only where `usize` is narrower than
-    /// `u64`, the only platforms a byte size can pass it on.
+    /// `u64`, the only platforms a byte size can pass it on. No notification
+    /// body limit is above the largest byte size, so that rule refuses too.
     #[test]
     fn a_body_ceiling_past_the_address_width_is_refused() {
         let mut config = BrokerConfig::default();
         config.request_limits.max_body = HumanByteSize::b(u64::MAX);
+        let notification_limit = ConfigurationViolation::OutOfRange {
+            key: ConfigKey::NotificationsDeliveryMaxHttpBody,
+            value: Quantity::Count(134_217_728),
+            relation: Relation::Above,
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, u64::MAX),
+        };
         if usize::try_from(u64::MAX).is_ok() {
-            assert_accepted(&config);
+            assert_eq!(refusals(&config), [notification_limit]);
         } else {
             assert_eq!(
                 refusals(&config),
-                [ConfigurationViolation::ExceedsAddressWidth {
-                    key: ConfigKey::RequestLimitsMaxBody,
-                    bytes: u64::MAX,
-                }]
+                [
+                    ConfigurationViolation::ExceedsAddressWidth {
+                        key: ConfigKey::RequestLimitsMaxBody,
+                        bytes: u64::MAX,
+                    },
+                    notification_limit,
+                ]
             );
         }
     }

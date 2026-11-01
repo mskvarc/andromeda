@@ -245,9 +245,9 @@ services:
       service: postgres
 
   # Multi-tenancy off, so a request naming a tenant is refused: no test that works in a private tenant can run here.
-  # Durable delivery with an HTTP notification body limit of 1 KiB, and a queue that polls and retries within a
-  # second, so a test sees a failing delivery run out of its four attempts while it waits; the durable broker's tests
-  # notify bodies over 1 KiB and wait out its default retries.
+  # Durable delivery with a request body limit of 4 KiB and an HTTP notification body limit of 5 KiB, and a queue that
+  # polls and retries within a second, so a test sees a failing delivery run out of its four attempts while it waits;
+  # the durable broker's tests notify bodies these limits would refuse and wait out its default retries.
   broker-single-tenant:
     extends:
       <<: *template
@@ -263,7 +263,8 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-single-tenant:1077"
       ANDROMEDA__TENANCY__MODE: "disabled"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
-      ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "1 KiB"
+      ANDROMEDA__REQUEST_LIMITS__MAX_BODY: "4 KiB"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "5 KiB"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__POLL_INTERVAL: "100ms"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_POLL_INTERVAL: "1s"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_ATTEMPTS: "4"

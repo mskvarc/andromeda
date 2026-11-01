@@ -11,13 +11,13 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{Entity, NgsiLdMediaType},
+    model::{Entity, EntityFragment, NgsiLdMediaType},
     subscription::{Endpoint, NotificationParams, NotificationStatus, NotificationTrigger, Subscription},
 };
 
-/// Pins: Under durable delivery, a notification larger than the HTTP body limit is never sent and fails on its first attempt without a retry, while the notification of the same change to an unreachable endpoint is retried until its attempts run out
+/// Pins: Under durable delivery, a notification larger than the HTTP body limit, of an entity grown past it by writes each within the request body limit, is never sent and fails on its first attempt without a retry, while the notification of the entity's creation to an unreachable endpoint is retried until its attempts run out
 /// Clause: 5.8.6, 5.2.14
-/// Recorded: Andromeda extension, not v1.9.1: `notifications.delivery.max_http_body` (1 KiB on broker-single-tenant) under durable delivery with four attempts 100 ms apart
+/// Recorded: Andromeda extension, not v1.9.1: `notifications.delivery.max_http_body` (5 KiB on broker-single-tenant, above its 4 KiB `request_limits.max_body`) under durable delivery with four attempts 100 ms apart
 #[gtest]
 #[tokio::test]
 async fn a_ntf_dlv_9006_a_notification_over_the_http_body_limit_fails_once_without_a_retry() -> Result<()> {
@@ -33,7 +33,8 @@ async fn a_ntf_dlv_9006_a_notification_over_the_http_body_limit_fails_once_witho
     let subscription_large = Subscription::builder()
         .id(subscription_large_id.clone())
         .entities([building_type.as_str()])
-        .notification_triggers([NotificationTrigger::EntityCreated])
+        .watched_attributes(["annex"])
+        .notification_triggers([NotificationTrigger::AttributeCreated])
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint("large")?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     broker_notification_limits.subscriptions().create(&subscription_large).send().await?;
@@ -53,12 +54,27 @@ async fn a_ntf_dlv_9006_a_notification_over_the_http_body_limit_fails_once_witho
         .build()?;
     broker_notification_limits.subscriptions().create(&subscription_unreachable).send().await?;
     let building = Entity::builder()
-        .id(building_id)
+        .id(building_id.clone())
         .entity_type(building_type.clone())
         .property("name", "Tower")
-        .property("description", "x".repeat(2000))
         .build()?;
     broker_notification_limits.entities().create(&building).send().await?.done()?;
+    // Each write stays under the 4 KiB request body limit; the entity notified after the second carries both
+    // 3000-character values and passes the 5 KiB notification body limit.
+    let description = EntityFragment::builder().property("description", "x".repeat(3000)).build()?;
+    broker_notification_limits
+        .entities()
+        .append_attributes(&building_id, &description)
+        .send()
+        .await?
+        .done()?;
+    let annex = EntityFragment::builder().property("annex", "y".repeat(3000)).build()?;
+    broker_notification_limits
+        .entities()
+        .append_attributes(&building_id, &annex)
+        .send()
+        .await?
+        .done()?;
     retried(async || {
         let subscription = broker_notification_limits
             .with_accept(Accept::new(NgsiLdMediaType::Json))

@@ -137,7 +137,7 @@ pub struct DeliveryConfig {
     /// The largest notification body an HTTP delivery sends, in human-readable
     /// form (`"128 MiB"`). A larger notification fails without a retry.
     #[schemars(
-        description = "The largest notification body sent over HTTP. A larger notification is not sent, and its delivery fails without a retry, since every attempt would send the same body. Keep it above `request_limits.max_body`, so that any entity a client can write can also be notified."
+        description = "The largest notification body sent over HTTP. A larger notification is not sent, and its delivery fails without a retry, since every attempt would send the same body. A notification carries the entities of a change in full, so a limit at `request_limits.max_body` or below could refuse to notify an entity one request wrote."
     )]
     pub max_http_body: NotificationBodyLimit,
     /// The largest MQTT packet a notification is published in, from one byte

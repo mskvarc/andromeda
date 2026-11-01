@@ -46,6 +46,12 @@ impl NotificationBodyLimit {
     pub const fn octets(self) -> usize {
         self.octets
     }
+
+    /// The limit as the byte size it was written as.
+    #[must_use]
+    pub const fn byte_size(self) -> HumanByteSize {
+        self.written
+    }
 }
 
 impl TryFrom<HumanByteSize> for NotificationBodyLimit {
