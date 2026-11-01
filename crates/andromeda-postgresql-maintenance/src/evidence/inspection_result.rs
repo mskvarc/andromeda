@@ -22,8 +22,6 @@ pub(crate) enum InspectionResult {
     MissingPgstattuple,
     /// The broker role may not execute `pgstattuple`.
     MissingPgstattupleExecute,
-    /// The broker role lacks the `MAINTAIN` privilege.
-    MissingMaintain,
     /// The controller is disabled.
     Disabled,
     /// Another replica holds the fleet-wide lock.
@@ -61,7 +59,6 @@ impl InspectionResult {
             CapabilityStatus::Ready => InspectionResult::Ready,
             CapabilityStatus::MissingPgstattuple => InspectionResult::MissingPgstattuple,
             CapabilityStatus::MissingPgstattupleExecute => InspectionResult::MissingPgstattupleExecute,
-            CapabilityStatus::MissingMaintain => InspectionResult::MissingMaintain,
         }
     }
 
@@ -93,7 +90,6 @@ impl InspectionResult {
             InspectionResult::Ready => MaintenanceInspectionResultCode::Ready,
             InspectionResult::MissingPgstattuple => MaintenanceInspectionResultCode::MissingPgstattuple,
             InspectionResult::MissingPgstattupleExecute => MaintenanceInspectionResultCode::MissingPgstattupleExecute,
-            InspectionResult::MissingMaintain => MaintenanceInspectionResultCode::MissingMaintain,
             InspectionResult::Disabled => MaintenanceInspectionResultCode::Disabled,
             InspectionResult::GlobalLockUnavailable => MaintenanceInspectionResultCode::GlobalLockUnavailable,
             InspectionResult::NoTenant => MaintenanceInspectionResultCode::NoTenant,
@@ -125,12 +121,18 @@ mod tests {
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 
-    /// The mapping is one-to-one and onto: every result has its own number and
-    /// every number the registry assigns is some result's.
+    /// The mapping is one-to-one, and onto every number but `missing-maintain`:
+    /// a missing `MAINTAIN` privilege leaves a visit observing, so its own
+    /// outcome is recorded and that number is only ever decoded.
     #[test]
-    fn every_inspection_result_has_its_own_stored_number_and_every_number_is_used() {
+    fn every_inspection_result_has_its_own_stored_number_and_only_missing_maintain_is_unwritten() {
         let stored: Vec<MaintenanceInspectionResultCode> = InspectionResult::iter().map(InspectionResult::code).collect();
-        assert_eq!(stored, MaintenanceInspectionResultCode::ALL.to_vec());
+        let written: Vec<MaintenanceInspectionResultCode> = MaintenanceInspectionResultCode::ALL
+            .iter()
+            .copied()
+            .filter(|code| *code != MaintenanceInspectionResultCode::MissingMaintain)
+            .collect();
+        assert_eq!(stored, written);
     }
 
     #[test]

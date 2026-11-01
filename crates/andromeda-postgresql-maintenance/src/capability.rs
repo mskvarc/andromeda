@@ -1,4 +1,9 @@
 //! Per-database validation of the extension and privileges maintenance needs.
+//!
+//! Inspection and acting are checked apart. The `pgstattuple` extension and
+//! its functions gate a whole visit: without them nothing can be sampled. The
+//! `MAINTAIN` privilege is checked per branch and only decides whether
+//! automatic mode acts there; a branch without it is still sampled.
 
 use crate::{branch::Branch, error::MaintenanceError};
 use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
@@ -10,38 +15,37 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgConnection;
 
-/// Per-database capability validation result.
+/// Whether a tenant database can be inspected at all.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilityStatus {
-    /// Required extension, function execution and optional mutation privileges exist.
+    /// The extension is installed and the role may execute its functions.
     Ready,
     /// The optional supplied extension is not installed.
     MissingPgstattuple,
     /// The role cannot execute required physical inspection functions.
     MissingPgstattupleExecute,
-    /// Automatic mode lacks `MAINTAIN` on at least one allowlisted heap.
-    MissingMaintain,
 }
 
-/// Whether capability validation includes mutation privileges.
+/// Whether the broker role may run maintenance statements in one branch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MutationPrivilege {
-    /// Inspection privileges only.
-    NotRequired,
-    /// PostgreSQL 17 `MAINTAIN` is required on all allowlisted heaps.
-    Required,
+pub(crate) enum MaintainPrivilege {
+    /// The role holds `MAINTAIN` on every allowlisted heap of the branch.
+    Held,
+    /// The server knows `MAINTAIN` and the role lacks it on at least one
+    /// allowlisted heap of the branch.
+    NotGranted,
+    /// The server predates PostgreSQL 17, so no grant can supply `MAINTAIN`.
+    Unsupported,
 }
 
-/// Validate the optional diagnostic extension and role privileges.
-pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutation: MutationPrivilege) -> Result<CapabilityStatus, MaintenanceError> {
+/// Validate the optional diagnostic extension and the role's privilege to run
+/// its inspection functions.
+pub(crate) async fn validate_capabilities(connection: &mut PgConnection) -> Result<CapabilityStatus, MaintenanceError> {
     if !extension_present_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
         return Ok(CapabilityStatus::MissingPgstattuple);
     }
     if !inspection_privilege_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
         return Ok(CapabilityStatus::MissingPgstattupleExecute);
-    }
-    if mutation == MutationPrivilege::Required && !branch_maintainable(connection, Branch::Live).await? {
-        return Ok(CapabilityStatus::MissingMaintain);
     }
     Ok(CapabilityStatus::Ready)
 }
@@ -49,16 +53,24 @@ pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutatio
 /// The first PostgreSQL release with the `MAINTAIN` privilege.
 const MAINTAIN_PRIVILEGE_VERSION: PostgresVersion = PostgresVersion::new(170_000);
 
-/// Whether the role holds `MAINTAIN` on every allowlisted heap `branch` holds.
-///
-/// On a server before PostgreSQL 17 the answer is `false`, the same missing
-/// privilege a later server without the grant reports.
-pub(crate) async fn branch_maintainable(connection: &mut PgConnection, branch: Branch) -> Result<bool, MaintenanceError> {
+/// The `MAINTAIN` privilege the role holds in each of `branches`, in order.
+pub(crate) async fn maintain_privileges(connection: &mut PgConnection, branches: &[Branch]) -> Result<Vec<(Branch, MaintainPrivilege)>, MaintenanceError> {
     let server = PostgresVersion::new(server_version_statement().to_query_scalar::<i32>().fetch_one(&mut *connection).await?);
-    match maintain_probe(server, branch) {
-        None => Ok(false),
-        Some(statement) => Ok(statement.to_query_scalar::<bool>().fetch_one(connection).await?),
+    let mut privileges = Vec::with_capacity(branches.len());
+    for &branch in branches {
+        let privilege = match maintain_probe(server, branch) {
+            None => MaintainPrivilege::Unsupported,
+            Some(statement) => {
+                if statement.to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
+                    MaintainPrivilege::Held
+                } else {
+                    MaintainPrivilege::NotGranted
+                }
+            }
+        };
+        privileges.push((branch, privilege));
     }
+    Ok(privileges)
 }
 
 /// The running server's `server_version_num`.
@@ -136,7 +148,7 @@ mod tests {
     }
 
     /// The privilege arrived in PostgreSQL 17; an earlier server rejects its
-    /// name, so no query is built and the role reads as lacking it.
+    /// name, so no query is built and the privilege reads as unsupported.
     #[test]
     fn a_server_before_postgresql_17_lacks_maintain_without_a_privilege_query() {
         for version in [150_000, 160_000, 169_999] {

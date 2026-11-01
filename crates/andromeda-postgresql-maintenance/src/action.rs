@@ -15,7 +15,7 @@ use crate::{
     prepared_action::{Preparation, prepare_action, read_comparison},
     rowstore_rebuild,
     safety_gate_inspection::{self, GateScope},
-    state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
+    state::{RegisteredTenant, density_baseline, pending_action, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
 };
 use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
@@ -236,6 +236,15 @@ async fn report_horizon_holders(connection: &mut PgConnection, tenant: &Register
                 warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), holder = kind, xmin_age, decision = "ineffective", "PostgreSQL vacuum horizon holder");
             }
         }
+    }
+    Ok(())
+}
+
+/// Withdraw every action queued in `branch`, which the visit only observes,
+/// logging each as one automatic mode would run.
+pub(crate) async fn withdraw_observed(platform: &mut PgConnection, tenant: &RegisteredTenant, branch: Branch) -> Result<(), MaintenanceError> {
+    for target in pending_action::withdraw_actions(platform, tenant, branch).await? {
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?target_action(target), decision = "would-act", "PostgreSQL maintenance withdrew a queued action from a branch it only observes");
     }
     Ok(())
 }

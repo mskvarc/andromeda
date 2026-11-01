@@ -14,10 +14,11 @@
 //! lock held defers the schema drop instead of waiting for it. A reap may also
 //! have committed between the eligibility read and the lock, so the control
 //! record is read again once the lock is won.
+//!
+//! Selection never looks at privileges. Whether a visit acts in a selected
+//! branch or only observes it is decided afterwards, per branch.
 
 use crate::{
-    branch::Branch,
-    capability::{self, MutationPrivilege},
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
     state::RegisteredTenant,
@@ -41,7 +42,7 @@ use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectState
 use sqlx::{PgConnection, Row};
 use std::cmp::Reverse;
 use strum::Display;
-use tracing::{info, warn};
+use tracing::info;
 
 /// The shortest remaining lifetime of a Snapshot whose branch a visit works
 /// in: the maintenance session's `statement_timeout`, so no rebuild or vacuum
@@ -104,8 +105,6 @@ enum BranchDecline {
     SnapshotReaped,
     /// The Snapshot became ineligible after the eligibility read.
     SnapshotIneligible,
-    /// Automatic mode lacks `MAINTAIN` on a heap of the branch.
-    MissingMaintain,
 }
 
 /// Lock every eligible Snapshot branch with churn, the most churned first,
@@ -115,7 +114,6 @@ enum BranchDecline {
 pub(crate) async fn lock_branches(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    mutation: MutationPrivilege,
     current: BranchSchemaVersion,
 ) -> Result<Vec<SnapshotKey>, MaintenanceError> {
     let now = Utc::now();
@@ -128,7 +126,7 @@ pub(crate) async fn lock_branches(
     let churn = branch_churn(connection).await?;
     let mut locked = Vec::new();
     for key in churn_order(&eligible, &churn) {
-        if lock_branch(connection, tenant, key, mutation, current).await? {
+        if lock_branch(connection, tenant, key, current).await? {
             locked.push(key);
         }
     }
@@ -154,7 +152,6 @@ async fn lock_branch(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     key: SnapshotKey,
-    mutation: MutationPrivilege,
     current: BranchSchemaVersion,
 ) -> Result<bool, MaintenanceError> {
     let acquired = Query::select()
@@ -167,39 +164,22 @@ async fn lock_branch(
         info!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "deferred", reason = "branch-locked", "PostgreSQL maintenance skipped a Snapshot branch another session holds");
         return Ok(false);
     }
-    let Some(decline) = decline(connection, key, mutation, current).await? else {
+    let Some(decline) = decline(connection, key, current).await? else {
         return Ok(true);
     };
     release_branch_lock(connection, key).await?;
-    match decline {
-        BranchDecline::SnapshotReaped | BranchDecline::SnapshotIneligible => {
-            info!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "deferred", reason = %decline, "PostgreSQL maintenance skipped a Snapshot branch");
-        }
-        BranchDecline::MissingMaintain => {
-            warn!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "capability-unavailable", reason = %decline, "PostgreSQL maintenance skipped a Snapshot branch");
-        }
-    }
+    info!(tenant = tenant.log_name(), database = %tenant.database, snapshot_key = key.as_i64(), decision = "deferred", reason = %decline, "PostgreSQL maintenance skipped a Snapshot branch");
     Ok(false)
 }
 
 /// Why a visit holding `key`'s branch lock declines the branch, `None` when
 /// it works in it.
-async fn decline(
-    connection: &mut PgConnection,
-    key: SnapshotKey,
-    mutation: MutationPrivilege,
-    current: BranchSchemaVersion,
-) -> Result<Option<BranchDecline>, MaintenanceError> {
+async fn decline(connection: &mut PgConnection, key: SnapshotKey, current: BranchSchemaVersion) -> Result<Option<BranchDecline>, MaintenanceError> {
     let record = snapshot_records(connection, Some(key), current).await?.into_iter().next();
     Ok(match record.map(|record| record.eligibility(Utc::now())) {
         None => Some(BranchDecline::SnapshotReaped),
         Some(BranchEligibility::Preparing | BranchEligibility::Expiring) => Some(BranchDecline::SnapshotIneligible),
-        Some(BranchEligibility::Eligible) => match mutation {
-            MutationPrivilege::NotRequired => None,
-            MutationPrivilege::Required => {
-                (!capability::branch_maintainable(connection, Branch::Snapshot(key)).await?).then_some(BranchDecline::MissingMaintain)
-            }
-        },
+        Some(BranchEligibility::Eligible) => None,
     })
 }
 

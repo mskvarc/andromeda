@@ -12,6 +12,7 @@ use crate::{
         catalog_sampling::{self, CatalogSample},
         density_sampling,
         probe_selection,
+        visit_branches::{VisitBranch, VisitBranches},
     },
     error::MaintenanceError,
     gin_density,
@@ -23,7 +24,6 @@ use crate::{
     state::{RegisteredTenant, target_record},
     statistics_freshness::{self, HeapStatistics},
 };
-use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use andromeda_telemetry::maintenance::record_overdue_relations;
 use chrono::Utc;
 use sqlx::PgConnection;
@@ -39,15 +39,14 @@ pub(crate) struct BranchSampling {
     pub(crate) probe_candidates: Vec<IndexSize>,
 }
 
-/// Record the catalog samples of every branch in `branches`, in order, report
-/// the heaps autovacuum has missed in each, and collect each branch's probe
-/// candidates.
+/// Record the catalog samples of every branch in `branches`, in order and
+/// each under its own mode, report the heaps autovacuum has missed in each,
+/// and collect each branch's probe candidates.
 pub(crate) async fn sample_branches(
-    mode: MaintenanceMode,
     platform: &mut PgConnection,
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    branches: &[Branch],
+    branches: &VisitBranches,
     profile: PolicyProfile,
 ) -> Result<BranchSampling, MaintenanceError> {
     let mut sampling = BranchSampling {
@@ -55,7 +54,7 @@ pub(crate) async fn sample_branches(
         probe_candidates: Vec::new(),
     };
     let mut overdue_relations = 0;
-    for &branch in branches {
+    for VisitBranch { branch, mode } in branches.iter() {
         overdue_relations += autovacuum_health::report_overdue_heaps(connection, tenant, branch).await?;
         let index_sizes = inspection::index_sizes(connection, branch).await?;
         let estimates = btree_estimate::btree_estimates(connection, branch).await?;

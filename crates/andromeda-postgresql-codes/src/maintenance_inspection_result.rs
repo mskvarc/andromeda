@@ -20,7 +20,9 @@ compact_code_registry! {
             MissingPgstattuple = 4, "missing-pgstattuple";
             /// The broker role may not execute `pgstattuple`.
             MissingPgstattupleExecute = 5, "missing-pgstattuple-execute";
-            /// The broker role lacks the `MAINTAIN` privilege.
+            /// A visit stopped at a missing `MAINTAIN` privilege. Nothing
+            /// writes it: such a visit observes and records its own outcome.
+            /// It decodes so a stored row keeps its meaning.
             MissingMaintain = 6, "missing-maintain";
             /// The controller is disabled.
             Disabled = 7, "disabled";

@@ -5,12 +5,19 @@
 //! canary is rebuilt on an earlier pass, and a target in its failure backoff
 //! is skipped without holding back the rest. A canary and its GIN live in the
 //! same branch, so the pending actions of each branch are ordered on their own.
+//!
+//! A branch decided under observe mode keeps no queued work: observe mode
+//! never queues, and an action queued before automatic mode lost the branch's
+//! `MAINTAIN` would otherwise be reached on every visit and end it before its
+//! index probes. Such a branch's queued actions are withdrawn instead, and
+//! queued again by a later sample once the branch is acted in.
 
 use crate::{
     branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     error::MaintenanceError,
-    evidence::target_code::target_of,
+    evidence::{recorded_decision::RecordedDecision, target_code::target_of},
+    policy::PolicyDecision,
     state::{
         RegisteredTenant,
         TenantKey,
@@ -21,7 +28,7 @@ use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, Order, Query, SelectStatement};
+use sea_query::{Expr, ExprTrait, Iden, Order, Query, SelectStatement, UpdateStatement};
 use sqlx::{PgConnection, Row};
 
 /// One queued action of one tenant's branch.
@@ -65,14 +72,50 @@ pub(crate) async fn pending_action(
 pub(crate) async fn first_branch_action(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    branches: &[Branch],
+    branches: impl IntoIterator<Item = Branch>,
 ) -> Result<Option<BranchTarget>, MaintenanceError> {
-    for &branch in branches {
+    for branch in branches {
         if let Some(target) = pending_action(connection, tenant, branch).await? {
             return Ok(Some(BranchTarget::new(branch, target)?));
         }
     }
     Ok(None)
+}
+
+/// Withdraw every action queued in `branch`, recording each as one automatic
+/// mode would act on, and return the targets withdrawn.
+pub(crate) async fn withdraw_actions(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+) -> Result<Vec<MaintenanceTarget>, MaintenanceError> {
+    let rows = withdraw_actions_update(tenant.key, branch).to_query().fetch_all(connection).await?;
+    rows.iter()
+        .map(|row| {
+            Ok(target_of(MaintenanceTargetCode::try_from(
+                row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
+            )?))
+        })
+        .collect()
+}
+
+/// Build the update clearing every pending action of `tenant`'s `branch`. A
+/// withdrawn action has no retry left to back off from, and its breach run
+/// stays: the problem it was queued for is still sampled.
+fn withdraw_actions_update(tenant: TenantKey, branch: Branch) -> UpdateStatement {
+    Query::update()
+        .table(PostgresqlMaintenanceTargets::Table)
+        .value(PostgresqlMaintenanceTargets::IsActionPending, false)
+        .value(
+            PostgresqlMaintenanceTargets::LastDecision,
+            RecordedDecision::Policy(PolicyDecision::WouldAct).code().code(),
+        )
+        .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.0))
+        .and_where(branch_rows(branch))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
+        .returning_col(PostgresqlMaintenanceTargets::Target)
+        .to_owned()
 }
 
 /// Every tenant to which [`pending_action`] would give an action of some
@@ -167,7 +210,7 @@ mod tests {
         candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         state::{
             TenantKey,
-            pending_action::{PendingAction, PendingRow, due_tenants, first_pending, pending_actions_statement},
+            pending_action::{PendingAction, PendingRow, due_tenants, first_pending, pending_actions_statement, withdraw_actions_update},
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -259,6 +302,18 @@ mod tests {
         let sql = pending_actions_statement().to_string(PostgresQueryBuilder);
         assert!(sql.ends_with(r#"ORDER BY "tenant_key" ASC, "snapshot_key" ASC, "target" ASC"#), "{sql}");
         assert!(!sql.contains(r#""snapshot_key" ="#), "every branch is read: {sql}");
+    }
+
+    /// Decision 3 is would-act.
+    #[test]
+    fn withdrawing_clears_only_the_pending_actions_of_one_branch() {
+        let snapshot = Branch::Snapshot(SnapshotKey::try_from(7).expect("positive snapshot key"));
+        assert_eq!(
+            withdraw_actions_update(TenantKey(4), snapshot).to_string(PostgresQueryBuilder),
+            r#"UPDATE "postgresql_maintenance_targets" SET "is_action_pending" = FALSE, "last_decision" = 3, "consecutive_failures" = 0 WHERE "tenant_key" = 4 AND "snapshot_key" = 7 AND "is_action_pending" = TRUE RETURNING "target""#
+        );
+        let live = withdraw_actions_update(TenantKey(4), Branch::Live).to_string(PostgresQueryBuilder);
+        assert!(live.contains(r#""snapshot_key" = 0 AND"#), "{live}");
     }
 
     #[test]

@@ -5,13 +5,15 @@ mod catalog_sampling;
 mod density_sampling;
 mod index_probing;
 mod probe_selection;
+mod visit_branches;
 
 use crate::{
     action,
     autovacuum_health,
     branch::Branch,
     branch_selection,
-    capability::{self, CapabilityStatus, MutationPrivilege},
+    capability::{self, CapabilityStatus},
+    controller::visit_branches::{PredatingServerNotice, VisitBranches},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     expected_deployment::ExpectedDeployment,
@@ -64,7 +66,8 @@ pub enum PassOutcome {
     Probed,
     /// A target accumulated enough consecutive evidence and was queued.
     Queued,
-    /// Observe mode reported a mutation it would otherwise execute.
+    /// A branch decided under observe mode reported a mutation automatic
+    /// mode would execute there.
     WouldAct,
     /// A safety gate deferred detailed inspection or mutation.
     Deferred,
@@ -95,6 +98,8 @@ pub struct MaintenanceController {
     /// The highest branch migration this binary embeds. A Snapshot branch
     /// behind it is quarantined and left out of every visit.
     branch_version: BranchSchemaVersion,
+    /// Whether this process has logged that its server predates `MAINTAIN`.
+    predating_server: PredatingServerNotice,
 }
 
 impl MaintenanceController {
@@ -115,6 +120,7 @@ impl MaintenanceController {
             acquire_timeout,
             expected,
             branch_version,
+            predating_server: PredatingServerNotice::new(),
         }
     }
 
@@ -189,11 +195,7 @@ impl MaintenanceController {
         timescale_observation::report_timescale_state(&mut connection, tenant, self.expected.columnstore_conversion, Utc::now()).await?;
         extension_observation::report_extension_updates(&mut connection, tenant).await?;
         statement_statistics::report_statement_statistics(&mut connection, tenant).await?;
-        let mutation = match self.config.mode {
-            MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
-            MaintenanceMode::Automatic => MutationPrivilege::Required,
-        };
-        let capability = capability::validate_capabilities(&mut connection, mutation).await?;
+        let capability = capability::validate_capabilities(&mut connection).await?;
         if capability != CapabilityStatus::Ready {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_capability(capability)).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
@@ -203,39 +205,37 @@ impl MaintenanceController {
         let profile = PolicyProfile::from_profile(self.config.profile);
         let published = inspection::published_branches(&mut connection).await?;
         branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
-        let snapshots = branch_selection::lock_branches(&mut connection, tenant, mutation, self.branch_version).await?;
+        let snapshots = branch_selection::lock_branches(&mut connection, tenant, self.branch_version).await?;
         let branches = iter::once(Branch::Live).chain(snapshots.into_iter().map(Branch::Snapshot)).collect::<Vec<_>>();
+        let branches = visit_branches::decide_branches(self.config.mode, &mut connection, tenant, &branches, &self.predating_server).await?;
         let invalid = inspection::invalid_indexes(&mut connection).await?;
-        let pending_before_sampling = pending_action::first_branch_action(platform, tenant, &branches).await?;
-        let sampling = branch_sampling::sample_branches(self.config.mode, platform, &mut connection, tenant, &branches, profile).await?;
+        for branch in branches.observed() {
+            action::withdraw_observed(platform, tenant, branch).await?;
+        }
+        let pending_before_sampling = pending_action::first_branch_action(platform, tenant, branches.acting()).await?;
+        let sampling = branch_sampling::sample_branches(platform, &mut connection, tenant, &branches, profile).await?;
 
         report_invalid_indexes(tenant, &invalid, &branches);
         let branch_artifact = invalid
             .iter()
-            .filter(|index| branches.contains(&index.branch()))
+            .filter(|index| branches.contains(index.branch()))
             .find_map(InvalidIndex::recovery_artifact);
         let artifact = match branch_artifact {
             Some(artifact) => Some(artifact),
             None => rowstore_rebuild::chunk_artifacts(&mut connection).await?.into_iter().next(),
         };
         if let Some(artifact) = artifact {
-            return action::recover_artifact(self.config.mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
+            let mode = branches.mode(artifact.name.branch());
+            return action::recover_artifact(mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
         }
         if let Some(row) = pending_before_sampling {
-            return action::execute_pending(self.config.mode, platform, &mut connection, tenant, row, profile, cancellation).await;
+            let mode = branches.mode(row.branch());
+            return action::execute_pending(mode, platform, &mut connection, tenant, row, profile, cancellation).await;
         }
 
-        let outcome = index_probing::probe_indexes(
-            self.config.mode,
-            platform,
-            &mut connection,
-            tenant,
-            &sampling.probe_candidates,
-            profile,
-            cancellation,
-        )
-        .await?
-        .pass_outcome(sampling.flagged);
+        let outcome = index_probing::probe_indexes(&branches, platform, &mut connection, tenant, &sampling.probe_candidates, profile, cancellation)
+            .await?
+            .pass_outcome(sampling.flagged);
         if outcome != PassOutcome::Cancelled {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         }
@@ -282,14 +282,14 @@ impl MaintenanceController {
 /// Log every invalid index the visit leaves alone: one no allowlisted index
 /// left behind, and a recovery artifact in a Snapshot branch the visit does
 /// not work in, which a visit that does will drop.
-fn report_invalid_indexes(tenant: &RegisteredTenant, invalid: &[InvalidIndex], branches: &[Branch]) {
+fn report_invalid_indexes(tenant: &RegisteredTenant, invalid: &[InvalidIndex], branches: &VisitBranches) {
     for index in invalid {
         let branch = index.branch();
         match index.recovery_artifact() {
             None => {
                 warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
             }
-            Some(artifact) if !branches.contains(&branch) => {
+            Some(artifact) if !branches.contains(branch) => {
                 warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), artifact_kind = ?artifact.kind, decision = "branch-artifact-reported", "Concurrent-index recovery artifact in a Snapshot branch this visit does not work in reported");
             }
             Some(_) => {}

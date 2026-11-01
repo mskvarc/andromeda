@@ -9,14 +9,13 @@
 use crate::{
     branch::BranchTarget,
     candidate::MaintenanceTarget,
-    controller::{PassOutcome, idle_gates},
+    controller::{PassOutcome, idle_gates, visit_branches::VisitBranches},
     error::MaintenanceError,
     inspection::{self, IndexSize},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, decide, safety_deferral},
     safety_gate_inspection::{self, GateScope},
     state::{RegisteredTenant, target_record},
 };
-use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use chrono::Utc;
 use sqlx::PgConnection;
 use std::{
@@ -89,9 +88,10 @@ impl ProbeBudget {
 }
 
 /// Probe `candidates` in order until the budget, the safety gates or
-/// cancellation stop the visit, recording each probe's decision.
+/// cancellation stop the visit, recording each probe's decision under the
+/// mode of the candidate's branch.
 pub(crate) async fn probe_indexes(
-    mode: MaintenanceMode,
+    branches: &VisitBranches,
     platform: &mut PgConnection,
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
@@ -122,7 +122,7 @@ pub(crate) async fn probe_indexes(
         };
         let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
-        let decision = decide(mode, profile, target_state, measured, idle_gates(), now);
+        let decision = decide(branches.mode(size.branch), profile, target_state, measured, idle_gates(), now);
         target_record::record_decision(platform, tenant, row, Some(measured), decision, target_state.breach, now).await?;
         let took = started.elapsed();
         info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, duration_seconds = took.as_secs_f64(), "PostgreSQL maintenance index probe completed");

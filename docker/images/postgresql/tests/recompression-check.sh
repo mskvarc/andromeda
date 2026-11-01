@@ -114,9 +114,10 @@ expect "an UPDATE into the converted chunk leaves it partial" 9 "$(sql "$db" "$a
 wait_for "the controller recompresses the partial chunk" 1 900 "$db" "$aged_status"
 expect "rows readable after recompression" 9 "$(sql "$db" 'SELECT count(*) FROM attribute_history')"
 
-# Target 35 is attribute_history_columnstore; result 1 is succeeded.
+# Target 35 is attribute_history_columnstore, snapshot key 0 the live
+# branch; result 1 is succeeded.
 wait_for "the platform records the recompression as succeeded" 1 30 postgres \
-	"SELECT coalesce(string_agg(last_action_result::text, ','), 'none') FROM postgresql_maintenance_targets WHERE target = 35 AND snapshot_key IS NULL"
+	"SELECT coalesce(string_agg(last_action_result::text, ','), 'none') FROM postgresql_maintenance_targets WHERE target = 35 AND snapshot_key = 0"
 
 logs="$(docker logs "$broker" 2>&1)"
 if grep -q 'orphan-tenant-database' <<< "$logs" && grep -q 'andromeda_tenant_orphan_0badc0de' <<< "$logs"; then
