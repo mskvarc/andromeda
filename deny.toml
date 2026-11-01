@@ -22,6 +22,11 @@ allow = ["Apache-2.0 WITH LLVM-exception"]
 name = "notify"
 allow = ["CC0-1.0"]
 
+# Boost Software License 1.0: permissive, OSI approved; the xxh3 hash behind sub-attribute path keys.
+[[licenses.exceptions]]
+name = "xxhash-rust"
+allow = ["BSL-1.0"]
+
 [advisories]
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
