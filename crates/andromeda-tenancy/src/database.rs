@@ -1,14 +1,13 @@
 //! The tenant registry this crate asks for and does not provide.
 
 use crate::{
-    database_name::TenantDatabaseName,
     error::TenancyError,
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use async_trait::async_trait;
 use std::time::Duration;
 

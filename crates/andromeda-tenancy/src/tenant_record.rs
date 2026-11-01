@@ -1,7 +1,7 @@
 //! One tenant's registry row, as the registry hands it back.
 
-use crate::{database_name::TenantDatabaseName, status::TenantStatus};
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use crate::status::TenantStatus;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use chrono::{DateTime, Utc};
 
 /// A named tenant's registry row: its name, administrative state, database and

@@ -79,6 +79,34 @@ pub enum BrokerRole {
     /// The andromeda stack broker configured with a path-prefixed apiRoot and admitting every RFC 5646 tag as a `q`
     /// target language.
     Prefixed,
+    /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
+    /// evicted tenants the dormant tests watch.
+    Dormant,
+    /// The pgbouncer stack broker whose pooler the resilience tests pause, reconnect, saturate and kill, one tenant
+    /// database at a time.
+    Resilience,
+    /// The pgbouncer stack broker delivering notifications durably and running maintenance, behind a pooler with two
+    /// server connections per database and a small prepared-statement cache.
+    PooledDurable,
+    /// The pgbouncer stack broker reaching its PostgreSQL server directly, with no pooler.
+    Direct,
+    /// The pgbouncer stack broker only the provisioning-burst scale test uses.
+    Provisioning,
+    /// The pgbouncer stack broker only the scale test of a working set larger than its cache uses.
+    Thrash,
+    /// The pgbouncer stack broker only the scale test of a Zipf working set uses.
+    Zipf,
+    /// The pgbouncer stack broker keeping every tenant resident, only the idle-cache scale test uses.
+    Wide,
+    /// The pgbouncer stack broker keeping every tenant resident, only the scale test of a new tenant among hundreds of
+    /// resident ones uses.
+    Crowded,
+    /// The pgbouncer stack broker only the scale test of client concurrency against backends uses.
+    Concurrency,
+    /// The pooled pgbouncer stack broker of the burst-footprint scale test.
+    BurstPooled,
+    /// The un-pooled pgbouncer stack broker of the burst-footprint scale test.
+    BurstDirect,
 }
 
 /// A broker as another broker of the stack reaches it: what a registration `endpoint` names.
@@ -191,6 +219,67 @@ impl MqttSettings {
     }
 }
 
+/// The infrastructure behind the brokers of the pgbouncer stack, by broker role: the PostgreSQL server each broker
+/// owns, the admin console of the pooler in front of it, the metrics each broker serves, and the size of the scale
+/// tests' workloads.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PoolingSettings {
+    /// The PostgreSQL server each broker owns, reached directly with the server's administrative login.
+    #[serde(default)]
+    servers: BTreeMap<BrokerRole, Url>,
+    /// The admin console (database `pgbouncer`) of the pooler in front of each pooled broker's server.
+    #[serde(default)]
+    poolers: BTreeMap<BrokerRole, Url>,
+    /// The Prometheus exposition each broker serves on its management listener.
+    #[serde(default)]
+    metrics: BTreeMap<BrokerRole, Url>,
+    /// How many tenants a scale test provisions.
+    scale_tenants: usize,
+    /// How long one load run of a scale test lasts, in seconds.
+    load_seconds: u64,
+}
+
+impl PoolingSettings {
+    /// The PostgreSQL server the broker of `role` owns.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack names no such server.
+    pub fn server(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
+        self.servers.get(&role).ok_or_else(|| missing("POOLING__SERVERS", role.into()))
+    }
+
+    /// The admin console of the pooler in front of the server of the broker of `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack names no such pooler.
+    pub fn pooler(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
+        self.poolers.get(&role).ok_or_else(|| missing("POOLING__POOLERS", role.into()))
+    }
+
+    /// The Prometheus exposition of the broker of `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack names no such exposition.
+    pub fn metrics(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
+        self.metrics.get(&role).ok_or_else(|| missing("POOLING__METRICS", role.into()))
+    }
+
+    /// How many tenants a scale test provisions.
+    #[must_use]
+    pub const fn scale_tenants(&self) -> usize {
+        self.scale_tenants
+    }
+
+    /// How long one load run of a scale test lasts.
+    #[must_use]
+    pub const fn load_duration(&self) -> Duration {
+        Duration::from_secs(self.load_seconds)
+    }
+}
+
 /// The configuration of the stack the tests run against.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SuiteConfig {
@@ -205,6 +294,8 @@ pub struct SuiteConfig {
     callback_host: Option<HostName>,
     /// The MQTT brokers, on a stack that runs them.
     mqtt: Option<MqttSettings>,
+    /// The servers, poolers and metrics behind the brokers, on the pgbouncer stack.
+    pooling: Option<PoolingSettings>,
     /// The limits the brokers are configured with.
     #[serde(default)]
     budgets: BTreeMap<Budget, u64>,
@@ -304,6 +395,15 @@ impl SuiteConfig {
         self.mqtt.as_ref().ok_or(ConfigError::Missing(ConfigKey::Mqtt))
     }
 
+    /// The servers, poolers and metrics behind the brokers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] on a stack that names none.
+    pub fn pooling(&self) -> Result<&PoolingSettings, ConfigError> {
+        self.pooling.as_ref().ok_or(ConfigError::Missing(ConfigKey::Pooling))
+    }
+
     /// The NGSI-LD core `@context` the brokers answer with.
     #[must_use]
     pub const fn core_context(&self) -> &Url {
@@ -400,7 +500,7 @@ mod tests {
     };
     use figment2::{Figment, providers::Serialized, value::Value};
     use googletest::prelude::*;
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
     use url::{Host, Url};
 
     /// A figment holding `pairs` as the environment provider reads them: the key after the prefix lowercased and
@@ -478,6 +578,40 @@ mod tests {
         pairs.push(("CALLBACK_HOST", "runner"));
         let config = SuiteConfig::read(&figment(&pairs))?;
         verify_that!(config.callback_host()?, eq(&Host::Domain("runner".to_owned())))
+    }
+
+    #[gtest]
+    fn the_pooling_settings_are_read_as_one_section_by_role() -> Result<()> {
+        let mut pairs = REQUIRED.to_vec();
+        pairs.extend([
+            ("POOLING__SERVERS__DORMANT", "postgres://postgres:postgres@postgres-dormant:5432/postgres"),
+            ("POOLING__POOLERS__DORMANT", "postgres://postgres:postgres@pgbouncer-dormant:6432/pgbouncer"),
+            ("POOLING__METRICS__DORMANT", "http://broker-dormant:1086/metrics"),
+            ("POOLING__SCALE_TENANTS", "100"),
+            ("POOLING__LOAD_SECONDS", "60"),
+        ]);
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        let pooling = config.pooling()?;
+        expect_that!(
+            pooling.server(BrokerRole::Dormant).map(Url::as_str),
+            ok(eq(&"postgres://postgres:postgres@postgres-dormant:5432/postgres"))
+        );
+        expect_that!(pooling.pooler(BrokerRole::Dormant).map(Url::path), ok(eq(&"/pgbouncer")));
+        expect_that!(
+            pooling.metrics(BrokerRole::Dormant).map(Url::as_str),
+            ok(eq(&"http://broker-dormant:1086/metrics"))
+        );
+        expect_that!(pooling.scale_tenants(), eq(100));
+        expect_that!(pooling.load_duration(), eq(Duration::from_secs(60)));
+        let error = pooling.pooler(BrokerRole::Direct).err().or_fail()?;
+        verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__POOLING__POOLERS__DIRECT"))
+    }
+
+    #[gtest]
+    fn a_stack_without_a_pooling_section_names_its_keys() -> Result<()> {
+        let config = SuiteConfig::read(&figment(&REQUIRED))?;
+        let error = config.pooling().err().or_fail()?;
+        verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__POOLING__*"))
     }
 
     #[gtest]

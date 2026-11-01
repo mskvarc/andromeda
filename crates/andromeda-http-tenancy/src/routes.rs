@@ -59,11 +59,10 @@ impl TenancyRoutes {
 )]
 mod tests {
     use crate::routes::{TenancyRoutes, TenantManagement};
-    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
     use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
     use andromeda_tenancy::{
         administration::TenantAdministration,
-        database_name::TenantDatabaseName,
         error::TenancyError,
         residency::TenantResidency,
         status::TenantStatus,

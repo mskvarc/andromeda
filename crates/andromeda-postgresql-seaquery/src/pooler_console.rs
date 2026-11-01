@@ -33,17 +33,20 @@ impl PoolerDatabase {
 }
 
 /// One admin console command.
+///
+/// Every control command names one database, so a command for one database's
+/// pools leaves every other database's clients untouched.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PoolerCommand {
-    /// `PAUSE`: new client transactions wait until a resume.
-    Pause,
-    /// `RESUME`: every paused pool resumes.
-    Resume,
+    /// `PAUSE <database>`: the database's server connections are released once
+    /// their transactions end, and new client transactions wait until a
+    /// resume.
+    Pause(PoolerDatabase),
     /// `RESUME <database>`: one paused or killed database resumes.
-    ResumeDatabase(PoolerDatabase),
-    /// `RECONNECT`: every server connection reconnects at its next
-    /// opportunity.
-    Reconnect,
+    Resume(PoolerDatabase),
+    /// `RECONNECT <database>`: every server connection of one database
+    /// reconnects once its client releases it.
+    Reconnect(PoolerDatabase),
     /// `KILL <database>`: every client and server connection of one database
     /// is dropped at once.
     Kill(PoolerDatabase),
@@ -56,10 +59,9 @@ pub enum PoolerCommand {
 impl RenderedCommand for PoolerCommand {
     fn rendered(&self) -> String {
         match self {
-            PoolerCommand::Pause => "PAUSE".to_owned(),
-            PoolerCommand::Resume => "RESUME".to_owned(),
-            PoolerCommand::ResumeDatabase(database) => format!("RESUME {}", database.0),
-            PoolerCommand::Reconnect => "RECONNECT".to_owned(),
+            PoolerCommand::Pause(database) => format!("PAUSE {}", database.0),
+            PoolerCommand::Resume(database) => format!("RESUME {}", database.0),
+            PoolerCommand::Reconnect(database) => format!("RECONNECT {}", database.0),
             PoolerCommand::Kill(database) => format!("KILL {}", database.0),
             PoolerCommand::ShowPools => "SHOW POOLS".to_owned(),
             PoolerCommand::ShowClients => "SHOW CLIENTS".to_owned(),
@@ -84,7 +86,16 @@ mod tests {
     #[test]
     fn a_database_command_names_the_database_as_a_bare_word() {
         let database = PoolerDatabase::new("andromeda_tenant_a").expect("an accepted name");
-        assert_eq!(PoolerCommand::Kill(database).rendered(), "KILL andromeda_tenant_a");
+        assert_eq!(PoolerCommand::Kill(database.clone()).rendered(), "KILL andromeda_tenant_a"); // clone: every command below names it
+        assert_eq!(PoolerCommand::Pause(database.clone()).rendered(), "PAUSE andromeda_tenant_a"); // clone: every command below names it
+        assert_eq!(PoolerCommand::Reconnect(database.clone()).rendered(), "RECONNECT andromeda_tenant_a"); // clone: the last command names it
+        assert_eq!(PoolerCommand::Resume(database).rendered(), "RESUME andromeda_tenant_a");
+    }
+
+    #[test]
+    fn a_listing_names_no_database() {
+        assert_eq!(PoolerCommand::ShowPools.rendered(), "SHOW POOLS");
+        assert_eq!(PoolerCommand::ShowClients.rendered(), "SHOW CLIENTS");
     }
 
     #[test]

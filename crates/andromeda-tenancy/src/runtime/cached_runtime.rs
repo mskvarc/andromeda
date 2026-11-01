@@ -1,7 +1,8 @@
 //! One tenant's live runtime, when it was last reached for, and the hold a
 //! request takes against its eviction.
 
-use crate::{database_name::TenantDatabaseName, runtime::lease::LeaseOrigin};
+use crate::runtime::lease::LeaseOrigin;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use std::{
     sync::{
         Arc,
@@ -186,13 +187,13 @@ impl<S, R> CachedRuntime<S, R> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        database_name::TenantDatabaseName,
         runtime::{
             cached_runtime::{CachedRuntime, RuntimeExistence},
             lease::{LeaseOrigin, RuntimeLease},
         },
         state_factory::RuntimeActivity,
     };
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use std::{
         sync::{
             Arc,

@@ -68,10 +68,18 @@ pub enum BrokerError {
 ///
 /// Returns [`BrokerError`] when the stack runs no such broker or the client cannot be built.
 pub fn client(role: BrokerRole) -> Result<BrokerClient, BrokerError> {
-    let config = SuiteConfig::get().map_err(|error| BrokerError::Config(error.clone()))?;
-    let broker = config.broker(role)?;
-    let base_url = broker.join("ngsi-ld/v1/").map_err(|error| BrokerError::ApiPath(broker.clone(), error))?;
-    client_at(base_url)
+    client_at(api_root(role)?)
+}
+
+/// A client of the broker of `role` that prints none of its exchanges, for a test generating load whose thousands of
+/// exchanges it reports as a tally.
+///
+/// # Errors
+///
+/// Returns [`BrokerError`] when the stack runs no such broker or the client cannot be built.
+pub fn quiet_client(role: BrokerRole) -> Result<BrokerClient, BrokerError> {
+    let transport = ExchangeLog::quiet(RequestVersion::as_written(ReqwestTransport::new(http_client()?)));
+    built(api_root(role)?, transport)
 }
 
 /// A client of the API root `base_url`, in the default tenant, sending no `@context`.
@@ -80,15 +88,32 @@ pub fn client(role: BrokerRole) -> Result<BrokerClient, BrokerError> {
 ///
 /// Returns [`BrokerError`] when the client cannot be built.
 pub fn client_at(base_url: Url) -> Result<BrokerClient, BrokerError> {
-    let http = reqwest::Client::builder()
+    let transport = ExchangeLog::new(RequestVersion::as_written(ReqwestTransport::new(http_client()?)));
+    built(base_url, transport)
+}
+
+/// The API root of the broker of `role`.
+fn api_root(role: BrokerRole) -> Result<Url, BrokerError> {
+    let config = SuiteConfig::get().map_err(|error| BrokerError::Config(error.clone()))?;
+    let broker = config.broker(role)?;
+    broker.join("ngsi-ld/v1/").map_err(|error| BrokerError::ApiPath(broker.clone(), error)) // clone: the error names the broker the configuration keeps
+}
+
+/// The HTTP client every test client sends through.
+fn http_client() -> Result<reqwest::Client, BrokerError> {
+    reqwest::Client::builder()
         .redirect(Policy::none())
         .no_proxy()
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(BrokerError::Http)?;
+        .map_err(BrokerError::Http)
+}
+
+/// The client of the API root `base_url` sending through `transport`.
+fn built(base_url: Url, transport: SuiteTransport) -> Result<BrokerClient, BrokerError> {
     Client::builder()
-        .base_url(base_url.clone())
-        .transport(ExchangeLog::new(RequestVersion::as_written(ReqwestTransport::new(http))))
+        .base_url(base_url.clone()) // clone: the error names the API root the client was given
+        .transport(transport)
         .build()
         .map_err(|error| BrokerError::Endpoint(base_url, Box::new(error)))
 }

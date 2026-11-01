@@ -10,6 +10,10 @@ interoperability = { max-threads = 1 }
 # the database server for longer than the broker's admission deadline, so the tests that provision tenants run four at
 # a time, whatever the parallelism of the rest.
 private-tenants = { max-threads = 4 }
+# The pgbouncer stack runs thirteen brokers over thirteen PostgreSQL servers beside the runner. One of its tests at a
+# time fits a host that holds the whole stack; more than one and the servers of the scale tests, each carrying a
+# hundred tenant databases, drive the host past its memory and the brokers die under it.
+pgbouncer = { max-threads = 1 }
 
 # Every test runs in a process of its own beside every other, against the stack its test target uses. A failure is
 # never retried: an intermittent failure is a defect to find, in the test's isolation or in the broker.
@@ -26,6 +30,14 @@ final-status-level = "fail"
 [[profile.suite.overrides]]
 filter = 'binary_id(andromeda-test-suite::interoperability)'
 test-group = 'interoperability'
+
+# A pgbouncer test evicts a tenant under the pressure of 40 others and waits up to 150 s to see it dormant, then a
+# retry interval that has grown with the eviction, or drives load runs of a minute each over a hundred tenants it
+# brings up first; one still running after ten minutes hangs.
+[[profile.suite.overrides]]
+filter = 'package(andromeda-test-suite) & binary(~pgbouncer_)'
+test-group = 'pgbouncer'
+slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.suite.overrides]]
 filter = '''
@@ -84,6 +96,11 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 [[profile.suite-verdict.overrides]]
 filter = 'binary_id(andromeda-test-suite::interoperability)'
 test-group = 'interoperability'
+
+[[profile.suite-verdict.overrides]]
+filter = 'package(andromeda-test-suite) & binary(~pgbouncer_)'
+test-group = 'pgbouncer'
+slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.suite-verdict.overrides]]
 filter = '''

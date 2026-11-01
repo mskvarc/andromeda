@@ -3,7 +3,6 @@
 
 use crate::{
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     pending_work::{PendingWork, PendingWorkError},
     registered_tenant::RegisteredTenant,
     runtime::{
@@ -14,7 +13,7 @@ use crate::{
     status::TenantStatus,
     tenant_ref::TenantRef,
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_telemetry::tenancy::{WakeOutcome, record_wake};
 use dashmap::mapref::entry::Entry;
 use std::time::SystemTime;

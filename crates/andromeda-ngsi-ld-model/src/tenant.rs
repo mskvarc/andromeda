@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_lexicon::{
     constant_string,
     identifier::{Identifier, IdentifierParseError},
     tenant::{TENANT_ID_PREFIX, TenantName},
+    tenant_database_name::TenantDatabaseName,
     time::instant_serde,
 };
 use chrono::{DateTime, Utc};
@@ -46,9 +47,12 @@ pub enum TenantState {
 /// term. Because the tenant resource is returned as fixed JSON (never JSON-LD
 /// expanded against an `@context`), these are plain camelCase members, not
 /// vendor IRIs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TypedBuilder)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct TenantUsage {
+    /// The database holding the tenant's data, as the store names it: what an
+    /// operator finds the tenant under on the database server and its pooler.
+    pub database_name: TenantDatabaseName,
     /// Live PostgreSQL backend connections serving the tenant's database.
     pub pool_connections: u64,
     /// Total on-disk size of the tenant's database, in bytes.
@@ -135,6 +139,7 @@ mod tests {
         identifier::Identifier,
         identifier_length::IDENTIFIER_BYTE_LIMIT,
         tenant::{TENANT_NAME_BYTE_LIMIT, TenantName},
+        tenant_database_name::TenantDatabaseName,
     };
     use chrono::{TimeZone, Utc};
 
@@ -196,6 +201,7 @@ mod tests {
     #[test]
     fn usage_flattens_its_members_to_the_top_level() {
         let usage = TenantUsage::builder()
+            .database_name(TenantDatabaseName::from("andromeda_tenant_acme_0badc0de".to_string()))
             .pool_connections(3)
             .database_size(4096)
             .entity_count(7)
@@ -210,6 +216,7 @@ mod tests {
             .usage(Some(usage))
             .build();
         let json = serde_json::to_value(&tenant).expect("serialises");
+        pretty_assertions::assert_eq!(json["databaseName"], serde_json::json!("andromeda_tenant_acme_0badc0de"));
         pretty_assertions::assert_eq!(json["databaseSize"], serde_json::json!(4096));
         pretty_assertions::assert_eq!(json["entityCount"], serde_json::json!(7));
         pretty_assertions::assert_eq!(json["poolConnections"], serde_json::json!(3));

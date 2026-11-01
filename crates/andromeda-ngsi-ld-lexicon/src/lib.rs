@@ -42,6 +42,7 @@ pub mod scope;
 pub mod spec_version;
 pub mod temporal_format;
 pub mod tenant;
+pub mod tenant_database_name;
 pub mod time;
 pub mod time_prop;
 pub mod time_rel;

@@ -39,11 +39,12 @@ use andromeda_configuration::{
 };
 use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePublisher, committer::ContextCommitter};
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
 use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_database::DatabaseUrl};
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
-use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
+use andromeda_tenancy::{error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
 use async_trait::async_trait;
 use std::{
     collections::hash_map::DefaultHasher,

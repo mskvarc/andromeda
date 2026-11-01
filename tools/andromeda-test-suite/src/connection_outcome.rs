@@ -13,7 +13,7 @@ use quinn::ConnectionError;
 use std::{error::Error, io, iter};
 
 /// What became of a connection, and of the request sent over it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConnectionOutcome {
     /// The handshake completed and, for a request, the broker answered it over HTTP, whatever the status.
     Accepted,

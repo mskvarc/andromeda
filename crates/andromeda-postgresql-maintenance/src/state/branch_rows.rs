@@ -73,7 +73,7 @@ mod tests {
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use pretty_assertions::assert_eq;
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 

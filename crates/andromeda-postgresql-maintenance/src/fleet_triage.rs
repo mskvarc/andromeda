@@ -171,7 +171,7 @@ mod tests {
         freeze_policy::FreezeAge,
         state::{RegisteredTenant, TenantKey, tenant_inspection::InspectionRecord},
     };
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
 

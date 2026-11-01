@@ -1,34 +1,69 @@
 name: test-suite-pgbouncer
 
-# One broker serving every request through a transaction-pooling PgBouncer in front of its PostgreSQL server, the
-# deployment `[database.pooler]` configures, for the pgbouncer tree. Provisioning, migration and maintenance reach the
-# server directly. The tests run in the runner service on the same network; no service publishes a host port.
+# Brokers serving their requests through a transaction-pooling PgBouncer in front of their PostgreSQL server, the
+# deployment `[database.pooler]` configures, for the pgbouncer tree, beside one broker reaching its server directly.
+# Provisioning, migration and maintenance reach each server directly. Each broker owns its server and its pooler, so a
+# test that pauses, saturates or kills a pool, or counts a server's backends, sees only its own broker's. The brokers of
+# the scale tests serve one test each. The tests run in the runner service on the same network; no service publishes a
+# host port.
 
 x-template: &template
   file: ../templates/docker-compose.yaml
 
+# A pooler; its command names the file with its route.
+x-pgbouncer: &pgbouncer
+  image: pgbouncer/pgbouncer:1.25.2-20260911.206
+  entrypoint: ["/opt/pgbouncer/pgbouncer"]
+  volumes:
+    - ./pgbouncer:/etc/pgbouncer:ro
+  healthcheck:
+    # localhost resolves to ::1 first.
+    test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+# Thirteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
+# without a limit each sizes itself for the whole host, so together they outgrow it and the host kills processes of
+# whichever service is running; with 2 GB each, every server fits beside the others.
+x-postgres-memory: &postgres-memory
+  mem_limit: 2g
+
+# A scale test's server admits more sessions than the pooler and the broker's direct pools open together, so a test
+# bounding the backends a broker opens reads the broker's bound, never the server's.
+x-scale-postgres: &scale-postgres
+  <<: *postgres-memory
+  extends:
+    <<: *template
+    service: postgres
+  command: ["postgres", "-c", "max_connections=300"]
+
+# The settings every broker of this stack shares beside the template's.
+x-broker-env: &broker-env
+  ANDROMEDA__SERVER__PORT: "1081"
+  # A first write builds its tenant's database and runs the migrations in it, and the tests write into up to a hundred
+  # tenants at once. A build that outgrows the default request timeout is answered 500, which no retry mends, so the
+  # timeout leaves room for the builds a burst starts.
+  ANDROMEDA__REQUEST_LIMITS__TIMEOUT: "120s"
+
+# The settings of a broker whose tests read its metrics or manage its tenants.
+x-observed-env: &observed-env
+  ANDROMEDA__OBSERVABILITY__METRICS__MODE: "prometheus"
+  ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
+
 services:
   postgres:
+    <<: *postgres-memory
     extends:
       <<: *template
       service: postgres
 
-  # One route for every database and one shared login, so each tenant database gets a pool of its own on first use.
   pgbouncer:
-    image: pgbouncer/pgbouncer:1.25.2-20260911.206
-    entrypoint: ["/opt/pgbouncer/pgbouncer"]
-    command: ["/etc/pgbouncer/pgbouncer.ini"]
-    volumes:
-      - ./pgbouncer:/etc/pgbouncer:ro
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/front.ini"]
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      # localhost resolves to ::1 first.
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
 
   broker:
     extends:
@@ -40,7 +75,7 @@ services:
       pgbouncer:
         condition: service_healthy
     environment:
-      ANDROMEDA__SERVER__PORT: "1081"
+      <<: *broker-env
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
       ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "4"
@@ -50,12 +85,355 @@ services:
       # Every tenant of a burst of first writes stays resident while the burst runs.
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
+  postgres-dormant:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  pgbouncer-dormant:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/dormant.ini"]
+    depends_on:
+      postgres-dormant:
+        condition: service_healthy
+
+  # Tenants leave the cache of 32 under the pressure of others and are woken for their due work: a delivery retry
+  # stays due through ten attempts at doubling intervals from 5 s, longer than any eviction takes, and an evicted
+  # tenant is loaded again for due work 3 s after it left.
+  broker-dormant:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-dormant:
+        condition: service_healthy
+      pgbouncer-dormant:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-dormant:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-dormant:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_ATTEMPTS: "10"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+      ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "2m"
+      ANDROMEDA__TENANCY__RESIDENCY__SWEEP_INTERVAL: "5s"
+      ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "3s"
+
+  postgres-resilience:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  pgbouncer-resilience:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/resilience.ini"]
+    depends_on:
+      postgres-resilience:
+        condition: service_healthy
+
+  # Every tenant of the resilience tests stays resident, so what a test sees is the pooler's churn alone.
+  broker-resilience:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-resilience:
+        condition: service_healthy
+      pgbouncer-resilience:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-resilience:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-resilience:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "4"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "128"
+
+  postgres-pooled-durable:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  pgbouncer-pooled-durable:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/pooled-durable.ini"]
+    depends_on:
+      postgres-pooled-durable:
+        condition: service_healthy
+
+  # Durable delivery and automatic maintenance behind the tight pooler: two server connections per database and a
+  # prepared-statement cache of 32.
+  broker-pooled-durable:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-pooled-durable:
+        condition: service_healthy
+      pgbouncer-pooled-durable:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-pooled-durable:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-pooled-durable:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__DATABASE__MAINTENANCE__MODE: "automatic"
+      ANDROMEDA__DATABASE__MAINTENANCE__PROFILE: "responsive"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "128"
+
+  postgres-direct:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  # No pooler: each tenant's pool is four backends of its own.
+  broker-direct:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-direct:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-direct:5432/postgres"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-provisioning:
+    <<: *scale-postgres
+
+  pgbouncer-provisioning:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/provisioning.ini"]
+    depends_on:
+      postgres-provisioning:
+        condition: service_healthy
+
+  broker-provisioning:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-provisioning:
+        condition: service_healthy
+      pgbouncer-provisioning:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-provisioning:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-provisioning:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-thrash:
+    <<: *scale-postgres
+
+  pgbouncer-thrash:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/thrash.ini"]
+    depends_on:
+      postgres-thrash:
+        condition: service_healthy
+
+  broker-thrash:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-thrash:
+        condition: service_healthy
+      pgbouncer-thrash:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-thrash:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-thrash:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-zipf:
+    <<: *scale-postgres
+
+  pgbouncer-zipf:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/zipf.ini"]
+    depends_on:
+      postgres-zipf:
+        condition: service_healthy
+
+  broker-zipf:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-zipf:
+        condition: service_healthy
+      pgbouncer-zipf:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-zipf:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-zipf:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-wide:
+    <<: *scale-postgres
+
+  pgbouncer-wide:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/wide.ini"]
+    depends_on:
+      postgres-wide:
+        condition: service_healthy
+
+  # Every tenant a test touches stays resident for the default 15 minutes of idleness.
+  broker-wide:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-wide:
+        condition: service_healthy
+      pgbouncer-wide:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-wide:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-wide:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "1000"
+
+  postgres-crowded:
+    <<: *scale-postgres
+
+  pgbouncer-crowded:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/crowded.ini"]
+    depends_on:
+      postgres-crowded:
+        condition: service_healthy
+
+  broker-crowded:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-crowded:
+        condition: service_healthy
+      pgbouncer-crowded:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-crowded:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-crowded:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "1000"
+
+  postgres-concurrency:
+    <<: *scale-postgres
+
+  pgbouncer-concurrency:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/concurrency.ini"]
+    depends_on:
+      postgres-concurrency:
+        condition: service_healthy
+
+  broker-concurrency:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-concurrency:
+        condition: service_healthy
+      pgbouncer-concurrency:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-concurrency:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-concurrency:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-burst-pooled:
+    <<: *scale-postgres
+
+  pgbouncer-burst-pooled:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/burst-pooled.ini"]
+    depends_on:
+      postgres-burst-pooled:
+        condition: service_healthy
+
+  # Behind the tight pooler, which releases a server five seconds after its last transaction.
+  broker-burst-pooled:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-burst-pooled:
+        condition: service_healthy
+      pgbouncer-burst-pooled:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-burst-pooled:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-burst-pooled:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
+  postgres-burst-direct:
+    <<: *scale-postgres
+
+  broker-burst-direct:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-burst-direct:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-burst-direct:5432/postgres"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
   runner:
     extends:
       <<: *template
       service: runner
     depends_on:
       broker:
+        condition: service_healthy
+      broker-dormant:
+        condition: service_healthy
+      broker-resilience:
+        condition: service_healthy
+      broker-pooled-durable:
+        condition: service_healthy
+      broker-direct:
+        condition: service_healthy
+      broker-provisioning:
+        condition: service_healthy
+      broker-thrash:
+        condition: service_healthy
+      broker-zipf:
+        condition: service_healthy
+      broker-wide:
+        condition: service_healthy
+      broker-crowded:
+        condition: service_healthy
+      broker-concurrency:
+        condition: service_healthy
+      broker-burst-pooled:
+        condition: service_healthy
+      broker-burst-direct:
         condition: service_healthy
     env_file: runner.env
 

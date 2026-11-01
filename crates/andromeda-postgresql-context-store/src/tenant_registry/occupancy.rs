@@ -12,11 +12,11 @@
 
 use crate::{error::ContextStoreError, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::sql_state::SqlState;
 use andromeda_postgresql_schema::{csr::Csr, current::Entities, subscriptions::Subscriptions};
 use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
-use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Expr, ExprTrait, Query, SelectStatement, TableRef};
 use sqlx::{Connection, PgConnection};
 

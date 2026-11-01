@@ -1,6 +1,7 @@
 //! Building one tenant's runtime, which this crate asks for and cannot do.
 
-use crate::{database_name::TenantDatabaseName, error::TenancyError, tenant_ref::TenantRef};
+use crate::{error::TenancyError, tenant_ref::TenantRef};
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
 use std::sync::Arc;
 

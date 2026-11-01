@@ -17,10 +17,10 @@ use crate::{
         status_code::{StoredStanding, standing_of},
     },
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_seaquery::statement::Statement;
-use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, saturated_wait::SaturatedWait};
+use andromeda_tenancy::{error::TenancyError, saturated_wait::SaturatedWait};
 
 /// What the registration transaction found or wrote for the tenant.
 enum Registration {

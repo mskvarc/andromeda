@@ -4,14 +4,13 @@
 
 use crate::{
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     pending_work::{PendingWork, PendingWorkError},
     runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime},
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
     waker::WakerPolicy,
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
 use std::{
     sync::Arc,

@@ -7,6 +7,7 @@
 
 use crate::{store_fault::persistence_failure, tenant_database::DatabaseUrl};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
@@ -16,7 +17,7 @@ use andromeda_postgresql_seaquery::{
     introspection::{current_database, current_database_size},
     statement::Statement,
 };
-use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, tenant_usage::TenantUsage, usage_probe::TenantUsageProbe};
+use andromeda_tenancy::{error::TenancyError, tenant_usage::TenantUsage, usage_probe::TenantUsageProbe};
 use async_trait::async_trait;
 use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgPool;

@@ -9,7 +9,7 @@
 //! obligations is outstanding is the store's concern, and the cache needs only
 //! the instant.
 
-use crate::database_name::TenantDatabaseName;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use std::time::SystemTime;

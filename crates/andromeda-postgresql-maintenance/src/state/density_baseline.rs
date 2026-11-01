@@ -122,7 +122,7 @@ mod tests {
         gin_density::Density,
         state::{RegisteredTenant, TenantKey, density_baseline::density_baseline_upsert},
     };
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroU64;
 

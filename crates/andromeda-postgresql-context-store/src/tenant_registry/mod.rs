@@ -28,14 +28,13 @@ use crate::{
     },
 };
 use andromeda_configuration::schema::tenancy::TenantDatabasesConfig;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_pool::saturation::is_pool_saturated;
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_tenancy::{
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     error::TenancyError,
     lifecycle::TenantLifecycle,
     provisional::{Establishment, Retirement},

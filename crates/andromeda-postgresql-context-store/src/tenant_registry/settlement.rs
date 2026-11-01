@@ -18,13 +18,10 @@ use crate::{
         status_code::{StoredStanding, standing_of},
     },
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_seaquery::statement::Statement;
-use andromeda_tenancy::{
-    database_name::TenantDatabaseName,
-    provisional::{Establishment, Retirement},
-};
+use andromeda_tenancy::provisional::{Establishment, Retirement};
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Row, Transaction};
 use std::time::Duration;

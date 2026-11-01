@@ -26,12 +26,11 @@ pub(crate) mod target_record;
 pub(crate) mod tenant_inspection;
 
 use crate::error::MaintenanceError;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_seaquery::{
     advisory_lock::{advisory_unlock, try_advisory_lock},
     statement::Statement,
 };
-use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Expr, Query};
 use sqlx::PgConnection;
 
@@ -82,7 +81,7 @@ pub(crate) async fn release_global_lock(connection: &mut PgConnection) -> Result
 #[cfg(test)]
 mod tests {
     use crate::state::{RegisteredTenant, TenantKey};
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use pretty_assertions::assert_eq;
 
     #[test]

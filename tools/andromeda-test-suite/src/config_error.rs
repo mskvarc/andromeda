@@ -42,6 +42,8 @@ pub enum ConfigKey {
     },
     /// Every key of the MQTT section.
     Mqtt,
+    /// Every key of the pooling section.
+    Pooling,
     /// The apiRoot of the prefixed broker.
     ApiRootPrefixed,
     /// The directory of the stack's files.
@@ -54,6 +56,7 @@ impl fmt::Display for ConfigKey {
         match self {
             ConfigKey::Entry { section, name } => write!(formatter, "{PREFIX}{section}__{name}"),
             ConfigKey::Mqtt => write!(formatter, "{PREFIX}MQTT__*"),
+            ConfigKey::Pooling => write!(formatter, "{PREFIX}POOLING__*"),
             ConfigKey::ApiRootPrefixed => write!(formatter, "{PREFIX}API_ROOT_PREFIXED"),
             ConfigKey::StackDir => write!(formatter, "{PREFIX}STACK_DIR"),
         }

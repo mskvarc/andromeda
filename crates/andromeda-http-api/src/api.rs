@@ -170,14 +170,18 @@ mod tests {
         state::{TemporalRouteServices, TemporalStateResolver},
     };
     use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{
+        context_source_pseudonym::ContextSourcePseudonym,
+        identifier::Identifier,
+        tenant::TenantName,
+        tenant_database_name::TenantDatabaseName,
+    };
     use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::TenantAdministration,
         context_source_alias::ContextSourceAliases,
         creation_policy::TenantCreationPolicy,
-        database_name::TenantDatabaseName,
         error::TenancyError,
         residency::TenantResidency,
         status::TenantStatus,

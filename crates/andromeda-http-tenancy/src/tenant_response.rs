@@ -78,6 +78,7 @@ pub async fn build_tenant(view: &TenantView, options: TenantOptions, usage_probe
     let usage = if options.usage {
         let usage = usage_probe.usage(&record.database).await?;
         Some(TenantUsage {
+            database_name: record.database.clone(), // clone: the resource owns the name the registry row keeps
             pool_connections: usage.pool_connections,
             database_size: usage.database_size,
             entity_count: usage.entity_count,

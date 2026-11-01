@@ -7,11 +7,10 @@ use crate::{
     fleet_observation::ChangeCounters,
     state::{RegisteredTenant, TenantKey},
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::{maintenance::PostgresqlMaintenanceTenants, tenancy::Tenants};
 use andromeda_postgresql_seaquery::statement::Statement;
-use andromeda_tenancy::database_name::TenantDatabaseName;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, InsertStatement, JoinType, OnConflict, Query, SelectStatement, UpdateStatement, error::Error as SeaQueryError};
 use sqlx::{PgConnection, Row, postgres::PgRow};
@@ -172,7 +171,7 @@ mod tests {
             tenant_inspection::{inspection_records_statement, started_update},
         },
     };
-    use andromeda_tenancy::database_name::TenantDatabaseName;
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
 

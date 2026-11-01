@@ -5,7 +5,6 @@ use crate::{
     administration::TenantAdministration,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     error::TenancyError,
     lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
@@ -28,7 +27,7 @@ use andromeda_configuration::{
         tenancy::{ResidencyConfig, TenancyConfig, TenantBuildConfig},
     },
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;

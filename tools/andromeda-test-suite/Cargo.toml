@@ -10,9 +10,11 @@ description = "Black-box tests of the Andromeda NGSI-LD context broker, written 
 workspace = true
 
 [dependencies]
+andromeda-postgresql-seaquery.workspace = true
 bytes = "1.12.1"
 cefact-units = "1.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+derive_more = { version = "2.1.1", features = ["display", "from"] }
 figment2 = { version = "0.11.5", features = ["env"] }
 futures = "0.3.34"
 googletest = "0.14.3"
@@ -22,14 +24,18 @@ iri-rs = { version = "3.4.1", features = ["static", "serde"] }
 mediatype = "0.23.0"
 ngsi-ld = { version = "1.3.1", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
+prometheus-parse = "0.2.5"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["http2", "http3", "rustls"] }
 rumqttc = { version = "0.25.1", default-features = false }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
+sea-query = { version = "1.0.2", default-features = false, features = ["backend-postgres", "thread-safe"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 serde_json_path = "0.7.2"
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
@@ -341,6 +347,22 @@ path = "tests/distributed/tenancy/main.rs"
 [[test]]
 name = "annex_c"
 path = "tests/annex_c/main.rs"
+
+[[test]]
+name = "pgbouncer_dormant"
+path = "tests/pgbouncer/dormant/main.rs"
+
+[[test]]
+name = "pgbouncer_resilience"
+path = "tests/pgbouncer/resilience/main.rs"
+
+[[test]]
+name = "pgbouncer_scale"
+path = "tests/pgbouncer/scale/main.rs"
+
+[[test]]
+name = "pgbouncer_semantics"
+path = "tests/pgbouncer/semantics/main.rs"
 
 [[test]]
 name = "pgbouncer_tenancy"

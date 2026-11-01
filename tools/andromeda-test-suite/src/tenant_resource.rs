@@ -1,7 +1,7 @@
 //! The Tenant resource Andromeda serves at `/tenants/{name}` (clause 5.5.10 leaves tenant management to the broker):
 //! its type, its name and the identifier built on the name.
 
-use crate::reported_instant::ReportedInstant;
+use crate::{database_name::DatabaseName, reported_instant::ReportedInstant};
 use bytes::Bytes;
 use http::Response;
 use ngsi_ld::model::Tenant;
@@ -15,8 +15,9 @@ pub enum TenantType {
 }
 
 /// Whether a tenant serves its data path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, strum::Display)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum TenantStatus {
     /// Serving, with its runtime resident.
     Active,
@@ -45,6 +46,8 @@ pub struct TenantResource {
     pub created_at: Option<ReportedInstant>,
     /// `modifiedAt`, with `options=sysAttrs`.
     pub modified_at: Option<ReportedInstant>,
+    /// `databaseName`, the database holding the tenant, with `options=usage`.
+    pub database_name: Option<DatabaseName>,
     /// `databaseSize` in bytes, with `options=usage`.
     pub database_size: Option<u64>,
     /// `entityCount`, with `options=usage`.
@@ -85,7 +88,10 @@ impl TenantResource {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_resource::{TenantResource, TenantStatus};
+    use crate::{
+        database_name::DatabaseName,
+        tenant_resource::{TenantResource, TenantStatus},
+    };
     use bytes::Bytes;
     use googletest::prelude::*;
     use http::Response;
@@ -102,11 +108,15 @@ mod tests {
     #[gtest]
     fn the_members_the_options_add_are_read() -> Result<()> {
         let listing = TenantResource::read_all(&Response::new(Bytes::from_static(
-            br#"[{"id":"urn:ngsi-ld:Tenant:a","type":"Tenant","tenantName":"a","isActive":true,"status":"dormant","createdAt":"2026-10-30T04:59:03.350386Z","modifiedAt":"2026-10-30T04:59:07.617482Z","poolConnections":2,"databaseSize":22345407,"entityCount":1,"snapshotCount":0}]"#,
+            br#"[{"id":"urn:ngsi-ld:Tenant:a","type":"Tenant","tenantName":"a","isActive":true,"status":"dormant","createdAt":"2026-10-30T04:59:03.350386Z","modifiedAt":"2026-10-30T04:59:07.617482Z","databaseName":"andromeda_tenant_a_0badc0de","poolConnections":2,"databaseSize":22345407,"entityCount":1,"snapshotCount":0}]"#,
         )))?;
         let resource = listing.first().or_fail()?;
         expect_that!(resource.status, some(eq(TenantStatus::Dormant)));
         expect_that!(resource.entity_count, some(eq(1)));
+        expect_that!(
+            resource.database_name.as_ref().map(DatabaseName::as_str),
+            some(eq("andromeda_tenant_a_0badc0de"))
+        );
         expect_that!(resource.created_at, some(anything()));
         Ok(())
     }

@@ -21,6 +21,15 @@ use std::{
 /// the generated bodies of the size-limit tests.
 const PRINTED_BODY_BYTES: usize = 16 * 1024;
 
+/// Whether a log prints the exchanges it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Printing {
+    /// Every exchange is printed.
+    Every,
+    /// No exchange is printed: a load generator sends thousands, and its test reports their tally instead.
+    Nothing,
+}
+
 /// A transport printing every exchange it carries.
 #[derive(Debug, Clone)]
 pub struct ExchangeLog<T> {
@@ -28,6 +37,8 @@ pub struct ExchangeLog<T> {
     inner: T,
     /// The number of the last exchange, shared by every client derived from the same one.
     sequence: Arc<AtomicUsize>,
+    /// Whether the exchanges are printed.
+    printing: Printing,
 }
 
 impl<T: Transport> ExchangeLog<T> {
@@ -37,6 +48,17 @@ impl<T: Transport> ExchangeLog<T> {
         ExchangeLog {
             inner,
             sequence: Arc::new(AtomicUsize::new(0)),
+            printing: Printing::Every,
+        }
+    }
+
+    /// Carries every exchange through `inner` without printing it, for a client generating load.
+    #[must_use]
+    pub fn quiet(inner: T) -> ExchangeLog<T> {
+        ExchangeLog {
+            inner,
+            sequence: Arc::new(AtomicUsize::new(0)),
+            printing: Printing::Nothing,
         }
     }
 
@@ -47,6 +69,7 @@ impl<T: Transport> ExchangeLog<T> {
         ExchangeLog {
             inner,
             sequence: Arc::clone(&self.sequence),
+            printing: self.printing,
         }
     }
 }
@@ -55,6 +78,9 @@ impl<T: Transport> Transport for ExchangeLog<T> {
     type Error = T::Error;
 
     async fn send(&self, request: Request<Bytes>) -> Result<Response<Bytes>, T::Error> {
+        if self.printing == Printing::Nothing {
+            return self.inner.send(request).await;
+        }
         let number = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         let sent = SentRequest::of(&request);
         let result = self.inner.send(request).await;

@@ -1,6 +1,7 @@
 //! Reading a tenant's database for its operational usage.
 
-use crate::{database_name::TenantDatabaseName, error::TenancyError, tenant_usage::TenantUsage};
+use crate::{error::TenancyError, tenant_usage::TenantUsage};
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
 
 /// Gathers a tenant's operational usage from its own database.

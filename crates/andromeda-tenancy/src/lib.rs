@@ -23,7 +23,6 @@ pub mod administration;
 pub mod context_source_alias;
 pub mod creation_policy;
 pub mod database;
-pub mod database_name;
 pub mod error;
 pub mod lifecycle;
 pub mod pending_work;

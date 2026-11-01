@@ -4,7 +4,6 @@
 use crate::{
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     error::TenancyError,
     provisional::Establishment,
     registered_tenant::RegisteredTenant,
@@ -19,7 +18,7 @@ use crate::{
     status::TenantStatus,
     tenant_ref::TenantRef,
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_telemetry::tenancy::{ColdBuildOutcome, record_build_admission_wait, record_cold_build};
 use dashmap::mapref::entry::Entry;
 use std::{sync::Arc, time::Instant as StdInstant};

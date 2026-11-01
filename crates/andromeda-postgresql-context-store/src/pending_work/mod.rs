@@ -30,15 +30,13 @@ use crate::{
     tenant_migration::{TenantSchemaState, tenant_schema_state},
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_pool::{pool_options::configure_pool_options, saturation::is_pool_saturated, sql_state::SqlState};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
-use andromeda_tenancy::{
-    database_name::TenantDatabaseName,
-    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
-};
+use andromeda_tenancy::pending_work::{PendingWork, PendingWorkError, PendingWorkProbe};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, SelectStatement};
@@ -263,8 +261,9 @@ mod tests {
         pending_work::{PostgresPendingWorkProbe, earliest_interval_due, interval_probe_select, is_undefined_database, readable},
         tenant_migration::TenantSchemaState,
     };
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
-    use andromeda_tenancy::{database_name::TenantDatabaseName, pending_work::PendingWorkError};
+    use andromeda_tenancy::pending_work::PendingWorkError;
     use chrono::{Duration, Utc};
     use sea_query::PostgresQueryBuilder;
     use sqlx::Error as SqlxError;

@@ -14,7 +14,6 @@
 use crate::{
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
-    database_name::TenantDatabaseName,
     error::TenancyError,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
@@ -28,7 +27,7 @@ use crate::{
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_configuration::schema::tenancy::TenancyConfig;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{

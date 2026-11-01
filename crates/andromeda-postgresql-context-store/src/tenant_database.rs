@@ -7,7 +7,7 @@
 
 use crate::error::ContextStoreError;
 use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_pool::{sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
 use andromeda_postgresql_schema::tenancy::DATABASE_NAME_BYTE_LIMIT;
 use andromeda_postgresql_seaquery::{
@@ -18,7 +18,6 @@ use andromeda_postgresql_seaquery::{
     system_catalog::PgDatabase,
 };
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
-use andromeda_tenancy::database_name::TenantDatabaseName;
 use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::{Connection, PgConnection};
 use std::{
@@ -223,9 +222,9 @@ fn database_exists_statement(database_name: &str) -> sea_query::SelectStatement 
 )]
 mod tests {
     use crate::tenant_database::{CREATE_DATABASE_RETRY, DatabaseUrl, database_exists_statement, is_database_already_exists, is_transient_create_failure};
+    use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
     use andromeda_retry::schedule::BackoffSchedule;
-    use andromeda_tenancy::database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
     use std::time::Duration;
 
