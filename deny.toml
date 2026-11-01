@@ -38,6 +38,7 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki URI name constraints, blocked on rumqtt#1067" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki wildcard-name constraints, blocked on rumqtt#1067" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki CRL parsing panic, no CRLs configured, blocked on rumqtt#1067" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki distrusted emSign intermediates, blocked on rumqtt#1067" },
 ]
 
 [bans]
