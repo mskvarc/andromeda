@@ -9,10 +9,10 @@
 //! combines them.
 
 use crate::{
+    declared_operand::declares_other_data_type,
     jsonb::lift_comparison,
     operator::{PatternIndexes, compare, pattern as pattern_predicate},
     q_predicate::string_ordering::ordered_string,
-    temporal_operand::declares_time_value,
 };
 use andromeda_ngsi_ld_query::{
     filter::{
@@ -103,12 +103,12 @@ pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -
 /// Both polarities require the element to be present (clause 4.9), which is
 /// what [`present_and`] states once for every backend, and the target to be a
 /// String: "If the target value data type is different than String then it
-/// shall be considered as not matching". A JSON string declared as a time value
-/// is a time value, not a String.
+/// shall be considered as not matching". A JSON string declared as a time
+/// value, a number or a Boolean is that, not a String.
 pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
     let text = cast_compound(jsonb_whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
     let value = pattern_predicate(text, polarity, pattern, PatternIndexes::None);
     let string = jsonb_type_is(target.value.clone(), JsonType::String) // clone: as above
-        .and(negate_total(declares_time_value(target.datatype.clone()))); // clone: as above
+        .and(negate_total(declares_other_data_type(target.datatype.clone()))); // clone: as above
     Condition::all().add(present_and(target.presence.clone().and(string), value)) // clone: as above
 }

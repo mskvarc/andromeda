@@ -38,7 +38,7 @@ use andromeda_ngsi_ld_model::temporal::{
     structured_value::StructuredValue,
     text_annotation::TextAnnotation,
 };
-use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
 use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames},
     name_resolution::names_of,
@@ -116,6 +116,14 @@ fn typed(value: TemporalValue, datatype: NgsiLdReference) -> Result<TemporalValu
             datatype: Some(datatype),
         },
         TemporalValue::Boolean { flag, .. } => TemporalValue::Boolean {
+            flag,
+            datatype: Some(datatype),
+        },
+        TemporalValue::DeclaredNumber { number, .. } => TemporalValue::DeclaredNumber {
+            number,
+            datatype: Some(datatype),
+        },
+        TemporalValue::DeclaredBoolean { flag, .. } => TemporalValue::DeclaredBoolean {
             flag,
             datatype: Some(datatype),
         },
@@ -315,6 +323,17 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
             },
         }),
         ValueKind::Boolean => Ok(TemporalValue::Boolean {
+            flag: required_column(row, TABLE, HistoryColumn::ValueBoolean)?,
+            datatype: None,
+        }),
+        ValueKind::DeclaredNumber => {
+            let stored: StoredNumber = required_column(row, TABLE, HistoryColumn::ValueNumber)?;
+            Ok(TemporalValue::DeclaredNumber {
+                number: DeclaredNumber::try_from(stored).map_err(StoredHistoryError::ValueNumber)?,
+                datatype: None,
+            })
+        }
+        ValueKind::DeclaredBoolean => Ok(TemporalValue::DeclaredBoolean {
             flag: required_column(row, TABLE, HistoryColumn::ValueBoolean)?,
             datatype: None,
         }),

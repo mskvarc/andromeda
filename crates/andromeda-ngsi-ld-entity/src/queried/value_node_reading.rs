@@ -9,9 +9,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    datatype::{declaration::LiteralDeclaration, declared_value::DeclaredValue},
     reference::NgsiLdReference,
-    time::value::{TimeValue, TimeValueDeclaration},
 };
+use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedValueNode, value_item};
 use std::borrow::Cow;
 
@@ -19,7 +20,8 @@ use std::borrow::Cow;
 /// `valueType` beside it (`None` inside a structured value).
 ///
 /// A literal is compared by its value; its datatype counts only where it, or
-/// the `valueType`, declares a time value, and its language not at all. A JSON
+/// the `valueType`, declares a time value, a number or a Boolean, and its
+/// language not at all. A JSON
 /// literal is raw JSON addressed by its verbatim keys; a node is a structured
 /// value. A nested list carries neither a literal nor addressable members.
 #[must_use]
@@ -32,11 +34,20 @@ pub fn item_of<'a, M: QueriedMode>(value: &'a ExpandedValue<M>, value_type: Opti
     }
 }
 
-/// A literal's value as clause 4.9 compares it: the time value it is declared
-/// as, else its JSON scalar.
+/// A literal's value as clause 4.9 compares it: the time value, number or
+/// Boolean it is declared as, else its JSON scalar.
 fn declared_literal_value<'a>(literal: &'a Literal, value_type: Option<&NgsiLdReference>) -> value_item::LiteralValue<'a> {
-    match TimeValue::declared(TimeValueDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
-        Some(Ok(value)) => value_item::LiteralValue::Time(value),
+    match DeclaredValue::of(LiteralDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
+        Some(Ok(DeclaredValue::Time(value))) => value_item::LiteralValue::Time(value),
+        Some(Ok(DeclaredValue::Number {
+            number: DeclaredNumber::Finite(number),
+            ..
+        })) => value_item::LiteralValue::Number(Cow::Owned(number)),
+        Some(Ok(DeclaredValue::Number {
+            number: DeclaredNumber::NonFinite(value),
+            ..
+        })) => value_item::LiteralValue::NonFiniteNumber(value),
+        Some(Ok(DeclaredValue::Boolean(flag))) => value_item::LiteralValue::Boolean(flag),
         Some(Err(_)) | None => literal_value(literal.value()),
     }
 }

@@ -11,18 +11,14 @@ use crate::{
     filter::{language_matching::LanguageMatching, target_language::LanguageSelector, target_value::TargetValue},
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+        fixture_literal::FixtureLiteral,
         instance_metadata::InstanceMetadata,
         linked_entities::LinkedEntities,
-        value_item::{LiteralValue, ValueItem},
+        value_item::ValueItem,
     },
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    time::value::{TimeValue, TimeValueForm},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
 use langtag::LangTag;
@@ -80,26 +76,6 @@ pub(crate) enum FixtureItem {
     Node(FixtureNode),
     /// A nested list.
     Opaque,
-}
-
-/// A literal decoded from an expanded fixture.
-#[derive(Debug)]
-pub(crate) enum FixtureLiteral {
-    /// An exact number.
-    Number(JsonNumber),
-    /// A string.
-    Text(String),
-    /// A string carrying its `@language`, as a language map entry does.
-    Tagged {
-        /// The string.
-        text: String,
-        /// Its language tag.
-        language: String,
-    },
-    /// A boolean.
-    Boolean(bool),
-    /// A string whose `@type` declares a clause 4.6.3 time value.
-    Time(TimeValue),
 }
 
 /// A node of a structured value decoded from an expanded fixture.
@@ -248,10 +224,7 @@ fn item_of(node: &Value) -> FixtureItem {
         }
         return match value {
             Value::Number(number) if !is_json => FixtureItem::Literal(FixtureLiteral::Number(JsonNumber::try_from(number).expect("an exact number"))),
-            Value::String(text) if !is_json => match object.get("@type").and_then(Value::as_str).and_then(TimeValueForm::named_by) {
-                Some(form) => FixtureItem::Literal(FixtureLiteral::Time(form.parse(text).expect("a declared time value"))),
-                None => FixtureItem::Literal(FixtureLiteral::Text(text.to_owned())),
-            },
+            Value::String(text) if !is_json => FixtureItem::Literal(FixtureLiteral::declared(object.get("@type").and_then(Value::as_str), text)),
             Value::Bool(boolean) if !is_json => FixtureItem::Literal(FixtureLiteral::Boolean(*boolean)),
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
                 FixtureItem::Json(JsonLiteral::deserialize(value).expect("a JSON literal"))
@@ -280,12 +253,7 @@ impl FixtureItem {
     /// The item as the evaluator reads it.
     fn view(&self) -> ValueItem<'_, &FixtureNode> {
         match self {
-            FixtureItem::Literal(FixtureLiteral::Number(number)) => ValueItem::Literal(LiteralValue::Number(Cow::Borrowed(number))),
-            FixtureItem::Literal(FixtureLiteral::Text(text) | FixtureLiteral::Tagged { text, .. }) => {
-                ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text)))
-            }
-            FixtureItem::Literal(FixtureLiteral::Boolean(boolean)) => ValueItem::Literal(LiteralValue::Boolean(*boolean)),
-            FixtureItem::Literal(FixtureLiteral::Time(value)) => ValueItem::Literal(LiteralValue::Time(*value)),
+            FixtureItem::Literal(literal) => ValueItem::Literal(literal.view()),
             FixtureItem::Json(json) => ValueItem::Json(json.piece()),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
             FixtureItem::Node(node) => ValueItem::Node(node),
@@ -372,5 +340,6 @@ pub(crate) fn target_json(value: &TargetValue<'_>) -> Value {
         TargetValue::Json(json) => serde_json::from_str(json.text()).expect("the JSON a literal spells"),
         TargetValue::Array(elements) => Value::Array(elements.iter().map(target_json).collect()),
         TargetValue::Time(time) => Value::String(time.to_string()),
+        TargetValue::NonFiniteNumber(value) => Value::String(value.to_string()),
     }
 }

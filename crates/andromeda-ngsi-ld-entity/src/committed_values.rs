@@ -1,12 +1,14 @@
 //! The spelling a write commits each value in, so the state a write commits is the state every later read decodes.
 //!
-//! - A literal declared as a clause 4.6.3 `DateTime` or `Time`, by its own
-//!   `@type` or by the `valueType` of its attribute, is held in the one
-//!   spelling the broker serves it in: UTC, `Z`, and the sub-second precision
-//!   it carries in groups of three digits. That holds for a single value, each
-//!   value of a multi-valued Property, each `ListProperty` item and every typed
-//!   literal nested in a structured value, at every depth. A `Date` has one
-//!   spelling already. A string declared as no time value is never touched.
+//! - A JSON string declared as a clause 4.6.3 time value, an XSD number or an
+//!   `xsd:boolean`, by its own `@type` or by the `valueType` of its attribute,
+//!   is held in the one spelling the broker serves it in: a `DateTime` or a
+//!   `Time` in UTC, `Z`, and the sub-second precision it carries in groups of
+//!   three digits, a number in the canonical lexical form of its datatype, a
+//!   Boolean as `true` or `false`. That holds for a single value, each value of
+//!   a multi-valued Property, each `ListProperty` item and every typed literal
+//!   nested in a structured value, at every depth. A `Date` has one spelling
+//!   already. A string declared as none of them is never touched.
 //! - A `ListRelationship` target is held in the clause 4.5.22.2 normalized
 //!   spelling, `{"object": uri}`, whichever spelling the request used.
 
@@ -21,11 +23,9 @@ use crate::{
     value_mode::ValueMode,
 };
 use andromeda_ngsi_ld_lexicon::{
+    datatype::{declaration::LiteralDeclaration, declared_value::DeclaredValue},
     reference::NgsiLdReference,
-    time::{
-        system_instant::SystemInstant,
-        value::{TimeValue, TimeValueDeclaration},
-    },
+    time::system_instant::SystemInstant,
 };
 use std::sync::Arc;
 
@@ -109,7 +109,7 @@ fn canonicalize_value(value: &mut FamilyValue) {
     match value {
         FamilyValue::Property { values, value_type, .. } | FamilyValue::ListProperty { items: values, value_type, .. } => {
             for value in values.iter_mut() {
-                value.commit_time_values(value_type.as_ref());
+                value.commit_declared_values(value_type.as_ref());
             }
         }
         FamilyValue::ListRelationship { objects, .. } => {
@@ -145,13 +145,14 @@ fn expanded_needs_canonical<M: ValueMode>(value: &ExpandedValue<M>, value_type: 
 
 impl<M: ValueMode> ExpandedValue<M> {
     /// Rewrite this value, beside the `valueType` `value_type`, and every
-    /// literal inside it in its committed spelling: a declared `DateTime` or
-    /// `Time` takes its served spelling, every other literal is left as it is.
+    /// literal inside it in its committed spelling: a declared time value,
+    /// number or Boolean takes its served spelling, every other literal is left
+    /// as it is.
     ///
     /// The Temporal API records written values without a commit, so a Temporal
-    /// Evolution holds a declared time value in the same spelling current state
+    /// Evolution holds a declared value in the same spelling current state
     /// does.
-    pub fn commit_time_values(&mut self, value_type: Option<&NgsiLdReference>) {
+    pub fn commit_declared_values(&mut self, value_type: Option<&NgsiLdReference>) {
         match self {
             ExpandedValue::Literal(literal) => {
                 if let Some(canonical) = canonical_literal(literal, value_type) {
@@ -159,22 +160,22 @@ impl<M: ValueMode> ExpandedValue<M> {
                 }
             }
             ExpandedValue::Json(_) => {}
-            ExpandedValue::List(items) => items.iter_mut().for_each(|item| item.commit_time_values(value_type)),
+            ExpandedValue::List(items) => items.iter_mut().for_each(|item| item.commit_declared_values(value_type)),
             ExpandedValue::Node(node) => node
                 .members_mut()
                 .values_mut()
-                .for_each(|member| M::held_values_mut(member).iter_mut().for_each(|item| item.commit_time_values(None))),
+                .for_each(|member| M::held_values_mut(member).iter_mut().for_each(|item| item.commit_declared_values(None))),
         }
     }
 }
 
-/// The literal a declared time value is committed as, when `literal` is one
+/// The literal a declared value is committed as, when `literal` is one
 /// written in another spelling.
 fn canonical_literal(literal: &Literal, value_type: Option<&NgsiLdReference>) -> Option<Literal> {
     let LiteralValue::String(text) = literal.value() else {
         return None;
     };
-    let canonical = match TimeValue::declared(TimeValueDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
+    let canonical = match DeclaredValue::of(LiteralDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
         Some(Ok(value)) => value.to_string(),
         Some(Err(_)) | None => return None,
     };
@@ -313,6 +314,41 @@ mod tests {
             committed(several(vec![text("2024-01-01T00:00:00.000Z")], Some(date_time_type()))),
             several(vec![text("2024-01-01T00:00:00Z")], Some(date_time_type()))
         );
+    }
+
+    fn xsd(local: &str) -> NgsiLdReference {
+        format!("http://www.w3.org/2001/XMLSchema#{local}").parse().expect("an XSD datatype")
+    }
+
+    /// XML Schema Definition Language 1.1 Part 2: the canonical lexical form of
+    /// a decimal has no `+`, no leading and no trailing fractional zeros, and
+    /// that of a Boolean is `true` or `false`.
+    #[test]
+    fn a_declared_number_or_boolean_is_committed_in_its_canonical_spelling() {
+        for (written, canonical, datatype) in [
+            ("01", "1", xsd("integer")),
+            ("+1.50", "1.5", xsd("decimal")),
+            ("1.0E2", "100", xsd("double")),
+            ("0.0000001", "1E-7", xsd("double")),
+            ("1", "true", xsd("boolean")),
+            ("INF", "INF", xsd("double")),
+        ] {
+            pretty_assertions::assert_eq!(
+                committed(property(typed(written, datatype.clone()))),
+                property(typed(canonical, datatype.clone())),
+                "{written}"
+            );
+            pretty_assertions::assert_eq!(
+                committed(several(vec![text(written)], Some(datatype.clone()))),
+                several(vec![text(canonical)], Some(datatype)),
+                "{written} by valueType"
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_declared_as_another_xsd_datatype_is_committed_as_written() {
+        pretty_assertions::assert_eq!(committed(property(typed("01", xsd("string")))), property(typed("01", xsd("string"))));
     }
 
     #[test]

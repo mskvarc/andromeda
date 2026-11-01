@@ -53,6 +53,9 @@ pub enum JsonNumberError {
         "the number needs more than {MAX_FRACTIONAL_DIGITS} digits after the decimal point; Andromeda stores numbers of at most {MAX_INTEGRAL_DIGITS} digits before and {MAX_FRACTIONAL_DIGITS} digits after it"
     )]
     TooManyFractionalDigits,
+    /// A text is no XSD 1.1 lexical form of a numeric datatype.
+    #[error("the text is no XSD lexical form of a number")]
+    NotXsdLexical,
     /// A floating-point value has no JSON number representation.
     #[error("a JSON number cannot carry the non-finite floating-point value {value}")]
     NotFinite {

@@ -6,17 +6,23 @@
 //! map, several Relationship objects) an equality matches a value the array
 //! includes, so each member that is a number, a string or a boolean is one
 //! value, and so is the `@value` of a member value node when it is one of
-//! those. A value node whose `@type` declares a clause 4.6.3 time value is
-//! that time value. Every other member (`null`, an array, a node without such
-//! a `@value`) and a value that is not an array hold none.
+//! those. A value node whose `@type` declares a clause 4.6.3 time value, an
+//! XSD number or an `xsd:boolean` is that value; a declared number beyond the
+//! decimals equals no operand and holds none. Every other member (`null`, an
+//! array, a node without such a `@value`) and a value that is not an array
+//! hold none.
 //!
 //! The members are read from the stored text: a member's JSON type is fixed by
 //! its first byte, and a number is read at arbitrary precision so it keys as
 //! the exact decimal it is.
 
 use crate::stored_json::StoredJson;
-use andromeda_ngsi_ld_lexicon::time::value::{TimeValue, TimeValueError, TimeValueForm};
-use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
+use andromeda_ngsi_ld_lexicon::{
+    datatype::{declaration::LiteralDeclaration, declared_value::DeclaredValue, primitive_literal::PrimitiveLiteral, recognised::DatatypeError},
+    reference::NgsiLdReference,
+    time::value::TimeValue,
+};
+use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::DeclaredNumber};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use thiserror::Error;
@@ -26,7 +32,7 @@ use thiserror::Error;
 pub enum ArrayMember {
     /// A number, at its exact value.
     Number(JsonNumber),
-    /// A string declared as no time value.
+    /// A string its datatype gives no other data type.
     Text(String),
     /// A boolean.
     Boolean(bool),
@@ -54,9 +60,9 @@ pub enum StoredArrayMemberError {
     /// A member number has no exact decimal value.
     #[error("a stored array member is not a storable number: {0}")]
     Number(#[from] JsonNumberError),
-    /// A member declared as a time value is not one.
-    #[error("a stored array member is not of its declared time value form: {0}")]
-    Time(#[from] TimeValueError),
+    /// A member is no value of the datatype it is declared as.
+    #[error("a stored array member is no value of its declared datatype: {0}")]
+    Declared(#[from] DatatypeError),
 }
 
 /// The scalar members of `json`, in stored order; none when it is not an
@@ -78,18 +84,32 @@ pub fn stored_array_members(json: &StoredJson) -> Result<Vec<ArrayMember>, Store
 }
 
 /// The value `member` holds: itself when it is a scalar, its `@value` when it
-/// is a node whose `@value` is one, read as the time value its `@type`
-/// declares.
+/// is a node whose `@value` is one, read as the value its `@type` declares.
 fn array_member(member: &RawValue) -> Result<Option<ArrayMember>, StoredArrayMemberError> {
     if !member.get().starts_with('{') {
         return scalar(member);
     }
     let node = serde_json::from_str::<ValueNode<'_>>(member.get())?;
-    let form = node.datatype.and_then(TimeValueForm::named_by);
-    match (node.value.map(scalar).transpose()?.flatten(), form) {
-        (Some(ArrayMember::Text(text)), Some(form)) => Ok(Some(ArrayMember::Time(form.parse(&text)?))),
-        (held, Some(_) | None) => Ok(held),
-    }
+    let datatype = node.datatype.and_then(|datatype| datatype.parse::<NgsiLdReference>().ok());
+    let held = node.value.map(scalar).transpose()?.flatten();
+    let Some(ArrayMember::Text(text)) = held else {
+        return Ok(held);
+    };
+    Ok(
+        match DeclaredValue::of(LiteralDeclaration::new(datatype.as_ref(), None), PrimitiveLiteral::String(&text)).transpose()? {
+            None => Some(ArrayMember::Text(text)),
+            Some(DeclaredValue::Time(value)) => Some(ArrayMember::Time(value)),
+            Some(DeclaredValue::Number {
+                number: DeclaredNumber::Finite(number),
+                ..
+            }) => Some(ArrayMember::Number(number)),
+            Some(DeclaredValue::Number {
+                number: DeclaredNumber::NonFinite(_),
+                ..
+            }) => None,
+            Some(DeclaredValue::Boolean(flag)) => Some(ArrayMember::Boolean(flag)),
+        },
+    )
 }
 
 /// `value` when it is a number, a string or a boolean.

@@ -10,5 +10,7 @@
 //! the XSD datatypes RDF 1.1 section 5.1 lists as compatible. Any other IRI is
 //! a valid datatype with nothing to check.
 
+pub mod declaration;
+pub mod declared_value;
 pub mod primitive_literal;
 pub mod recognised;

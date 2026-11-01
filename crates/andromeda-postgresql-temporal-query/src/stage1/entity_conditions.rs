@@ -376,7 +376,7 @@ mod tests {
         let (sql, _) = built(&compiled, &speed_and_address());
         pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 1, "{sql}");
         assert!(
-            sql.contains(r#"(("qh"."attribute_name_key" = $1 AND "qh"."value_number" > $2) OR ("qh"."attribute_name_key" = $3 AND "qh"."value_number" < $4))"#),
+            sql.contains(r#"(("qh"."attribute_name_key" = $1 AND ("qh"."value_number" > $2 AND "qh"."value_number" <> ('NaN'::numeric))) OR ("qh"."attribute_name_key" = $3 AND ("qh"."value_number" < $4 AND "qh"."value_number" <> ('NaN'::numeric))))"#),
             "{sql}"
         );
         assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");

@@ -154,7 +154,12 @@ fn any_one_value<'t, 'a>(target: &'t ResolvedTarget<'a>) -> Option<&'t [TargetVa
         (MultiValueReading::AnyOneValue, TargetValue::Array(values)) => Some(values),
         (
             MultiValueReading::AnyOneValue,
-            TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Time(_),
+            TargetValue::Number(_)
+            | TargetValue::Text(_)
+            | TargetValue::Boolean(_)
+            | TargetValue::Json(_)
+            | TargetValue::Time(_)
+            | TargetValue::NonFiniteNumber(_),
         )
         | (MultiValueReading::WholeArray, _) => None,
     }
@@ -227,7 +232,7 @@ fn compare(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> bool {
 /// comparable in the scalar's domain.
 fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Option<bool> {
     match scalar {
-        Scalar::Number(rhs) => Some(op.holds(value.as_number()?.as_ref().cmp(rhs))),
+        Scalar::Number(rhs) => Some(op.holds(value.number_ordering(rhs)?)),
         Scalar::Bool(rhs) => Some(op.holds(value.as_boolean()?.cmp(rhs))),
         Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_text()?, rhs, op))),
         Scalar::Uri(rhs) => Some(op.holds(value.as_text()?.as_ref().cmp(rhs.as_str()))),
@@ -429,29 +434,98 @@ mod tests {
         ));
     }
 
-    /// A literal's datatype counts only where it declares a time value, so a
-    /// JSON string is a String whatever it spells (clause 4.9: a target of
-    /// another data type is unequal to the operand).
+    /// A JSON string declared as an XSD number is a number (clause 4.9 compares
+    /// by data type, and a declared datatype is the data type of a typed
+    /// literal), so it matches a number operand and no String one.
     #[test]
-    fn a_typed_json_ld_numeric_string_compares_as_the_string_it_is_written_as() {
+    fn a_json_string_declared_as_a_number_compares_as_the_number_it_names() {
         let entity = serde_json::json!([{
             "@id": "urn:ngsi-ld:Sensor:1",
             "https://example.com/reading": [{
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "0.100000000000000005", "@type": "http://www.w3.org/2001/XMLSchema#decimal"}]
             }]
         }]);
-        assert!(!holds(
-            &parse("\"https://example.com/reading\"==0.100000000000000005").expect("a number operand"),
-            &entity
-        ));
-        assert!(holds(
-            &parse("\"https://example.com/reading\"!=0.100000000000000005").expect("a number operand"),
-            &entity
-        ));
-        assert!(holds(
-            &parse("\"https://example.com/reading\"==\"0.100000000000000005\"").expect("a String operand"),
-            &entity
-        ));
+        let reading = |q: &str| holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &entity);
+        assert!(reading("==0.100000000000000005"));
+        assert!(!reading("!=0.100000000000000005"));
+        assert!(reading(">0.1"));
+        assert!(!reading("==\"0.100000000000000005\""));
+        assert!(reading("!=\"0.100000000000000005\""));
+    }
+
+    fn declared_double(value: &str) -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Sensor:1",
+            "https://example.com/reading": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value, "@type": "http://www.w3.org/2001/XMLSchema#double"}]
+            }]
+        }])
+    }
+
+    fn double_holds(value: &str, q: &str) -> bool {
+        holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &declared_double(value))
+    }
+
+    /// XSD orders `INF` above every finite number and `-INF` below; an operand
+    /// is always finite, so equality never holds.
+    #[test]
+    fn an_infinity_matches_the_orderings_xsd_gives_it() {
+        for q in [">3", ">=3", "!=3", "!=\"INF\"", "==3..4", "!=3..4"] {
+            let expected = !matches!(q, "==3..4");
+            pretty_assertions::assert_eq!(double_holds("INF", q), expected, "INF {q}");
+        }
+        for q in ["<3", "<=3", "!=3"] {
+            assert!(double_holds("-INF", q), "-INF {q}");
+        }
+        for q in ["==3", "<3", "==\"INF\""] {
+            assert!(!double_holds("INF", q), "INF {q}");
+        }
+        assert!(!double_holds("-INF", ">3"));
+    }
+
+    /// `NaN` compares with no operand: it fails `==` and every ordering and
+    /// passes `!=`.
+    #[test]
+    fn not_a_number_matches_only_unequal() {
+        for q in ["==3", ">3", ">=3", "<3", "<=3", "==3..4", "==\"NaN\""] {
+            assert!(!double_holds("NaN", q), "NaN {q}");
+        }
+        for q in ["!=3", "!=3..4", "!=\"NaN\""] {
+            assert!(double_holds("NaN", q), "NaN {q}");
+        }
+    }
+
+    #[test]
+    fn a_json_string_declared_as_a_boolean_compares_as_a_boolean() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Sensor:1",
+            "https://example.com/open": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "true", "@type": "http://www.w3.org/2001/XMLSchema#boolean"}]
+            }]
+        }]);
+        let open = |q: &str| holds(&parse(&format!("\"https://example.com/open\"{q}")).expect("parses"), &entity);
+        assert!(open("==true"));
+        assert!(!open("!=true"));
+        assert!(!open("==\"true\""));
+        assert!(open("!=\"true\""));
+    }
+
+    /// A JSON string with no datatype, or one declared as `xsd:string`, is a
+    /// String whatever it spells.
+    #[test]
+    fn a_json_string_declared_as_no_number_compares_as_a_string() {
+        for value in [
+            serde_json::json!({"@value": "4"}),
+            serde_json::json!({"@value": "4", "@type": "http://www.w3.org/2001/XMLSchema#string"}),
+        ] {
+            let entity = serde_json::json!([{
+                "@id": "urn:ngsi-ld:Sensor:1",
+                "https://example.com/reading": [{"https://uri.etsi.org/ngsi-ld/hasValue": [value]}]
+            }]);
+            let reading = |q: &str| holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &entity);
+            assert!(!reading("==4") && reading("!=4") && !reading(">3"));
+            assert!(reading("==\"4\"") && !reading("!=\"4\""));
+        }
     }
 
     #[test]

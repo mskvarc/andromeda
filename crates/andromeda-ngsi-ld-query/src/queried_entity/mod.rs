@@ -25,3 +25,9 @@ pub mod value_item;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 pub(crate) mod expanded_fixture;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+pub(crate) mod fixture_literal;

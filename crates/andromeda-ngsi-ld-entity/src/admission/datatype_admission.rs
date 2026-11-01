@@ -28,9 +28,12 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
-    datatype::recognised::{DatatypeError, RecognisedDatatype, admit_language_map_value_type},
+    datatype::{
+        declaration::LiteralDeclaration,
+        declared_value::DeclaredValue,
+        recognised::{DatatypeError, RecognisedDatatype, admit_language_map_value_type},
+    },
     reference::NgsiLdReference,
-    time::value::TimeValueDeclaration,
 };
 
 impl EntityDocument {
@@ -152,18 +155,26 @@ fn admit_value<M: ValueMode>(value: &ExpandedValue<M>, value_type: Option<&NgsiL
     }
 }
 
-/// One literal against its own datatype and the `valueType` beside it.
+/// One literal against its own datatype and the `valueType` beside it, and
+/// the value the deciding one reads from it, which the broker must hold: a
+/// declared number past the range of the store is refused here, not at the
+/// write.
 fn admit_literal(literal: &Literal, value_type: Option<&NgsiLdReference>) -> Result<(), DatatypeError> {
-    TimeValueDeclaration::new(literal.datatype(), value_type).form()?;
+    let declaration = LiteralDeclaration::new(literal.datatype(), value_type);
+    declaration.time_form()?;
     let primitive = literal.value().primitive();
     let declared = match (literal.datatype(), value_type) {
         (Some(datatype), Some(value_type)) if datatype == value_type => [Some(datatype), None],
         (datatype, value_type) => [datatype, value_type],
     };
-    declared.into_iter().flatten().try_for_each(|datatype| match RecognisedDatatype::of(datatype)? {
-        Some(recognised) => recognised.admits(primitive),
-        None => Ok(()),
-    })
+    declared
+        .into_iter()
+        .flatten()
+        .try_for_each(|datatype| match RecognisedDatatype::of(datatype)? {
+            Some(recognised) => recognised.admits(primitive),
+            None => Ok(()),
+        })?;
+    DeclaredValue::of(declaration, primitive).transpose().map(drop)
 }
 
 /// The refusal of a literal or `valueType` of `attribute`.

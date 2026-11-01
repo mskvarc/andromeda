@@ -28,9 +28,9 @@ pub struct CurrentAttributeRow {
 #[must_use]
 pub fn row_column(value: &StoredValue) -> CurrentAttributes {
     match value {
-        StoredValue::Number { .. } => CurrentAttributes::ValueNumber,
+        StoredValue::Number { .. } | StoredValue::DeclaredNumber { .. } => CurrentAttributes::ValueNumber,
         StoredValue::String { text, .. } => StringValueColumn::of(text).column(),
-        StoredValue::Boolean { .. } => CurrentAttributes::ValueBoolean,
+        StoredValue::Boolean { .. } | StoredValue::DeclaredBoolean { .. } => CurrentAttributes::ValueBoolean,
         StoredValue::DateTime { .. } => CurrentAttributes::ValueDateTime,
         StoredValue::Date { .. } | StoredValue::Time { .. } => CurrentAttributes::ValueString,
         StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,

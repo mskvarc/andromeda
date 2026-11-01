@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
+    datatype::declared_value::NumberSpelling,
     identifier::{Identifier, IdentifierParseError},
     reference::{NgsiLdReference, NgsiLdReferenceError},
     time::{
@@ -59,6 +60,10 @@ pub enum HistoryRowRenderError {
     /// A stored observation or deletion instant lies below the storable floor.
     #[error("a stored instant is not an NGSI-LD DateTime: {0}")]
     Instant(#[source] NgsiLdDateTimeError),
+    /// A stored declared number carries no numeric datatype and no numeric
+    /// `valueType`.
+    #[error("a stored declared number names no numeric datatype")]
+    UndeclaredNumber,
 }
 
 /// The attribute instance one backend-neutral [`TemporalHistoryRow`] renders
@@ -91,7 +96,11 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
     let (instance_id, dataset_id) = identity_members(&instance, dataset_id)?;
     let deleted_at = value.deleted_at();
     let metadata = metadata.map_or_else(empty_parts, ObservationMetadata::into_parts);
-    let value = rendered_value(value, attribute_type)?;
+    let value_type = match &metadata.value_type {
+        Some(Slot::Set(value_type)) => Some(value_type),
+        Some(Slot::Remove) | None => None,
+    };
+    let value = rendered_value(value, attribute_type, value_type)?;
     // A deletion carries no observation of its own: its value member, its
     // deletion instant, the `observedAt` a written deletion declared and its
     // identity are the whole rendering.
@@ -151,9 +160,11 @@ fn empty_parts() -> InstanceDocumentParts {
 /// prohibit.
 ///
 /// A scalar renders as the value object it was written as: typed when it
-/// declared a datatype, a declared time value among them, and tagged when it
-/// declared a language, as current state holds it.
-fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result<ValueSlot, HistoryRowRenderError> {
+/// declared a datatype, a declared time value, number or Boolean among them,
+/// and tagged when it declared a language, as current state holds it. A
+/// declared value is a JSON string in the canonical lexical form of its
+/// datatype.
+fn rendered_value(value: TemporalValue, attribute_type: AttributeType, value_type: Option<&NgsiLdReference>) -> Result<ValueSlot, HistoryRowRenderError> {
     Ok(ValueSlot::Set(match value {
         TemporalValue::Number { number, datatype } => literal(LiteralValue::Number(number), datatype),
         TemporalValue::String { text, annotation } => match (attribute_type, annotation) {
@@ -173,6 +184,14 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
             ) => text_literal(text, annotation)?,
         },
         TemporalValue::Boolean { flag, datatype } => literal(LiteralValue::Boolean(flag), datatype),
+        TemporalValue::DeclaredNumber { number, datatype } => {
+            let spelling = value_type
+                .or(datatype.as_ref())
+                .and_then(NumberSpelling::named_by)
+                .ok_or(HistoryRowRenderError::UndeclaredNumber)?;
+            literal(LiteralValue::String(spelling.spell(&number).into()), datatype)
+        }
+        TemporalValue::DeclaredBoolean { flag, datatype } => literal(LiteralValue::String(flag.to_string().into()), datatype),
         TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry)),
         TemporalValue::Structured(structured) => structured.into_written(),
         TemporalValue::DateTime { instant, datatype } => literal(LiteralValue::String(rendered_instant(instant).into()), datatype),

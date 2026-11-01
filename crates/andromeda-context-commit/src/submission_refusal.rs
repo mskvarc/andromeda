@@ -10,9 +10,10 @@
 
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    datatype::recognised::DatatypeError,
     identifier::Identifier,
     instance_identity::InstanceIdentity,
-    time::{date_time::NgsiLdDateTimeError, value::TimeValueError},
+    time::date_time::NgsiLdDateTimeError,
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
 use derive_more::Display;
@@ -24,9 +25,10 @@ pub enum SubmissionRefusal {
     /// An Entity carried no type; clause 4.5.1 requires at least one.
     #[error("entity {0} carries no type, but at least one is required")]
     UntypedEntity(Identifier),
-    /// A time-value property was not a clause 4.6.3 time value.
-    #[error("invalid time value property: {0}")]
-    TimeValueProperty(#[source] TimeValueError),
+    /// A Property value is no value of the datatype it is declared as: a
+    /// clause 4.6.3 time value, an XSD number or an `xsd:boolean`.
+    #[error("the property value is no value of its declared datatype: {0}")]
+    DeclaredValueProperty(#[source] DatatypeError),
     /// A `DateTime` value cannot be held at the store's microsecond resolution.
     #[error("a DateTime value cannot be stored at microsecond resolution: {0}")]
     TimestampPrecision(#[source] NgsiLdDateTimeError),

@@ -4,8 +4,11 @@
 //! The mapping mirrors what the write path stores:
 //!
 //! * numbers land in `value_number` (`numeric`) and bind directly as an exact
-//!   decimal, so every supported operand uses the typed numeric index,
-//! * booleans in `value_boolean`,
+//!   decimal, so every supported operand uses the typed numeric index; a JSON
+//!   string declared as an XSD number lands there too, under its own value
+//!   kind, `INF`, `-INF` and `NaN` included,
+//! * booleans in `value_boolean`, a JSON string declared as `xsd:boolean`
+//!   beside them,
 //! * date-times in `value_date_time`,
 //! * strings in `value_string` for Properties and single-term
 //!   `VocabProperties` (or, past the B-tree bound, in `value_long_text`, which
@@ -36,7 +39,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
 use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_seaquery::literal::false_literal;
+use andromeda_postgresql_seaquery::{literal::false_literal, numeric_special::is_not_nan};
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -67,7 +70,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
     match scalar {
         // SeaQuery owns every value in its AST, so this is the one necessary
         // clone between the borrowed query domain value and the NUMERIC bind.
-        Scalar::Number(number) => compare(row.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())),
+        Scalar::Number(number) => number_condition(compare(row.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())), op, row),
         Scalar::Bool(value) => compare(row.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
         Scalar::Str(value) | Scalar::Uri(value) => {
             let string_test = string_condition(scalar, value.as_str(), op, row);
@@ -89,6 +92,22 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
         Scalar::Time(value) => {
             compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdTime::normalise(*value).to_string())).and(row.value_kind_is(ValueKind::Time))
         }
+    }
+}
+
+/// A comparison of the number column, under `op`, that leaves `NaN` out of
+/// every ordering.
+///
+/// A declared `xsd:float` or `xsd:double` holds `INF`, `-INF` and `NaN` as the
+/// `numeric` values PostgreSQL orders `-Infinity` below every finite value,
+/// `Infinity` above, and `NaN` above both, equal to itself. The infinities
+/// already order as XSD orders them. `NaN` is unordered, so it must fail every
+/// ordering; it never equals an operand, which is always finite, so equality
+/// needs no guard, and `!=`, the total negation of `==`, holds for it.
+fn number_condition(compared: SimpleExpr, op: CmpOp, row: InstanceRow) -> SimpleExpr {
+    match op {
+        CmpOp::Equal | CmpOp::Unequal => compared,
+        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => compared.and(is_not_nan(row.value(ValueColumn::Number))),
     }
 }
 
@@ -196,6 +215,20 @@ mod tests {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             assert!(!render(current(&scalar, op)).contains("value_uri"), "{op:?}");
         }
+    }
+
+    /// `NaN` is unordered, so every ordering on the number column leaves it
+    /// out; it never equals a finite operand, so equality reads the column
+    /// alone, and reads it for both number kinds.
+    #[test]
+    fn a_number_ordering_leaves_not_a_number_out_and_equality_does_not_guard() {
+        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
+            let sql = render(current(&Scalar::Number(3.into()), op));
+            assert!(sql.contains(r#""ca"."value_number" <> ('NaN'::numeric)"#), "{op:?}: {sql}");
+            assert!(!sql.contains("value_kind"), "{op:?}: {sql}");
+        }
+        let sql = render(current(&Scalar::Number(3.into()), CmpOp::Equal));
+        assert!(!sql.contains("NaN") && !sql.contains("value_kind"), "{sql}");
     }
 
     /// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not

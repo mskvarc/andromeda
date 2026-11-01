@@ -4,6 +4,7 @@ use crate::{error::TemporalStoreError, temporal_store_invariant::TemporalStoreIn
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
+use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
     stored_json::StoredJson,
@@ -74,6 +75,14 @@ impl AttributeHistoryValue {
                 },
             },
             TemporalValue::Boolean { flag, datatype } => StoredValue::Boolean {
+                flag: *flag,
+                datatype: key(datatype)?,
+            },
+            TemporalValue::DeclaredNumber { number, datatype } => StoredValue::DeclaredNumber {
+                number: number.clone(), // clone: the persisted row owns its number.
+                datatype: key(datatype)?,
+            },
+            TemporalValue::DeclaredBoolean { flag, datatype } => StoredValue::DeclaredBoolean {
                 flag: *flag,
                 datatype: key(datatype)?,
             },
@@ -148,14 +157,21 @@ impl AttributeHistoryValue {
     /// The column is arbitrary-precision, so the value is handed over as its
     /// decimal text rather than as a double: a JSON integer beyond the range the
     /// double format names individually reaches storage unchanged instead of
-    /// being refused or rounded at the boundary. Every number renders a finite
-    /// literal without an exponent, which is exactly what `NUMERIC` parses.
+    /// being refused or rounded at the boundary. Every finite number renders a
+    /// literal without an exponent, which is exactly what `NUMERIC` parses; a
+    /// number beyond the decimals has none.
     #[must_use]
     pub fn numeric_literal(&self) -> Option<String> {
         match self.recorded()? {
-            StoredValue::Number { number, .. } => Some(number.to_string()),
+            StoredValue::Number { number, .. }
+            | StoredValue::DeclaredNumber {
+                number: DeclaredNumber::Finite(number),
+                ..
+            } => Some(number.to_string()),
             StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
@@ -171,8 +187,11 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             // clone: the bind owns the decimal it encodes, and the value gives up none.
             StoredValue::Number { number, .. } => Some(StoredNumber::from(number.clone())),
+            // clone: as above.
+            StoredValue::DeclaredNumber { number, .. } => Some(StoredNumber::from(number.clone())),
             StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
@@ -191,6 +210,8 @@ impl AttributeHistoryValue {
             StoredValue::Date { date, .. } => Some(Cow::Owned(date.to_string())),
             StoredValue::Time { time, .. } => Some(Cow::Owned(time.to_string())),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Geometry { .. }
@@ -203,8 +224,9 @@ impl AttributeHistoryValue {
     #[must_use]
     pub fn boolean(&self) -> Option<bool> {
         match self.recorded()? {
-            StoredValue::Boolean { flag, .. } => Some(*flag),
+            StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => Some(*flag),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
             | StoredValue::String { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
@@ -221,6 +243,8 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             StoredValue::Geometry { form, .. } => Some(form),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
@@ -237,6 +261,8 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             StoredValue::Geometry { members, .. } => members.as_ref().map(StoredJson::as_raw),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
@@ -253,6 +279,8 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             StoredValue::Object(object) => Some(object.as_raw()),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }
@@ -269,6 +297,8 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             StoredValue::DateTime { instant, .. } => Some(*instant),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::Date { .. }
@@ -285,6 +315,8 @@ impl AttributeHistoryValue {
         match self.recorded()? {
             StoredValue::Uri(uri) => Some(uri),
             StoredValue::Number { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }

@@ -7,8 +7,9 @@ compact_code_registry! {
     /// Which typed column of an attribute-history row holds its value.
     ///
     /// One member per typed value column, plus the two time value data types
-    /// the string column holds apart from a String and the reserved
-    /// [`Tombstone`](ValueKind::Tombstone). The number is not a convenience
+    /// the string column holds apart from a String, the declared number and
+    /// Boolean the number and boolean columns hold apart from a JSON number
+    /// and boolean, and the reserved [`Tombstone`](ValueKind::Tombstone). The number is not a convenience
     /// index: the rebuilt history table constrains the row so that the member
     /// and the populated column agree, which makes a stored value whose
     /// declared shape disagrees with where it actually sits unrepresentable
@@ -49,6 +50,13 @@ compact_code_registry! {
             /// in the string column in its fixed-width storage encoding
             /// `HH:MM:SS.ffffffZ`, whose byte order is chronological.
             Time = 9, "time";
+            /// The row's value is a JSON string declared as an XSD number,
+            /// held in the number column, `INF`, `-INF` and `NaN` as the
+            /// `numeric` values `Infinity`, `-Infinity` and `NaN`.
+            DeclaredNumber = 10, "declared-number";
+            /// The row's value is a JSON string declared as `xsd:boolean`, held
+            /// in the boolean column.
+            DeclaredBoolean = 11, "declared-boolean";
         }
     }
 }
@@ -56,14 +64,16 @@ compact_code_registry! {
 impl ValueKind {
     /// The `attribute_history` column a row of this kind holds its value in;
     /// `None` for the tombstone, which holds none. A `Date` and a `Time` share
-    /// the string column with a String.
+    /// the string column with a String, a declared number the number column
+    /// with a JSON number, and a declared Boolean the boolean column with a
+    /// JSON boolean.
     #[must_use]
     pub const fn history_column(self) -> Option<AttributeHistory> {
         match self {
             ValueKind::Tombstone => None,
-            ValueKind::Number => Some(AttributeHistory::ValueNumber),
+            ValueKind::Number | ValueKind::DeclaredNumber => Some(AttributeHistory::ValueNumber),
             ValueKind::String | ValueKind::Date | ValueKind::Time => Some(AttributeHistory::ValueString),
-            ValueKind::Boolean => Some(AttributeHistory::ValueBoolean),
+            ValueKind::Boolean | ValueKind::DeclaredBoolean => Some(AttributeHistory::ValueBoolean),
             ValueKind::Geometry => Some(AttributeHistory::ValueGeometry),
             ValueKind::Object => Some(AttributeHistory::ValueObject),
             ValueKind::DateTime => Some(AttributeHistory::ValueDateTime),
@@ -77,13 +87,19 @@ mod tests {
     use crate::value_kind::ValueKind;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
 
-    /// Only the tombstone holds no value, and the string column is the only
-    /// one three kinds share.
+    /// Only the tombstone holds no value; three kinds share the string column
+    /// and two each the number and boolean columns.
     #[test]
     fn every_kind_but_the_tombstone_names_the_column_it_holds_its_value_in() {
         assert_eq!(ValueKind::Tombstone.history_column(), None);
         for kind in [ValueKind::String, ValueKind::Date, ValueKind::Time] {
             assert_eq!(kind.history_column(), Some(AttributeHistory::ValueString), "{kind:?}");
+        }
+        for kind in [ValueKind::Number, ValueKind::DeclaredNumber] {
+            assert_eq!(kind.history_column(), Some(AttributeHistory::ValueNumber), "{kind:?}");
+        }
+        for kind in [ValueKind::Boolean, ValueKind::DeclaredBoolean] {
+            assert_eq!(kind.history_column(), Some(AttributeHistory::ValueBoolean), "{kind:?}");
         }
         let columns: Vec<AttributeHistory> = ValueKind::ALL.iter().filter_map(|kind| kind.history_column()).collect();
         let distinct = columns.iter().enumerate().filter(|(index, column)| !columns[..*index].contains(column)).count();
@@ -106,7 +122,7 @@ mod tests {
 
     #[test]
     fn every_value_shape_has_exactly_one_member() {
-        assert_eq!(ValueKind::ALL.len(), 10);
+        assert_eq!(ValueKind::ALL.len(), 12);
     }
 
     #[test]
@@ -116,6 +132,6 @@ mod tests {
 
     #[test]
     fn a_value_shape_a_newer_release_might_add_fails_to_decode() {
-        assert!(ValueKind::try_from(10).is_err());
+        assert!(ValueKind::try_from(12).is_err());
     }
 }

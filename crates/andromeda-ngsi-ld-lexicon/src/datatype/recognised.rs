@@ -13,6 +13,7 @@ use crate::{
     reference::NgsiLdReference,
     time::value::{TimeValueError, TimeValueForm},
 };
+use andromeda_ngsi_ld_number::JsonNumberError;
 use iri_rs::Iri;
 use rdfx::{RDF_JSON, RDF_LANG_STRING};
 use thiserror::Error;
@@ -172,6 +173,9 @@ pub enum DatatypeError {
     /// The literal is not a value of the recognised datatype.
     #[error("the value is not a {0}")]
     NotAValue(Iri<&'static str>),
+    /// The literal names a number the broker cannot hold.
+    #[error(transparent)]
+    Number(#[from] JsonNumberError),
     /// A `LanguageProperty` declares a `valueType` other than `rdf:langString`.
     #[error("the valueType of a LanguageProperty is langString, not '{0}'")]
     NotLangString(NgsiLdReference),

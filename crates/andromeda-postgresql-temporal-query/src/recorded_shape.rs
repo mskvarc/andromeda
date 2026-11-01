@@ -4,7 +4,9 @@
 //! The stored `value_kind` code names the typed column a row's value sits in,
 //! and for the text column the data type it holds: a String, a value declared
 //! as a clause 4.6.3 `Date`, or one declared as a `Time`, which the tables
-//! give an `avg` the other two do not have. One JSONB column holds both a JSON
+//! give an `avg` the other two do not have. A JSON string declared as an XSD
+//! number or `xsd:boolean` is a number or a Boolean, so its own kind records
+//! the shape of the JSON number or boolean. One JSONB column holds both a JSON
 //! Object and a JSON Array, and the tables give the two different methods:
 //! `avg`, `min`, `max` and `sum` are defined over the sizes of arrays and are
 //! N/A over objects, so that one split is read from the value itself.
@@ -28,6 +30,11 @@ pub struct RecordedShapeColumn;
 /// Whether the row's stored value shape is `kind`.
 fn value_kind_is(kind: ValueKind) -> SimpleExpr {
     Expr::col((Ah, AttributeHistory::ValueKind)).eq(int_literal(i64::from(kind.code())))
+}
+
+/// Whether the row's stored value shape is one of `kinds`.
+fn value_kind_in(kinds: [ValueKind; 2]) -> SimpleExpr {
+    Expr::col((Ah, AttributeHistory::ValueKind)).is_in(kinds.map(|kind| int_literal(i64::from(kind.code()))))
 }
 
 /// The refined shape of the `attribute_history` row aliased `ah`.
@@ -56,8 +63,8 @@ pub fn recorded_shape() -> SimpleExpr {
         .case(value_kind_is(ValueKind::Time), shape(RecordedShape::Time))
         .case(value_kind_is(ValueKind::Date), shape(RecordedShape::Date))
         .case(value_kind_is(ValueKind::String), shape(RecordedShape::String))
-        .case(value_kind_is(ValueKind::Number), shape(RecordedShape::Number))
-        .case(value_kind_is(ValueKind::Boolean), shape(RecordedShape::Boolean))
+        .case(value_kind_in([ValueKind::Number, ValueKind::DeclaredNumber]), shape(RecordedShape::Number))
+        .case(value_kind_in([ValueKind::Boolean, ValueKind::DeclaredBoolean]), shape(RecordedShape::Boolean))
         .case(value_kind_is(ValueKind::Geometry), shape(RecordedShape::Geometry))
         .case(value_kind_is(ValueKind::DateTime), shape(RecordedShape::DateTime))
         .case(value_kind_is(ValueKind::Uri), shape(RecordedShape::Uri))
@@ -107,6 +114,15 @@ mod tests {
 
     /// Clause 4.5.7: a deletion carries no value, so it has no shape either -
     /// the projection has no fallback branch that would give it one.
+    /// A declared number or Boolean is a number or a Boolean, so the tables
+    /// give it their methods.
+    #[test]
+    fn a_declared_number_or_boolean_records_the_shape_of_its_data_type() {
+        let sql = rendered();
+        assert!(sql.contains(r#"("ah"."value_kind" IN (1, 10)) THEN 1::smallint"#), "{sql}");
+        assert!(sql.contains(r#"("ah"."value_kind" IN (3, 11)) THEN 3::smallint"#), "{sql}");
+    }
+
     #[test]
     fn a_tombstone_row_falls_out_of_the_projection_with_no_shape() {
         let sql = rendered();

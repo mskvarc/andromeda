@@ -20,7 +20,8 @@
 --     4 VocabProperty, 5 LanguageProperty, 6 JsonProperty, 7 ListProperty,
 --     8 ListRelationship
 --   value_kind: 1 number, 2 string, 3 boolean, 4 geometry, 5 object,
---     6 date-time, 7 uri, 8 date, 9 time
+--     6 date-time, 7 uri, 8 date, 9 time, 10 declared-number,
+--     11 declared-boolean
 --
 -- Value kind 0, the tombstone, never appears: a deleted attribute is an absent
 -- row, not a marker.
@@ -30,7 +31,13 @@
 -- names its datatype when the literal carries one. A declared Date (kind 8)
 -- lands in `value_string` in its one spelling, a declared Time (kind 9) in
 -- `value_string` as `HH:MM:SS.ffffffZ`, whose byte order is its chronological
--- order. A string declared as no time value is a String (kind 2), whatever
+-- order. A JSON string declared as an XSD numeric datatype lands in
+-- `value_number` (kind 10), `INF`, `-INF` and `NaN` as the `numeric` values
+-- `Infinity`, `-Infinity` and `NaN`, and one declared as `xsd:boolean` in
+-- `value_boolean` (kind 11); either names the datatype that declares it in
+-- `value_datatype_key` or `value_type_key`, and reads back as the JSON string
+-- it was written as. The `valueType` decides before the literal's own
+-- datatype. A string declared as none of them is a String (kind 2), whatever
 -- it resembles.
 --
 -- `value_object` holds every value that is not one scalar: a structured
@@ -142,8 +149,8 @@ create table current_attributes (
     constraint chk_current_attributes_unit_code_id_positive check (unit_code_id > 0),
     constraint chk_current_attributes_ordinal_non_negative check (ordinal >= 0),
     constraint chk_current_attributes_value_presence check (num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri, value_long_text, value_long_uri) = 1),
-    constraint chk_current_attributes_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls(value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls(value_uri, value_long_uri) = 1) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null)),
-    constraint chk_current_attributes_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9)),
+    constraint chk_current_attributes_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls(value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls(value_uri, value_long_uri) = 1) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null) or (value_kind = 10 and value_number is not null and num_nonnulls(value_datatype_key, value_type_key) > 0) or (value_kind = 11 and value_boolean is not null and num_nonnulls(value_datatype_key, value_type_key) > 0)),
+    constraint chk_current_attributes_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9, 10, 11)),
     constraint chk_current_attributes_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
     constraint chk_current_attributes_value_geometry_members_with_geometry check (value_geometry_members is null or value_geometry is not null),
     constraint chk_current_attributes_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),

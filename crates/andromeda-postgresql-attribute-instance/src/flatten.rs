@@ -10,8 +10,10 @@
 //! its own column, everything else in `value_object` as the structured value
 //! codec writes it for history. A value declared as a clause 4.6.3 time value
 //! is held by its kind: a `DateTime` as its instant, a `Date` as its text, a
-//! `Time` in its fixed-width storage encoding. A string declared as none is a
-//! String, held as written. The instance must be one a write commits (its
+//! `Time` in its fixed-width storage encoding. A JSON string declared as an
+//! XSD number is held as the number it names, one declared as `xsd:boolean`
+//! as the Boolean. A string declared as none of them is a String, held as
+//! written. The instance must be one a write commits (its
 //! values in their committed spelling), since storage keeps nothing else.
 
 use crate::{
@@ -32,13 +34,10 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    datatype::{declaration::LiteralDeclaration, declared_value::DeclaredValue},
     identifier::Identifier,
     reference::NgsiLdReference,
-    time::{
-        date_time::NgsiLdDateTime,
-        system_instant::SystemInstant,
-        value::{TimeValue, TimeValueDeclaration},
-    },
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant, value::TimeValue},
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
 use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
@@ -60,9 +59,9 @@ pub enum FlattenError {
     /// (clause 4.8) before it commits.
     #[error("an instance of '{0}' carries no system times")]
     Unstamped(AttributeName),
-    /// A value is not one a write commits: a declared time value not in its
-    /// served spelling, or not of its declared form, or a list item target not
-    /// wrapped. Storage would read back another state than the one flattened.
+    /// A value is not one a write commits: a declared value not in its served
+    /// spelling, or no value of its declared datatype, or a list item target
+    /// not wrapped. Storage would read back another state than the one flattened.
     #[error("an instance of '{0}' holds a value a write does not commit")]
     UncommittedValue(AttributeName),
     /// A `JsonProperty` holds several JSON literals, which the structured value
@@ -207,7 +206,7 @@ fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&Ng
         LiteralValue::Boolean(flag) => return Ok(StoredValue::Boolean { flag: *flag, datatype }),
         LiteralValue::String(text) => text,
     };
-    let declared = match TimeValue::declared(TimeValueDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
+    let declared = match DeclaredValue::of(LiteralDeclaration::new(literal.datatype(), value_type), literal.value().primitive()) {
         None => {
             return Ok(StoredValue::String {
                 text: text.to_string(),
@@ -219,12 +218,14 @@ fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&Ng
         Some(Ok(_) | Err(_)) => return Err(FlattenError::UncommittedValue(name.clone())),
     };
     Ok(match declared {
-        TimeValue::DateTime(instant) => StoredValue::DateTime {
+        DeclaredValue::Time(TimeValue::DateTime(instant)) => StoredValue::DateTime {
             instant: instant.get(),
             datatype,
         },
-        TimeValue::Date(date) => StoredValue::Date { date, datatype },
-        TimeValue::Time(time) => StoredValue::Time { time, datatype },
+        DeclaredValue::Time(TimeValue::Date(date)) => StoredValue::Date { date, datatype },
+        DeclaredValue::Time(TimeValue::Time(time)) => StoredValue::Time { time, datatype },
+        DeclaredValue::Number { number, .. } => StoredValue::DeclaredNumber { number, datatype },
+        DeclaredValue::Boolean(flag) => StoredValue::DeclaredBoolean { flag, datatype },
     })
 }
 

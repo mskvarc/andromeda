@@ -14,7 +14,8 @@
 --     4 VocabProperty, 5 LanguageProperty, 6 JsonProperty, 7 ListProperty,
 --     8 ListRelationship
 --   value_kind: 0 tombstone, 1 number, 2 string, 3 boolean, 4 geometry,
---     5 object, 6 date-time, 7 uri, 8 date, 9 time
+--     5 object, 6 date-time, 7 uri, 8 date, 9 time, 10 declared-number,
+--     11 declared-boolean
 --
 -- `recorded_at` is the write clock and is never rendered. `observed_at`,
 -- `created_at`, `modified_at` and `deleted_at` are the four axes clause 5.2.21
@@ -31,7 +32,9 @@
 -- keeps it: `value_datatype_key` is the `entity_type_names` key of the `@type`
 -- a typed number, string, boolean or time value declares, `value_language` the
 -- `@language` of a language-tagged string, so the Temporal Evolution renders
--- the instance current state renders.
+-- the instance current state renders. A JSON string declared as an XSD number
+-- or `xsd:boolean` is held as current state holds it, in `value_number` (kind
+-- 10) or `value_boolean` (kind 11), naming the datatype that declares it.
 --
 -- A tombstone carries `deleted_at` and no typed value; its NGSI-LD null is
 -- synthesised at render time, never stored. `attribute_kind` is kept so the
@@ -121,8 +124,8 @@ create table attribute_history (
     -- Pins `value_kind` to the populated column, so a value whose declared
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
-    constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null)),
-    constraint chk_attribute_history_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9)),
+    constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null) or (value_kind = 10 and value_number is not null and num_nonnulls(value_datatype_key, value_type_key) > 0) or (value_kind = 11 and value_boolean is not null and num_nonnulls(value_datatype_key, value_type_key) > 0)),
+    constraint chk_attribute_history_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9, 10, 11)),
     constraint chk_attribute_history_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
     constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),

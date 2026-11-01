@@ -7,8 +7,8 @@
 use crate::queried_entity::value_item::LiteralValue;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
-use andromeda_ngsi_ld_number::JsonNumber;
-use std::borrow::Cow;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
+use std::{borrow::Cow, cmp::Ordering};
 
 /// One resolved comparison target: the clause 4.9 target value a predicate
 /// compares, and where it came from.
@@ -45,6 +45,8 @@ pub enum TargetValue<'a> {
     /// A value declared as a clause 4.6.3 time value, or an instant the
     /// instance holds; only a time operand of its form compares with it.
     Time(TimeValue),
+    /// A number beyond the decimals, declared as `xsd:float` or `xsd:double`.
+    NonFiniteNumber(NonFinite),
 }
 
 impl<'a> TargetValue<'a> {
@@ -65,10 +67,11 @@ impl<'a> TargetValue<'a> {
             LiteralValue::Text(text) => TargetValue::Text(text),
             LiteralValue::Boolean(boolean) => TargetValue::Boolean(boolean),
             LiteralValue::Time(value) => TargetValue::Time(value),
+            LiteralValue::NonFiniteNumber(value) => TargetValue::NonFiniteNumber(value),
         }
     }
 
-    /// The value when it is a number.
+    /// The value when it is a finite number.
     ///
     /// A string spelling a number is a String, not a number: clause 4.9 makes a
     /// target of another data type unequal to the operand.
@@ -80,7 +83,25 @@ impl<'a> TargetValue<'a> {
                 JsonKind::Number => json.as_number().map(Cow::Owned),
                 JsonKind::Null | JsonKind::String | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
+            TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
+        }
+    }
+
+    /// How the value orders against the finite number `operand`, `None` when it
+    /// is no number or is not-a-number.
+    ///
+    /// XSD orders positive infinity above every finite number and negative
+    /// infinity below; not-a-number is unordered, so it fails `==` and every
+    /// ordering and satisfies `!=`.
+    #[must_use]
+    pub fn number_ordering(&self, operand: &JsonNumber) -> Option<Ordering> {
+        match self {
+            TargetValue::NonFiniteNumber(NonFinite::PositiveInfinity) => Some(Ordering::Greater),
+            TargetValue::NonFiniteNumber(NonFinite::NegativeInfinity) => Some(Ordering::Less),
+            TargetValue::NonFiniteNumber(NonFinite::NotANumber) => None,
+            TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Array(_) | TargetValue::Time(_) => {
+                Some(self.as_number()?.as_ref().cmp(operand))
+            }
         }
     }
 
@@ -93,7 +114,7 @@ impl<'a> TargetValue<'a> {
                 JsonKind::Boolean => json.as_bool(),
                 JsonKind::Null | JsonKind::String | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Text(_) | TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
+            TargetValue::Text(_) | TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
         }
     }
 
@@ -102,7 +123,12 @@ impl<'a> TargetValue<'a> {
     pub const fn as_time(&self) -> Option<TimeValue> {
         match self {
             TargetValue::Time(value) => Some(*value),
-            TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Array(_) => None,
+            TargetValue::Number(_)
+            | TargetValue::Text(_)
+            | TargetValue::Boolean(_)
+            | TargetValue::Json(_)
+            | TargetValue::Array(_)
+            | TargetValue::NonFiniteNumber(_) => None,
         }
     }
 
@@ -114,7 +140,7 @@ impl<'a> TargetValue<'a> {
         match self {
             TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
             TargetValue::Json(json) => json.as_str(),
-            TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) => None,
+            TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
         }
     }
 }

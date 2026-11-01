@@ -438,10 +438,26 @@ fn a_typed_time_is_held_in_its_storage_encoding_and_read_back_served() {
 #[test]
 fn a_custom_datatype_keeps_its_lexical_form() {
     let state = committed(&document(
-        &json!({ex("d"): [property(&json!([{"@type": "http://www.w3.org/2001/XMLSchema#decimal", "@value": "1.10"}]))]}),
+        &json!({ex("d"): [property(&json!([{"@type": "http://www.w3.org/2001/XMLSchema#token", "@value": "1.10"}]))]}),
     ));
     let rows = round_trip(&state);
     assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "1.10"));
+}
+
+/// A JSON string declared as an XSD number is held as the number in its own
+/// value kind and read back as the string it was committed as.
+#[test]
+fn a_declared_decimal_is_held_as_a_number_and_read_back_as_its_canonical_string() {
+    let state = committed(&document(
+        &json!({ex("d"): [property(&json!([{"@type": "http://www.w3.org/2001/XMLSchema#decimal", "@value": "1.10"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(
+        matches!(only_value(&rows), StoredValue::DeclaredNumber { datatype: Some(_), .. }),
+        "{:?}",
+        only_value(&rows)
+    );
+    pretty_assertions::assert_eq!(only_value(&rows).kind(), ValueKind::DeclaredNumber);
 }
 
 #[test]

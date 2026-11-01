@@ -28,6 +28,7 @@ use andromeda_postgresql_seaquery::{
     json_type::{JsonType, jsonb_type_is},
     jsonb::jsonb_array_length,
     literal::int_literal,
+    numeric_special::finite_numeric,
     pg_type::PostgresType,
 };
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, SimpleExpr};
@@ -55,6 +56,15 @@ fn family_has_value_aggregates() -> SimpleExpr {
 /// operand: `AVG`, `MIN`, `MAX`, `SUM` and `STDDEV` all skip nulls.
 fn only_when_aggregable(operand: SimpleExpr) -> SimpleExpr {
     CaseStatement::new().case(family_has_value_aggregates(), operand).into()
+}
+
+/// The number column when it holds a finite number.
+///
+/// A declared `xsd:float` or `xsd:double` may hold `INF`, `-INF` or `NaN`,
+/// which no JSON number carries, so the aggregate the representation renders as
+/// a JSON number skips them, as it skips every value it has no number for.
+fn finite_number() -> SimpleExpr {
+    finite_numeric(Expr::col((Ah, AttributeHistory::ValueNumber)))
 }
 
 /// A boolean value as the number Table 4.5.19.1-1's note gives it.
@@ -95,7 +105,7 @@ fn array_size() -> SimpleExpr {
 /// gate is what keeps the array-size branch to actual JSON Array values.
 #[must_use]
 pub fn sized_numeric_expr() -> SimpleExpr {
-    only_when_aggregable(Func::coalesce([Expr::col((Ah, AttributeHistory::ValueNumber)), boolean_as_numeric(), array_size()]).into())
+    only_when_aggregable(Func::coalesce([finite_number(), boolean_as_numeric(), array_size()]).into())
 }
 
 /// The operand of `sumsq` and `stddev`: a number or a boolean read as its zero
@@ -107,7 +117,7 @@ pub fn sized_numeric_expr() -> SimpleExpr {
 /// deviation of a set of lengths.
 #[must_use]
 pub fn arithmetic_numeric_expr() -> SimpleExpr {
-    only_when_aggregable(Func::coalesce([Expr::col((Ah, AttributeHistory::ValueNumber)), boolean_as_numeric()]).into())
+    only_when_aggregable(Func::coalesce([finite_number(), boolean_as_numeric()]).into())
 }
 
 /// The text column `min` and `max` order lexicographically, for the families
@@ -228,6 +238,20 @@ mod tests {
     fn both_numeric_operands_read_a_boolean_as_its_zero_or_one() {
         for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
             assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{sql}");
+        }
+    }
+
+    /// A declared float or double beyond the decimals has no JSON number, so
+    /// every numeric operand reads only a finite value of the number column.
+    #[test]
+    fn every_numeric_operand_skips_the_numbers_beyond_the_decimals() {
+        for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
+            assert!(
+                sql.contains(
+                    r#"CASE WHEN ("ah"."value_number" NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)) THEN "ah"."value_number" END"#
+                ),
+                "{sql}"
+            );
         }
     }
 

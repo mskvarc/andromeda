@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_prop::TimeProp,
     uri::Uri,
 };
-use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
 use andromeda_ngsi_ld_vocabulary::{keyword, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, Utc};
 
@@ -91,6 +91,24 @@ pub enum TemporalValue {
         /// The datatype a typed boolean declares.
         datatype: Option<NgsiLdReference>,
     },
+    /// A JSON string declared as an XSD number, by its datatype or by the
+    /// attribute's `valueType`.
+    DeclaredNumber {
+        /// The number.
+        number: DeclaredNumber,
+        /// The datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<NgsiLdReference>,
+    },
+    /// A JSON string declared as `xsd:boolean`, by its datatype or by the
+    /// attribute's `valueType`.
+    DeclaredBoolean {
+        /// The Boolean.
+        flag: bool,
+        /// The datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<NgsiLdReference>,
+    },
     /// A `GeoJSON` geometry, held decoded with its `bbox` and foreign members.
     Geometry(GeometryValue),
     /// A structured attribute value: what no typed column can hold.
@@ -157,6 +175,8 @@ impl TemporalValue {
         match self {
             TemporalValue::Number { datatype, .. }
             | TemporalValue::Boolean { datatype, .. }
+            | TemporalValue::DeclaredNumber { datatype, .. }
+            | TemporalValue::DeclaredBoolean { datatype, .. }
             | TemporalValue::DateTime { datatype, .. }
             | TemporalValue::Date { datatype, .. }
             | TemporalValue::Time { datatype, .. } => datatype.as_ref(),
@@ -186,6 +206,11 @@ impl TemporalValue {
                 annotation: TextAnnotation::Plain,
             },
             TemporalValue::Boolean { flag, .. } => TemporalValue::Boolean { flag: *flag, datatype: None },
+            TemporalValue::DeclaredNumber { number, .. } => TemporalValue::DeclaredNumber {
+                number: number.clone(), // clone: the unannotated value owns its number
+                datatype: None,
+            },
+            TemporalValue::DeclaredBoolean { flag, .. } => TemporalValue::DeclaredBoolean { flag: *flag, datatype: None },
             TemporalValue::DateTime { instant, .. } => TemporalValue::DateTime {
                 instant: *instant,
                 datatype: None,
@@ -209,6 +234,8 @@ impl TemporalValue {
             TemporalValue::Number { .. }
             | TemporalValue::String { .. }
             | TemporalValue::Boolean { .. }
+            | TemporalValue::DeclaredNumber { .. }
+            | TemporalValue::DeclaredBoolean { .. }
             | TemporalValue::Geometry(_)
             | TemporalValue::Structured(_)
             | TemporalValue::DateTime { .. }

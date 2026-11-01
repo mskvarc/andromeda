@@ -3,7 +3,7 @@
 
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
-use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
 use std::borrow::Cow;
 
 /// One value held by an attribute instance's family member, or by a member of
@@ -19,7 +19,7 @@ pub enum ValueItem<'a, N> {
     /// `ListProperty` item, the string of one `LanguageProperty` map entry, a
     /// `GeoProperty` geometry written as a string (clause 4.7.2) or a time
     /// value. A language tag is not part of what clause 4.9 compares, and a
-    /// datatype only where it declares a time value.
+    /// datatype only where it declares a time value, a number or a Boolean.
     Literal(LiteralValue<'a>),
     /// A JSON literal (`@type: @json`): a `JsonProperty` value (clause
     /// 4.5.24), or a Property value held as raw JSON outside the JSON-LD graph,
@@ -37,18 +37,23 @@ pub enum ValueItem<'a, N> {
 }
 
 /// The value of a JSON-LD literal, in the JSON scalar types clause 4.9
-/// compares (clause 4.6.3 for numbers) and the time values a literal is
-/// declared as (annex C.6).
+/// compares (clause 4.6.3 for numbers) and the data types a literal is
+/// declared as (annex C.6): a time value, or a number or Boolean declared by
+/// an XSD datatype.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue<'a> {
     /// An exact number.
     Number(Cow<'a, JsonNumber>),
     /// A string: a plain or language-tagged string, or the lexical form of a
-    /// typed literal declared as no time value.
+    /// typed literal its datatype gives no other data type.
     Text(Cow<'a, str>),
     /// A boolean.
     Boolean(bool),
     /// A literal declared as a clause 4.6.3 time value, by its datatype or by
     /// the `valueType` of its attribute.
     Time(TimeValue),
+    /// A literal declared as `xsd:float` or `xsd:double` holding a value beyond
+    /// the decimals. It is a number, and compares with no finite one but
+    /// orders against it as XSD orders the infinities.
+    NonFiniteNumber(NonFinite),
 }

@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
     uri::Uri,
 };
-use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
@@ -55,6 +55,22 @@ pub enum StoredValue {
         /// The boolean.
         flag: bool,
         /// The datatype a typed boolean declares.
+        datatype: Option<EntityTypeNameKey>,
+    },
+    /// A JSON string declared as an XSD number, held as the number it names.
+    DeclaredNumber {
+        /// The number.
+        number: DeclaredNumber,
+        /// The datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
+        datatype: Option<EntityTypeNameKey>,
+    },
+    /// A JSON string declared as `xsd:boolean`, held as the Boolean it names.
+    DeclaredBoolean {
+        /// The Boolean.
+        flag: bool,
+        /// The datatype when the literal declares it; `None` when the
+        /// attribute's `valueType` does.
         datatype: Option<EntityTypeNameKey>,
     },
     /// A value declared as a clause 4.6.3 `DateTime`, held as its instant.
@@ -105,6 +121,8 @@ impl StoredValue {
             StoredValue::Number { .. } => ValueKind::Number,
             StoredValue::String { .. } => ValueKind::String,
             StoredValue::Boolean { .. } => ValueKind::Boolean,
+            StoredValue::DeclaredNumber { .. } => ValueKind::DeclaredNumber,
+            StoredValue::DeclaredBoolean { .. } => ValueKind::DeclaredBoolean,
             StoredValue::DateTime { .. } => ValueKind::DateTime,
             StoredValue::Date { .. } => ValueKind::Date,
             StoredValue::Time { .. } => ValueKind::Time,
@@ -120,6 +138,8 @@ impl StoredValue {
         match self {
             StoredValue::Number { datatype, .. }
             | StoredValue::Boolean { datatype, .. }
+            | StoredValue::DeclaredNumber { datatype, .. }
+            | StoredValue::DeclaredBoolean { datatype, .. }
             | StoredValue::DateTime { datatype, .. }
             | StoredValue::Date { datatype, .. }
             | StoredValue::Time { datatype, .. } => *datatype,
@@ -142,6 +162,8 @@ impl StoredValue {
             StoredValue::String { .. }
             | StoredValue::Number { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }

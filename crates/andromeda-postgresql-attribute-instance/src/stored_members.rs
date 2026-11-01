@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date::NgsiLdDateError, time_of_day::NgsiLdTimeError},
     uri::UriParseError,
 };
-use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
+use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::DeclaredNumber};
 use andromeda_postgresql_codes::{
     attribute_kind::AttributeKind,
     registry::UnknownCompactCode,
@@ -236,7 +236,8 @@ impl TryFrom<InstanceMembers> for MemberColumns {
         match members.value {
             StoredValue::Number { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
             StoredValue::String { text, .. } => columns.value_string = Some(text),
-            StoredValue::Boolean { flag, .. } => columns.value_boolean = Some(flag),
+            StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => columns.value_boolean = Some(flag),
+            StoredValue::DeclaredNumber { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
             StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
             StoredValue::Date { date, .. } => columns.value_string = Some(date.to_string()),
             StoredValue::Time { time, .. } => columns.value_string = Some(time.to_string()),
@@ -305,6 +306,14 @@ impl ValueFields {
                 },
             },
             ValueKind::Boolean => StoredValue::Boolean {
+                flag: self.boolean.ok_or(misplaced)?,
+                datatype,
+            },
+            ValueKind::DeclaredNumber => StoredValue::DeclaredNumber {
+                number: DeclaredNumber::try_from(self.number.ok_or(misplaced)?)?,
+                datatype,
+            },
+            ValueKind::DeclaredBoolean => StoredValue::DeclaredBoolean {
                 flag: self.boolean.ok_or(misplaced)?,
                 datatype,
             },

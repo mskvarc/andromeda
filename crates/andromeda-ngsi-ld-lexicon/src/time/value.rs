@@ -1,4 +1,4 @@
-//! The three clause 4.6.3 time value data types, and the one rule that decides when a value is one.
+//! The three clause 4.6.3 time value data types.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 4.6.3 enumerates `DateTime`, `Date` and
 //! `Time` among the data types "for representing Values" and pins the string
@@ -20,15 +20,11 @@
 //! clause 4.9 `ComparableValue` grammar admits as a `dateTime`, a `date` or a
 //! `time` by its shape ([`TimeValueForm::of`]).
 
-use crate::{
-    datatype::primitive_literal::PrimitiveLiteral,
-    reference::NgsiLdReference,
-    time::{
-        date::{NgsiLdDate, NgsiLdDateError},
-        date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
-        rendering::{date_text, instant_text, time_of_day_text},
-        time_of_day::{NgsiLdTime, NgsiLdTimeError},
-    },
+use crate::time::{
+    date::{NgsiLdDate, NgsiLdDateError},
+    date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+    rendering::{date_text, instant_text, time_of_day_text},
+    time_of_day::{NgsiLdTime, NgsiLdTimeError},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use derive_more::Display;
@@ -125,47 +121,6 @@ impl TimeValueForm {
     }
 }
 
-/// What one literal is declared as: its own datatype and the `valueType` of
-/// the attribute it is a value of.
-///
-/// `valueType` declares the datatype of every primitive member of the value it
-/// sits beside (clause 4.5.2): the single value, each value of a multi-valued
-/// Property, each item of a `ListProperty`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TimeValueDeclaration<'a> {
-    /// The literal's JSON-LD `@type`, expanded.
-    pub datatype: Option<&'a NgsiLdReference>,
-    /// The `valueType` of the attribute, expanded.
-    pub value_type: Option<&'a NgsiLdReference>,
-}
-
-impl<'a> TimeValueDeclaration<'a> {
-    /// The declaration of a literal carrying `datatype` in an attribute whose
-    /// `valueType` is `value_type`.
-    #[must_use]
-    pub const fn new(datatype: Option<&'a NgsiLdReference>, value_type: Option<&'a NgsiLdReference>) -> TimeValueDeclaration<'a> {
-        TimeValueDeclaration { datatype, value_type }
-    }
-
-    /// The time value form the declaration names, `None` when it names none.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TimeValueError::ConflictingDeclarations`] when the datatype and
-    /// the `valueType` are two different datatypes and one of them is a time
-    /// value form: a literal has one datatype.
-    pub fn form(self) -> Result<Option<TimeValueForm>, TimeValueError> {
-        let named = |reference: Option<&NgsiLdReference>| reference.and_then(|reference| TimeValueForm::named_by(reference.as_str()));
-        let (by_datatype, by_value_type) = (named(self.datatype), named(self.value_type));
-        match (self.datatype, self.value_type) {
-            (Some(datatype), Some(value_type)) if datatype != value_type && (by_datatype.is_some() || by_value_type.is_some()) => {
-                Err(TimeValueError::ConflictingDeclarations)
-            }
-            (Some(_) | None, Some(_) | None) => Ok(by_datatype.or(by_value_type)),
-        }
-    }
-}
-
 /// A parsed clause 4.6.3 time value.
 ///
 /// [`Display`] renders the one spelling the broker gives each value it serves:
@@ -185,23 +140,6 @@ pub enum TimeValue {
 }
 
 impl TimeValue {
-    /// The time value `literal` is declared as, `None` when it is declared as
-    /// none and is therefore the plain JSON value it is.
-    ///
-    /// A declared form is what the client said the value is, so a literal that
-    /// does not satisfy it is an error, never a string.
-    #[must_use]
-    pub fn declared(declaration: TimeValueDeclaration<'_>, literal: PrimitiveLiteral<'_>) -> Option<Result<TimeValue, TimeValueError>> {
-        let form = match declaration.form() {
-            Ok(form) => form?,
-            Err(conflict) => return Some(Err(conflict)),
-        };
-        Some(match literal {
-            PrimitiveLiteral::String(text) => form.parse(text),
-            PrimitiveLiteral::Number(_) | PrimitiveLiteral::Boolean(_) => Err(TimeValueError::NotAString),
-        })
-    }
-
     /// The form this value has.
     #[must_use]
     pub const fn form(&self) -> TimeValueForm {
@@ -241,95 +179,8 @@ pub enum TimeValueError {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        datatype::primitive_literal::PrimitiveLiteral,
-        reference::NgsiLdReference,
-        time::{
-            lexical::LexicalError,
-            time_of_day::NgsiLdTimeError,
-            value::{TimeValue, TimeValueDeclaration, TimeValueError, TimeValueForm},
-        },
-    };
-    use andromeda_ngsi_ld_number::JsonNumber;
+    use crate::time::value::TimeValueForm;
     use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
-
-    fn reference(form: TimeValueForm) -> NgsiLdReference {
-        form.iri().as_str().parse().expect("a datatype IRI")
-    }
-
-    fn declared(datatype: Option<&NgsiLdReference>, value_type: Option<&NgsiLdReference>, text: &str) -> Option<Result<TimeValue, TimeValueError>> {
-        TimeValue::declared(TimeValueDeclaration::new(datatype, value_type), PrimitiveLiteral::String(text))
-    }
-
-    #[test]
-    fn a_literal_typed_date_time_is_a_date_time() {
-        let date_time = reference(TimeValueForm::DateTime);
-        let value = declared(Some(&date_time), None, "2024-01-01T00:00:00.5Z")
-            .expect("declared")
-            .expect("a DateTime");
-        assert!(matches!(value, TimeValue::DateTime(_)), "got {value:?}");
-        pretty_assertions::assert_eq!(value.to_string(), "2024-01-01T00:00:00.500Z");
-    }
-
-    /// Annex C.6: a value is a time value only when it is declared as one.
-    #[test]
-    fn an_undeclared_string_in_date_time_form_is_no_time_value() {
-        assert!(declared(None, None, "2024-01-01T00:00:00Z").is_none());
-        assert!(declared(None, None, "12:00:00Z").is_none());
-        assert!(declared(None, None, "2024-01-01").is_none());
-    }
-
-    #[test]
-    fn a_value_type_declares_the_time_value_of_a_plain_literal() {
-        let time = reference(TimeValueForm::Time);
-        let value = declared(None, Some(&time), "12:00:00Z").expect("declared").expect("a Time");
-        assert!(matches!(value, TimeValue::Time(_)), "got {value:?}");
-        pretty_assertions::assert_eq!(value.to_string(), "12:00:00Z");
-    }
-
-    #[test]
-    fn a_datatype_and_a_value_type_naming_two_forms_conflict() {
-        let (date, time) = (reference(TimeValueForm::Date), reference(TimeValueForm::Time));
-        let refusal = declared(Some(&date), Some(&time), "2024-01-01").expect("declared");
-        assert!(matches!(refusal, Err(TimeValueError::ConflictingDeclarations)), "got {refusal:?}");
-    }
-
-    #[test]
-    fn a_non_time_datatype_beside_a_time_value_type_conflicts() {
-        let string: NgsiLdReference = "http://www.w3.org/2001/XMLSchema#string".parse().expect("a datatype IRI");
-        let date_time = reference(TimeValueForm::DateTime);
-        let refusal = declared(Some(&string), Some(&date_time), "2024-01-01T00:00:00Z").expect("declared");
-        assert!(matches!(refusal, Err(TimeValueError::ConflictingDeclarations)), "got {refusal:?}");
-    }
-
-    #[test]
-    fn a_datatype_and_a_value_type_naming_one_form_agree() {
-        let date_time = reference(TimeValueForm::DateTime);
-        let value = declared(Some(&date_time), Some(&date_time), "2024-01-01T00:00:00Z").expect("declared");
-        assert!(matches!(value, Ok(TimeValue::DateTime(_))), "got {value:?}");
-    }
-
-    /// A declared form is what the client said the value is, so a literal that
-    /// does not satisfy it is refused rather than demoted to a string.
-    #[test]
-    fn a_declared_form_refuses_a_literal_that_does_not_satisfy_it() {
-        let time = reference(TimeValueForm::Time);
-        let refusal = declared(Some(&time), None, "yesterday").expect("declared");
-        assert!(
-            matches!(refusal, Err(TimeValueError::Time(NgsiLdTimeError::Lexical(LexicalError::Malformed)))),
-            "got {refusal:?}"
-        );
-    }
-
-    #[test]
-    fn a_time_datatype_on_a_number_is_not_a_string() {
-        let date_time = reference(TimeValueForm::DateTime);
-        let number: JsonNumber = serde_json::from_str("123").expect("a number");
-        let refusal = TimeValue::declared(TimeValueDeclaration::new(Some(&date_time), None), PrimitiveLiteral::Number(&number)).expect("declared");
-        assert!(matches!(refusal, Err(TimeValueError::NotAString)), "got {refusal:?}");
-        let refusal = TimeValue::declared(TimeValueDeclaration::new(Some(&date_time), None), PrimitiveLiteral::Boolean(true)).expect("declared");
-        assert!(matches!(refusal, Err(TimeValueError::NotAString)), "got {refusal:?}");
-    }
 
     #[test]
     fn each_time_value_class_iri_names_its_own_form() {

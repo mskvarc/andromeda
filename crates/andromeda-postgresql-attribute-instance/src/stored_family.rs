@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    datatype::declared_value::NumberSpelling,
     reference::NgsiLdReference,
     time::{rendering::instant_text, value::TimeValue},
     uri::Uri,
@@ -67,7 +68,7 @@ impl StoredFamily<'_> {
             AttributeType::Property => {
                 self.refuse_present(!object_types.is_empty())?;
                 Ok(FamilyValue::Property {
-                    values: self.property_values(value)?,
+                    values: self.property_values(value, value_type.as_ref())?,
                     unit_code,
                     value_type,
                 })
@@ -158,9 +159,9 @@ impl StoredFamily<'_> {
         }
     }
 
-    /// The values of a Property: one literal from a scalar column, else the
-    /// stored structured value.
-    fn property_values(self, value: StoredValue) -> Result<Vec<ExpandedValue>, AssemblyError> {
+    /// The values of a Property beside the `valueType` `value_type`: one
+    /// literal from a scalar column, else the stored structured value.
+    fn property_values(self, value: StoredValue, value_type: Option<&NgsiLdReference>) -> Result<Vec<ExpandedValue>, AssemblyError> {
         match value {
             StoredValue::Object(json) => match self.read(&json)? {
                 StructuredValue::Values(values) => self.stored_values(values),
@@ -174,9 +175,11 @@ impl StoredFamily<'_> {
             scalar @ (StoredValue::Number { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
-            | StoredValue::Time { .. }) => Ok(vec![ExpandedValue::Literal(self.literal(scalar)?)]),
+            | StoredValue::Time { .. }) => Ok(vec![ExpandedValue::Literal(self.literal(scalar, value_type)?)]),
             other @ (StoredValue::Geometry { .. } | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
         }
     }
@@ -199,6 +202,8 @@ impl StoredFamily<'_> {
             other @ (StoredValue::Number { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
@@ -224,6 +229,8 @@ impl StoredFamily<'_> {
             other @ (StoredValue::Number { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
@@ -251,6 +258,8 @@ impl StoredFamily<'_> {
             other @ (StoredValue::Number { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
@@ -259,12 +268,27 @@ impl StoredFamily<'_> {
         }
     }
 
-    /// The literal a scalar column holds.
-    fn literal(self, value: StoredValue) -> Result<Literal, AssemblyError> {
+    /// The literal a scalar column holds beside the `valueType` `value_type`.
+    ///
+    /// A declared number or Boolean is the JSON string it was written as, in
+    /// the canonical lexical form of the datatype that declares it, the
+    /// `valueType` before the literal's own.
+    fn literal(self, value: StoredValue, value_type: Option<&NgsiLdReference>) -> Result<Literal, AssemblyError> {
         let datatype = |key: Option<EntityTypeNameKey>| key.map(|key| self.type_name(key)).transpose();
         Ok(match value {
             StoredValue::Number { number, datatype: key } => Literal::try_new(LiteralValue::Number(number), datatype(key)?, None, None)?,
             StoredValue::Boolean { flag, datatype: key } => Literal::try_new(LiteralValue::Boolean(flag), datatype(key)?, None, None)?,
+            StoredValue::DeclaredNumber { number, datatype: key } => {
+                let datatype = datatype(key)?;
+                let spelling = value_type
+                    .or(datatype.as_ref())
+                    .and_then(NumberSpelling::named_by)
+                    .ok_or_else(|| self.mismatch(ValueKind::DeclaredNumber))?;
+                Literal::try_new(LiteralValue::String(spelling.spell(&number).into()), datatype, None, None)?
+            }
+            StoredValue::DeclaredBoolean { flag, datatype: key } => {
+                Literal::try_new(LiteralValue::String(flag.to_string().into()), datatype(key)?, None, None)?
+            }
             StoredValue::DateTime { instant, datatype: key } => {
                 Literal::try_new(LiteralValue::String(instant_text(instant).into()), datatype(key)?, None, None)?
             }
@@ -290,6 +314,8 @@ impl StoredFamily<'_> {
             other @ (StoredValue::Number { .. }
             | StoredValue::String { .. }
             | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }

@@ -104,7 +104,11 @@ fn every_value_kind_pins_exactly_one_column() -> Result<(), PinError> {
         assert!(placement.contains(&arm), "value kind {code} pins no column: {placement}");
     }
     assert!(!placement.contains("value_kind = 0"), "the tombstone never appears: {placement}");
-    assert!(!placement.contains("value_kind = 10"), "there are nine value kinds: {placement}");
+    for (code, column) in [(10, "value_number"), (11, "value_boolean")] {
+        let arm = format!("(value_kind = {code} and {column} is not null and num_nonnulls(value_datatype_key, value_type_key) > 0)");
+        assert!(placement.contains(&arm), "declared value kind {code} pins no column and datatype: {placement}");
+    }
+    assert!(!placement.contains("value_kind = 12"), "there are eleven value kinds: {placement}");
     Ok(())
 }
 

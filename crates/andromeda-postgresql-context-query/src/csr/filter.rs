@@ -436,9 +436,7 @@ mod tests {
         let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\"");
         assert!(sql.contains("IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
         assert!(
-            sql.contains(
-                "'$[*]') AS \"element\" WHERE (CASE WHEN (jsonb_typeof(\"element\".\"element\") = ('string')) THEN (\"element\".\"element\" #>> ('{}'))::text END) = 'queryEntity'"
-            ),
+            sql.contains("'$[*]') AS \"element\" WHERE (CASE WHEN (jsonb_typeof(\"element\".\"element\") = ('string') AND (NOT COALESCE((NULL::text) IN ("),
             "{sql}"
         );
         assert!(!sql.contains("NOT EXISTS"), "{sql}");

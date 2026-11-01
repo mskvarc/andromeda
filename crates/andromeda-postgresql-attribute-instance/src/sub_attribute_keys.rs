@@ -6,7 +6,9 @@
 //! value's key; one holding an array has the key of every scalar member
 //! ([`stored_array_members`]); one holding a geometry or a structured object
 //! has none. A value declared as a time value is keyed under its kind, a
-//! String under its own.
+//! String under its own. A declared number keys as the number it names and a
+//! declared Boolean as the Boolean, so an equality operand probes one key for
+//! either; a number beyond the decimals equals no operand and has none.
 
 use crate::{
     stored_array_members::{ArrayMember, StoredArrayMemberError, stored_array_members},
@@ -14,6 +16,7 @@ use crate::{
     sub_attribute::SubAttributeElement,
 };
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
+use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
@@ -75,9 +78,13 @@ pub fn sub_attribute_keys(attribute: AttributeNameKey, elements: &[SubAttributeE
 fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttributeKey>) -> Result<(), StoredArrayMemberError> {
     let key = |value: KeyedValue<'_>| SubAttributeKey::of(path, value);
     match value {
-        StoredValue::Number { number, .. } => keys.push(key(KeyedValue::Number(number.decimal()))),
+        StoredValue::Number { number, .. }
+        | StoredValue::DeclaredNumber {
+            number: DeclaredNumber::Finite(number),
+            ..
+        } => keys.push(key(KeyedValue::Number(number.decimal()))),
         StoredValue::String { text, .. } => keys.push(key(KeyedValue::Text(text, TextKind::String))),
-        StoredValue::Boolean { flag, .. } => keys.push(key(KeyedValue::Boolean(*flag))),
+        StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => keys.push(key(KeyedValue::Boolean(*flag))),
         StoredValue::DateTime { instant, .. } => keys.push(key(KeyedValue::Instant(*instant))),
         StoredValue::Date { date, .. } => keys.push(key(KeyedValue::Text(&date.to_string(), TextKind::Date))),
         StoredValue::Time { time, .. } => keys.push(key(KeyedValue::Text(&time.to_string(), TextKind::Time))),
@@ -94,7 +101,11 @@ fn push_value_keys(path: PathHash, value: &StoredValue, keys: &mut Vec<SubAttrib
                 }
             }
         }
-        StoredValue::Geometry { .. } => {}
+        StoredValue::Geometry { .. }
+        | StoredValue::DeclaredNumber {
+            number: DeclaredNumber::NonFinite(_),
+            ..
+        } => {}
     }
     Ok(())
 }

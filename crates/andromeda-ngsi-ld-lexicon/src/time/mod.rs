@@ -12,7 +12,7 @@
 //!
 //! * [`lexical`] reads the three forms character by character;
 //! * [`date_time`], [`date`] and [`time_of_day`] build the value types on it;
-//! * [`value`] decides when a literal is declared as a time value;
+//! * [`value`] names the three forms and holds a parsed value;
 //! * [`rendering`] spells a held value back;
 //! * [`resolution`] brings a broker-produced value to the microsecond;
 //! * [`instant_serde`] carries the rules into serde models;

@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date::NgsiLdDate, rendering::instant_text, time_of_day::NgsiLdTime},
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
-use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use langtag::LangTagBuf;
 use serde_json::{Value, json};
@@ -217,7 +217,7 @@ fn a_declared_type_refuses_a_literal_that_does_not_satisfy_it() {
     ] {
         let error = read(&typed_property(type_iri, literal)).expect_err("the literal does not satisfy its declared type");
         assert!(matches!(error, TemporalError::Validation(_)), "{literal}: {error:?}");
-        assert!(error.to_string().contains("time value property"), "{literal}: {error}");
+        assert!(error.to_string().contains("no value of its declared datatype"), "{literal}: {error}");
     }
 }
 
@@ -545,16 +545,31 @@ fn a_language_tagged_string_is_recorded_with_its_language() {
     );
 }
 
-/// A typed string and a typed number keep the datatype they declare.
+/// A typed string and a typed number keep the datatype they declare; a string
+/// declared as an XSD number or `xsd:boolean` is that number or Boolean.
 #[test]
 fn a_typed_literal_is_recorded_with_its_datatype() {
     const INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
     const DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
     pretty_assertions::assert_eq!(
         recorded(&property(&json!([{"@value": "42", "@type": INTEGER}]))),
+        TemporalValue::DeclaredNumber {
+            number: DeclaredNumber::Finite(JsonNumber::from(42)),
+            datatype: Some(INTEGER.parse().expect("a datatype")),
+        }
+    );
+    pretty_assertions::assert_eq!(
+        recorded(&property(&json!([{"@value": "1", "@type": "http://www.w3.org/2001/XMLSchema#boolean"}]))),
+        TemporalValue::DeclaredBoolean {
+            flag: true,
+            datatype: Some("http://www.w3.org/2001/XMLSchema#boolean".parse().expect("a datatype")),
+        }
+    );
+    pretty_assertions::assert_eq!(
+        recorded(&property(&json!([{"@value": "42", "@type": "http://www.w3.org/2001/XMLSchema#token"}]))),
         TemporalValue::String {
             text: "42".to_owned(),
-            annotation: TextAnnotation::Datatype(INTEGER.parse().expect("a datatype")),
+            annotation: TextAnnotation::Datatype("http://www.w3.org/2001/XMLSchema#token".parse().expect("a datatype")),
         }
     );
     pretty_assertions::assert_eq!(
