@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1.98.1-trixie AS chef
+FROM rust:1.99.1-trixie AS chef
 
 # cmake for aws-lc-sys.
 RUN apt-get update \
