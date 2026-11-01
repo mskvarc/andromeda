@@ -38,7 +38,8 @@ const REPLAY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// likewise counts as a failed source, answered as the operation answers one,
 /// only if it gives up before the request does. An HTTP
 /// notification carries in full the entities a change wrote, so its body limit
-/// exceeds the largest body a request may send. A side-effect or history
+/// exceeds the largest body a request may send, and so does the MQTT packet a
+/// notification is published in. A side-effect or history
 /// lease outlasts the wait for its transaction's connection. A provisional
 /// tenant outlives the longest creating request, or a request still running
 /// could find its database gone.
@@ -81,6 +82,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Ordered {
             key: ConfigKey::NotificationsDeliveryMaxHttpBody,
+            relation: Relation::Above,
+            limit: Limit::Key(ConfigKey::RequestLimitsMaxBody),
+        },
+        Rule::Ordered {
+            key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
             relation: Relation::Above,
             limit: Limit::Key(ConfigKey::RequestLimitsMaxBody),
         },

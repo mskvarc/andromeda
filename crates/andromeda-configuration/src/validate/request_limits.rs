@@ -173,7 +173,8 @@ mod tests {
 
     /// The address width is checked only where `usize` is narrower than
     /// `u64`, the only platforms a byte size can pass it on. No notification
-    /// body limit is above the largest byte size, so that rule refuses too.
+    /// body limit or MQTT packet limit is above the largest byte size, so
+    /// those rules refuse too.
     #[test]
     fn a_body_ceiling_past_the_address_width_is_refused() {
         let mut config = BrokerConfig::default();
@@ -184,8 +185,14 @@ mod tests {
             relation: Relation::Above,
             bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
         };
+        let packet_limit = ConfigurationViolation::OutOfRange {
+            key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
+            value: Quantity::Bytes(134_217_728),
+            relation: Relation::Above,
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
+        };
         if usize::try_from(u64::MAX).is_ok() {
-            assert_eq!(refusals(&config), [notification_limit]);
+            assert_eq!(refusals(&config), [notification_limit, packet_limit]);
         } else {
             assert_eq!(
                 refusals(&config),
@@ -195,6 +202,7 @@ mod tests {
                         bytes: u64::MAX,
                     },
                     notification_limit,
+                    packet_limit,
                 ]
             );
         }

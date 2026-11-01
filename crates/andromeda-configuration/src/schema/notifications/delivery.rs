@@ -162,7 +162,7 @@ pub struct DeliveryConfig {
     /// maximum lowers it for that connection. A larger notification fails
     /// without a retry.
     #[schemars(
-        description = "The largest MQTT packet a notification is published in, envelope and topic included. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry."
+        description = "The largest MQTT packet a notification is published in, envelope and topic included. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry. A notification carries the entities of a change in full, so a limit at `request_limits.max_body` or below could refuse to notify an entity one request wrote. No packet is longer than 256 MiB, so `request_limits.max_body` stays below that."
     )]
     pub max_mqtt_packet: MqttPacketLimit,
     /// The attempts a queued delivery gets before it is dead-lettered.

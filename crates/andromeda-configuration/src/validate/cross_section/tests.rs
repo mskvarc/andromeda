@@ -2,6 +2,7 @@ use crate::{
     broker_config::BrokerConfig,
     human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
+    mqtt_packet_limit::{MqttPacketLimit, MqttPacketLimitError},
     notification_body_limit::{NotificationBodyLimit, NotificationBodyLimitError},
     schema::{feature_mode::FeatureMode, http3::Http3Mode, listener_transport::ListenerTransport, management::ManagementMode, tls::ClientAuthenticationMode},
     validate::{
@@ -176,6 +177,25 @@ fn a_notification_body_limit_at_the_request_body_limit_is_refused_and_one_byte_a
         }]
     );
     config.notifications.delivery.max_http_body = NotificationBodyLimit::try_from(HumanByteSize::b(67_108_865))?;
+    assert_accepted(&config);
+    Ok(())
+}
+
+#[test]
+fn an_mqtt_packet_limit_at_the_request_body_limit_is_refused_and_one_byte_above_accepted() -> Result<(), MqttPacketLimitError> {
+    let mut config = BrokerConfig::default();
+    config.request_limits.max_body = HumanByteSize::mib(64);
+    config.notifications.delivery.max_mqtt_packet = MqttPacketLimit::try_from(HumanByteSize::mib(64))?;
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::OutOfRange {
+            key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
+            value: Quantity::Bytes(67_108_864),
+            relation: Relation::Above,
+            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(67_108_864)),
+        }]
+    );
+    config.notifications.delivery.max_mqtt_packet = MqttPacketLimit::try_from(HumanByteSize::b(67_108_865))?;
     assert_accepted(&config);
     Ok(())
 }

@@ -109,7 +109,7 @@ fn build_file_layer(config: &LogFileConfig) -> Result<(Box<dyn Layer<Registry> +
     };
     let writer = FileRotate::new(
         directory.join(&config.name),
-        AppendTimestamp::default(FileLimit::MaxFiles(config.max_retained_files)),
+        AppendTimestamp::default(FileLimit::MaxFiles(config.max_retained_files.get())),
         ContentLimit::Time(frequency),
         compression,
         None,

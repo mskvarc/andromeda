@@ -3,7 +3,7 @@
 use crate::schema::feature_mode::FeatureMode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 use strum::{Display, EnumString};
 
 /// Broker log verbosity.
@@ -113,9 +113,10 @@ pub struct LogFileConfig {
     /// Whether rotated files are compressed.
     #[schemars(description = "Whether rotated files are compressed.")]
     pub compression: LogCompression,
-    /// The most rotated files kept; the oldest is deleted past it.
-    #[schemars(description = "The most rotated files kept. Past it, the oldest is deleted.")]
-    pub max_retained_files: usize,
+    /// The most rotated files kept; the oldest is deleted past it. At least
+    /// one, since the file being written is one of them.
+    #[schemars(description = "The most rotated files kept. Past it, the oldest is deleted. Zero is refused.")]
+    pub max_retained_files: NonZeroUsize,
     /// Maximum verbosity written to the file, independent of the stdout level.
     #[schemars(description = "The most verbose level written to the file, independent of `observability.log.level`.")]
     pub level: LogLevel,
@@ -132,7 +133,7 @@ impl Default for LogFileConfig {
             format: LogFileFormat::Json,
             rotation: LogRotationInterval::Daily,
             compression: LogCompression::Gzip,
-            max_retained_files: 7,
+            max_retained_files: NonZeroUsize::MIN.saturating_add(6),
             level: LogLevel::Info,
         }
     }
@@ -210,8 +211,16 @@ mod tests {
         pretty_assertions::assert_eq!(config.compression, LogCompression::Gzip);
         pretty_assertions::assert_eq!(config.format, LogFileFormat::Json);
         pretty_assertions::assert_eq!(config.rotation, LogRotationInterval::Daily);
-        pretty_assertions::assert_eq!(config.max_retained_files, 7);
+        pretty_assertions::assert_eq!(config.max_retained_files.get(), 7);
         pretty_assertions::assert_eq!(config.directory, None);
+    }
+
+    #[test]
+    fn zero_retained_files_is_refused() {
+        let refused = toml::from_str::<LogFileConfig>(
+            "mode = \"enabled\"\nname = \"andromeda.log\"\nformat = \"json\"\nrotation = \"daily\"\ncompression = \"gzip\"\nmax_retained_files = 0\nlevel = \"info\"\n",
+        );
+        assert!(refused.is_err_and(|error| error.to_string().contains("nonzero")));
     }
 
     #[test]

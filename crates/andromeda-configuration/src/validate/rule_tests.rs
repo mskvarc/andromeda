@@ -84,7 +84,7 @@ fn every_bound_a_value_type_holds_is_declared() {
     assert_eq!(declared_statements(ConfigKey::DatabaseWriteReservePercent), ["below 100"]);
     assert_eq!(
         declared_statements(ConfigKey::NotificationsDeliveryMaxMqttPacket),
-        ["above zero", "at most 256.0 MiB"]
+        ["above zero", "at most 256.0 MiB", "above `request_limits.max_body`"]
     );
     assert_eq!(declared_statements(ConfigKey::JsonLdCacheDefaultLifetime), ["at least 1s"]);
     assert_eq!(declared_statements(ConfigKey::JsonLdCacheHostedRevalidationInterval), ["at least 1s"]);
