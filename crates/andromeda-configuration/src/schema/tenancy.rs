@@ -41,6 +41,26 @@ impl Default for TenantDatabasesConfig {
     }
 }
 
+/// The default tenant's pool.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
+#[schemars(description = "The tenant a request reaches when it names none in `NGSILD-Tenant`, whose data lives in `database.url`.")]
+#[serde(deny_unknown_fields)]
+pub struct DefaultTenantConfig {
+    /// The most connections the default tenant's pool opens.
+    #[schemars(
+        description = "The most connections the default tenant's pool opens, in each broker process. Named tenants size theirs with `tenancy.databases.max_connections`. Zero is refused."
+    )]
+    pub max_connections: NonZeroU32,
+}
+
+impl Default for DefaultTenantConfig {
+    fn default() -> DefaultTenantConfig {
+        DefaultTenantConfig {
+            max_connections: NonZeroU32::MIN.saturating_add(31),
+        }
+    }
+}
+
 /// How many tenant runtimes stay open, and for how long.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
 #[schemars(description = "How many tenants a broker process keeps loaded, for how long, and how an unloaded tenant with due work is loaded again.")]
@@ -164,7 +184,9 @@ impl Default for TenantBuildConfig {
 /// Whether named tenants are served, where their data lives, how many stay
 /// open, and how one is opened.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
-#[schemars(description = "Whether named tenants are served, how their databases are named and pooled, and how many stay loaded.")]
+#[schemars(
+    description = "Whether named tenants are served, how the default tenant's and each named tenant's pools are sized, how named tenants' databases are named, and how many stay loaded."
+)]
 #[serde(deny_unknown_fields)]
 pub struct TenancyConfig {
     /// Whether named tenants are served: `enabled` or `disabled`.
@@ -187,6 +209,9 @@ pub struct TenancyConfig {
         description = "How long a new tenant whose database still holds nothing is kept before its database is dropped. A creating operation that names a tenant for the first time prepares its database before it runs, and the tenant is answered as nonexistent until that database holds information; a refused operation leaves such a tenant behind."
     )]
     pub provisional_tenant_lifetime: HumanDuration,
+    /// The default tenant's pool.
+    #[schemars(description = "The default tenant's pool.")]
+    pub default_tenant: DefaultTenantConfig,
     /// Where each named tenant's data lives.
     #[schemars(description = "How each named tenant's database is named and pooled.")]
     pub databases: TenantDatabasesConfig,
@@ -203,6 +228,7 @@ impl Default for TenancyConfig {
         TenancyConfig {
             mode: FeatureMode::Enabled,
             provisional_tenant_lifetime: HumanDuration::from_secs(600),
+            default_tenant: DefaultTenantConfig::default(),
             databases: TenantDatabasesConfig::default(),
             residency: ResidencyConfig::default(),
             build: TenantBuildConfig::default(),

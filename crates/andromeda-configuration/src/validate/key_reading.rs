@@ -55,7 +55,6 @@ impl ConfigKey {
             ConfigKey::RequestLimitsMaxAttributeNesting => Some(width(config.request_limits.max_attribute_nesting.get())),
             ConfigKey::RequestLimitsMaxQNesting => Some(width(config.request_limits.max_q_nesting.get())),
             ConfigKey::HttpBodyDecodingBlockingThreshold => Some(size(config.http.body_decoding.blocking_threshold)),
-            ConfigKey::DatabaseMaxConnections => Some(count(config.database.max_connections)),
             ConfigKey::DatabasePoolerMaxConnectionsPerTenant => config.database.pooler.as_ref().map(|pooler| count(pooler.max_connections_per_tenant.get())),
             ConfigKey::DatabaseWriteReservePercent => Some(count(u8::from(config.database.write_reserve_percent))),
             ConfigKey::DatabaseAcquireTimeout => Some(span(config.database.acquire_timeout)),

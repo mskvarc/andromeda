@@ -82,7 +82,8 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     let tenancy = &config.tenancy;
     let builds = u32::try_from(tenancy.build.max_concurrent.get()).unwrap_or(u32::MAX);
     let direct = database
-        .max_connections
+        .platform_max_connections
+        .get()
         .saturating_add(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
         .saturating_add(MAINTENANCE_TENANT_CONNECTIONS)
         .saturating_add(builds.saturating_mul(BUILD_CONNECTIONS));
@@ -91,7 +92,7 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     }
     let cached = u32::try_from(tenancy.residency.max_resident.get()).unwrap_or(u32::MAX);
     direct
-        .saturating_add(database.max_connections)
+        .saturating_add(tenancy.default_tenant.max_connections.get())
         .saturating_add(cached.saturating_mul(tenancy.databases.max_connections.get()))
         .saturating_add(REQUEST_PROBE_CONNECTIONS)
 }
@@ -123,7 +124,8 @@ mod tests {
     /// A configuration with small, distinct pool sizes.
     fn sized() -> BrokerConfig {
         let mut config = BrokerConfig::default();
-        config.database.max_connections = 10;
+        config.database.platform_max_connections = NonZeroU32::MIN.saturating_add(9);
+        config.tenancy.default_tenant.max_connections = NonZeroU32::MIN.saturating_add(6);
         config.tenancy.build.max_concurrent = NonZeroUsize::MIN.saturating_add(3);
         config.tenancy.residency.max_resident = NonZeroUsize::MIN.saturating_add(19);
         config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(2);
@@ -131,11 +133,11 @@ mod tests {
     }
 
     /// Direct: platform 10, maintenance 2 plus its tenant connection 1,
-    /// builds 4 x 2; request path: default tenant 10, cached tenants 20 x 3,
+    /// builds 4 x 2; request path: default tenant 7, cached tenants 20 x 3,
     /// probes 2.
     #[test]
     fn a_direct_broker_counts_every_pool_it_opens_against_postgresql() {
-        assert_eq!(broker_connection_ceiling(&sized()), 10 + 2 + 1 + 8 + 10 + 60 + 2);
+        assert_eq!(broker_connection_ceiling(&sized()), 10 + 2 + 1 + 8 + 7 + 60 + 2);
     }
 
     /// Behind a pooler the request path reaches the pooler, so only the

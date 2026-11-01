@@ -12,7 +12,7 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{num::NonZeroU32, time::Duration};
 use strum::{Display, EnumString};
 use url::Url;
 use url_macro::url;
@@ -69,11 +69,13 @@ pub struct DatabaseConfig {
         description = "The PostgreSQL server and the default tenant's database. It always names PostgreSQL itself, never a proxy: tenant creation, migrations and maintenance connect here even when `database.pooler` is set, and so do requests when it is not."
     )]
     pub url: Url,
-    /// The most connections the platform pool opens.
+    /// The most connections the platform pool opens: the pool over the
+    /// platform database that holds the tenant registry, the wake schedule and
+    /// the forwarded-subscription routes. Always direct to PostgreSQL.
     #[schemars(
-        description = "The most connections the default tenant's pool opens, in each broker process. Named tenants size their pools with `tenancy.databases.max_connections`."
+        description = "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.url`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`. Zero is refused."
     )]
-    pub max_connections: u32,
+    pub platform_max_connections: NonZeroU32,
     /// Percentage of each tenant pool that read requests (queries, retrievals,
     /// discovery and temporal reads) never hold, so writes keep connections
     /// however many reads queue. Rounded down: a pool too small to spare a
@@ -115,7 +117,7 @@ impl Default for DatabaseConfig {
         DatabaseConfig {
             // Compile-time validated, so the built-in default carries no runtime parse or panic.
             url: url!("postgres://postgres:postgres@localhost:5432/postgres"),
-            max_connections: 32,
+            platform_max_connections: NonZeroU32::MIN.saturating_add(31),
             write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::On,

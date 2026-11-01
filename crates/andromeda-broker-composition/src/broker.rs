@@ -251,10 +251,10 @@ async fn construct(
     // shares the pooler's handful of server connections for that one database,
     // and provisioning holds one of them across `CREATE DATABASE`, which queues
     // every cold load's registry read behind it. It is served directly, bounded
-    // by `database.max_connections`.
+    // by `database.platform_max_connections`.
     let registry = Arc::new(
         PostgresTenantRegistry::connect(
-            configure_pool_options(config.database.max_connections, config.database.acquire_timeout()),
+            configure_pool_options(config.database.platform_max_connections.get(), config.database.acquire_timeout()),
             direct_url.clone(),               // clone: the registry provisions and migrates over the direct base
             config.tenancy.databases.clone(), // clone: the registry owns where tenant data lives
             &database_defaults(&config),

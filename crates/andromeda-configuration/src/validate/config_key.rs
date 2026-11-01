@@ -120,9 +120,6 @@ pub enum ConfigKey {
     /// `http.forwarded.proxies`.
     #[display("http.forwarded.proxies")]
     HttpForwardedProxies,
-    /// `database.max_connections`.
-    #[display("database.max_connections")]
-    DatabaseMaxConnections,
     /// `database.pooler.max_connections_per_tenant`.
     #[display("database.pooler.max_connections_per_tenant")]
     DatabasePoolerMaxConnectionsPerTenant,

@@ -9,13 +9,12 @@ use crate::{
     },
 };
 
-/// The pool needs a connection and a positive acquire deadline, and a write
+/// A request needs a positive acquire deadline, and a write
 /// reserve that leaves reads one. A name cache without capacity reads every
 /// name from its table, and a zero idle timeout evicts every name the moment
 /// it is cached.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
-        Rule::Positive(ConfigKey::DatabaseMaxConnections),
         Rule::Positive(ConfigKey::DatabaseAcquireTimeout),
         Rule::Ordered {
             key: ConfigKey::DatabaseWriteReservePercent,
@@ -41,20 +40,6 @@ mod tests {
         },
     };
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn a_pool_without_connections_is_refused_and_one_connection_accepted() {
-        let mut config = BrokerConfig::default();
-        config.database.max_connections = 0;
-        assert_eq!(
-            refusals(&config),
-            [ConfigurationViolation::Zero {
-                key: ConfigKey::DatabaseMaxConnections
-            }]
-        );
-        config.database.max_connections = 1;
-        assert_accepted(&config);
-    }
 
     #[test]
     fn a_zero_acquire_timeout_is_refused() {

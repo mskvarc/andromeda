@@ -201,7 +201,7 @@ pub(super) async fn initialize_storage(
     tenant: &TenantRef,
 ) -> Result<TenantStorage, TenantAssemblyError> {
     let max_connections = match tenant {
-        TenantRef::UnnamedDefault => config.database.max_connections,
+        TenantRef::UnnamedDefault => config.tenancy.default_tenant.max_connections.get(),
         // Through a pooler a named tenant's serving pool holds only a couple of
         // client connections -- the pooler does the real backend pooling -- so a
         // working set larger than the runtime cache cannot churn the host's

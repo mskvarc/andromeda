@@ -13,6 +13,11 @@ use url_macro::url;
 /// refusal must name, and the file spelling it has now.
 const MOVED: &[(&str, &str, &str)] = &[
     (
+        "[database]\nmax_connections = 8\n",
+        "max_connections",
+        "[database]\nplatform_max_connections = 8\n\n[tenancy.default_tenant]\nmax_connections = 8\n",
+    ),
+    (
         "[server]\ngraceful_drain = \"30s\"\n",
         "graceful_drain",
         "[server]\ngraceful_drain_timeout = \"30s\"\n",
