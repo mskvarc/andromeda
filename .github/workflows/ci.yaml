@@ -103,17 +103,6 @@ jobs:
       - uses: ./.github/actions/rust-toolchain
       - run: cargo clippy --workspace --exclude andromeda-test-suite --all-targets --all-features --locked -- -D warnings
 
-  architecture:
-    name: architecture
-    if: *ready
-    runs-on: *runner
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-toolchain
-      # --lib: the broker's root tests/ also has an architecture module.
-      - run: cargo test --workspace --exclude andromeda --exclude andromeda-test-suite --lib --all-features --locked architecture
-
   unit:
     name: unit
     if: *ready
@@ -125,6 +114,11 @@ jobs:
       # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
       - name: Workspace unit tests
         run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked -- --skip architecture
+      # The selection and flags of the step above, so the test binaries it built are run again rather than rebuilt. The
+      # architecture checks are generated into every crate; andromeda-sql's run with its tests in sql.
+      - name: Architecture checks
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked architecture
       # The broker's root tests/ need a live stack.
       - name: Broker unit tests
         if: ${{ !cancelled() }}
@@ -209,7 +203,7 @@ jobs:
     # Runs when a job it needs failed or was skipped, so a failure upstream still fails ci-ok; a cancelled run, which a
     # newer commit superseded, reports nothing.
     if: ${{ !cancelled() && !github.event.pull_request.draft }}
-    needs: [fmt, taplo, machete, deny, shellcheck, clippy, architecture, unit, sql, suite]
+    needs: [fmt, taplo, machete, deny, shellcheck, clippy, unit, sql, suite]
     runs-on: *runner
     timeout-minutes: 5
     steps:
