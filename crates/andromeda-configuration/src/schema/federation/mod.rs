@@ -1,11 +1,13 @@
-//! The `[federation]` tables: forwarding to Context Sources, caching their
-//! answers, holding back the failing ones, and this broker's own identity.
+//! The `[federation]` tables: forwarding to Context Sources, what a federated
+//! query means, caching their answers, holding back the failing ones, and
+//! this broker's own identity.
 
 pub mod cooldown;
 pub mod forwarding;
 pub mod identity;
+pub mod query;
 
-use crate::schema::federation::{cooldown::CooldownConfig, forwarding::ForwardingConfig, identity::IdentityConfig};
+use crate::schema::federation::{cooldown::CooldownConfig, forwarding::ForwardingConfig, identity::IdentityConfig, query::FederatedQueryConfig};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
@@ -39,8 +41,13 @@ impl Default for ResponseCacheConfig {
 )]
 pub struct FederationConfig {
     /// How requests are forwarded to Context Sources.
-    #[schemars(description = "How requests are forwarded to context sources: timeouts, fan-out and result caps.")]
+    #[schemars(description = "How requests reach context sources: fan-out, timeouts and the addresses a source may resolve into.")]
     pub forwarding: ForwardingConfig,
+    /// What a federated query means and how much it gathers.
+    #[schemars(
+        description = "What a federated query means and how much it may gather from context sources: the `splitEntities` default, the result caps and how aggregated temporal reads are gathered."
+    )]
+    pub query: FederatedQueryConfig,
     /// The per-tenant cache of forwarded responses.
     #[schemars(description = "The per-tenant cache of forwarded `GET` responses.")]
     pub response_cache: ResponseCacheConfig,

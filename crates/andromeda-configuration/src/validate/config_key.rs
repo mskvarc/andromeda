@@ -240,12 +240,12 @@ pub enum ConfigKey {
     /// `federation.forwarding.request_timeout`.
     #[display("federation.forwarding.request_timeout")]
     FederationForwardingRequestTimeout,
-    /// `federation.forwarding.max_query_entities`.
-    #[display("federation.forwarding.max_query_entities")]
-    FederationForwardingMaxQueryEntities,
-    /// `federation.forwarding.max_query_source_rows`.
-    #[display("federation.forwarding.max_query_source_rows")]
-    FederationForwardingMaxQuerySourceRows,
+    /// `federation.query.max_entities`.
+    #[display("federation.query.max_entities")]
+    FederationQueryMaxEntities,
+    /// `federation.query.max_source_rows`.
+    #[display("federation.query.max_source_rows")]
+    FederationQueryMaxSourceRows,
     /// `federation.cooldown.mode`.
     #[display("federation.cooldown.mode")]
     FederationCooldownMode,

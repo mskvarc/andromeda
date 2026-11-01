@@ -495,17 +495,42 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[federation]\nsplit_entities_default = \"split\"\n",
         "split_entities_default",
-        "[federation.forwarding]\nsplit_entities = \"split\"\n",
+        "[federation.query]\nsplit_entities = \"split\"\n",
     ),
     (
         "[federation]\nmax_query_entities = 10\n",
         "max_query_entities",
-        "[federation.forwarding]\nmax_query_entities = 10\n",
+        "[federation.query]\nmax_entities = 10\n",
     ),
     (
         "[federation]\nmax_query_instances = 10\n",
         "max_query_instances",
+        "[federation.query]\nmax_instances = 10\n",
+    ),
+    (
+        "[federation.forwarding]\nsplit_entities = \"split\"\n",
+        "split_entities",
+        "[federation.query]\nsplit_entities = \"split\"\n",
+    ),
+    (
+        "[federation.forwarding]\nmax_query_entities = 10\n",
+        "max_query_entities",
+        "[federation.query]\nmax_entities = 10\n",
+    ),
+    (
+        "[federation.forwarding]\nmax_query_source_rows = 30000\n",
+        "max_query_source_rows",
+        "[federation.query]\nmax_source_rows = 30000\n",
+    ),
+    (
         "[federation.forwarding]\nmax_query_instances = 10\n",
+        "max_query_instances",
+        "[federation.query]\nmax_instances = 10\n",
+    ),
+    (
+        "[federation.forwarding]\nfederated_aggregation = \"instances\"\n",
+        "federated_aggregation",
+        "[federation.query]\naggregation = \"instances\"\n",
     ),
     (
         "[federation]\ncache_max_entries = 10\n",

@@ -20,9 +20,9 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         Rule::Positive(ConfigKey::FederationForwardingConnectTimeout),
         Rule::Positive(ConfigKey::FederationForwardingRequestTimeout),
         Rule::Ordered {
-            key: ConfigKey::FederationForwardingMaxQuerySourceRows,
+            key: ConfigKey::FederationQueryMaxSourceRows,
             relation: Relation::AtLeast,
-            limit: Limit::Key(ConfigKey::FederationForwardingMaxQueryEntities),
+            limit: Limit::Key(ConfigKey::FederationQueryMaxEntities),
         },
     ]
     .into_iter()
@@ -95,18 +95,18 @@ mod tests {
     #[test]
     fn a_source_row_ceiling_below_the_entity_limit_is_refused_and_an_equal_one_accepted() {
         let mut config = BrokerConfig::default();
-        config.federation.forwarding.max_query_entities = NonZeroU32::new(500).expect("positive");
-        config.federation.forwarding.max_query_source_rows = NonZeroU32::new(499).expect("positive");
+        config.federation.query.max_entities = NonZeroU32::new(500).expect("positive");
+        config.federation.query.max_source_rows = NonZeroU32::new(499).expect("positive");
         assert_eq!(
             refusals(&config),
             [ConfigurationViolation::OutOfRange {
-                key: ConfigKey::FederationForwardingMaxQuerySourceRows,
+                key: ConfigKey::FederationQueryMaxSourceRows,
                 value: Quantity::Count(499),
                 relation: Relation::AtLeast,
-                bound: Bound::setting(ConfigKey::FederationForwardingMaxQueryEntities, 500_u64),
+                bound: Bound::setting(ConfigKey::FederationQueryMaxEntities, 500_u64),
             }]
         );
-        config.federation.forwarding.max_query_source_rows = NonZeroU32::new(500).expect("positive");
+        config.federation.query.max_source_rows = NonZeroU32::new(500).expect("positive");
         assert_accepted(&config);
     }
 

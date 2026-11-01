@@ -8,7 +8,7 @@
 //! over the instances of every part; the deployment chooses how they are
 //! found.
 
-use andromeda_configuration::schema::federation::forwarding::FederatedAggregation;
+use andromeda_configuration::schema::federation::query::FederatedAggregation;
 
 /// How the entities a query aggregates here are found and their instances
 /// gathered.
@@ -26,7 +26,7 @@ pub enum AggregationGathering {
 }
 
 impl AggregationGathering {
-    /// The gathering the deployment's `federated_aggregation` names.
+    /// The gathering the deployment's `federation.query.aggregation` names.
     #[must_use]
     pub const fn configured(configured: FederatedAggregation) -> AggregationGathering {
         match configured {
@@ -39,7 +39,7 @@ impl AggregationGathering {
 #[cfg(test)]
 mod tests {
     use crate::aggregation_gathering::AggregationGathering;
-    use andromeda_configuration::schema::federation::forwarding::FederatedAggregation;
+    use andromeda_configuration::schema::federation::query::FederatedAggregation;
 
     #[test]
     fn each_configured_choice_names_its_gathering() {

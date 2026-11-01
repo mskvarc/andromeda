@@ -12,7 +12,7 @@ use googletest::prelude::*;
 use http::Method;
 
 /// Pins: Retrieve Temporal Evolution of an Entity as aggregatedValues totalCount and sum, on a broker whose
-/// `federated_aggregation` is `instances`: a Vehicle the broker holds 30 instances of and one source 30 more counts 60
+/// `federation.query.aggregation` is `instances`: a Vehicle the broker holds 30 instances of and one source 30 more counts 60
 /// summing to 6870, one three sources hold 30 instances each counts 90 summing to 10305, one only the broker holds
 /// counts its own 30 summing to 6435, and one only a source holds counts that source's 30 summing to 435; no source is
 /// asked for an aggregate

@@ -21,7 +21,7 @@ use ngsi_ld::{
 };
 
 /// Pins: Query Temporal Evolution of Entities as aggregatedValues totalCount and sum, on a broker whose
-/// `federated_aggregation` is `instances`, over three sources each holding 30 instances of one Vehicle at instants of
+/// `federation.query.aggregation` is `instances`, over three sources each holding 30 instances of one Vehicle at instants of
 /// their own, and one source alone holding 5 instances of a second Vehicle: the shared Vehicle counts 90 instances
 /// summing to 10305, the second counts its 5, and no source is asked for an aggregate
 /// Clause: 5.7.4.4, 4.5.19

@@ -256,7 +256,7 @@ use crate::{
     source_identity::SourceIdentityCache,
     split_entities::{SplitEntities, resolve_split_entities},
 };
-use andromeda_configuration::schema::federation::{FederationConfig, forwarding::SplitEntitiesDefault};
+use andromeda_configuration::schema::federation::{FederationConfig, query::SplitEntitiesDefault};
 use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
@@ -359,13 +359,13 @@ impl FederationService {
             ),
             cache: ForwardedGetCache::new(config.response_cache.max_entries.get()),
             source_identities: SourceIdentityCache::default(),
-            split_entities_default: config.forwarding.split_entities,
+            split_entities_default: config.query.split_entities,
             result_limits: ResultLimits {
-                distinct_entities: config.forwarding.max_query_entities,
-                source_rows: config.forwarding.max_query_source_rows,
+                distinct_entities: config.query.max_entities,
+                source_rows: config.query.max_source_rows,
             },
-            max_query_instances: config.forwarding.max_query_instances,
-            aggregation_gathering: AggregationGathering::configured(config.forwarding.federated_aggregation),
+            max_query_instances: config.query.max_instances,
+            aggregation_gathering: AggregationGathering::configured(config.query.aggregation),
         })
     }
 

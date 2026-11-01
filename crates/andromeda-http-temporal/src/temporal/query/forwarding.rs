@@ -414,8 +414,14 @@ mod tests {
     fn each_exceeded_bound_is_too_many_results_naming_its_setting() {
         let instance: Uri = "/ngsi-ld/v1/temporal/entities".parse().expect("a valid URI");
         let bounds = [
-            (ResultBudgetExceeded::DistinctEntities { maximum: NonZeroU32::MIN }, "max_query_entities"),
-            (ResultBudgetExceeded::SourceRows { maximum: NonZeroU32::MIN }, "max_query_source_rows"),
+            (
+                ResultBudgetExceeded::DistinctEntities { maximum: NonZeroU32::MIN },
+                "federation.query.max_entities",
+            ),
+            (
+                ResultBudgetExceeded::SourceRows { maximum: NonZeroU32::MIN },
+                "federation.query.max_source_rows",
+            ),
         ];
         for (exceeded, setting) in bounds {
             let Err(refusal) = forwarding_outcome(Err(QueryForwardingError::TooManyResults(exceeded)), &instance) else {

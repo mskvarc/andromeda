@@ -25,7 +25,7 @@ use ngsi_ld::{
 };
 
 /// Pins: Query Temporal Evolution of Entities with splitEntities false as aggregatedValues totalCount and sum, under
-/// the default `federated_aggregation` (`overlapping-instances`), over one Vehicle the broker holds with the speed
+/// the default `federation.query.aggregation` (`overlapping-instances`), over one Vehicle the broker holds with the speed
 /// instances 200, 201 and 202 and two sources each answer with 30 instances of their own: with q speed<150 the
 /// broker's part fails and the Vehicle counts the sources' 60 instances summing to 3870, with q speed<300 it matches
 /// and the Vehicle counts 63 summing to 4473, and with q speed>1000, which no source matches either, the Vehicle is

@@ -300,7 +300,7 @@ services:
       ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__FRESH_REQUESTS: "offset"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "enabled"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-ranges"
-      ANDROMEDA__FEDERATION__FORWARDING__FEDERATED_AGGREGATION: "instances"
+      ANDROMEDA__FEDERATION__QUERY__AGGREGATION: "instances"
 
   # Terminates TLS in front of the edge broker, the clause 6.2 model where a proxy meets the requirement for a
   # plaintext broker that believes the forwarded fields the proxy sets. It presents the leaf terminator.crt for the name

@@ -57,14 +57,14 @@ pub struct ResultBudget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ResultBudgetExceeded {
     /// The distinct entities exceed their limit.
-    #[error("the query matches more than the {maximum} distinct entities this broker gathers for one request (federation.forwarding.max_query_entities)")]
+    #[error("the query matches more than the {maximum} distinct entities this broker gathers for one request (federation.query.max_entities)")]
     DistinctEntities {
         /// The limit that was exceeded.
         maximum: NonZeroU32,
     },
     /// The elements the sources sent, duplicates included, exceed their limit.
     #[error(
-        "the context sources answered more than the {maximum} entities this broker fetches for one request, duplicates included (federation.forwarding.max_query_source_rows)"
+        "the context sources answered more than the {maximum} entities this broker fetches for one request, duplicates included (federation.query.max_source_rows)"
     )]
     SourceRows {
         /// The limit that was exceeded.
@@ -287,11 +287,11 @@ mod tests {
         let distinct = ResultBudgetExceeded::DistinctEntities { maximum: positive(5) }.to_string();
         let rows = ResultBudgetExceeded::SourceRows { maximum: positive(15) }.to_string();
         assert!(
-            distinct.contains("5 distinct entities") && distinct.contains("federation.forwarding.max_query_entities"),
+            distinct.contains("5 distinct entities") && distinct.contains("federation.query.max_entities"),
             "{distinct}"
         );
         assert!(
-            rows.contains("15 entities") && rows.contains("duplicates included") && rows.contains("federation.forwarding.max_query_source_rows"),
+            rows.contains("15 entities") && rows.contains("duplicates included") && rows.contains("federation.query.max_source_rows"),
             "{rows}"
         );
     }

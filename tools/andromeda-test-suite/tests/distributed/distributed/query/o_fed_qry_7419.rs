@@ -11,7 +11,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{http::headers::Accept, model::ErrorType, registration::RegistrationMode};
 
-/// Pins: Query Entities on broker-f, whose source row ceiling is 15, over four inclusive registrations at brokers B, C, D and E that each hold the same 5 Entities, 20 rows in all, answers 403 `TooManyResults` whose detail names `federation.forwarding.max_query_source_rows`
+/// Pins: Query Entities on broker-f, whose source row ceiling is 15, over four inclusive registrations at brokers B, C, D and E that each hold the same 5 Entities, 20 rows in all, answers 403 `TooManyResults` whose detail names `federation.query.max_source_rows`
 /// Clause: 4.12, 5.7.2.4
 /// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows
 #[gtest]
@@ -41,7 +41,7 @@ async fn o_fed_qry_7419_sources_sending_more_than_the_source_row_ceiling_are_too
         .await;
     expect_that!(
         &answer,
-        problem(StatusCode::FORBIDDEN, ErrorType::TooManyResults).with_detail_containing("max_query_source_rows")
+        problem(StatusCode::FORBIDDEN, ErrorType::TooManyResults).with_detail_containing("federation.query.max_source_rows")
     );
     for registration_id in [&registration_1, &registration_2, &registration_3, &registration_4] {
         bounded.registrations().delete(registration_id).send().await?;
