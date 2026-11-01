@@ -22,16 +22,15 @@ use andromeda_subscription::{
     compilation::compile_subscription,
     notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
     store::SubscriptionStore,
+    stored_subscription::StoredSubscription,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, error};
 
-const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
-
-/// Bounded evaluation of due entity interval subscriptions.
+/// Evaluation of due entity interval subscriptions, one subscription at a
+/// time; how many run at once is the caller's to bound.
 pub struct IntervalNotificationOperation {
     target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
@@ -80,69 +79,64 @@ impl IntervalNotificationOperation {
         }
     }
 
-    /// Evaluate every interval subscription due at the execution boundary.
+    /// Every interval subscription owed a grid point at `cutoff`.
     ///
-    /// Every due subscription records `cutoff` as the instant it answered its
-    /// grid at, whether or not it had anything to send: a subscription that
-    /// matched nothing still ticked, so the sweep stops re-reading it, and
-    /// re-running its paged scan, every pass until its next grid point. The
-    /// grid is anchored on the subscription's creation, so a pass that runs
-    /// late delays its notifications without moving the next grid point
-    /// (clause 5.8.6).
+    /// The grid is anchored on the subscription's creation, so a subscription
+    /// evaluated late delays its notification without moving its next grid
+    /// point (clause 5.8.6).
     ///
     /// # Errors
     ///
     /// Returns [`NotificationError::Subscription`] when the subscription store
-    /// cannot report the due interval subscriptions. Per-subscription failures —
-    /// entity lookup, payload assembly, slot claiming, serialization, endpoint
-    /// parsing, and delivery outcome bookkeeping — are logged and skipped rather
-    /// than aborting the sweep.
-    pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<usize, NotificationError> {
-        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target, cutoff).await?;
-        let due_count = due_subs.len();
+    /// cannot report the due interval subscriptions.
+    pub async fn due(&self, cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, NotificationError> {
+        Ok(self.sub_repo.find_due_interval_subscriptions(&self.target, cutoff).await?)
+    }
 
-        let this = &self;
-        let _results: Vec<()> = stream::iter(due_subs)
-            .map(|stored| async move {
-                let compiled = compile_subscription(&stored, this.entity_query.language_targeting().matching());
-                let sub = &stored.subscription;
-                let entities = match this.candidates().matching(&compiled).await {
-                    Ok(e) => e,
-                    Err(e) => {
-                        error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                        if let Err(e) = this
-                            .sub_repo
-                            .record_outcome(&this.target, &sub.id, NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly)
-                            .await
-                        {
-                            debug!("Failed to mark failure for {}: {}", sub.id, e);
-                        }
-                        return;
-                    }
-                };
-
-                let entities = match matching_entities(&this.entity_query, &this.target, &compiled, entities, Utc::now()).await {
-                    Ok(entities) => entities,
-                    Err(e) => {
-                        error!("IntervalWorker failed to read the entities the filter of {} links to: {}", sub.id, e);
-                        return;
-                    }
-                };
-
-                if entities.is_empty() {
-                    // Clause 5.8.6: no matching entities means no notification.
-                    // The tick is still recorded so the interval is not re-read
-                    // every pass until it next comes due.
-                    this.record_tick(sub, cutoff).await;
-                    return;
+    /// Evaluate one subscription found due at `cutoff`: read what it matches,
+    /// then notify it or record that it answered its grid with nothing to send.
+    ///
+    /// A subscription that matched nothing still records `cutoff` as the
+    /// instant it answered its grid at, so the sweep stops re-reading it, and
+    /// re-running its paged scan, every pass until its next grid point.
+    /// Failures (entity lookup, payload assembly, slot claiming, serialization,
+    /// endpoint parsing, outcome bookkeeping) are logged, and touch no other
+    /// subscription.
+    pub async fn evaluate(&self, stored: StoredSubscription, cutoff: DateTime<Utc>) {
+        let compiled = compile_subscription(&stored, self.entity_query.language_targeting().matching());
+        let sub = &stored.subscription;
+        let entities = match self.candidates().matching(&compiled).await {
+            Ok(e) => e,
+            Err(e) => {
+                error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
+                if let Err(e) = self
+                    .sub_repo
+                    .record_outcome(&self.target, &sub.id, NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly)
+                    .await
+                {
+                    debug!("Failed to mark failure for {}: {}", sub.id, e);
                 }
+                return;
+            }
+        };
 
-                this.notify(sub, entities, cutoff).await;
-            })
-            .buffer_unordered(INTERVAL_NOTIFICATION_CONCURRENCY)
-            .collect()
-            .await;
-        Ok(due_count)
+        let entities = match matching_entities(&self.entity_query, &self.target, &compiled, entities, Utc::now()).await {
+            Ok(entities) => entities,
+            Err(e) => {
+                error!("IntervalWorker failed to read the entities the filter of {} links to: {}", sub.id, e);
+                return;
+            }
+        };
+
+        if entities.is_empty() {
+            // Clause 5.8.6: no matching entities means no notification.
+            // The tick is still recorded so the interval is not re-read
+            // every pass until it next comes due.
+            self.record_tick(sub, cutoff).await;
+            return;
+        }
+
+        self.notify(sub, entities, cutoff).await;
     }
 
     /// Claim the slot of the due subscription `sub`, which matched `entities`

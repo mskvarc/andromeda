@@ -13,9 +13,10 @@ use crate::tenant_factory::{
     periodic_due::PeriodicSweep,
     storage::TenantStorage,
     tasks::{
-        PeriodicPacing,
+        PeriodicSweepDrive,
         notification_schedule::{register_notification_schedule, register_periodic_wake},
         notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
+        periodic_evaluation::periodic_pass,
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -100,7 +101,7 @@ pub(super) fn register_csource_notification_workers(
     transport: &Arc<TransportDispatcher>,
     csource_subscriptions: Arc<dyn SubscriptionStore>,
     streams: CsourceNotificationStreams,
-    pacing: PeriodicPacing,
+    drive: PeriodicSweepDrive,
 ) -> Result<(), TenantAssemblyError> {
     // Both streams change what a periodic csource notification would report: the
     // registrations it carries (clause 5.11.7) and the subscription set it is
@@ -140,7 +141,7 @@ pub(super) fn register_csource_notification_workers(
             receiver: interval_receiver,
             subscription_changes,
         },
-        pacing,
+        drive,
     )
 }
 
@@ -244,13 +245,14 @@ fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,
     wake: IntervalWake,
-    pacing: PeriodicPacing,
+    drive: PeriodicSweepDrive,
 ) -> Result<(), TenantAssemblyError> {
     let IntervalWake {
         handle,
         receiver,
         subscription_changes,
     } = wake;
+    let rerun = handle.clone(); // clone: an evaluation that ends after a pass refused it wakes the sweep.
     register_periodic_wake(
         supervisor,
         "csource-notification-interval-subscription-wake",
@@ -258,6 +260,7 @@ fn register_csource_interval_notification(
         ChangeChannel::CsourceSubscription,
         subscription_changes,
     )?;
+    let PeriodicSweepDrive { pacing, evaluations } = drive;
     register_notification_schedule(
         supervisor,
         "csource-notification-interval",
@@ -265,10 +268,19 @@ fn register_csource_interval_notification(
         receiver,
         pacing,
         move |cutoff| {
-            let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+            let operation = Arc::clone(&operation); // clone: each pass hands the shared operation to the evaluations it starts.
+            let evaluations = evaluations.clone(); // clone: each pass offers its evaluations to the tenant's one set of slots.
+            let rerun = rerun.clone(); // clone: each pass hands the sweep's wake to the evaluations it starts.
             async move {
-                operation.execute(cutoff).await?;
-                operation.next_due(cutoff).await
+                periodic_pass(
+                    &operation,
+                    &evaluations,
+                    &move || {
+                        let _ = rerun.wake();
+                    },
+                    cutoff,
+                )
+                .await
             }
         },
     )

@@ -17,10 +17,11 @@ use crate::{
         storage::TenantStorage,
         tasks::{
             EntityNotificationDelivery,
-            PeriodicPacing,
+            PeriodicSweepDrive,
             notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
             notification_schedule::{register_notification_schedule, register_periodic_wake},
             notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped, worker_notification_failure},
+            periodic_evaluation::periodic_pass,
         },
     },
 };
@@ -196,7 +197,7 @@ pub(super) fn register_interval_notification(
     storage: &TenantStorage,
     delivery: IntervalDelivery,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
-    pacing: PeriodicPacing,
+    drive: PeriodicSweepDrive,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(IntervalNotificationDeps {
         target: storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
@@ -209,6 +210,7 @@ pub(super) fn register_interval_notification(
         tenant: storage.tenant.clone(), // clone: interval policy owns its tenant partition.
     }));
     let (interval_wake, receiver) = wake_channel();
+    let rerun = interval_wake.clone(); // clone: an evaluation that ends after a pass refused it wakes the sweep.
     register_periodic_wake(
         supervisor,
         "notification-interval-wake",
@@ -216,11 +218,21 @@ pub(super) fn register_interval_notification(
         ChangeChannel::Subscription,
         subscription_changes,
     )?;
+    let PeriodicSweepDrive { pacing, evaluations } = drive;
     register_notification_schedule(supervisor, "notification-interval", PeriodicSweep::Entity, receiver, pacing, move |cutoff| {
-        let operation = Arc::clone(&operation); // clone: each bounded pass owns the shared notification operation.
+        let operation = Arc::clone(&operation); // clone: each pass hands the shared operation to the evaluations it starts.
+        let evaluations = evaluations.clone(); // clone: each pass offers its evaluations to the tenant's one set of slots.
+        let rerun = rerun.clone(); // clone: each pass hands the sweep's wake to the evaluations it starts.
         async move {
-            operation.execute(cutoff).await?;
-            operation.next_due(cutoff).await
+            periodic_pass(
+                &operation,
+                &evaluations,
+                &move || {
+                    let _ = rerun.wake();
+                },
+                cutoff,
+            )
+            .await
         }
     })
 }

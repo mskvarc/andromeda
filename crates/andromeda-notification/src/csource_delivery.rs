@@ -129,13 +129,22 @@ impl CsourceNotificationDelivery {
         trigger_reason: CsrTriggerReason,
     ) -> CsourceDeliveryOutcome {
         let sub_id = &subscription.id;
+        // Clause 5.8.1.4: once `expiresAt` is reached no notification is sent.
+        // A caller found the subscription in force before reading what it
+        // matches, and that read may have outlasted its expiry, so the send is
+        // admitted again at the instant the notification is generated at, the
+        // one its `notifiedAt` carries.
+        let generated_at = Utc::now();
+        if !subscription.standing.notifies_at(generated_at) {
+            return CsourceDeliveryOutcome::NotSent;
+        }
 
         let record = match self
             .sub_repo
             .claim_notification_slot(
                 &self.target,
                 sub_id,
-                NotificationSlotGate::at(Utc::now(), subscription.cadence(), subscription.endpoint_cooldown),
+                NotificationSlotGate::at(generated_at, subscription.cadence(), subscription.endpoint_cooldown),
             )
             .await
         {
@@ -173,7 +182,7 @@ impl CsourceNotificationDelivery {
             .context(delivery.body_context())
             .id(&notification_id)
             .subscription_id(sub_id)
-            .notified_at(Utc::now())
+            .notified_at(generated_at)
             .data(&data)
             .trigger_reason(trigger_reason)
             .build();
@@ -243,15 +252,23 @@ fn notified_registration(
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::csource_delivery::notified_registration;
+    use crate::{
+        csource_delivery::{CsourceDeliveryOutcome, CsourceNotificationDelivery, notified_registration},
+        notifier_test_double::{ClaimRecordingStore, offline_engine, transport},
+    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
     use andromeda_ngsi_ld_model::{
+        notification::CsrTriggerReason,
         registration::ContextSourceRegistration,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_subscription::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use chrono::{TimeDelta, Utc};
     use serde_json::json;
+    use std::sync::Arc;
     use url::Url;
 
     fn subscription(raw_type: &str) -> CompiledCsrSubscription {
@@ -305,6 +322,28 @@ mod tests {
                 .await
                 .expect("the core context processes"),
         )
+    }
+
+    /// Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
+    /// The subscription was found due before its expiry, but the notification
+    /// would be generated after it, so no slot is claimed and nothing is sent.
+    #[tokio::test]
+    async fn a_subscription_expired_when_its_notification_is_generated_is_not_notified() {
+        let store = Arc::new(ClaimRecordingStore::default());
+        let delivery = CsourceNotificationDelivery::new(
+            ContextTarget::Live,
+            Arc::<ClaimRecordingStore>::clone(&store),
+            offline_engine(),
+            transport(),
+            TenantRef::UnnamedDefault,
+        );
+        let mut expired = subscription("https://example.com/Vehicle");
+        expired.standing.expires_at = Some(Utc::now() - TimeDelta::seconds(1));
+
+        let outcome = delivery.deliver(&expired, Vec::new(), CsrTriggerReason::NewlyMatching).await;
+
+        pretty_assertions::assert_eq!(outcome, CsourceDeliveryOutcome::NotSent);
+        pretty_assertions::assert_eq!(store.claims(), Vec::new());
     }
 
     /// Clause 5.11.7: the notification carries only the matching

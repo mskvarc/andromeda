@@ -9,6 +9,7 @@ mod maintenance;
 mod notification_delivery;
 mod notification_schedule;
 mod notification_worker_failure;
+mod periodic_evaluation;
 mod pool_gauges;
 mod retention;
 mod snapshot;
@@ -40,6 +41,7 @@ use crate::{
             expiry::register_expiry_workers,
             maintenance::{register_entity_side_effects, register_spatial_workers},
             notification_delivery::{DeliveryDrainDrive, delivery_queue},
+            periodic_evaluation::register_periodic_evaluations,
             pool_gauges::register_pool_gauges,
             snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
             table_size_gauges::register_table_size_gauges,
@@ -48,7 +50,7 @@ use crate::{
     },
 };
 use andromeda_configuration::schema::temporal::storage::TemporalStorageConfig;
-use andromeda_context_commit::committer::ContextCommitter;
+use andromeda_context_commit::{committer::ContextCommitter, subscription_key::SubscriptionKey};
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::pending_change::{PendingChange, PendingCommits};
@@ -60,6 +62,7 @@ use andromeda_subscription::{
     store::SubscriptionStore,
 };
 use andromeda_task_runtime::{
+    keyed_slots::KeyedSlots,
     supervisor::TaskSupervisor,
     wake_trigger::{DrainWakeReceiver, WakeHandle},
 };
@@ -153,11 +156,33 @@ pub(super) struct PeriodicPacing {
     pub(super) due: Arc<PeriodicDue>,
 }
 
+/// What one periodic sweep runs on: its pacing, and the tenant's evaluation
+/// slots it hands each due Subscription's evaluation to.
+#[derive(Clone)]
+pub(super) struct PeriodicSweepDrive {
+    /// How the sweep is paced and where it publishes its next due instant.
+    pub(super) pacing: PeriodicPacing,
+    /// The slots shared by both sweeps of the tenant.
+    pub(super) evaluations: KeyedSlots<SubscriptionKey>,
+}
+
 /// Build the delivery signal the Snapshot service raises after enqueuing status
 /// notifications outside the scheduled preparation sweep, wrapping a clone of the
 /// status-delivery drain's wake handle.
 pub(super) fn snapshot_delivery_signal(wake: WakeHandle) -> Arc<dyn StatusDeliverySignal> {
     Arc::new(snapshot::StatusDeliveryWaker::new(wake))
+}
+
+/// Start the MQTT pool's health probe in the unnamed default tenant, which
+/// exists once per process, and return its handle with the sender that stops
+/// it; every other tenant starts none.
+fn spawn_mqtt_health_probe(storage: &TenantStorage, transport: &TransportDispatcher) -> (Vec<JoinHandle<()>>, Option<watch::Sender<bool>>) {
+    if storage.tenant.is_unnamed_default() {
+        let (shutdown, receiver) = watch::channel(false);
+        (vec![transport.mqtt_pool().spawn_health_probe(receiver)], Some(shutdown))
+    } else {
+        (Vec::new(), None)
+    }
 }
 
 /// Whether entity notifications are delivered live or through the durable queue.
@@ -199,7 +224,6 @@ pub(super) fn supervise_tasks(
         registration_receiver,
         csource_subscription,
     } = signals;
-    let mut handles: Vec<JoinHandle<()>> = Vec::new();
     register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
     // clone: PgPool is a shared handle sampled by the size-gauge task, which consults the tenant's one pacer.
     register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
@@ -207,13 +231,7 @@ pub(super) fn supervise_tasks(
     register_discovery_census_fold(&task_supervisor, Arc::clone(&pacer), storage.pool.clone())?;
     // clone: every background pass of the tenant consults its one pacer.
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
-    let health_shutdown = if storage.tenant.is_unnamed_default() {
-        let (shutdown, receiver) = watch::channel(false);
-        handles.push(transport.mqtt_pool().spawn_health_probe(receiver));
-        Some(shutdown)
-    } else {
-        None
-    };
+    let (handles, health_shutdown) = spawn_mqtt_health_probe(storage, transport);
     // clone: both subscription stores intern attribute lists through the tenant's one dictionary.
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
@@ -242,6 +260,10 @@ pub(super) fn supervise_tasks(
         },
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
+    let periodic = PeriodicSweepDrive {
+        pacing: periodic,
+        evaluations: register_periodic_evaluations(&task_supervisor)?,
+    };
     register_interval_notification(
         &task_supervisor,
         storage,
@@ -251,7 +273,7 @@ pub(super) fn supervise_tasks(
             transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
         },
         interval_subscription_changes,
-        periodic.clone(), // clone: both periodic sweeps consult the tenant's one pacer and publish into its one cell.
+        periodic.clone(), // clone: both periodic sweeps share the tenant's pacer, its due cell and its evaluation slots.
     )?;
     register_csource_notification_workers(
         &task_supervisor,

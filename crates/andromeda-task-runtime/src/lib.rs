@@ -22,6 +22,8 @@ pub mod failure;
 mod failure_report;
 /// Concurrent work that keeps the order of the items sharing a key.
 pub mod keyed_lanes;
+/// Bounded detached work that runs at most once per key at a time.
+pub mod keyed_slots;
 /// Observable task lifecycle events.
 pub mod lifecycle_event;
 /// Periodic scheduling policy.
