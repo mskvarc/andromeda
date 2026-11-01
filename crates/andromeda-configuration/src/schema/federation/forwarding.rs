@@ -1,7 +1,7 @@
 //! The `[federation.forwarding]` table: how requests are forwarded to Context
 //! Sources.
 
-use crate::{address_rule::AddressRule, human_duration::HumanDuration, schema::private_ip_blocking::PrivateIpBlocking};
+use crate::{address_rule::AddressRule, human_duration::HumanDuration, schema::private_addresses::PrivateAddresses};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -88,18 +88,18 @@ pub struct ForwardingConfig {
     /// reserved address space is `allowed` or `refused`. Checked against the
     /// address actually resolved. Redirects are never followed.
     #[schemars(
-        description = "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. `allowed_addresses` exempts addresses from a `refused`, and `denied_addresses` refuses addresses whatever this is set to. A redirect from a context source is never followed, whatever this is set to."
+        description = "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. `federation.forwarding.allowed_addresses` exempts addresses from `\"refused\"`, and `federation.forwarding.denied_addresses` refuses addresses whatever this is set to. A redirect from a context source is never followed, whatever this is set to."
     )]
-    pub private_ip_blocking: PrivateIpBlocking,
+    pub private_addresses: PrivateAddresses,
     /// Addresses and subnets a Context Source may resolve into even when
-    /// `private_ip_blocking` is `refused`.
+    /// `private_addresses` is `refused`.
     #[schemars(
-        description = "IP addresses and subnets (`\"10.8.0.0/16\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a context source may resolve into even though `private_ip_blocking` is `refused`. Empty by default. An entry in `denied_addresses` takes precedence."
+        description = "IP addresses and subnets (`\"10.8.0.0/16\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a context source may resolve into even though `federation.forwarding.private_addresses` is `\"refused\"`. Empty by default. An entry in `federation.forwarding.denied_addresses` takes precedence."
     )]
     pub allowed_addresses: Vec<AddressRule>,
     /// Addresses and subnets a Context Source is never contacted at.
     #[schemars(
-        description = "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a context source must not resolve into, public ones included and whatever `private_ip_blocking` is set to. Empty by default. Takes precedence over `allowed_addresses`."
+        description = "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a context source must not resolve into, public ones included and whatever `federation.forwarding.private_addresses` is set to. Empty by default. Takes precedence over `federation.forwarding.allowed_addresses`."
     )]
     pub denied_addresses: Vec<AddressRule>,
     /// What `splitEntities` means when a request or subscription leaves it
@@ -148,7 +148,7 @@ impl Default for ForwardingConfig {
             max_concurrent: NonZeroUsize::MIN.saturating_add(15),
             connect_timeout: HumanDuration::from_secs(3),
             request_timeout: HumanDuration::from_secs(5),
-            private_ip_blocking: PrivateIpBlocking::Allowed,
+            private_addresses: PrivateAddresses::Allowed,
             allowed_addresses: Vec::new(),
             denied_addresses: Vec::new(),
             split_entities: SplitEntitiesDefault::Complete,

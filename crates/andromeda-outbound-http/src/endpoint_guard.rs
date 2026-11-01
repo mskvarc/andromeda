@@ -109,7 +109,7 @@ async fn vet(policy: &AddressPolicy, authority: &Authority) -> Result<(), Endpoi
 )]
 mod tests {
     use crate::{address_policy::AddressPolicy, endpoint_guard::PrivateIpGuard, endpoint_refusal::EndpointRefusal};
-    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
     use std::net::Ipv4Addr;
     use url::{Host, Url};
 
@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn armed() -> PrivateIpGuard {
-        PrivateIpGuard::new(AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new()))
+        PrivateIpGuard::new(AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new()))
     }
 
     fn open() -> PrivateIpGuard {
@@ -172,7 +172,7 @@ mod tests {
     #[tokio::test]
     async fn an_allowed_subnet_is_reached_and_the_rest_of_private_space_is_not() {
         let guard = PrivateIpGuard::new(AddressPolicy::new(
-            PrivateIpBlocking::Refused,
+            PrivateAddresses::Refused,
             rules(&["127.0.0.0/8", "10.2.0.0/24"]),
             Vec::new(),
         ));
@@ -187,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn a_denied_address_is_refused_even_when_private_addresses_are_allowed() {
         let guard = PrivateIpGuard::new(AddressPolicy::new(
-            PrivateIpBlocking::Allowed,
+            PrivateAddresses::Allowed,
             Vec::new(),
             rules(&["203.0.113.0/24", "198.51.100.9"]),
         ));
@@ -201,9 +201,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_name_resolving_to_a_denied_address_is_refused_and_one_resolving_to_an_allowed_subnet_is_not() {
-        let denying = PrivateIpGuard::new(AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), rules(&["127.0.0.0/8", "::1"])));
+        let denying = PrivateIpGuard::new(AddressPolicy::new(PrivateAddresses::Allowed, Vec::new(), rules(&["127.0.0.0/8", "::1"])));
         assert!(denying.check(&endpoint("http://localhost:9/")).await.is_err());
-        let allowing = PrivateIpGuard::new(AddressPolicy::new(PrivateIpBlocking::Refused, rules(&["127.0.0.0/8", "::1"]), Vec::new()));
+        let allowing = PrivateIpGuard::new(AddressPolicy::new(PrivateAddresses::Refused, rules(&["127.0.0.0/8", "::1"]), Vec::new()));
         assert!(allowing.check(&endpoint("http://localhost:9/")).await.is_ok());
     }
 }

@@ -15,7 +15,7 @@ use crate::{
             compression::CompressionQuality,
             cors::{CorsMode, MethodRule},
         },
-        private_ip_blocking::PrivateIpBlocking,
+        private_addresses::PrivateAddresses,
     },
     validate::{
         bound::{Bound, Quantity, Relation},
@@ -514,10 +514,10 @@ fn a_source_id_that_is_not_an_iri_is_refused_at_load() {
 
 #[test]
 #[serial]
-fn federation_forwarding_private_ip_blocking_reads_refused_and_refuses_any_other_value() {
-    let config = load_file("[federation.forwarding]\nprivate_ip_blocking = \"refused\"\n").expect("refused is a defined value");
-    assert_eq!(config.federation.forwarding.private_ip_blocking, PrivateIpBlocking::Refused);
-    load_file("[federation.forwarding]\nprivate_ip_blocking = \"bogus\"\n").expect_err("bogus is not a defined value");
+fn federation_forwarding_private_addresses_reads_refused_and_refuses_any_other_value() {
+    let config = load_file("[federation.forwarding]\nprivate_addresses = \"refused\"\n").expect("refused is a defined value");
+    assert_eq!(config.federation.forwarding.private_addresses, PrivateAddresses::Refused);
+    load_file("[federation.forwarding]\nprivate_addresses = \"bogus\"\n").expect_err("bogus is not a defined value");
 }
 
 #[test]
@@ -535,7 +535,7 @@ fn the_address_lists_of_both_outbound_surfaces_read_mixed_entries_and_default_to
         "allowed_addresses = [\"10.2.0.0/24\", \"10.3.0.17\", \"fd00:1234::/48\"]\n",
         "denied_addresses = [\"203.0.113.0/24\", \"198.51.100.9\"]\n",
         "[federation.forwarding]\n",
-        "private_ip_blocking = \"refused\"\n",
+        "private_addresses = \"refused\"\n",
         "allowed_addresses = [\"10.8.0.0/16\"]\n",
     ))
     .expect("addresses and subnets, IPv4 and IPv6, are entries");

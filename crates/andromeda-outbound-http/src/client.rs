@@ -80,7 +80,7 @@ mod tests {
         client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy},
         endpoint_refusal::EndpointRefusal,
     };
-    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
     use std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::Duration,
@@ -132,7 +132,7 @@ mod tests {
     /// exempt.
     fn refusing_all_but_the_origin() -> AddressPolicy {
         let origin: AddressRule = "127.0.0.1".parse().expect("a well-formed rule");
-        AddressPolicy::new(PrivateIpBlocking::Refused, vec![origin], Vec::new())
+        AddressPolicy::new(PrivateAddresses::Refused, vec![origin], Vec::new())
     }
 
     #[tokio::test]
@@ -182,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn a_redirecting_client_refuses_a_redirect_to_a_domain_resolving_where_the_policy_refuses() {
         let address = origin(vec![|address| redirect_to(&format!("http://localhost:{}/", address.port()))]).await;
-        let refusing = AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new());
+        let refusing = AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new());
         let client = policy(refusing).redirecting_client_builder(5).build().expect("a buildable client");
 
         let error = client.get(format!("http://{address}/")).send().await.expect_err("the hop is refused");

@@ -7,7 +7,7 @@ use crate::{
     human_duration::HumanDuration,
     mqtt_packet_limit::MqttPacketLimit,
     notification_body_limit::NotificationBodyLimit,
-    schema::{durable_queue::DurableQueue, private_ip_blocking::PrivateIpBlocking},
+    schema::{durable_queue::DurableQueue, private_addresses::PrivateAddresses},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -122,7 +122,7 @@ pub struct DeliveryConfig {
     #[schemars(
         description = "Whether a notification endpoint, an HTTP URL or an MQTT broker, resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name. `allowed_addresses` exempts addresses from a `refused`, and `denied_addresses` refuses addresses whatever this is set to."
     )]
-    pub private_addresses: PrivateIpBlocking,
+    pub private_addresses: PrivateAddresses,
     /// Addresses and subnets a notification endpoint may resolve into even
     /// when `private_addresses` is `refused`.
     #[schemars(
@@ -169,7 +169,7 @@ impl Default for DeliveryConfig {
             request_timeout: HumanDuration::from_secs(10),
             max_concurrent: NonZeroU32::MIN.saturating_add(19),
             max_error_length: NonZeroU32::MIN.saturating_add(1023),
-            private_addresses: PrivateIpBlocking::Allowed,
+            private_addresses: PrivateAddresses::Allowed,
             allowed_addresses: Vec::new(),
             denied_addresses: Vec::new(),
             max_http_body: NotificationBodyLimit::DEFAULT,
@@ -201,7 +201,7 @@ impl DeliveryConfig {
 mod tests {
     use crate::schema::{
         notifications::delivery::{DeliveryConfig, DeliveryMode},
-        private_ip_blocking::PrivateIpBlocking,
+        private_addresses::PrivateAddresses,
     };
     use pretty_assertions::assert_eq;
 
@@ -209,7 +209,7 @@ mod tests {
     fn the_defaults_deliver_live_to_any_address() {
         let config = DeliveryConfig::default();
         assert_eq!(config.mode, DeliveryMode::Live);
-        assert_eq!(config.private_addresses, PrivateIpBlocking::Allowed);
+        assert_eq!(config.private_addresses, PrivateAddresses::Allowed);
     }
 
     #[test]

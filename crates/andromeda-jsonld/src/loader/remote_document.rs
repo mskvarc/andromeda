@@ -293,7 +293,7 @@ mod tests {
         },
         test_documents::{as_value, literal},
     };
-    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
     use andromeda_outbound_http::{address_policy::AddressPolicy, endpoint_refusal::EndpointRefusal};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
@@ -323,7 +323,7 @@ mod tests {
     /// exempt and every other loopback address refused.
     fn refusing_all_but_the_origin() -> AddressPolicy {
         let origin: AddressRule = "127.0.0.1".parse().expect("a well-formed rule");
-        AddressPolicy::new(PrivateIpBlocking::Refused, vec![origin], Vec::new())
+        AddressPolicy::new(PrivateAddresses::Refused, vec![origin], Vec::new())
     }
 
     /// Whether `error` is a refusal of `refused`.
@@ -478,7 +478,7 @@ mod tests {
     async fn a_context_url_in_refused_address_space_is_refused_without_a_request() {
         let origin = TestOrigin::start().await;
         origin.stage("/context.jsonld", ok("application/ld+json", TERMS, &[])).await;
-        let refusing = AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new());
+        let refusing = AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new());
 
         let error = fetched_under(refusing, &origin, "/context.jsonld").await.expect_err("loopback is refused");
 
@@ -491,7 +491,7 @@ mod tests {
         let origin = TestOrigin::start().await;
         origin.stage("/context.jsonld", ok("application/ld+json", TERMS, &[])).await;
         let denied: AddressRule = "127.0.0.1".parse().expect("a well-formed rule");
-        let denying = AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), vec![denied]);
+        let denying = AddressPolicy::new(PrivateAddresses::Allowed, Vec::new(), vec![denied]);
 
         let error = fetched_under(denying, &origin, "/context.jsonld")
             .await

@@ -19,7 +19,7 @@ pub mod listener_transport;
 pub mod management;
 pub mod notifications;
 pub mod observability;
-pub mod private_ip_blocking;
+pub mod private_addresses;
 pub mod request_limits;
 pub mod server;
 pub mod snapshot;

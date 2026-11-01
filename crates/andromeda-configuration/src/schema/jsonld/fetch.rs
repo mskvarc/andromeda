@@ -5,7 +5,7 @@ use crate::{
     address_rule::AddressRule,
     human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
-    schema::{feature_mode::FeatureMode, private_ip_blocking::PrivateIpBlocking},
+    schema::{feature_mode::FeatureMode, private_addresses::PrivateAddresses},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct JsonLdFetchConfig {
     #[schemars(
         description = "Whether a `@context` URL resolving into private or reserved address space is downloaded, and so every redirect and JSON-LD alternate the download follows. Checked against the address actually resolved, not the host name. `jsonld.fetch.allowed_addresses` exempts addresses from `\"refused\"`, and `jsonld.fetch.denied_addresses` refuses addresses whatever this is set to. A refused download is answered `504` `LdContextNotAvailable`. Set `\"refused\"` when clients you do not trust can name a `@context`."
     )]
-    pub private_addresses: PrivateIpBlocking,
+    pub private_addresses: PrivateAddresses,
     /// Addresses and subnets a `@context` download may resolve into even when
     /// `private_addresses` is `refused`.
     #[schemars(
@@ -61,7 +61,7 @@ impl Default for JsonLdFetchConfig {
             timeout: HumanDuration::from_secs(30),
             max_redirects: 5,
             max_size: HumanByteSize::mib(2),
-            private_addresses: PrivateIpBlocking::Allowed,
+            private_addresses: PrivateAddresses::Allowed,
             allowed_addresses: Vec::new(),
             denied_addresses: Vec::new(),
         }
@@ -81,7 +81,7 @@ mod tests {
     use crate::{
         address_rule::AddressRule,
         human_byte_size::HumanByteSize,
-        schema::{jsonld::fetch::JsonLdFetchConfig, private_ip_blocking::PrivateIpBlocking},
+        schema::{jsonld::fetch::JsonLdFetchConfig, private_addresses::PrivateAddresses},
     };
     use pretty_assertions::assert_eq;
     use std::error::Error;
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn the_default_downloads_from_any_address() {
         let config = JsonLdFetchConfig::default();
-        assert_eq!(config.private_addresses, PrivateIpBlocking::Allowed);
+        assert_eq!(config.private_addresses, PrivateAddresses::Allowed);
         assert_eq!(config.allowed_addresses, Vec::<AddressRule>::new());
         assert_eq!(config.denied_addresses, Vec::<AddressRule>::new());
     }
@@ -106,7 +106,7 @@ mod tests {
         let config: JsonLdFetchConfig = toml::from_str(
             "mode = \"enabled\"\ntimeout = \"30s\"\nmax_redirects = 5\nmax_size = \"2 MiB\"\nprivate_addresses = \"refused\"\nallowed_addresses = [\"10.2.0.0/24\"]\ndenied_addresses = [\"10.2.0.9\"]\n",
         )?;
-        assert_eq!(config.private_addresses, PrivateIpBlocking::Refused);
+        assert_eq!(config.private_addresses, PrivateAddresses::Refused);
         assert_eq!(config.allowed_addresses, vec!["10.2.0.0/24".parse::<AddressRule>()?]);
         assert_eq!(config.denied_addresses, vec!["10.2.0.9".parse::<AddressRule>()?]);
         Ok(())

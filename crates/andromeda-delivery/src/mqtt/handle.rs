@@ -158,7 +158,7 @@ mod tests {
         address_rule::AddressRule,
         human_byte_size::HumanByteSize,
         mqtt_packet_limit::MqttPacketLimit,
-        schema::private_ip_blocking::PrivateIpBlocking,
+        schema::private_addresses::PrivateAddresses,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_outbound_http::address_policy::AddressPolicy;
@@ -333,7 +333,7 @@ mod tests {
         let (address, received) = broker().await;
         let endpoint = endpoint(address, MqttQoS::AtLeast);
         let config = MqttPoolConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new()),
+            addresses: AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new()),
             ..MqttPoolConfig::default()
         };
         let handle = pool(config).transport_for(&endpoint);
@@ -358,7 +358,7 @@ mod tests {
         let (address, received) = broker().await;
         let endpoint = endpoint(address, MqttQoS::AtLeast);
         let config = MqttPoolConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rule(), Vec::new()),
+            addresses: AddressPolicy::new(PrivateAddresses::Refused, loopback_rule(), Vec::new()),
             ..MqttPoolConfig::default()
         };
         let handle = pool(config).transport_for(&endpoint);
@@ -378,7 +378,7 @@ mod tests {
         let (address, received) = broker().await;
         let endpoint = endpoint(address, MqttQoS::AtLeast);
         let config = MqttPoolConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rule()),
+            addresses: AddressPolicy::new(PrivateAddresses::Allowed, Vec::new(), loopback_rule()),
             ..MqttPoolConfig::default()
         };
         let handle = pool(config).transport_for(&endpoint);

@@ -210,6 +210,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "[jsonld.fetch]\nmode = \"disabled\"\n",
     ),
     ("[jsonld]\ntimeout = \"30s\"\n", "timeout", "[jsonld.fetch]\ntimeout = \"30s\"\n"),
+    (
+        "[federation.forwarding]\nprivate_ip_blocking = \"refused\"\n",
+        "private_ip_blocking",
+        "[federation.forwarding]\nprivate_addresses = \"refused\"\n",
+    ),
     ("[jsonld]\nmax_redirects = 5\n", "max_redirects", "[jsonld.fetch]\nmax_redirects = 5\n"),
     ("[jsonld]\nmax_context = \"2 MiB\"\n", "max_context", "[jsonld.fetch]\nmax_size = \"2 MiB\"\n"),
     ("[jsonld]\ncache_capacity = 10\n", "cache_capacity", "[jsonld.cache]\nmax_entries = 10\n"),

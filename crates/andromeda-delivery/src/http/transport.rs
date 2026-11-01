@@ -282,7 +282,7 @@ mod tests {
         address_rule::AddressRule,
         human_byte_size::HumanByteSize,
         notification_body_limit::NotificationBodyLimit,
-        schema::{link_field_layout::LinkFieldLayout, private_ip_blocking::PrivateIpBlocking},
+        schema::{link_field_layout::LinkFieldLayout, private_addresses::PrivateAddresses},
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
@@ -396,7 +396,7 @@ mod tests {
     async fn a_loopback_literal_endpoint_is_refused_when_private_addresses_are_refused() {
         let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
         let transport = HttpTransport::new(HttpTransportConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new()),
+            addresses: AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new()),
             ..HttpTransportConfig::default()
         })
         .expect("the transport builds");
@@ -423,7 +423,7 @@ mod tests {
     async fn a_loopback_endpoint_is_notified_when_its_subnet_is_allowed_though_private_addresses_are_refused() {
         let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
         let transport = HttpTransport::new(HttpTransportConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rule(), Vec::new()),
+            addresses: AddressPolicy::new(PrivateAddresses::Refused, loopback_rule(), Vec::new()),
             ..HttpTransportConfig::default()
         })
         .expect("the transport builds");
@@ -438,7 +438,7 @@ mod tests {
     async fn a_loopback_endpoint_is_refused_when_its_subnet_is_denied_though_private_addresses_are_allowed() {
         let (endpoint, accepted) = receiver_abandoning_idle_connections().await;
         let transport = HttpTransport::new(HttpTransportConfig {
-            addresses: AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rule()),
+            addresses: AddressPolicy::new(PrivateAddresses::Allowed, Vec::new(), loopback_rule()),
             ..HttpTransportConfig::default()
         })
         .expect("the transport builds");

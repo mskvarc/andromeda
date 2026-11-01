@@ -66,7 +66,7 @@ async fn vetted_addrs(host: String, policy: AddressPolicy) -> ResolveResult {
 )]
 mod tests {
     use crate::{address_policy::AddressPolicy, endpoint_refusal::EndpointRefusal, resolver::vetted_addrs};
-    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
 
     fn loopback_rules() -> Vec<AddressRule> {
         ["127.0.0.0/8", "::1"].iter().filter_map(|entry| entry.parse().ok()).collect()
@@ -74,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_loopback_resolution_is_refused_when_the_guard_is_armed() {
-        let refused = vetted_addrs("localhost".to_string(), AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new())).await;
+        let refused = vetted_addrs("localhost".to_string(), AddressPolicy::new(PrivateAddresses::Refused, Vec::new(), Vec::new())).await;
         let Err(error) = refused else {
             panic!("localhost resolves to loopback and must be refused");
         };
@@ -89,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_loopback_resolution_is_refused_when_the_address_is_denied_though_private_addresses_are_allowed() {
-        let denying = AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), loopback_rules());
+        let denying = AddressPolicy::new(PrivateAddresses::Allowed, Vec::new(), loopback_rules());
         let Err(error) = vetted_addrs("localhost".to_string(), denying).await else {
             panic!("localhost resolves to a denied address and must be refused");
         };
@@ -98,7 +98,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_loopback_resolution_is_admitted_when_its_subnet_is_allowed() {
-        let allowing = AddressPolicy::new(PrivateIpBlocking::Refused, loopback_rules(), Vec::new());
+        let allowing = AddressPolicy::new(PrivateAddresses::Refused, loopback_rules(), Vec::new());
         assert!(vetted_addrs("localhost".to_string(), allowing).await.is_ok());
     }
 }

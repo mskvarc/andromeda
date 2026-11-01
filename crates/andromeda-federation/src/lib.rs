@@ -329,7 +329,7 @@ impl FederationService {
             timeout: config.forwarding.request_timeout(),
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
             addresses: AddressPolicy::new(
-                config.forwarding.private_ip_blocking,
+                config.forwarding.private_addresses,
                 config.forwarding.allowed_addresses.clone(), // clone: the configuration keeps its lists
                 config.forwarding.denied_addresses.clone(),  // clone: the configuration keeps its lists
             ),

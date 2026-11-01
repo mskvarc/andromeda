@@ -10,7 +10,7 @@ use strum::{Display, EnumString};
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 #[schemars(description = "Whether an outbound request may go to an endpoint that resolves into private or reserved address space.")]
-pub enum PrivateIpBlocking {
+pub enum PrivateAddresses {
     /// Any endpoint the broker's network reaches is contacted.
     #[default]
     #[schemars(description = "Any endpoint the broker's network reaches is contacted.")]
@@ -26,14 +26,14 @@ pub enum PrivateIpBlocking {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::private_ip_blocking::PrivateIpBlocking;
+    use crate::schema::private_addresses::PrivateAddresses;
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     #[test]
-    fn private_ip_blocking_reads_its_two_values_and_refuses_any_other() {
-        assert_eq!(PrivateIpBlocking::from_str("refused"), Ok(PrivateIpBlocking::Refused));
-        assert_eq!(PrivateIpBlocking::from_str("allowed"), Ok(PrivateIpBlocking::Allowed));
-        assert!(PrivateIpBlocking::from_str("enabled").is_err());
+    fn private_addresses_reads_its_two_values_and_refuses_any_other() {
+        assert_eq!(PrivateAddresses::from_str("refused"), Ok(PrivateAddresses::Refused));
+        assert_eq!(PrivateAddresses::from_str("allowed"), Ok(PrivateAddresses::Allowed));
+        assert!(PrivateAddresses::from_str("enabled").is_err());
     }
 }

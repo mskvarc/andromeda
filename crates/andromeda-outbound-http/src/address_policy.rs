@@ -1,7 +1,7 @@
 //! Which resolved addresses an outbound request may be made to.
 
 use crate::{address_class::is_private_ip, endpoint_refusal::EndpointRefusal};
-use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
 use std::{
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
@@ -20,7 +20,7 @@ const NAT64_PREFIX: [u8; 12] = [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0];
 #[derive(Clone, Debug, Default)]
 pub struct AddressPolicy {
     /// Whether loopback, private and reserved addresses are refused.
-    blocking: PrivateIpBlocking,
+    private_addresses: PrivateAddresses,
     /// Addresses exempt from the private-address check.
     allowed: Arc<[AddressRule]>,
     /// Addresses refused whatever the private-address check says.
@@ -30,9 +30,9 @@ pub struct AddressPolicy {
 impl AddressPolicy {
     /// A policy over the private-address mode and the two lists.
     #[must_use]
-    pub fn new(blocking: PrivateIpBlocking, allowed: Vec<AddressRule>, denied: Vec<AddressRule>) -> AddressPolicy {
+    pub fn new(private_addresses: PrivateAddresses, allowed: Vec<AddressRule>, denied: Vec<AddressRule>) -> AddressPolicy {
         AddressPolicy {
-            blocking,
+            private_addresses,
             allowed: allowed.into(),
             denied: denied.into(),
         }
@@ -43,9 +43,9 @@ impl AddressPolicy {
     /// exempts addresses from a `refused` private-address mode.
     #[must_use]
     pub fn is_open(&self) -> bool {
-        match self.blocking {
-            PrivateIpBlocking::Allowed => self.denied.is_empty(),
-            PrivateIpBlocking::Refused => false,
+        match self.private_addresses {
+            PrivateAddresses::Allowed => self.denied.is_empty(),
+            PrivateAddresses::Refused => false,
         }
     }
 
@@ -68,7 +68,8 @@ impl AddressPolicy {
             .denied
             .iter()
             .any(|rule| rule.contains(&judged) || translated.is_some_and(|target| rule.contains(&IpAddr::V4(target))));
-        let unexempt_private = self.blocking == PrivateIpBlocking::Refused && is_private_ip(&judged) && !self.allowed.iter().any(|rule| rule.contains(&judged));
+        let unexempt_private =
+            self.private_addresses == PrivateAddresses::Refused && is_private_ip(&judged) && !self.allowed.iter().any(|rule| rule.contains(&judged));
         if denied || unexempt_private {
             Err(EndpointRefusal::Blocked { ip: address })
         } else {
@@ -97,7 +98,7 @@ fn nat64_target(address: &IpAddr) -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use crate::address_policy::AddressPolicy;
-    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};
     use std::{error::Error, net::IpAddr};
 
     fn rules(entries: &[&str]) -> Result<Vec<AddressRule>, Box<dyn Error>> {
@@ -108,16 +109,16 @@ mod tests {
         Ok(text.parse()?)
     }
 
-    fn policy(blocking: PrivateIpBlocking, allowed: &[&str], denied: &[&str]) -> Result<AddressPolicy, Box<dyn Error>> {
-        Ok(AddressPolicy::new(blocking, rules(allowed)?, rules(denied)?))
+    fn policy(private_addresses: PrivateAddresses, allowed: &[&str], denied: &[&str]) -> Result<AddressPolicy, Box<dyn Error>> {
+        Ok(AddressPolicy::new(private_addresses, rules(allowed)?, rules(denied)?))
     }
 
     #[test]
     fn empty_lists_judge_an_address_as_the_private_address_mode_alone_does() -> Result<(), Box<dyn Error>> {
-        let refused = policy(PrivateIpBlocking::Refused, &[], &[])?;
+        let refused = policy(PrivateAddresses::Refused, &[], &[])?;
         assert!(refused.vet(address("10.2.0.5")?).is_err());
         assert!(refused.vet(address("8.8.8.8")?).is_ok());
-        let allowed = policy(PrivateIpBlocking::Allowed, &[], &[])?;
+        let allowed = policy(PrivateAddresses::Allowed, &[], &[])?;
         assert!(allowed.vet(address("10.2.0.5")?).is_ok());
         assert!(allowed.vet(address("127.0.0.1")?).is_ok());
         Ok(())
@@ -125,7 +126,7 @@ mod tests {
 
     #[test]
     fn an_allow_entry_exempts_private_space_from_a_refused_mode_and_nothing_outside_it() -> Result<(), Box<dyn Error>> {
-        let policy = policy(PrivateIpBlocking::Refused, &["10.2.0.0/24", "fd00:1234::/48"], &[])?;
+        let policy = policy(PrivateAddresses::Refused, &["10.2.0.0/24", "fd00:1234::/48"], &[])?;
         assert!(policy.vet(address("10.2.0.5")?).is_ok());
         assert!(policy.vet(address("fd00:1234::7")?).is_ok());
         assert!(policy.vet(address("10.3.0.5")?).is_err());
@@ -135,7 +136,7 @@ mod tests {
 
     #[test]
     fn a_deny_entry_inside_an_allow_entry_wins() -> Result<(), Box<dyn Error>> {
-        let policy = policy(PrivateIpBlocking::Refused, &["10.2.0.0/24"], &["10.2.0.9"])?;
+        let policy = policy(PrivateAddresses::Refused, &["10.2.0.0/24"], &["10.2.0.9"])?;
         assert!(policy.vet(address("10.2.0.5")?).is_ok());
         assert!(policy.vet(address("10.2.0.9")?).is_err());
         Ok(())
@@ -143,7 +144,7 @@ mod tests {
 
     #[test]
     fn a_deny_entry_refuses_a_public_address_when_private_addresses_are_allowed() -> Result<(), Box<dyn Error>> {
-        let policy = policy(PrivateIpBlocking::Allowed, &[], &["203.0.113.0/24", "8.8.8.8", "2001:4860::/32"])?;
+        let policy = policy(PrivateAddresses::Allowed, &[], &["203.0.113.0/24", "8.8.8.8", "2001:4860::/32"])?;
         assert!(policy.vet(address("203.0.113.5")?).is_err());
         assert!(policy.vet(address("8.8.8.8")?).is_err());
         assert!(policy.vet(address("2001:4860:4860::8888")?).is_err());
@@ -154,11 +155,11 @@ mod tests {
 
     #[test]
     fn an_ipv4_mapped_address_gets_the_answer_of_the_ipv4_it_embeds() -> Result<(), Box<dyn Error>> {
-        let allowing = policy(PrivateIpBlocking::Refused, &["10.2.0.0/24"], &[])?;
+        let allowing = policy(PrivateAddresses::Refused, &["10.2.0.0/24"], &[])?;
         for text in ["10.2.0.5", "::ffff:10.2.0.5"] {
             assert!(allowing.vet(address(text)?).is_ok(), "{text}");
         }
-        let denying = policy(PrivateIpBlocking::Allowed, &[], &["203.0.113.0/24"])?;
+        let denying = policy(PrivateAddresses::Allowed, &[], &["203.0.113.0/24"])?;
         for text in ["203.0.113.5", "::ffff:203.0.113.5"] {
             assert!(denying.vet(address(text)?).is_err(), "{text}");
         }
@@ -167,14 +168,14 @@ mod tests {
 
     #[test]
     fn an_allow_entry_for_an_ipv4_does_not_exempt_the_nat64_address_that_translates_to_it() -> Result<(), Box<dyn Error>> {
-        let policy = policy(PrivateIpBlocking::Refused, &["10.2.0.0/24"], &[])?;
+        let policy = policy(PrivateAddresses::Refused, &["10.2.0.0/24"], &[])?;
         assert!(policy.vet(address("64:ff9b::a02:5")?).is_err());
         Ok(())
     }
 
     #[test]
     fn a_deny_entry_for_an_ipv4_refuses_the_nat64_address_that_translates_to_it() -> Result<(), Box<dyn Error>> {
-        let policy = policy(PrivateIpBlocking::Allowed, &[], &["203.0.113.0/24"])?;
+        let policy = policy(PrivateAddresses::Allowed, &[], &["203.0.113.0/24"])?;
         assert!(policy.vet(address("64:ff9b::cb00:7105")?).is_err());
         assert!(policy.vet(address("64:ff9b::808:808")?).is_ok());
         Ok(())
@@ -182,10 +183,10 @@ mod tests {
 
     #[test]
     fn only_a_policy_that_can_refuse_something_needs_addresses_resolved() -> Result<(), Box<dyn Error>> {
-        assert!(policy(PrivateIpBlocking::Allowed, &[], &[])?.is_open());
-        assert!(policy(PrivateIpBlocking::Allowed, &["10.2.0.0/24"], &[])?.is_open());
-        assert!(!policy(PrivateIpBlocking::Allowed, &[], &["203.0.113.0/24"])?.is_open());
-        assert!(!policy(PrivateIpBlocking::Refused, &[], &[])?.is_open());
+        assert!(policy(PrivateAddresses::Allowed, &[], &[])?.is_open());
+        assert!(policy(PrivateAddresses::Allowed, &["10.2.0.0/24"], &[])?.is_open());
+        assert!(!policy(PrivateAddresses::Allowed, &[], &["203.0.113.0/24"])?.is_open());
+        assert!(!policy(PrivateAddresses::Refused, &[], &[])?.is_open());
         Ok(())
     }
 }

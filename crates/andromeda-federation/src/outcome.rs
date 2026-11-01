@@ -47,7 +47,7 @@ pub enum TransportFailure {
     Undelivered(Arc<reqwest::Error>),
     /// The endpoint is refused before anything is sent to it: it names no
     /// host, cannot be resolved, resolves into private or reserved address
-    /// space while `federation.forwarding.private_ip_blocking` is `refused`
+    /// space while `federation.forwarding.private_addresses` is `refused`
     /// and `allowed_addresses` does not cover it, or resolves into
     /// `denied_addresses`.
     /// The cause is not part of the message, since a warning reaches the client
