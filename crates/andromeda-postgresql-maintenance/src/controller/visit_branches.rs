@@ -1,8 +1,8 @@
 //! The branches one visit works in and the mode each is decided under.
 //!
 //! Each mode does everything the mode below it does. Automatic mode acts in a
-//! branch only where the role holds `MAINTAIN` on every heap of that branch it
-//! may vacuum, and samples, probes and reports every other branch the way
+//! branch only where the role may maintain every heap of that branch it may
+//! vacuum, and samples, probes and reports every other branch the way
 //! observe mode does: a missing privilege takes away acting, never sampling.
 //! Observe mode checks no privilege.
 
@@ -14,7 +14,6 @@ use crate::{
 };
 use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
 use sqlx::PgConnection;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::warn;
 
 /// One branch a visit works in.
@@ -68,51 +67,13 @@ impl VisitBranches {
     }
 }
 
-/// The mode a branch is decided under, given the configured mode and the
-/// role's `MAINTAIN` privilege in the branch.
+/// The mode a branch is decided under, given the configured mode and whether
+/// the role may maintain the branch.
 pub(crate) const fn branch_mode(configured: MaintenanceMode, privilege: MaintainPrivilege) -> MaintenanceMode {
     match (configured, privilege) {
         (MaintenanceMode::Automatic, MaintainPrivilege::Held) => MaintenanceMode::Automatic,
-        (MaintenanceMode::Automatic, MaintainPrivilege::NotGranted | MaintainPrivilege::Unsupported) => MaintenanceMode::Observe,
-        (MaintenanceMode::Disabled | MaintenanceMode::Observe, MaintainPrivilege::Held | MaintainPrivilege::NotGranted | MaintainPrivilege::Unsupported) => {
-            configured
-        }
-    }
-}
-
-/// Whether a notice is due on this sighting.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Sighting {
-    /// The first sighting in this process: the notice is logged.
-    First,
-    /// A later sighting: the notice was already logged.
-    Repeat,
-}
-
-/// Process state: whether this broker process has logged that its server
-/// predates `MAINTAIN`. No grant can change that, so one notice per process
-/// says it; a per-visit warning would repeat it every pass.
-#[derive(Debug)]
-pub(crate) struct PredatingServerNotice {
-    /// Set by the first sighting.
-    logged: AtomicBool,
-}
-
-impl PredatingServerNotice {
-    /// A notice not yet logged.
-    pub(crate) const fn new() -> PredatingServerNotice {
-        PredatingServerNotice {
-            logged: AtomicBool::new(false),
-        }
-    }
-
-    /// Record one sighting of a server that predates `MAINTAIN`.
-    pub(crate) fn sight(&self) -> Sighting {
-        if self.logged.swap(true, Ordering::Relaxed) {
-            Sighting::Repeat
-        } else {
-            Sighting::First
-        }
+        (MaintenanceMode::Automatic, MaintainPrivilege::NotGranted) => MaintenanceMode::Observe,
+        (MaintenanceMode::Disabled | MaintenanceMode::Observe, MaintainPrivilege::Held | MaintainPrivilege::NotGranted) => configured,
     }
 }
 
@@ -123,13 +84,12 @@ pub(crate) async fn decide_branches(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     branches: &[Branch],
-    notice: &PredatingServerNotice,
 ) -> Result<VisitBranches, MaintenanceError> {
     let branches = match configured {
         MaintenanceMode::Disabled | MaintenanceMode::Observe => branches.iter().map(|&branch| VisitBranch { branch, mode: configured }).collect(),
         MaintenanceMode::Automatic => {
             let privileges = capability::maintain_privileges(connection, branches).await?;
-            report_observed_branches(tenant, &privileges, notice);
+            report_observed_branches(tenant, &privileges);
             privileges
                 .into_iter()
                 .map(|(branch, privilege)| VisitBranch {
@@ -142,25 +102,16 @@ pub(crate) async fn decide_branches(
     Ok(VisitBranches { branches })
 }
 
-/// Log why automatic mode only observes some of a visit's branches: once per
-/// process for a server that predates `MAINTAIN`, once per visit naming every
-/// branch whose grant is missing.
-fn report_observed_branches(tenant: &RegisteredTenant, privileges: &[(Branch, MaintainPrivilege)], notice: &PredatingServerNotice) {
-    if privileges.iter().any(|&(_, privilege)| privilege == MaintainPrivilege::Unsupported) && notice.sight() == Sighting::First {
-        warn!(
-            decision = "capability-unavailable",
-            reason = "server-predates-maintain",
-            "PostgreSQL before 17 has no MAINTAIN privilege, so automatic maintenance only observes on this server"
-        );
-    }
+/// Log, once per visit, every branch automatic mode only observes because the
+/// role may not maintain it.
+fn report_observed_branches(tenant: &RegisteredTenant, privileges: &[(Branch, MaintainPrivilege)]) {
     let not_granted = not_granted_branches(privileges);
     if !not_granted.is_empty() {
-        warn!(tenant = tenant.log_name(), database = %tenant.database, branches = ?not_granted, decision = "capability-unavailable", reason = "missing-maintain", "PostgreSQL maintenance only observes the branches whose heaps the role lacks MAINTAIN on");
+        warn!(tenant = tenant.log_name(), database = %tenant.database, branches = ?not_granted, decision = "capability-unavailable", reason = "missing-maintain", "PostgreSQL maintenance only observes the branches whose heaps the role may not maintain (MAINTAIN, or ownership before PostgreSQL 17)");
     }
 }
 
-/// The branches of `privileges` whose `MAINTAIN` grant is missing on a server
-/// that knows the privilege.
+/// The branches of `privileges` the role may not maintain.
 fn not_granted_branches(privileges: &[(Branch, MaintainPrivilege)]) -> Vec<Branch> {
     privileges
         .iter()
@@ -178,7 +129,7 @@ mod tests {
     use crate::{
         branch::Branch,
         capability::MaintainPrivilege,
-        controller::visit_branches::{PredatingServerNotice, Sighting, VisitBranch, VisitBranches, branch_mode, not_granted_branches},
+        controller::visit_branches::{VisitBranch, VisitBranches, branch_mode, not_granted_branches},
     };
     use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
     use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -195,16 +146,8 @@ mod tests {
     }
 
     #[test]
-    fn automatic_mode_observes_every_branch_on_a_server_before_postgresql_17() {
-        assert_eq!(
-            branch_mode(MaintenanceMode::Automatic, MaintainPrivilege::Unsupported),
-            MaintenanceMode::Observe
-        );
-    }
-
-    #[test]
     fn a_privilege_never_lifts_observe_mode_into_acting() {
-        for privilege in [MaintainPrivilege::Held, MaintainPrivilege::NotGranted, MaintainPrivilege::Unsupported] {
+        for privilege in [MaintainPrivilege::Held, MaintainPrivilege::NotGranted] {
             assert_eq!(branch_mode(MaintenanceMode::Observe, privilege), MaintenanceMode::Observe, "{privilege:?}");
             assert_eq!(branch_mode(MaintenanceMode::Disabled, privilege), MaintenanceMode::Disabled, "{privilege:?}");
         }
@@ -242,20 +185,5 @@ mod tests {
             (snapshot(5), MaintainPrivilege::NotGranted),
         ];
         assert_eq!(not_granted_branches(&privileges), [Branch::Live, snapshot(5)]);
-    }
-
-    #[test]
-    fn a_server_before_postgresql_17_names_no_branch_as_missing_its_grant() {
-        let privileges = [(Branch::Live, MaintainPrivilege::Unsupported), (snapshot(3), MaintainPrivilege::Unsupported)];
-        assert_eq!(not_granted_branches(&privileges), []);
-    }
-
-    #[test]
-    fn the_predating_server_notice_is_due_on_the_first_sighting_only() {
-        let notice = PredatingServerNotice::new();
-        assert_eq!(notice.sight(), Sighting::First);
-        for _ in 0..3 {
-            assert_eq!(notice.sight(), Sighting::Repeat);
-        }
     }
 }

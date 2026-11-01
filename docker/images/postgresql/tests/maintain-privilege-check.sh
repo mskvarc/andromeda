@@ -184,11 +184,6 @@ if grep 'statistics-stale' <<< "$logs" | grep "$tenant" | grep -q 'attribute_cen
 else
 	fail "statistics-stale is not reported for attribute_census"
 fi
-if grep -q 'server-predates-maintain' <<< "$logs"; then
-	fail "a PostgreSQL 18 server is reported as predating MAINTAIN"
-else
-	pass "the server is not reported as predating MAINTAIN"
-fi
 if grep -qE 'ERROR' <<< "$logs"; then
 	fail "broker log carries an error"
 	grep -E 'ERROR' <<< "$logs" >&2

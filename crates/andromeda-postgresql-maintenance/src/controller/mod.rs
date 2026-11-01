@@ -13,7 +13,7 @@ use crate::{
     branch::Branch,
     branch_selection,
     capability::{self, CapabilityStatus},
-    controller::visit_branches::{PredatingServerNotice, VisitBranches},
+    controller::visit_branches::VisitBranches,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     expected_deployment::ExpectedDeployment,
@@ -98,8 +98,6 @@ pub struct MaintenanceController {
     /// The highest branch migration this binary embeds. A Snapshot branch
     /// behind it is quarantined and left out of every visit.
     branch_version: BranchSchemaVersion,
-    /// Whether this process has logged that its server predates `MAINTAIN`.
-    predating_server: PredatingServerNotice,
 }
 
 impl MaintenanceController {
@@ -120,7 +118,6 @@ impl MaintenanceController {
             acquire_timeout,
             expected,
             branch_version,
-            predating_server: PredatingServerNotice::new(),
         }
     }
 
@@ -207,7 +204,7 @@ impl MaintenanceController {
         branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
         let snapshots = branch_selection::lock_branches(&mut connection, tenant, self.branch_version).await?;
         let branches = iter::once(Branch::Live).chain(snapshots.into_iter().map(Branch::Snapshot)).collect::<Vec<_>>();
-        let branches = visit_branches::decide_branches(self.config.mode, &mut connection, tenant, &branches, &self.predating_server).await?;
+        let branches = visit_branches::decide_branches(self.config.mode, &mut connection, tenant, &branches).await?;
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         for branch in branches.observed() {
             action::withdraw_observed(platform, tenant, branch).await?;

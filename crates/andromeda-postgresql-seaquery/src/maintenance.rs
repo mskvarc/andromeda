@@ -178,6 +178,25 @@ pub fn current_user_has_table_privilege(relation: SimpleExpr, privilege: SimpleE
         .into()
 }
 
+/// `pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid =
+/// relation::regclass), 'USAGE')`: whether the current user owns `relation`,
+/// directly or through a role it inherits, or is a superuser.
+#[must_use]
+pub fn current_user_owns_relation(relation: SimpleExpr) -> SimpleExpr {
+    let owner = Query::select()
+        .column(Alias::new("relowner"))
+        .from(Alias::new("pg_class"))
+        .and_where(Expr::col(Alias::new("oid")).eq(cast(relation, PostgresType::Regclass)))
+        .to_owned();
+    Func::cust(MaintenanceFunction::PgHasRole)
+        .args([
+            Expr::cust("current_user"),
+            Expr::SubQuery(None, Box::new(owner.into_sub_query_statement())),
+            Expr::val("USAGE"),
+        ])
+        .into()
+}
+
 /// `pgstattuple(relation)` as a table-valued function source.
 #[must_use]
 pub fn pgstattuple(relation: SimpleExpr) -> FunctionCall {
@@ -254,6 +273,8 @@ enum MaintenanceFunction {
     HasFunctionPrivilege,
     /// `has_table_privilege`.
     HasTablePrivilege,
+    /// `pg_has_role`.
+    PgHasRole,
     /// `pgstattuple`.
     Pgstattuple,
     /// `pg_backend_pid`.
@@ -276,6 +297,7 @@ mod tests {
         command::rendering::RenderedCommand,
         maintenance::{
             analyze,
+            current_user_owns_relation,
             drop_index_concurrently,
             multixact_age,
             recompress_chunk,
@@ -293,6 +315,18 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn ownership_is_read_from_the_relation_owner_through_role_membership() {
+        let sql = Query::select()
+            .expr(current_user_owns_relation(Expr::val("snap_7.entities")))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT pg_has_role(current_user, (SELECT "relowner" FROM "pg_class" WHERE "oid" = ('snap_7.entities'::regclass)), 'USAGE')"#
+        );
+    }
 
     #[test]
     fn a_vacuum_analyze_names_the_qualified_relation() {
