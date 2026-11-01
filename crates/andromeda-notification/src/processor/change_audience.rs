@@ -81,7 +81,9 @@ pub(crate) enum CommitFilters {
 /// filters and the instants they notify since are read.
 ///
 /// A live change is routed now through every subscription's `entities`,
-/// `notificationTrigger` and `watchedAttributes`. A queued delivery was routed
+/// `notificationTrigger` and `watchedAttributes`, as they stand or, for a
+/// subscription whose selection an update superseded after `committed_at`, as
+/// they stood then while the cache keeps that selection. A queued delivery was routed
 /// by the commit that queued it, under the selection in force then (clauses
 /// 5.8.2 and 5.8.6 owe the notification from the change itself), so the one
 /// subscription it is addressed to is taken as it now stands, and only
@@ -94,10 +96,11 @@ pub(crate) fn addressed(
     cache: &SubscriptionCache,
     target: &ContextTarget,
     event: &ChangeEvent,
+    committed_at: StoreInstant,
 ) -> Vec<Arc<CompiledSubscription>> {
     match audience {
         ChangeAudience::Live => {
-            let outcome = cache.find_matching(target, event);
+            let outcome = cache.find_matching_committed_at(target, event, committed_at);
             debug!(
                 entity = %event.entity_id,
                 triggers = ?event.change.triggers(),
@@ -177,6 +180,22 @@ pub(crate) fn admitted_by_entity_filters(
             decided.into_iter().chain(narrow(hopping)).collect()
         }
     }
+}
+
+/// The version in force now of each subscription a change was matched to,
+/// dropping one no longer notified of changes.
+///
+/// A change may have been matched under a selection an update superseded since,
+/// but clause 5.8.6 sends a notification only while the subscription is active,
+/// to its endpoint and as its notification asks, all as they stand when it is
+/// sent.
+pub(crate) fn in_force_versions(cache: &SubscriptionCache, target: &ContextTarget, matched: Vec<Arc<CompiledSubscription>>) -> Vec<Arc<CompiledSubscription>> {
+    let now = Utc::now();
+    matched
+        .into_iter()
+        .filter_map(|selection| cache.get(target, &selection.id))
+        .filter(|in_force| in_force.notifies_on_change_at(now))
+        .collect()
 }
 
 /// The states the change's entity filters read (clause 5.8.6), exactly as the

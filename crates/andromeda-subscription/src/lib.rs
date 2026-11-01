@@ -96,6 +96,8 @@ pub mod subscription_invariant;
 pub mod subscription_listing;
 /// The typed reasons a subscription request is rejected as `BadRequestData`.
 pub mod subscription_validation_reason;
+/// The selections Subscriptions held before an update replaced them.
+mod superseded_selection;
 /// Counting a suppression window back from an instant.
 mod suppression_window;
 /// Expansion of a subscription request against the request `@context`.

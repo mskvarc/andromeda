@@ -25,7 +25,6 @@ use crate::{
     },
 };
 use andromeda_configuration::schema::notifications::NotificationsConfig;
-use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::{
     configured_policy::geometry_census_limits,
@@ -41,6 +40,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_notification::{
     delivery_store::DeliveryStore,
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
+    pending_change::{PendingChange, PendingCommits},
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
 use andromeda_retry::schedule::BackoffSchedule;
@@ -116,6 +116,7 @@ pub(super) fn compose_notification_processor(
     notification_query: Arc<EntityQueryService>,
     transport: &Arc<TransportDispatcher>,
     subscriptions: &Arc<dyn SubscriptionStore>,
+    pending_commits: Arc<PendingCommits>,
 ) -> Arc<NotificationProcessor> {
     Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
         live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
@@ -126,6 +127,7 @@ pub(super) fn compose_notification_processor(
         transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
         tenant: storage.tenant.clone(),   // clone: notification policy owns its tenant partition.
         subscription_cache: Arc::clone(&storage.subscription_cache),
+        pending_commits,
     }))
 }
 
@@ -152,7 +154,7 @@ pub(super) fn register_notification_workers(
     store: Arc<dyn DeliveryStore>,
     config: &NotificationsConfig,
     processor: Arc<NotificationProcessor>,
-    entity_changes: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
+    entity_changes: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
@@ -234,12 +236,12 @@ fn live_evaluation_lanes(
     processor: &Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
     width: NonZeroUsize,
-) -> Option<KeyedLanes<ContextChangeEvent>> {
+) -> Option<KeyedLanes<PendingChange>> {
     match delivery {
         EntityNotificationDelivery::Durable => None,
         EntityNotificationDelivery::Live => {
             let processor = Arc::clone(processor); // clone: the lanes own the policy operation they evaluate with.
-            Some(KeyedLanes::start(width, LIVE_LANE_DEPTH, move |change: ContextChangeEvent| {
+            Some(KeyedLanes::start(width, LIVE_LANE_DEPTH, move |change: PendingChange| {
                 let processor = Arc::clone(&processor); // clone: each evaluation owns the shared policy operation.
                 async move {
                     // Clause 5.13.3.5: counting one hit per context per
@@ -255,7 +257,7 @@ fn live_evaluation_lanes(
 
 fn register_notification_processor(
     supervisor: &TaskSupervisor,
-    entity_changes: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
+    entity_changes: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     processor: Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
@@ -307,7 +309,7 @@ fn register_notification_processor(
                                 }
                             }
                             if let Some(lanes) = &evaluation {
-                                lanes.lane(&change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
+                                lanes.lane(&change.change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
                             }
                         }
                         None => return Err(channel_closed(ChangeChannel::Entity)),

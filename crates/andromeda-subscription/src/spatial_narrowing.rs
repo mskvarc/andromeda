@@ -32,6 +32,8 @@ use std::{
 pub struct SpatialReach<'a> {
     /// The cache whose spatial index is probed.
     cache: &'a SubscriptionCache,
+    /// The branch the change landed in.
+    target: &'a ContextTarget,
     /// Whether the index covers the branch the change landed in.
     indexed: bool,
     /// The entity state probed.
@@ -45,9 +47,10 @@ pub struct SpatialReach<'a> {
 impl<'a> SpatialReach<'a> {
     /// The reach of `entity`, typed `entity_types`, in `target`, probed lazily.
     #[must_use]
-    pub fn new(cache: &'a SubscriptionCache, target: &ContextTarget, entity: &'a EntityState, entity_types: &'a [EntityTypeName]) -> SpatialReach<'a> {
+    pub fn new(cache: &'a SubscriptionCache, target: &'a ContextTarget, entity: &'a EntityState, entity_types: &'a [EntityTypeName]) -> SpatialReach<'a> {
         SpatialReach {
             cache,
+            target,
             indexed: target.permits_federation(),
             entity,
             entity_types,
@@ -56,6 +59,10 @@ impl<'a> SpatialReach<'a> {
     }
 
     /// Whether the index has the entity in scope of `subscription`'s `geoQ`.
+    ///
+    /// The index holds the `geoQ` of the versions in force only, so a
+    /// superseded selection the index does not reach is admitted, and the
+    /// exact predicate decides it.
     pub fn admits(&mut self, subscription: &CompiledSubscription) -> bool {
         let Some(geo_q) = subscription.compiled_geo_q.restriction().filter(|_| self.indexed) else {
             return true;
@@ -64,7 +71,7 @@ impl<'a> SpatialReach<'a> {
             let reached = self.probe(&geo_q.geoproperty);
             self.reached.insert(geo_q.geoproperty.clone(), reached); // clone: the map owns its key, which the subscription keeps
         }
-        self.reached.get(&geo_q.geoproperty).is_some_and(|ids| ids.contains(&subscription.id))
+        self.reached.get(&geo_q.geoproperty).is_some_and(|ids| ids.contains(&subscription.id)) || !self.cache.is_in_force(self.target, subscription)
     }
 
     /// Every subscription the index admits for some instance of the entity's
@@ -271,7 +278,8 @@ mod tests {
         ]);
         let entity = building(&[(LOCATION, vec![point([13.4001, 52.52], None)])]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         let admitted: Vec<bool> = subscriptions.iter().map(|subscription| reach.admits(subscription)).collect();
         pretty_assertions::assert_eq!(admitted, vec![true, false]);
     }
@@ -281,7 +289,8 @@ mod tests {
         let (cache, subscriptions) = cached(vec![subscription(1, true, None)]);
         let entity = building(&[]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         assert!(subscriptions.iter().all(|subscription| reach.admits(subscription)));
         assert!(reach.reached.is_empty(), "no GeoProperty is probed for an unrestricted subscription");
     }
@@ -324,7 +333,8 @@ mod tests {
         ]);
         let entity = building(&[(LOCATION, vec![point(HERE, None)]), (OBSERVATION_POINT, vec![point(AWAY, None)])]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         let admitted: Vec<bool> = subscriptions.iter().map(|subscription| reach.admits(subscription)).collect();
         pretty_assertions::assert_eq!(admitted, vec![true, false, true, false]);
         pretty_assertions::assert_eq!(reach.reached.len(), 2, "one probe per GeoProperty named");
@@ -344,7 +354,8 @@ mod tests {
         )]);
         let entity = building(&[(LOCATION, vec![point(HERE, None)])]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         assert!(!subscriptions.iter().any(|subscription| reach.admits(subscription)));
     }
 
@@ -362,7 +373,8 @@ mod tests {
         )]);
         let entity = building(&[(LOCATION, vec![point(AWAY, None), point(HERE, Some("urn:ngsi-ld:Dataset:a"))])]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         assert!(subscriptions.iter().all(|subscription| reach.admits(subscription)));
     }
 
@@ -388,8 +400,28 @@ mod tests {
         ]);
         let entity = building(&[(LOCATION, vec![point(HERE, None)])]);
         let types = building_type();
-        let mut reach = SpatialReach::new(&cache, &ContextTarget::Live, &entity, &types);
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         let admitted: Vec<bool> = subscriptions.iter().map(|subscription| reach.admits(subscription)).collect();
         pretty_assertions::assert_eq!(admitted, vec![true, false]);
+    }
+
+    /// The index holds the `geoQ` in force, so a superseded selection near
+    /// the entity is admitted although the index reaches only the newer
+    /// `geoQ`, and the exact predicate decides it.
+    #[test]
+    fn a_superseded_selection_the_index_does_not_reach_is_admitted() {
+        let near = |at| Some(Near { at, geoproperty: LOCATION });
+        let (cache, superseded) = cached(vec![subscription(1, true, near(HERE))]);
+        let mut moved = subscription(1, true, near(AWAY));
+        moved.notifying_since.selected = StoreInstant::new(DateTime::<Utc>::UNIX_EPOCH);
+        cache.insert(&ContextTarget::Live, moved);
+        let in_force = cache.get(&ContextTarget::Live, &superseded[0].id).expect("the subscription is cached");
+        let entity = building(&[(LOCATION, vec![point(HERE, None)])]);
+        let types = building_type();
+        let live = ContextTarget::Live;
+        let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
+        assert!(reach.admits(&superseded[0]));
+        assert!(!reach.admits(&in_force), "the selection in force is still narrowed by the index");
     }
 }

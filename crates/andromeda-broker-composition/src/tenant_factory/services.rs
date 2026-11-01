@@ -2,7 +2,7 @@
 
 use crate::{
     blocking_executor::TokioBlockingExecutor,
-    event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::QueuedRegistrationChangeSink},
+    event::registration_change_sink::QueuedRegistrationChangeSink,
     linked_forwarding::LinkedForwarding,
     local_entity_type::EntityStoreTypeResolver,
     registered_entity_probe::EntityStoreRegistrationProbe,
@@ -170,7 +170,7 @@ fn compose_change_notifier(config: &TenantFactoryConfig, storage: &TenantStorage
             SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache }),
         ));
     }
-    let entity_change_sink = Arc::new(QueuedEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
+    let entity_change_sink = Arc::new(signals.entity.clone()) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
     Arc::new(ChangeNotifier::new(
         Some(entity_change_sink),
         SubscriptionMatching::AtDelivery(subscription_cache),

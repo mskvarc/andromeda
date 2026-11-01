@@ -164,6 +164,7 @@ impl NotificationProcessor {
 mod tests {
     use crate::{
         notifier_test_double::{ClaimRecordingStore, NoEntities, entity_query, offline_engine, transport},
+        pending_change::PendingCommits,
         processor::{NotificationProcessor, NotificationProcessorDeps, payload::cache::NotificationCompactionCache, subscription_notification::NotifiedChange},
     };
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
@@ -198,6 +199,7 @@ mod tests {
             transport: transport(),
             tenant: TenantRef::UnnamedDefault,
             subscription_cache: Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality)),
+            pending_commits: Arc::new(PendingCommits::default()),
         })
     }
 

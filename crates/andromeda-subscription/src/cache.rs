@@ -15,7 +15,7 @@ use crate::{
     error::SubscriptionError,
     store::SubscriptionStore,
 };
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
@@ -162,6 +162,49 @@ impl SubscriptionCache {
             .map_or_else(MatchOutcome::default, |index| index.find_matching(event))
     }
 
+    /// Find every compiled subscription a live change committed at
+    /// `committed_at` matches under the selection that stood at its commit
+    /// (clause 5.8.6): one in force, as [`SubscriptionCache::find_matching`]
+    /// finds it, whose selection began at or before the commit, and each
+    /// superseded selection that stood then.
+    ///
+    /// Both are read under one lock, so an update applied meanwhile neither
+    /// hides the version that stood at the commit nor offers it twice.
+    pub fn find_matching_committed_at(&self, target: &ContextTarget, event: &ChangeEvent, committed_at: StoreInstant) -> MatchOutcome {
+        self.indices.read().get(target).map_or_else(MatchOutcome::default, |index| {
+            let mut outcome = index.find_matching(event);
+            outcome.matched.retain(|in_force| in_force.notifying_since.selected <= committed_at);
+            outcome.matched.extend(index.find_superseded_matching(event, committed_at));
+            outcome
+        })
+    }
+
+    /// Whether `subscription` is the version in force in `target` rather than
+    /// a selection an update superseded.
+    pub fn is_in_force(&self, target: &ContextTarget, subscription: &CompiledSubscription) -> bool {
+        self.indices.read().get(target).is_some_and(|index| index.is_in_force(subscription))
+    }
+
+    /// Drop every superseded selection no change still to be evaluated can
+    /// have committed under: none is when `floor`, the earliest commit instant
+    /// evaluation still holds, is at or after the selection's end, or when
+    /// evaluation holds no change (`None`).
+    ///
+    /// The exclusive lock is taken only when a selection can be dropped.
+    pub fn release_superseded(&self, floor: Option<StoreInstant>) {
+        if !self.indices.read().values().any(|index| index.releases_superseded(floor)) {
+            return;
+        }
+        for index in self.indices.write().values_mut() {
+            index.release_superseded(floor);
+        }
+    }
+
+    /// Number of superseded selections kept for `target`.
+    pub fn superseded_len(&self, target: &ContextTarget) -> usize {
+        self.indices.read().get(target).map_or(0, CandidateIndex::superseded_len)
+    }
+
     /// Look up a single compiled subscription by ID.
     pub fn get(&self, target: &ContextTarget, id: &Identifier) -> Option<Arc<CompiledSubscription>> {
         self.indices.read().get(target).and_then(|index| index.get(id).map(Arc::clone))
@@ -253,10 +296,18 @@ mod tests {
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
-    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
+    use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_entity::reads::{
+        attribute_change::{AttributeChange, AttributeChangeKind},
+        attribute_instance_key::AttributeInstanceKey,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
+    use andromeda_ngsi_ld_model::{
+        entity_change::{EntityChange, EntityLifecycle},
+        notification::ChangeOrigin,
+        subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+    };
     use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, page_window::PageWindow, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -264,7 +315,7 @@ mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, sync::Arc};
     use url::Url;
 
     /// What the store double answers when a subscription is read back.
@@ -487,5 +538,169 @@ mod tests {
 
         assert!(cache.get(&target, &id).is_none());
         Ok(())
+    }
+
+    fn at(unix_seconds: i64) -> StoreInstant {
+        StoreInstant::new(DateTime::from_timestamp(unix_seconds, 0).expect("a fixture timestamp in range"))
+    }
+
+    /// The one Vehicle subscription every version below is of, watching
+    /// `attribute` as it does since `selected`.
+    fn watching(attribute: &str, selected: i64) -> CompiledSubscription {
+        let mut subscription = make_compiled_sub("churn", 9, "Vehicle", vec!["attributeUpdated"]);
+        subscription.watched_attrs = Some([attribute.parse().expect("a valid attribute name")].into_iter().collect());
+        subscription.notifying_since = NotifyingSince {
+            active: at(0),
+            selected: at(selected),
+        };
+        subscription
+    }
+
+    /// An update of `attribute` on a Vehicle.
+    fn update_of(attribute: &str) -> ChangeEvent {
+        ChangeEvent::builder()
+            .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier"))
+            .entity_types(vec!["Vehicle".parse().expect("a valid type name")])
+            .change(EntityChange::new(
+                EntityLifecycle::Modified,
+                vec![AttributeChange {
+                    key: AttributeInstanceKey {
+                        attr: attribute.parse().expect("a valid attribute name"),
+                        dataset_id: None,
+                    },
+                    kind: AttributeChangeKind::Updated,
+                }],
+            ))
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build()
+    }
+
+    /// The `watchedAttributes` of each version a change committed at
+    /// `committed_at` was matched by.
+    fn matched_watching(cache: &SubscriptionCache, attribute: &str, committed_at: i64) -> Vec<Vec<String>> {
+        cache
+            .find_matching_committed_at(&live_target(), &update_of(attribute), at(committed_at))
+            .matched
+            .iter()
+            .map(|version| version.watched_attrs.iter().flatten().map(ToString::to_string).collect())
+            .collect()
+    }
+
+    /// `seq` is watched from 1 000, `other` from 2 000.
+    fn reselected() -> SubscriptionCache {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        cache.insert(&live_target(), watching("seq", 1_000));
+        cache.insert(&live_target(), watching("other", 2_000));
+        cache
+    }
+
+    /// Clause 5.8.6: a change of `seq` committed at 1 500, while `seq` was
+    /// watched, is owed however late it is evaluated.
+    #[test]
+    fn a_change_committed_under_a_superseded_selection_is_matched_by_it() {
+        let cache = reselected();
+        assert_eq!(matched_watching(&cache, "seq", 1_500), vec![vec!["seq".to_owned()]]);
+        assert_eq!(matched_watching(&cache, "other", 1_500), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_change_committed_after_the_update_is_matched_only_by_the_selection_in_force() {
+        let cache = reselected();
+        assert_eq!(matched_watching(&cache, "seq", 2_500), Vec::<Vec<String>>::new());
+        assert_eq!(matched_watching(&cache, "other", 2_500), vec![vec!["other".to_owned()]]);
+        assert_eq!(
+            matched_watching(&cache, "other", 2_000),
+            vec![vec!["other".to_owned()]],
+            "the update's own instant is the new selection's"
+        );
+    }
+
+    /// The versions' intervals are disjoint, so a change both select is
+    /// matched once, by the one in force at its commit.
+    #[test]
+    fn a_change_two_versions_select_is_matched_once_by_the_one_that_stood_at_its_commit() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        cache.insert(&live_target(), watching("seq", 1_000));
+        let mut requalified = watching("seq", 2_000);
+        requalified.throttling_secs = Some(5.0);
+        cache.insert(&live_target(), requalified);
+        for committed_at in [1_500, 2_500] {
+            let matched = cache.find_matching_committed_at(&live_target(), &update_of("seq"), at(committed_at)).matched;
+            assert_eq!(matched.len(), 1, "committed at {committed_at}");
+            let in_force = cache.is_in_force(&live_target(), &matched[0]);
+            assert_eq!(in_force, committed_at >= 2_000, "committed at {committed_at}");
+        }
+    }
+
+    #[test]
+    fn an_update_that_keeps_the_selection_supersedes_nothing() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        cache.insert(&live_target(), watching("seq", 1_000));
+        cache.insert(&live_target(), watching("seq", 1_000));
+        assert_eq!(cache.superseded_len(&live_target()), 0);
+    }
+
+    /// Table 5.2.12-1 `timeInterval`: a periodic selection was owed no change.
+    #[test]
+    fn a_periodic_selection_is_not_kept() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let mut periodic = watching("seq", 1_000);
+        periodic.time_interval_secs = Some(10.0);
+        cache.insert(&live_target(), periodic);
+        cache.insert(&live_target(), watching("other", 2_000));
+        assert_eq!(cache.superseded_len(&live_target()), 0);
+    }
+
+    /// Clause 5.8.6 sends nothing to a Subscription no longer active, so a
+    /// deleted, paused or expired one drops what it superseded.
+    #[test]
+    fn removing_a_subscription_drops_the_selections_it_superseded() {
+        let cache = reselected();
+        let id = watching("seq", 0).id;
+        cache.remove(&live_target(), &id);
+        assert_eq!(cache.superseded_len(&live_target()), 0);
+        assert_eq!(matched_watching(&cache, "seq", 1_500), Vec::<Vec<String>>::new());
+    }
+
+    /// The selection in force decides whether the Subscription is still
+    /// notified of changes; one turned periodic since is not.
+    #[test]
+    fn a_superseded_selection_is_not_matched_once_the_subscription_is_no_longer_notified_of_changes() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        cache.insert(&live_target(), watching("seq", 1_000));
+        let mut periodic = watching("other", 2_000);
+        periodic.time_interval_secs = Some(10.0);
+        cache.insert(&live_target(), periodic);
+        assert_eq!(cache.superseded_len(&live_target()), 1);
+        assert_eq!(matched_watching(&cache, "seq", 1_500), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_superseded_selection_is_kept_while_a_change_committed_before_its_end_is_held() {
+        let cache = reselected();
+        cache.release_superseded(Some(at(1_999)));
+        assert_eq!(cache.superseded_len(&live_target()), 1);
+    }
+
+    #[test]
+    fn a_superseded_selection_is_released_once_no_change_committed_before_its_end_is_held() {
+        for floor in [Some(at(2_000)), Some(at(2_500)), None] {
+            let cache = reselected();
+            cache.release_superseded(floor);
+            assert_eq!(cache.superseded_len(&live_target()), 0, "{floor:?}");
+            assert_eq!(matched_watching(&cache, "seq", 1_500), Vec::<Vec<String>>::new(), "{floor:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_cached_version_is_in_force() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let superseded = Arc::new(watching("seq", 1_000));
+        cache.indices.write().entry(live_target()).or_default().insert(Arc::clone(&superseded));
+        cache.insert(&live_target(), watching("other", 2_000));
+        let in_force = cache.get(&live_target(), &superseded.id).expect("the subscription is cached");
+        assert!(cache.is_in_force(&live_target(), &in_force));
+        assert!(!cache.is_in_force(&live_target(), &superseded));
     }
 }

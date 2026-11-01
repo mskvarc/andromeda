@@ -1516,6 +1516,7 @@ dependencies = [
  "derive_more",
  "futures",
  "iri-rs",
+ "parking_lot 0.13.0",
  "pretty_assertions",
  "serde_json",
  "thiserror 2.0.21",

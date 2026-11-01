@@ -3,30 +3,45 @@
 //!
 //! Clause 5.8.6 owes a notification for every change of a watched Attribute,
 //! and clause 5.5.11.3 a separate one for each update, so a change is queued
-//! as [`queue_in_order`] queues it: never dropped, in commit order.
+//! as [`queue_in_order`] queues it: never dropped, in commit order. Every change
+//! is held among the tenant's pending commits from the moment it is handed
+//! off, including while it waits for room, until it is evaluated or dropped.
 
 use crate::event::queued_handoff::{QueuedChange, queue_in_order};
 use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_entity::change_sink::EntityChangeSink;
+use andromeda_notification::pending_change::{PendingChange, PendingCommits};
 use futures::future::BoxFuture;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Queues committed entity changes for the tenant's live notification
 /// evaluation.
+#[derive(Clone, Debug)]
 pub struct QueuedEntityChangeSink {
-    sender: mpsc::Sender<ContextChangeEvent>,
+    /// The queue live evaluation reads.
+    sender: mpsc::Sender<PendingChange>,
+    /// The changes handed off and not yet evaluated.
+    commits: Arc<PendingCommits>,
 }
 
 impl QueuedEntityChangeSink {
-    /// Create a sink queueing into the supplied sender.
-    pub const fn new(sender: mpsc::Sender<ContextChangeEvent>) -> QueuedEntityChangeSink {
-        QueuedEntityChangeSink { sender }
+    /// Create a sink queueing into `sender`, holding every change among
+    /// `commits` until it is dropped.
+    pub const fn new(sender: mpsc::Sender<PendingChange>, commits: Arc<PendingCommits>) -> QueuedEntityChangeSink {
+        QueuedEntityChangeSink { sender, commits }
+    }
+
+    /// The changes handed off through this sink and not yet evaluated.
+    pub const fn commits(&self) -> &Arc<PendingCommits> {
+        &self.commits
     }
 }
 
 impl EntityChangeSink for QueuedEntityChangeSink {
     fn publish(&self, changes: Vec<ContextChangeEvent>) -> BoxFuture<'static, ()> {
-        queue_in_order(&self.sender, changes, QueuedChange::Entity)
+        let held: Vec<PendingChange> = changes.into_iter().map(|change| self.commits.hold(change)).collect();
+        queue_in_order(&self.sender, held, QueuedChange::Entity)
     }
 }
 
@@ -42,8 +57,10 @@ mod tests {
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
     };
+    use andromeda_notification::pending_change::{PendingChange, PendingCommits};
     use chrono::Utc;
     use futures::FutureExt;
+    use std::sync::Arc;
     use tokio::{sync::mpsc, task};
 
     fn change(entity: &str) -> ContextChangeEvent {
@@ -59,19 +76,42 @@ mod tests {
         }
     }
 
-    async fn drain(queue: &mut mpsc::Receiver<ContextChangeEvent>, count: usize) -> Vec<String> {
+    async fn drain(queue: &mut mpsc::Receiver<PendingChange>, count: usize) -> Vec<String> {
         let mut identifiers = Vec::with_capacity(count);
         while identifiers.len() < count {
-            let change = queue.recv().await.expect("the sink keeps its sender");
-            identifiers.push(change.event.entity_id.to_string());
+            let pending = queue.recv().await.expect("the sink keeps its sender");
+            identifiers.push(pending.change.event.entity_id.to_string());
         }
         identifiers
+    }
+
+    fn sink(sender: mpsc::Sender<PendingChange>) -> QueuedEntityChangeSink {
+        QueuedEntityChangeSink::new(sender, Arc::new(PendingCommits::default()))
+    }
+
+    /// A change waiting for room is not yet evaluated, so it bounds which
+    /// superseded selections are kept as much as one already queued.
+    #[tokio::test]
+    async fn a_change_is_held_from_its_hand_off_until_it_is_dropped() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let sink = sink(sender);
+        let first = change("1");
+        let committed_at = first.committed_at;
+        let waiting = sink.publish(vec![first, change("2")]);
+        assert_eq!(sink.commits().floor(), Some(committed_at));
+        let queued = receiver.recv().await.expect("the first change is queued");
+        let second = receiver.recv().await.expect("the second change is queued");
+        waiting.await;
+        drop(queued);
+        assert!(sink.commits().floor().is_some(), "the second change is still held");
+        drop(second);
+        assert_eq!(sink.commits().floor(), None);
     }
 
     #[tokio::test]
     async fn changes_that_fit_are_queued_before_publish_returns() {
         let (sender, mut receiver) = mpsc::channel(4);
-        let sink = QueuedEntityChangeSink::new(sender);
+        let sink = sink(sender);
         sink.publish(vec![change("1"), change("2")])
             .now_or_never()
             .expect("a queue with room takes the changes at once");
@@ -81,7 +121,7 @@ mod tests {
     #[tokio::test]
     async fn a_burst_past_the_capacity_waits_and_loses_no_change() {
         let (sender, mut receiver) = mpsc::channel(4);
-        let sink = QueuedEntityChangeSink::new(sender);
+        let sink = sink(sender);
         let burst: Vec<_> = (0..11).map(|entity| change(&entity.to_string())).collect();
         let mut publish = sink.publish(burst);
         assert!(
@@ -97,7 +137,7 @@ mod tests {
     #[tokio::test]
     async fn an_abandoned_wait_still_queues_every_change() {
         let (sender, mut receiver) = mpsc::channel(1);
-        let sink = QueuedEntityChangeSink::new(sender);
+        let sink = sink(sender);
         drop(sink.publish(vec![change("1"), change("2"), change("3")]));
         assert_eq!(
             drain(&mut receiver, 3).await,
@@ -109,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn a_later_write_queues_behind_one_already_waiting() {
         let (sender, mut receiver) = mpsc::channel(1);
-        let sink = QueuedEntityChangeSink::new(sender);
+        let sink = sink(sender);
         sink.publish(vec![change("1")]).await;
         let waiting = sink.publish(vec![change("2")]);
         task::yield_now().await;

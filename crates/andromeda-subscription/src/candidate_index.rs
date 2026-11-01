@@ -5,20 +5,27 @@
 //! [`matches_subscription`] would accept, and it may keep ones it would
 //! reject. The matcher stays authoritative; the index only decides how many
 //! subscriptions it has to look at.
+//!
+//! Beside the subscriptions in force, the index keeps the selections an update
+//! superseded, under the same lock, so one matching pass sees either the
+//! version in force at a change's commit or the one that superseded it, never
+//! both and never neither.
 
 use crate::{
     candidate_funnel::MatchOutcome,
     compiled::CompiledSubscription,
-    matching::matches_subscription,
+    matching::{matches_subscription, selects_change},
     membership::Membership,
     selector_routing::{SelectorRef, SelectorRouting, SelectorShape},
+    superseded_selection::SupersededSelections,
 };
-use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
+use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_telemetry::subscription::CandidateFunnel;
+use chrono::Utc;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{collections::HashMap, hash::Hash, ptr, sync::Arc};
 use strum::EnumCount;
 
 /// The routing buckets over one tenant's active subscriptions.
@@ -37,6 +44,9 @@ pub struct CandidateIndex {
     by_watched_attribute: HashMap<AttributeName, FxHashSet<SubscriptionKey>>,
     watch_all: FxHashSet<SubscriptionKey>,
     membership: FxHashMap<SubscriptionKey, Membership>,
+    /// The selections updates replaced while a change committed under one may
+    /// still be evaluated.
+    superseded: SupersededSelections,
 }
 
 /// The slot of a trigger in the per-trigger bucket array.
@@ -76,9 +86,11 @@ impl CandidateIndex {
     }
 
     /// Index a compiled subscription, replacing any earlier entry with the same
-    /// identifier.
+    /// identifier; an entry whose selection it changes is kept as superseded.
     pub fn insert(&mut self, compiled: Arc<CompiledSubscription>) {
-        self.remove(&compiled.id);
+        if let Some(previous) = self.unindex(&compiled.id) {
+            self.superseded.supersede(previous, &compiled);
+        }
         let key = compiled.key;
         let selectors = SelectorRouting::of(&compiled);
         if selectors.wildcard {
@@ -115,9 +127,16 @@ impl CandidateIndex {
         self.entries.insert(key, compiled);
     }
 
-    /// Unindex the subscription with this identifier, walking only the
-    /// buckets its membership record names.
+    /// Unindex the subscription with this identifier and drop the selections
+    /// it superseded: it is no longer notified of changes (clause 5.8.6).
     pub fn remove(&mut self, id: &Identifier) -> Option<Arc<CompiledSubscription>> {
+        self.superseded.forget(id);
+        self.unindex(id)
+    }
+
+    /// Unindex the subscription in force with this identifier, walking only
+    /// the buckets its membership record names.
+    fn unindex(&mut self, id: &Identifier) -> Option<Arc<CompiledSubscription>> {
         let key = self.keys_by_id.remove(id)?;
         let compiled = self.entries.remove(&key);
         if let Some(membership) = self.membership.remove(&key) {
@@ -195,6 +214,49 @@ impl CandidateIndex {
             },
             matched,
         }
+    }
+
+    /// The superseded selections that stood when a change committed at
+    /// `committed_at` and select `event`, each of a subscription still notified
+    /// of changes as it now stands.
+    ///
+    /// The superseded selections are few and live only while evaluation lags
+    /// behind an update, so each is matched directly rather than routed.
+    pub fn find_superseded_matching(&self, event: &ChangeEvent, committed_at: StoreInstant) -> Vec<Arc<CompiledSubscription>> {
+        let now = Utc::now();
+        self.superseded
+            .standing_at(committed_at)
+            .filter(|selection| self.get(&selection.id).is_some_and(|current| current.notifies_on_change_at(now)))
+            .filter(|selection| selects_change(selection, event))
+            .map(Arc::clone)
+            .collect()
+    }
+
+    /// Whether `subscription` is the version in force rather than a superseded
+    /// one.
+    #[must_use]
+    pub fn is_in_force(&self, subscription: &CompiledSubscription) -> bool {
+        self.get(&subscription.id).is_some_and(|current| ptr::eq(current.as_ref(), subscription))
+    }
+
+    /// Whether a superseded selection is no longer awaited by any change
+    /// committed at or after `floor`, the earliest commit instant evaluation
+    /// still holds (`None` when it holds none).
+    #[must_use]
+    pub fn releases_superseded(&self, floor: Option<StoreInstant>) -> bool {
+        self.superseded.releases(floor)
+    }
+
+    /// Drop every superseded selection no change committed at or after
+    /// `floor` can have committed under.
+    pub fn release_superseded(&mut self, floor: Option<StoreInstant>) {
+        self.superseded.release(floor);
+    }
+
+    /// Number of superseded selections kept.
+    #[must_use]
+    pub const fn superseded_len(&self) -> usize {
+        self.superseded.len()
     }
 
     /// Selector stage: the wildcard bucket, plus every selector whose indexed

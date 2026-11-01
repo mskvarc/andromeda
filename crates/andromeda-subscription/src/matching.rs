@@ -24,7 +24,16 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         debug!("Subscription {} skipped: not notified of changes as it stands ({:?})", sub.id, sub.standing);
         return false;
     }
+    selects_change(sub, event)
+}
 
+/// Whether the selection of `sub` selects a change event, whatever its
+/// standing: its `localOnly`, its triggers and watched attributes, and its
+/// entity selectors.
+///
+/// A superseded selection is judged by this alone, the standing being the one
+/// of the subscription as it now stands.
+pub fn selects_change(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
     if sub.local_only && event.origin == ChangeOrigin::Forwarded {
         debug!("Subscription {} skipped: localOnly=true but event origin is forwarded", sub.id);
         return false;

@@ -15,8 +15,9 @@ mod subscription_notification;
 
 use crate::{
     error::NotificationError,
+    pending_change::{PendingChange, PendingCommits},
     processor::{
-        change_audience::{ChangeAudience, addressed, admitted_by_entity_filters, changed_states, owed_since_commit},
+        change_audience::{ChangeAudience, addressed, admitted_by_entity_filters, changed_states, in_force_versions, owed_since_commit},
         change_payload::notified_state,
         payload::cache::NotificationCompactionCache,
         subscription_notification::NotifiedChange,
@@ -88,6 +89,7 @@ pub struct NotificationProcessor {
     transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
     tenant: TenantRef,
+    pending_commits: Arc<PendingCommits>,
 }
 
 #[derive(Clone)]
@@ -109,6 +111,9 @@ pub struct NotificationProcessorDeps {
     pub tenant: TenantRef,
     /// Compiled subscription matching state.
     pub subscription_cache: Arc<SubscriptionCache>,
+    /// The changes handed to live evaluation and not yet evaluated, which
+    /// bound how long a superseded selection is kept.
+    pub pending_commits: Arc<PendingCommits>,
 }
 
 /// Aggregate endpoint outcomes from evaluating one committed entity change.
@@ -135,6 +140,7 @@ impl NotificationProcessor {
             transport: deps.transport,
             engine: deps.engine,
             tenant: deps.tenant,
+            pending_commits: deps.pending_commits,
         }
     }
 
@@ -151,12 +157,24 @@ impl NotificationProcessor {
     /// Apply one committed subscription lifecycle change to matching state.
     pub async fn apply_subscription_change(&self, change: SubscriptionChange) {
         self.cache.handle_change(&change, self.sub_repo.as_ref()).await;
+        self.release_superseded();
     }
 
-    /// Evaluate and deliver notifications for one committed entity change.
-    pub async fn apply_entity_change(&self, change: ContextChangeEvent) -> NotificationEvaluationOutcome {
-        self.apply_entity_change_for(change.target, change.event, change.committed_at, ChangeAudience::Live)
-            .await
+    /// Evaluate and deliver notifications for one committed entity change,
+    /// then stop holding it.
+    pub async fn apply_entity_change(&self, pending: PendingChange) -> NotificationEvaluationOutcome {
+        let PendingChange { change, hold } = pending;
+        let ContextChangeEvent { target, event, committed_at } = change;
+        let outcome = self.apply_entity_change_for(target, event, committed_at, ChangeAudience::Live).await;
+        drop(hold);
+        self.release_superseded();
+        outcome
+    }
+
+    /// Drop the superseded selections no change still held for evaluation can
+    /// have committed under.
+    fn release_superseded(&self) {
+        self.cache.release_superseded(self.pending_commits.floor());
     }
 
     async fn apply_entity_change_for(
@@ -192,7 +210,11 @@ impl NotificationProcessor {
                 ..NotificationEvaluationOutcome::default()
             };
         };
-        let matching = admitted_by_entity_filters(audience, &self.cache, &target, &event, candidates, states, &linked);
+        let matching = in_force_versions(
+            &self.cache,
+            &target,
+            admitted_by_entity_filters(audience, &self.cache, &target, &event, candidates, states, &linked),
+        );
         if matching.is_empty() {
             return NotificationEvaluationOutcome::default();
         }
@@ -230,12 +252,15 @@ impl NotificationProcessor {
     /// Returns the store's failure when the subscription cannot be read back;
     /// the cache is then left as it was.
     async fn refresh_cached_subscription(&self, target: &ContextTarget, subscription_id: &Identifier) -> Result<(), SubscriptionError> {
-        self.cache.refresh(target, subscription_id, self.sub_repo.as_ref()).await
+        let refreshed = self.cache.refresh(target, subscription_id, self.sub_repo.as_ref()).await;
+        self.release_superseded();
+        refreshed
     }
 
     /// The compiled subscriptions the change committed at `committed_at` is
     /// owed to before entity filters are evaluated: every one it reaches for a
-    /// live change, the one a durably queued delivery is addressed to.
+    /// live change, under the selection that stood at its commit, the one a
+    /// durably queued delivery is addressed to.
     ///
     /// The subscription's own state is read as it stands now, so a subscription
     /// deleted, paused or expired since the change was queued is not notified
@@ -243,8 +268,8 @@ impl NotificationProcessor {
     /// an active subscription, so one that became active after the change
     /// committed was paused, expired or absent when it happened and is owed
     /// nothing for it; and one whose selection changed after the commit is
-    /// owed nothing for a change judged now, by a selection that did not exist
-    /// when it happened.
+    /// judged by the superseded selection while the cache keeps it, and owed
+    /// nothing once it does not.
     fn candidate_subscriptions(
         &self,
         target: &ContextTarget,
@@ -252,7 +277,7 @@ impl NotificationProcessor {
         committed_at: StoreInstant,
         audience: ChangeAudience<'_>,
     ) -> Vec<Arc<CompiledSubscription>> {
-        owed_since_commit(audience, committed_at, addressed(audience, &self.cache, target, event))
+        owed_since_commit(audience, committed_at, addressed(audience, &self.cache, target, event, committed_at))
     }
 
     /// The entities the `rel{…}` hops of the candidates' filters cross into
@@ -288,7 +313,7 @@ impl NotificationProcessor {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::processor::change_audience::{ChangeAudience, CommitFilters, addressed, admitted_by_entity_filters, owed_since_commit};
+    use crate::processor::change_audience::{ChangeAudience, CommitFilters, addressed, admitted_by_entity_filters, in_force_versions, owed_since_commit};
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
@@ -692,7 +717,7 @@ mod tests {
     }
 
     fn addressed_ids(audience: ChangeAudience<'_>, cache: &SubscriptionCache, event: &ChangeEvent) -> Vec<String> {
-        addressed(audience, cache, &ContextTarget::Live, event)
+        addressed(audience, cache, &ContextTarget::Live, event, StoreInstant::new(Utc::now()))
             .iter()
             .map(|candidate| candidate.id.to_string())
             .collect()
@@ -740,6 +765,58 @@ mod tests {
             };
             pretty_assertions::assert_eq!(addressed_ids(queued, &cache, &event), Vec::<String>::new(), "{id}");
         }
+    }
+
+    /// A Vehicle subscription watching `attribute` since `selected`.
+    fn vehicle_watching_since(attribute: &str, selected: i64) -> CompiledSubscription {
+        let mut sub = make_sub("reselected", vec![], vec!["attributeUpdated"], Some(vec![attribute]));
+        sub.notifying_since = NotifyingSince {
+            active: at(0),
+            selected: at(selected),
+        };
+        sub
+    }
+
+    /// Clause 5.8.6: the `speed` update committed at 1 500, while `speed` was
+    /// watched, is owed though the Subscription watches `heading` since 2 000
+    /// by the time the change is evaluated; it is sent as the Subscription now
+    /// stands.
+    #[test]
+    fn a_live_change_committed_before_a_reselection_is_owed_under_the_selection_of_its_commit() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        cache.insert(&ContextTarget::Live, vehicle_watching_since("speed", 1_000));
+        cache.insert(&ContextTarget::Live, vehicle_watching_since("heading", 2_000));
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
+        let watched = |candidates: &[Arc<CompiledSubscription>]| -> Vec<String> {
+            candidates
+                .iter()
+                .flat_map(|candidate| candidate.watched_attrs.iter().flatten().map(ToString::to_string))
+                .collect()
+        };
+
+        let owed = owed_since_commit(
+            ChangeAudience::Live,
+            at(1_500),
+            addressed(ChangeAudience::Live, &cache, &ContextTarget::Live, &event, at(1_500)),
+        );
+        pretty_assertions::assert_eq!(watched(&owed), vec!["speed".to_owned()]);
+        pretty_assertions::assert_eq!(watched(&in_force_versions(&cache, &ContextTarget::Live, owed)), vec!["heading".to_owned()]);
+
+        let later = owed_since_commit(
+            ChangeAudience::Live,
+            at(2_500),
+            addressed(ChangeAudience::Live, &cache, &ContextTarget::Live, &event, at(2_500)),
+        );
+        pretty_assertions::assert_eq!(later.len(), 0, "a speed update after the reselection is not owed");
+    }
+
+    /// Clause 5.8.6 sends nothing once the Subscription is gone, whichever
+    /// selection the change was matched under.
+    #[test]
+    fn a_matched_subscription_deleted_before_it_is_notified_is_dropped() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let matched = Arc::new(vehicle_watching_since("speed", 1_000));
+        pretty_assertions::assert_eq!(in_force_versions(&cache, &ContextTarget::Live, vec![matched]).len(), 0);
     }
 
     /// The states a modification leaving `state` is filtered against.

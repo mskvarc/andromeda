@@ -75,6 +75,9 @@ pub mod notified_registration_store;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod notifier_test_double;
+/// The committed entity changes handed to live evaluation and not yet
+/// evaluated.
+pub mod pending_change;
 /// Entity event notification evaluation.
 pub mod processor;
 /// The `@context` a notification is rendered under, and the failure recorded when it cannot be loaded.

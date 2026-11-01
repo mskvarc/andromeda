@@ -16,36 +16,40 @@ mod table_size_gauges;
 mod temporal_retention;
 mod temporal_sweep_failure;
 
-use crate::tenant_factory::{
-    TenantFactoryConfig,
-    background_pacer::BackgroundPacer,
-    error::TenantAssemblyError,
-    periodic_due::PeriodicDue,
-    services::ConstructedServices,
-    storage::TenantStorage,
-    tasks::{
-        columnstore_conversion::register_columnstore_conversion,
-        csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
-        discovery_census::register_discovery_census_fold,
-        entity_notification::{
-            IntervalDelivery,
-            compose_notification_processor,
-            compose_notification_query,
-            register_interval_notification,
-            register_notification_workers,
+use crate::{
+    event::entity_change_sink::QueuedEntityChangeSink,
+    tenant_factory::{
+        TenantFactoryConfig,
+        background_pacer::BackgroundPacer,
+        error::TenantAssemblyError,
+        periodic_due::PeriodicDue,
+        services::ConstructedServices,
+        storage::TenantStorage,
+        tasks::{
+            columnstore_conversion::register_columnstore_conversion,
+            csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
+            discovery_census::register_discovery_census_fold,
+            entity_notification::{
+                IntervalDelivery,
+                compose_notification_processor,
+                compose_notification_query,
+                register_interval_notification,
+                register_notification_workers,
+            },
+            expiry::register_expiry_workers,
+            maintenance::{register_entity_side_effects, register_spatial_workers},
+            notification_delivery::{DeliveryDrainDrive, delivery_queue},
+            pool_gauges::register_pool_gauges,
+            snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
+            table_size_gauges::register_table_size_gauges,
+            temporal_retention::register_temporal_retention,
         },
-        expiry::register_expiry_workers,
-        maintenance::{register_entity_side_effects, register_spatial_workers},
-        notification_delivery::{DeliveryDrainDrive, delivery_queue},
-        pool_gauges::register_pool_gauges,
-        snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
-        table_size_gauges::register_table_size_gauges,
-        temporal_retention::register_temporal_retention,
     },
 };
-use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
+use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
+use andromeda_notification::pending_change::{PendingChange, PendingCommits};
 use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
 use andromeda_snapshot::status_delivery_signal::StatusDeliverySignal;
 use andromeda_subscription::{
@@ -69,10 +73,10 @@ const REGISTRATION_QUEUE_CAPACITY: NonZeroUsize = NonZeroUsize::MIN.saturating_a
 /// Change channels shared by tenant services and their workers.
 pub(super) struct TenantSignals {
     /// Where committed entity changes queue for live notification evaluation.
-    pub(super) entity: mpsc::Sender<ContextChangeEvent>,
+    pub(super) entity: QueuedEntityChangeSink,
     /// The queue's one reader, held across restarts of the notification worker
     /// so a change queued while it restarts is still evaluated.
-    pub(super) entity_receiver: Arc<Mutex<mpsc::Receiver<ContextChangeEvent>>>,
+    pub(super) entity_receiver: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
     /// Where committed registration changes queue for context source
     /// notification evaluation.
@@ -89,6 +93,7 @@ impl TenantSignals {
     /// `entity_capacity` committed entity changes for live evaluation.
     pub(super) fn new(entity_capacity: NonZeroUsize) -> TenantSignals {
         let (entity, entity_receiver) = mpsc::channel(entity_capacity.get());
+        let entity = QueuedEntityChangeSink::new(entity, Arc::new(PendingCommits::default()));
         let (subscription, _) = broadcast::channel(1024);
         let (registration, registration_receiver) = mpsc::channel(REGISTRATION_QUEUE_CAPACITY.get());
         let (csource_subscription, _) = broadcast::channel(1024);
@@ -214,6 +219,7 @@ pub(super) fn supervise_tasks(
         Arc::clone(&notification_query), // clone: change-driven and periodic notifications resolve their joins through one service.
         transport,
         &entity_subscriptions,
+        Arc::clone(entity.commits()), // clone: the sink holds what the processor releases.
     );
     // clone: the periodic sweep subscribes to the same change stream so a new or
     // amended timeInterval subscription wakes it, while the event-driven workers
@@ -281,7 +287,7 @@ pub(super) fn supervise_tasks(
 
 #[cfg(test)]
 mod tests {
-    use andromeda_context_commit::context_change_event::ContextChangeEvent;
+    use andromeda_notification::pending_change::PendingChange;
 
     /// `notifications.live_change_capacity` prices a slot of the live change
     /// channel at under half a kilobyte, allocated up front for every slot of
@@ -289,10 +295,6 @@ mod tests {
     /// documented memory cost a lie.
     #[test]
     fn a_live_change_slot_stays_within_its_documented_price() {
-        assert!(
-            size_of::<ContextChangeEvent>() <= 448,
-            "a change event is {} bytes",
-            size_of::<ContextChangeEvent>()
-        );
+        assert!(size_of::<PendingChange>() <= 448, "a held change event is {} bytes", size_of::<PendingChange>());
     }
 }
