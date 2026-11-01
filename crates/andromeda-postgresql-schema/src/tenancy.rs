@@ -49,6 +49,24 @@ pub enum TenantWakeSchedule {
     ProbedAt,
 }
 
+/// The `tenant_extension_versions` table - the versioned extensions each tenant
+/// database held after its last open, and what the server shipped then.
+#[derive(Iden, Clone, Copy)]
+pub enum TenantExtensionVersions {
+    /// Table name: `tenant_extension_versions`
+    Table,
+    /// Foreign key to the owning `tenants` row
+    TenantKey,
+    /// Instant the open that wrote the row brought the extensions up to date
+    ReconciledAt,
+    /// The extension's catalogue name, `postgis` or `timescaledb`
+    Extension,
+    /// The version installed in the tenant database, `NULL` when not installed
+    InstalledVersion,
+    /// The version the server shipped at that open, `NULL` when it shipped none
+    ShippedVersion,
+}
+
 /// The `schema_metadata` table - the per-database schema-contract stamp.
 #[derive(Iden, Clone, Copy)]
 pub enum SchemaMetadata {
@@ -66,7 +84,7 @@ pub enum SchemaMetadata {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenancy::{SchemaMetadata, TenantWakeSchedule, Tenants};
+    use crate::tenancy::{SchemaMetadata, TenantExtensionVersions, TenantWakeSchedule, Tenants};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -90,6 +108,16 @@ mod tests {
         assert_eq!(TenantWakeSchedule::TenantKey.to_string(), "tenant_key");
         assert_eq!(TenantWakeSchedule::WakeAt.to_string(), "wake_at");
         assert_eq!(TenantWakeSchedule::ProbedAt.to_string(), "probed_at");
+    }
+
+    #[test]
+    fn tenant_extension_versions_table_and_columns() {
+        assert_eq!(TenantExtensionVersions::Table.to_string(), "tenant_extension_versions");
+        assert_eq!(TenantExtensionVersions::TenantKey.to_string(), "tenant_key");
+        assert_eq!(TenantExtensionVersions::ReconciledAt.to_string(), "reconciled_at");
+        assert_eq!(TenantExtensionVersions::Extension.to_string(), "extension");
+        assert_eq!(TenantExtensionVersions::InstalledVersion.to_string(), "installed_version");
+        assert_eq!(TenantExtensionVersions::ShippedVersion.to_string(), "shipped_version");
     }
 
     #[test]

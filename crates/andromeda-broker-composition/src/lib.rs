@@ -17,6 +17,7 @@ mod listeners;
 mod local_entity_type;
 mod logging;
 pub mod outcome;
+mod pending_work_probe;
 mod planes;
 mod postgresql_maintenance;
 mod registered_entity_probe;

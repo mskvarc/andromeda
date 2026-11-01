@@ -54,6 +54,11 @@ impl BrokerTenantRuntime {
     pub(super) fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         self.transport.mqtt_pool()
     }
+
+    /// The tenant's serving pool.
+    pub(super) const fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 }
 
 #[async_trait]

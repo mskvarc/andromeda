@@ -110,15 +110,6 @@ mod tests {
         assert_eq!(all, expected);
     }
 
-    /// The platform set runs first on the platform database, so it holds the
-    /// lowest versions of the shared space.
-    #[test]
-    fn the_platform_set_precedes_every_tenant_and_branch_migration() {
-        let highest_platform = platform_migrations().iter().map(|migration| migration.version).max();
-        let lowest_tenant = tenant_migrator().iter().map(|migration| migration.version).min();
-        assert!(highest_platform < lowest_tenant, "{highest_platform:?} must precede {lowest_tenant:?}");
-    }
-
     #[test]
     fn the_union_is_sorted_and_holds_exactly_the_files_on_disk() {
         let union: Vec<i64> = tenant_migrator().iter().map(|migration| migration.version).collect();

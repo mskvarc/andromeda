@@ -20,6 +20,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod administration;
+pub mod catch_up;
 pub mod context_source_alias;
 pub mod creation_policy;
 pub mod database;

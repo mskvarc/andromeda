@@ -42,7 +42,7 @@ use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePu
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
-use andromeda_postgresql_context_store::database_defaults::DatabaseDefaults;
+use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_extension_versions::PostgresTenantExtensionVersions};
 use andromeda_postgresql_pool::database_url::DatabaseUrl;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
@@ -53,7 +53,7 @@ use std::{
     hash::Hasher,
     sync::{Arc, OnceLock},
 };
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 mod assembly_invariant;
@@ -93,6 +93,8 @@ pub struct BrokerTenantFactory {
     process_tasks: TaskSupervisor,
     /// The platform route from minted subscription identifiers to tenants.
     subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
+    /// The platform record of the extension versions each opened tenant holds.
+    extension_versions: Arc<PostgresTenantExtensionVersions>,
 }
 
 /// The tables tenant construction reads, kept for every tenant it builds.
@@ -158,6 +160,7 @@ impl BrokerTenantFactory {
         direct_url: DatabaseUrl,
         process_tasks: TaskSupervisor,
         subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
+        extension_versions: Arc<PostgresTenantExtensionVersions>,
     ) -> BrokerTenantFactory {
         BrokerTenantFactory {
             config: Arc::new(TenantFactoryConfig::from(config)),
@@ -166,6 +169,7 @@ impl BrokerTenantFactory {
             default_mqtt_pool: OnceLock::new(),
             process_tasks,
             subscription_router,
+            extension_versions,
         }
     }
 
@@ -196,6 +200,11 @@ impl TenantStateFactory for BrokerTenantFactory {
 
         if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(runtime.mqtt_pool())).is_err() {
             debug!("the default tenant's MQTT pool was already recorded; /health keeps reporting on the first");
+        }
+        // The record only steers which dormant tenants a wake pass brings up to
+        // date, so a failed write costs at most one more load and never the open.
+        if let Err(error) = self.extension_versions.record(database, runtime.pool()).await {
+            warn!(error = %error, event = "tenant_extension_versions_unrecorded", "the tenant's extension versions could not be recorded");
         }
 
         Ok((Arc::new(state), runtime))

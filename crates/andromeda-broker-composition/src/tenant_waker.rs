@@ -2,7 +2,9 @@
 //!
 //! Two supervised tasks drive the wake schedule this broker shares with its
 //! replicas. The waker claims tenants whose recorded wake instant has passed
-//! and loads each to run its due background work; the reconciliation sweep
+//! and loads each to run its due background work, then spends what is left of
+//! its pass on tenants behind the server's extension versions; the
+//! reconciliation sweep
 //! re-probes the least-recently-probed tenants, so a wake a crashed replica
 //! recorded but never fired is eventually picked up. Both only run when named
 //! tenancy is enabled -- a single-tenant broker holds one never-evicted runtime
@@ -24,7 +26,8 @@ use andromeda_task_runtime::{
     task_name::{TaskName, TaskNameError},
 };
 use andromeda_tenancy::{
-    runtime::TenantRuntimeManager,
+    catch_up::{CatchUpCandidates, CatchUpError},
+    runtime::{TenantRuntimeManager, wake_pass::WakePassError},
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use std::{
@@ -75,23 +78,18 @@ pub(crate) fn register_tenant_waker(
     supervisor: &TaskSupervisor,
     manager: Manager,
     schedule: Arc<dyn TenantWakeSchedule>,
+    catch_up: Arc<dyn CatchUpCandidates>,
     tenancy: &TenancyConfig,
 ) -> Result<(), TenantWakerRegistrationError> {
     if !tenancy.is_enabled() {
         return Ok(());
     }
-    let limit = tenancy.residency.max_wakes_per_pass.get();
-    register_waker(supervisor, Arc::clone(&manager), Arc::clone(&schedule), limit)?;
-    register_reconciliation(supervisor, manager, schedule, limit)
+    register_waker(supervisor, Arc::clone(&manager), catch_up)?;
+    register_reconciliation(supervisor, manager, schedule, tenancy.residency.max_wakes_per_pass.get())
 }
 
-/// Register the task that claims due tenants and wakes each.
-fn register_waker(
-    supervisor: &TaskSupervisor,
-    manager: Manager,
-    schedule: Arc<dyn TenantWakeSchedule>,
-    limit: usize,
-) -> Result<(), TenantWakerRegistrationError> {
+/// Register the task that wakes the due tenants, then catches up lagging ones.
+fn register_waker(supervisor: &TaskSupervisor, manager: Manager, catch_up: Arc<dyn CatchUpCandidates>) -> Result<(), TenantWakerRegistrationError> {
     let registration = TaskRegistration::new(
         TaskName::try_from("tenant-waker")?,
         TaskCriticality::Observed,
@@ -101,16 +99,19 @@ fn register_waker(
     let schedule_pass = PeriodicSchedule::new(WAKER_INTERVAL, InitialExecution::Immediate, MissedTickPolicy::Skip)?;
     let task = ScheduledTask::new(registration, schedule_pass, move |_execution| {
         let manager = Arc::clone(&manager); // clone: each pass owns the manager while executing
-        let schedule = Arc::clone(&schedule); // clone: each pass owns the schedule handle
+        let catch_up = Arc::clone(&catch_up); // clone: each pass owns the catch-up source
         async move {
             let now = SystemTime::now();
-            let due = schedule.claim_due(now, now + CLAIM_LEASE, limit).await.map_err(classify_failure)?;
-            let woken = due.len();
-            for tenant in due {
-                manager.wake(&tenant).await;
-            }
-            if woken > 0 {
-                debug!(woken, "tenant waker loaded dormant tenants with due work");
+            let report = manager
+                .run_wake_pass(catch_up.as_ref(), now, now + CLAIM_LEASE)
+                .await
+                .map_err(classify_pass_failure)?;
+            if report.scheduled > 0 || report.caught_up > 0 {
+                debug!(
+                    scheduled = report.scheduled,
+                    caught_up = report.caught_up,
+                    "tenant waker loaded dormant tenants"
+                );
             }
             Ok(())
         }
@@ -146,6 +147,15 @@ fn register_reconciliation(
         }
     });
     supervisor.register_scheduled(task).map(drop).map_err(TenantWakerRegistrationError::from)
+}
+
+/// A wake pass failure is transient: a leased claim re-fires, and the next pass
+/// reads the catch-up candidates again.
+const fn classify_pass_failure(error: WakePassError) -> TaskFailure<WakePassError> {
+    let class = match &error {
+        WakePassError::Schedule(WakeScheduleError::Store { .. }) | WakePassError::CatchUp(CatchUpError::Store { .. }) => FailureClass::Transient,
+    };
+    TaskFailure::new(class, error)
 }
 
 /// A wake-schedule store failure is transient: the leased claim re-fires and the

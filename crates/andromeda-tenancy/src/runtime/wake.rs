@@ -123,7 +123,22 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
             return WakeOutcome::Deferred;
         }
+        self.build_woken(tenant_ref, database, existence, tenant).await
+    }
 
+    /// Build a woken tenant's runtime and cache it as the first idle-eviction
+    /// victim, settling its wake schedule with the result.
+    ///
+    /// A build that fails re-arms a retry one `min_dormancy` out, so the
+    /// tenant is retried by its wake schedule rather than forgotten.
+    pub(super) async fn build_woken(
+        &self,
+        tenant_ref: &TenantRef,
+        database: TenantDatabaseName,
+        existence: RuntimeExistence,
+        tenant: &TenantName,
+    ) -> WakeOutcome {
+        let now = SystemTime::now();
         // Load under the same admission bound as a request cold build.
         let permit = self.build_permits.acquire().await.ok();
         let built = self.factory.build(tenant_ref, &database).await;

@@ -91,11 +91,12 @@ pub struct ResidencyConfig {
         description = "How long a tenant loaded for its due work stays loaded. For this long it is not unloaded, not even to make room for another tenant, so its due work runs. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
     )]
     pub woken_lifetime: HumanDuration,
-    /// The most dormant tenants one wake pass opens. Woken runtimes are
+    /// The most dormant tenants one wake pass opens, those with due work first
+    /// and then those behind the server's extension versions. Woken runtimes are
     /// built through the same admission bound as request cold builds, so this
     /// keeps a wake burst from starving request-driven cold loads.
     #[schemars(
-        description = "The most unloaded tenants one pass loads for due work. Woken tenants share `tenancy.build.max_concurrent` with tenants loaded for requests, so this keeps a burst of wakes from crowding requests out."
+        description = "The most unloaded tenants one pass loads: for due work first, then, in what that leaves, for tenants whose extensions are behind the versions the server ships. Woken tenants share `tenancy.build.max_concurrent` with tenants loaded for requests, so this keeps a burst of wakes from crowding requests out."
     )]
     pub max_wakes_per_pass: NonZeroUsize,
     /// The most tenant runtimes torn down at once.

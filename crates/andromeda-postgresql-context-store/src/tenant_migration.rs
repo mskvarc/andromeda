@@ -49,10 +49,10 @@ use url::Url;
 ///
 /// The platform database is also the unnamed default tenant's database, so it
 /// carries the tenant schema and its contract beside the platform tables. The
-/// platform set runs first because it holds the lowest versions of the one
-/// version space every migration directory shares; the two sets are recorded
-/// in separate ledgers ([`crate::migration_set`]), so neither sees the other's
-/// history.
+/// platform set runs first, and the two sets are recorded in separate ledgers
+/// ([`crate::migration_set`]), so neither sees the other's history and their
+/// versions may interleave in the one version space every migration directory
+/// shares.
 ///
 /// # Errors
 ///

@@ -47,6 +47,7 @@ use tokio::{
 };
 
 mod periodic_eviction;
+mod wake_pass;
 
 /// What a [`FakeProbe`] answers with for every database.
 enum FakeProbeOutcome {
@@ -125,14 +126,22 @@ struct FakeSchedule {
     recorded: StdMutex<Vec<(String, Option<SystemTime>)>>,
     /// Every `settle` call's tenant and next wake.
     settled: StdMutex<Vec<(String, Option<SystemTime>)>>,
+    /// The tenants held due, handed out by `claim_due` up to its limit.
+    due: StdMutex<Vec<String>>,
 }
 
 impl FakeSchedule {
     /// A schedule that records writes and claims nothing.
     fn inert() -> FakeSchedule {
+        FakeSchedule::claiming(&[])
+    }
+
+    /// A schedule that records writes and holds `due` due, in that order.
+    fn claiming(due: &[&str]) -> FakeSchedule {
         FakeSchedule {
             recorded: StdMutex::new(Vec::new()),
             settled: StdMutex::new(Vec::new()),
+            due: StdMutex::new(due.iter().map(|name| (*name).to_string()).collect()),
         }
     }
 
@@ -156,8 +165,16 @@ impl TenantWakeSchedule for FakeSchedule {
         Ok(())
     }
 
-    async fn claim_due(&self, _now: SystemTime, _lease_until: SystemTime, _limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        Ok(Vec::new())
+    async fn claim_due(&self, _now: SystemTime, _lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
+        let claimed: Vec<String> = self
+            .due
+            .lock()
+            .map(|mut due| {
+                let take = limit.min(due.len());
+                due.drain(..take).collect()
+            })
+            .unwrap_or_default();
+        Ok(claimed.into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
     }
 
     async fn settle(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {

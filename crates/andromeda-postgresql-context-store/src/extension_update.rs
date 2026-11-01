@@ -50,6 +50,7 @@ use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement, SimpleExpr
 use sqlx::{
     Acquire,
     Connection,
+    Executor,
     PgConnection,
     Postgres,
     Row,
@@ -58,6 +59,18 @@ use sqlx::{
 };
 use strum::IntoEnumIterator;
 use url::Url;
+
+/// One versioned extension's installed version in a database, and the version
+/// the server's installation ships.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtensionStanding {
+    /// The extension.
+    pub extension: VersionedExtension,
+    /// What `pg_extension` records for this database.
+    pub installed: ExtensionPresence,
+    /// The version the server's installation ships, `None` when it ships none.
+    pub shipped: Option<ExtensionVersion>,
+}
 
 /// One versioned extension installed below the version the server ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,13 +128,24 @@ where
 /// [`ContextStoreError::SchemaContract`] when a reported version cannot be
 /// read.
 pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<Vec<PendingExtensionUpdate>, ContextStoreError> {
-    let row = extension_versions_statement().to_query().fetch_one(connection).await?;
+    Ok(extension_standings(connection).await?.into_iter().filter_map(pending_update).collect())
+}
+
+/// Every versioned extension's installed version in the database `executor`
+/// reaches, beside the version the server ships.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the read fails and
+/// [`ContextStoreError::SchemaContract`] when a reported version cannot be
+/// read.
+pub async fn extension_standings<'e, E>(executor: E) -> Result<Vec<ExtensionStanding>, ContextStoreError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let row = extension_versions_statement().to_query().fetch_one(executor).await?;
     VersionedExtension::iter()
-        .filter_map(|extension| {
-            read_versions(&row, extension)
-                .map(|(installed, shipped)| pending_update(extension, installed, shipped))
-                .transpose()
-        })
+        .map(|extension| read_versions(&row, extension).map(|(installed, shipped)| ExtensionStanding { extension, installed, shipped }))
         .collect()
 }
 
@@ -282,7 +306,7 @@ fn read_versions(row: &PgRow, extension: VersionedExtension) -> Result<(Extensio
 /// An installed version above the shipped one is a server running an older
 /// image than the one that last updated the database; no update reaches back,
 /// and the schema contract's floor decides whether it still serves.
-fn pending_update(extension: VersionedExtension, installed: ExtensionPresence, shipped: Option<ExtensionVersion>) -> Option<PendingExtensionUpdate> {
+fn pending_update(ExtensionStanding { extension, installed, shipped }: ExtensionStanding) -> Option<PendingExtensionUpdate> {
     match (installed, shipped) {
         (ExtensionPresence::Installed(installed), Some(shipped)) if installed < shipped => Some(PendingExtensionUpdate { extension, installed, shipped }),
         (ExtensionPresence::Installed(_) | ExtensionPresence::Absent, Some(_) | None) => None,
@@ -331,6 +355,7 @@ fn extension_update_lock(database: &str) -> SelectStatement {
 mod tests {
     use crate::{
         extension_update::{
+            ExtensionStanding,
             PendingExtensionUpdate,
             extension_update_lock,
             extension_versions_statement,
@@ -388,7 +413,11 @@ mod tests {
         let installed = ExtensionVersion::new(2, 30, 1);
         let shipped = ExtensionVersion::new(2, 30, 2);
         assert_eq!(
-            pending_update(VersionedExtension::TimescaleDb, ExtensionPresence::Installed(installed), Some(shipped)),
+            pending_update(ExtensionStanding {
+                extension: VersionedExtension::TimescaleDb,
+                installed: ExtensionPresence::Installed(installed),
+                shipped: Some(shipped),
+            }),
             Some(PendingExtensionUpdate {
                 extension: VersionedExtension::TimescaleDb,
                 installed,
@@ -409,7 +438,11 @@ mod tests {
         ];
         for (installed, shipped) in settled {
             assert_eq!(
-                pending_update(VersionedExtension::PostGis, installed, shipped),
+                pending_update(ExtensionStanding {
+                    extension: VersionedExtension::PostGis,
+                    installed,
+                    shipped,
+                }),
                 None,
                 "{installed} against {shipped:?}"
             );

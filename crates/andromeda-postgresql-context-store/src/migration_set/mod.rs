@@ -3,8 +3,9 @@
 //! The schema is described by three migration directories:
 //!
 //! * `platform/`: the platform tables (tenant registry, maintenance state,
-//!   forwarded-subscription routes, wake schedule), applied only to the platform
-//!   database and recorded in [`platform::PLATFORM_LEDGER`].
+//!   forwarded-subscription routes, wake schedule, tenant extension versions),
+//!   applied only to the platform database and recorded in
+//!   [`platform::PLATFORM_LEDGER`].
 //! * `tenant/`: tenant-global relations (dictionaries, contexts,
 //!   registrations, snapshot control records, forwarding mappings) and the
 //!   TimescaleDB conversion of the live history tables.
@@ -17,9 +18,10 @@
 //! (a branch relation references the dictionaries a tenant file creates, and
 //! the forwarding mappings reference branch relations), so the tenant migrator
 //! runs the union of `tenant/` and `branch/` in version order in `public`,
-//! recorded in [`tenant::TENANT_LEDGER`]. The platform set, which holds the
-//! lowest versions, runs first on the platform database, recorded in
-//! [`platform::PLATFORM_LEDGER`]. The branch migrator runs `branch/` alone
+//! recorded in [`tenant::TENANT_LEDGER`]. The platform set runs first on the
+//! platform database, recorded in [`platform::PLATFORM_LEDGER`]; no platform
+//! table references a tenant relation, so a platform file may be numbered
+//! above tenant files. The branch migrator runs `branch/` alone
 //! inside a Snapshot schema, recorded in that schema's own
 //! [`branch::BRANCH_LEDGER`]. Because every set has a ledger of its own, none of
 //! them ever sees another's rows, so missing-migration detection stays on

@@ -4,9 +4,11 @@
 # PostGIS to the versions IMAGE ships when it opens the tenant, and that the
 # tenant then serves. The first case creates the databases with TimescaleDB at
 # the previous minor release, which IMAGE still ships. The second, run when
-# PREVIOUS_IMAGE and PREVIOUS_BROKER_IMAGE are given, creates and fills the
-# tenants with the previous broker on the previous image, then restarts the
-# data directory on IMAGE under BROKER_IMAGE.
+# PREVIOUS_IMAGE and PREVIOUS_BROKER_IMAGE are given, creates and fills twenty
+# tenants with the previous broker on the previous image, one of them far
+# busier than the rest, then restarts the data directory on IMAGE under
+# BROKER_IMAGE and sends no request: the wake pass alone must bring every
+# tenant up to date, the busiest first, and record what each holds.
 set -Eeuo pipefail
 
 image="$1"
@@ -193,29 +195,66 @@ stop_database
 docker volume rm "$volume" > /dev/null
 
 if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
-	printf -- '--- tenants created on the previous image, opened on this one\n'
+	printf -- '--- tenants created on the previous image, brought up to date on this one with no request\n'
+	mapfile -t catch_up_tenants < <(seq -f 'cu%02g' 1 20)
+	busiest=cu20
 	start_database "$previous_image"
 	start_broker "$previous_broker_image"
-	write_tenant b
-	read_tenant b
+	for name in "${catch_up_tenants[@]}"; do
+		tenant="$name"
+		write_tenant b
+	done
+	tenant="$busiest"
+	for n in $(seq 1 40); do
+		expect "create entity Load:$n in $busiest" 201 "$(status POST /entities "{\"id\":\"urn:ngsi-ld:Load:$n\",\"type\":\"Load\",\"count\":{\"type\":\"Property\",\"value\":$n}}")"
+	done
 	stop_broker
-	tenant_db="$(tenant_database)"
-	old_timescaledb="$(extversion "$tenant_db" timescaledb)"
-	old_postgis="$(extversion "$tenant_db" postgis)"
+	first_db="$(sql postgres "SELECT database_name FROM tenants WHERE name = 'cu01'")"
+	old_timescaledb="$(extversion "$first_db" timescaledb)"
+	old_postgis="$(extversion "$first_db" postgis)"
 	stop_database
 	start_database "$image"
-	expect "$tenant_db timescaledb on the new image before the broker" "$old_timescaledb" "$(extversion "$tenant_db" timescaledb)"
-	expect "$tenant_db postgis on the new image before the broker" "$old_postgis" "$(extversion "$tenant_db" postgis)"
+	expect "$first_db timescaledb on the new image before the broker" "$old_timescaledb" "$(extversion "$first_db" timescaledb)"
 	start_broker "$broker_image"
 	assert_current postgres
-	read_tenant b
-	assert_current "$tenant_db"
-	write_tenant c
-	read_tenant c
-	# Each changed extension is updated twice: in the platform database and the tenant's.
+	# Five wake passes of four tenants, plus building each, with no request.
+	lagging=''
+	for _ in $(seq 1 90); do
+		lagging=''
+		for name in "${catch_up_tenants[@]}"; do
+			db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$name'")"
+			if [ "$(extversion "$db" timescaledb)" != "$(shipped timescaledb)" ] || [ "$(extversion "$db" postgis)" != "$(shipped postgis)" ]; then
+				lagging="$lagging $name"
+			fi
+		done
+		[ -z "$lagging" ] && break
+		sleep 1
+	done
+	expect "tenants still behind the image after 90s with no request" '' "$lagging"
+	# The record matches every tenant database's own catalogue.
+	mismatched=''
+	for name in "${catch_up_tenants[@]}"; do
+		db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$name'")"
+		for extension in timescaledb postgis; do
+			recorded="$(sql postgres "SELECT v.installed_version FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$name' AND v.extension = '$extension'")"
+			[ "$recorded" = "$(extversion "$db" "$extension")" ] || mismatched="$mismatched $name/$extension"
+		done
+	done
+	expect "tenants whose recorded versions differ from pg_extension" '' "$mismatched"
+	# The busiest tenant is in the first pass's batch: opened within one
+	# five-second pass of the first tenant opened.
+	busiest_lead="$(sql postgres "SELECT extract(epoch FROM (SELECT min(v.reconciled_at) FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$busiest') - (SELECT min(v.reconciled_at) FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name LIKE 'cu%')) < 5")"
+	expect "$busiest opened in the first wake pass" t "$busiest_lead"
+	# Each changed extension is updated once in the platform database and once
+	# in every tenant's.
 	updates=0
-	[ "$old_timescaledb" != "$(shipped timescaledb)" ] && updates=$((updates + 2))
-	[ "$old_postgis" != "$(shipped postgis)" ] && updates=$((updates + 2))
+	[ "$old_timescaledb" != "$(shipped timescaledb)" ] && updates=$((updates + 1 + ${#catch_up_tenants[@]}))
+	[ "$old_postgis" != "$(shipped postgis)" ] && updates=$((updates + 1 + ${#catch_up_tenants[@]}))
+	assert_broker_log_clean "$updates"
+	# A request after the catch-up runs no further update.
+	tenant=cu01
+	read_tenant b
+	write_tenant c
 	assert_broker_log_clean "$updates"
 fi
 

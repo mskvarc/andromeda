@@ -16,6 +16,7 @@ mod teardown;
 )]
 mod tests;
 mod wake;
+pub mod wake_pass;
 
 use crate::{
     administration::TenantAdministration,

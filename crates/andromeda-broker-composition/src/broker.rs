@@ -7,6 +7,7 @@ use crate::{
     listeners,
     logging,
     outcome::ProcessExitOutcome,
+    pending_work_probe::{PendingWorkProbeError, pending_work_probe},
     planes::assemble_planes,
     postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
     routes::{
@@ -25,10 +26,7 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
-use andromeda_configuration::{
-    broker_config::BrokerConfig,
-    schema::{observability::MetricsMode, temporal::storage::StorageDaysError},
-};
+use andromeda_configuration::{broker_config::BrokerConfig, schema::observability::MetricsMode};
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
 use andromeda_health::aggregate::Health;
@@ -52,27 +50,19 @@ use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
     health::DatabaseHealthIndicator,
-    pending_work::PostgresPendingWorkProbe,
+    tenant_extension_versions::PostgresTenantExtensionVersions,
     tenant_registry::PostgresTenantRegistry,
     tenant_usage::PostgresTenantUsageProbe,
     tenant_wake_schedule::PostgresTenantWakeSchedule,
 };
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options};
-use andromeda_postgresql_temporal_store::{
-    history_due::HistorySchedule,
-    history_work_probe::PostgresHistoryWorkProbe,
-    retention_sweep::TemporalRetentionHorizonInvalid,
-};
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
-use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use andromeda_tenancy::{
     administration::TenantAdministration,
     creation_policy::TenantCreationPolicy,
     error::TenancyError,
-    pending_work::PendingWorkProbe,
-    pending_work_sources::PendingWorkSources,
     runtime::TenantRuntimeManager,
     tenant_ref::TenantRef,
     usage_probe::TenantUsageProbe,
@@ -136,12 +126,9 @@ enum BrokerStartupError {
     /// The `/info/sourceIdentity` route could not be built from the configured identity.
     #[error(transparent)]
     SourceIdentity(#[from] SourceIdentityRouteError),
-    /// A `temporal.storage` horizon is not a positive whole number of days.
-    #[error("invalid configuration: {0}")]
-    TemporalStorage(#[from] StorageDaysError),
-    /// The retention horizon reaches past the representable instants.
-    #[error("invalid configuration: {0}")]
-    TemporalRetention(#[from] TemporalRetentionHorizonInvalid),
+    /// The dormant-tenant wake probe could not be assembled.
+    #[error(transparent)]
+    PendingWorkProbe(#[from] PendingWorkProbeError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -240,33 +227,6 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dy
     ))
 }
 
-/// The dormant-tenant wake probe: every store answering for the work it owns.
-///
-/// The context store answers first, for its queues, expiries and periodic
-/// notifications, and so vouches for the tenant's schema before the temporal
-/// store reads its history chunks for the conversion and retention sweeps. Each
-/// reads over a transient request-path connection of its own.
-///
-/// # Errors
-///
-/// Returns [`BrokerStartupError::TemporalStorage`] or
-/// [`BrokerStartupError::TemporalRetention`] when `temporal.storage` names no
-/// usable sweep horizon, which configuration validation refuses first.
-fn pending_work_probe(request_url: &DatabaseUrl, config: &BrokerConfig) -> Result<Arc<dyn PendingWorkProbe>, BrokerStartupError> {
-    let history = HistorySchedule::try_from(&TemporalStoragePolicy::try_from(&config.temporal.storage)?)?;
-    Ok(Arc::new(PendingWorkSources::new(vec![
-        Arc::new(PostgresPendingWorkProbe::new(
-            request_url.clone(), // clone: each probe derives tenant URLs from its own copy of the request base
-            config.database.acquire_timeout(),
-        )),
-        Arc::new(PostgresHistoryWorkProbe::new(
-            request_url.clone(), // clone: each probe derives tenant URLs from its own copy of the request base
-            config.database.acquire_timeout(),
-            history,
-        )),
-    ])))
-}
-
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
 async fn construct(
     config: Arc<BrokerConfig>,
@@ -320,12 +280,16 @@ async fn construct(
     let pending_work_probe = pending_work_probe(&request_url, &config)?;
     let tenant_usage_probe = tenant_usage_probe(request_url.clone(), &config); // clone: the factory retains the request base URL
     let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
+    // Every open records the extension versions it left, and the waker reads
+    // the record to bring dormant tenants up to date after an image upgrade.
+    let extension_versions = Arc::new(PostgresTenantExtensionVersions::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
         request_url,
         direct_url,
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
         Arc::clone(&forwarded_subscription_router),
+        Arc::clone(&extension_versions),
     ));
     let tenants = TenantRuntimeManager::new(
         config.tenancy.clone(), // clone: manager owns its policy
@@ -338,7 +302,7 @@ async fn construct(
     // The wake tasks share the schedule with the manager and run only when named
     // tenancy is enabled; registered after the janitor so a woken runtime is
     // subject to the same eviction sweeps.
-    register_tenant_waker(&process_tasks, Arc::clone(&tenants), wake_schedule, &config.tenancy)?;
+    register_tenant_waker(&process_tasks, Arc::clone(&tenants), wake_schedule, extension_versions, &config.tenancy)?;
     // Warm the unnamed default so its runtime is built before the first
     // request. The returned lease is dropped at once: the default is never
     // evicted, so it needs no hold to stay resident.

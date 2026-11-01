@@ -74,6 +74,9 @@ pub mod subscription_forwarding;
 pub mod subscription_store;
 /// Reaching and creating a tenant's database.
 pub mod tenant_database;
+/// The versioned extensions each tenant database held after its last open,
+/// behind the tenancy crate's catch-up port.
+pub mod tenant_extension_versions;
 /// Migrating a tenant's database to the schema this binary embeds.
 pub mod tenant_migration;
 /// The `tenants` table, behind the tenancy crate's registry port.
