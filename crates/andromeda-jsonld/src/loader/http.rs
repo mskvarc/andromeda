@@ -27,6 +27,7 @@ use crate::{
     hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
     loader::{
         cache_lifetime::CacheLifetime,
+        context_client::ContextClient,
         context_lifetimes::ContextLifetimes,
         context_sources::note_source,
         durable_cache::{fetch_and_persist, load_from_durable_cache, persist_registry_context},
@@ -40,7 +41,6 @@ use crate::{
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
 use moka::future::Cache;
-use reqwest::{Client, redirect::Policy};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -51,8 +51,8 @@ use std::sync::{
 /// Not `Clone`: wrap in `Arc` to share across tasks.
 #[derive(Debug)]
 pub struct HttpContextLoader {
-    /// The HTTP client remote fetches go through.
-    client: Client,
+    /// The HTTP client remote fetches go through, held to the address policy.
+    client: ContextClient,
     /// The in-process cache in front of every other step.
     pub(super) cache: Cache<IriBuf, LoadedContext>,
     /// Embedded and preloaded documents, available without network access.
@@ -90,7 +90,7 @@ impl HttpContextLoader {
     /// # Errors
     ///
     /// Returns [`JsonLdError::ClientBuild`] when the HTTP client cannot be
-    /// built from the supplied timeout and redirect limit.
+    /// built from the supplied timeout, redirect limit and address policy.
     pub(crate) fn new(
         registry: Arc<ContextRegistry>,
         settings: LoaderSettings,
@@ -100,15 +100,12 @@ impl HttpContextLoader {
             allow_remote,
             timeout,
             max_redirects,
+            addresses,
             cache_capacity,
             lifetimes,
             max_context_bytes,
         } = settings;
-        let client = Client::builder()
-            .timeout(timeout)
-            .redirect(Policy::limited(max_redirects as usize))
-            .build()
-            .map_err(JsonLdError::ClientBuild)?;
+        let client = ContextClient::new(addresses, timeout, max_redirects).map_err(JsonLdError::ClientBuild)?;
 
         // No `time_to_live`: a cache-wide bound would cut a `max-age` the origin
         // server granted short of what clause 6.3.16 requires be honoured.
@@ -281,7 +278,7 @@ impl HttpContextLoader {
         }
         let url_iri = url.clone(); // owned: the moka key and the cache-fill future both need it
         let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
-        let client = self.client.clone(); // clone: reqwest::Client is an Arc handle
+        let client = self.client.clone(); // clone: shares the connection pool and the guard into the cache-fill future
         let allow_remote = self.allow_remote;
         let lifetimes = self.lifetimes;
         let max_bytes = self.max_context_bytes;

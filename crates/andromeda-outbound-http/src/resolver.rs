@@ -10,28 +10,12 @@
 
 use crate::address_policy::AddressPolicy;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use std::{
-    error::Error,
-    net::{IpAddr, SocketAddr},
-};
+use std::{error::Error, net::SocketAddr};
 use tokio::net::lookup_host;
 
 /// The result the `reqwest` DNS contract expects: resolved addresses, or a
 /// boxed error that fails the connection.
 type ResolveResult = Result<Addrs, Box<dyn Error + Send + Sync>>;
-
-/// A resolution the guard refused because it reached an address the policy
-/// does not admit.
-///
-/// Handed back to `reqwest` inside its boxed resolver error, which fails the
-/// connection; the host is the one `reqwest` asked to resolve and is named by
-/// the request error that wraps this one.
-#[derive(Debug, thiserror::Error)]
-#[error("resolution blocked: resolves to refused IP {ip}")]
-struct PrivateAddressResolved {
-    /// The first resolved address the policy refused.
-    ip: IpAddr,
-}
 
 /// Resolver that blocks any resolution reaching an address the policy refuses.
 #[derive(Debug)]
@@ -57,13 +41,19 @@ impl Resolve for PrivateIpResolver {
 }
 
 /// Resolve a host and refuse it if the policy refuses any resolved address.
+///
+/// A refusal is handed back to `reqwest` as an
+/// [`EndpointRefusal`](crate::endpoint_refusal::EndpointRefusal) inside its
+/// boxed resolver error, which fails the connection, so a caller finds it in
+/// the request error's source chain with
+/// [`EndpointRefusal::find_in`](crate::endpoint_refusal::EndpointRefusal::find_in).
 async fn vetted_addrs(host: String, policy: AddressPolicy) -> ResolveResult {
     // Port 0: `reqwest` overrides it with the URL's port (or the scheme default)
     // per the `Resolve` contract, so only the address is significant here.
     let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), 0)).await?.collect();
 
-    if let Some(refused) = resolved.iter().find(|addr| policy.vet(addr.ip()).is_err()) {
-        return Err(Box::new(PrivateAddressResolved { ip: refused.ip() }));
+    if let Some(refusal) = resolved.iter().find_map(|addr| policy.vet(addr.ip()).err()) {
+        return Err(Box::new(refusal));
     }
 
     Ok(Box::new(resolved.into_iter()))
@@ -75,10 +65,7 @@ async fn vetted_addrs(host: String, policy: AddressPolicy) -> ResolveResult {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        address_policy::AddressPolicy,
-        resolver::{PrivateAddressResolved, vetted_addrs},
-    };
+    use crate::{address_policy::AddressPolicy, endpoint_refusal::EndpointRefusal, resolver::vetted_addrs};
     use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
 
     fn loopback_rules() -> Vec<AddressRule> {
@@ -91,7 +78,7 @@ mod tests {
         let Err(error) = refused else {
             panic!("localhost resolves to loopback and must be refused");
         };
-        assert!(error.is::<PrivateAddressResolved>(), "the refusal is the typed guard error: {error}");
+        assert!(error.is::<EndpointRefusal>(), "the refusal is the typed guard error: {error}");
     }
 
     #[tokio::test]
@@ -106,7 +93,7 @@ mod tests {
         let Err(error) = vetted_addrs("localhost".to_string(), denying).await else {
             panic!("localhost resolves to a denied address and must be refused");
         };
-        assert!(error.is::<PrivateAddressResolved>(), "{error}");
+        assert!(error.is::<EndpointRefusal>(), "{error}");
     }
 
     #[tokio::test]

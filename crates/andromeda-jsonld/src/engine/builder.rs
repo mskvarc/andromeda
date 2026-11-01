@@ -16,6 +16,7 @@ use crate::{
     loader::{cache_lifetime::CacheLifetime, context_lifetimes::ContextLifetimes, http::HttpContextLoader, loader_settings::LoaderSettings},
 };
 use andromeda_json_literal::JsonLiteral;
+use andromeda_outbound_http::address_policy::AddressPolicy;
 use iri_rs::{Iri, IriBuf, iri};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 use tracing::info;
@@ -49,6 +50,8 @@ pub struct JsonLdEngineBuilder {
     timeout: Duration,
     /// How many redirects a context fetch may follow.
     max_redirects: u32,
+    /// Which resolved addresses a context fetch may reach.
+    addresses: AddressPolicy,
     /// Entry bound shared by the context cache and the term cache.
     cache_capacity: u64,
     /// The term cache's entry lifetime, and the heuristic lifetime a context
@@ -75,6 +78,7 @@ impl JsonLdEngineBuilder {
             allow_remote: RemoteContextFetch::Allow,
             timeout: Duration::from_secs(30),
             max_redirects: 5,
+            addresses: AddressPolicy::default(),
             cache_capacity: 1024,
             cache_ttl: CacheLifetime::DEFAULT,
             hosted_context_revalidation: CacheLifetime::HOSTED_REVALIDATION_DEFAULT,
@@ -102,6 +106,14 @@ impl JsonLdEngineBuilder {
     #[must_use]
     pub const fn max_redirects(mut self, max: u32) -> JsonLdEngineBuilder {
         self.max_redirects = max;
+        self
+    }
+
+    /// Which resolved addresses a context fetch, and every redirect and JSON-LD
+    /// alternate it follows, may reach. The default admits every address.
+    #[must_use]
+    pub fn addresses(mut self, addresses: AddressPolicy) -> JsonLdEngineBuilder {
+        self.addresses = addresses;
         self
     }
 
@@ -207,6 +219,7 @@ impl JsonLdEngineBuilder {
             .allow_remote(self.allow_remote)
             .timeout(self.timeout)
             .max_redirects(self.max_redirects)
+            .addresses(self.addresses)
             .cache_capacity(self.cache_capacity)
             .lifetimes(ContextLifetimes {
                 heuristic: self.cache_ttl,

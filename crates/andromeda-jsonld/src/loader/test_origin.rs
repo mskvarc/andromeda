@@ -4,11 +4,14 @@
 //! stage exactly the responses a context host could send (a redirect, an HTML
 //! page naming an alternate) without reaching the network.
 
+use crate::loader::context_client::ContextClient;
+use andromeda_outbound_http::address_policy::AddressPolicy;
 use iri_rs::IriBuf;
 use reqwest::{
     StatusCode,
     header::{LINK, LOCATION},
 };
+use std::time::Duration;
 use wiremock::{
     Mock,
     MockServer,
@@ -40,6 +43,12 @@ impl TestOrigin {
         IriBuf::new(format!("{}{served}", self.server.uri())).expect("an origin URL is an IRI")
     }
 
+    /// The port the origin listens on, for a URL naming another loopback
+    /// address on the same port.
+    pub(crate) fn port(&self) -> u16 {
+        self.server.address().port()
+    }
+
     /// How many times `path` was requested.
     pub(crate) async fn requests(&self, served: &str) -> usize {
         self.server
@@ -50,6 +59,12 @@ impl TestOrigin {
             .filter(|request| request.method.as_str() == "GET" && request.url.path() == served)
             .count()
     }
+}
+
+/// A context client admitting what `addresses` admits, with the download
+/// limits of a default loader.
+pub(crate) fn client(addresses: AddressPolicy) -> ContextClient {
+    ContextClient::new(addresses, Duration::from_secs(30), 5).expect("a buildable context client")
 }
 
 /// A `200 OK` carrying `body` as `content_type`, with one `Link` header line

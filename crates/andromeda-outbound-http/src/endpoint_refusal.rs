@@ -1,6 +1,6 @@
 //! Why an endpoint is refused before a request is sent to it.
 
-use std::{io, net::IpAddr, sync::Arc};
+use std::{error::Error, io, iter::successors, net::IpAddr, sync::Arc};
 
 /// An endpoint the guard will not let a request go to.
 ///
@@ -24,4 +24,30 @@ pub enum EndpointRefusal {
         /// What the resolver reported, shared because the outcome is cached.
         source: Arc<io::Error>,
     },
+}
+
+impl EndpointRefusal {
+    /// The refusal in the source chain of a request `error`.
+    ///
+    /// The connect-time resolver and the redirect policy can only refuse from
+    /// inside `reqwest`, which wraps what they return in its own error, so a
+    /// caller that tells a refusal from a transport failure looks for it here.
+    #[must_use]
+    pub fn find_in(error: &reqwest::Error) -> Option<&EndpointRefusal> {
+        successors(error.source(), |&current| current.source()).find_map(|current| current.downcast_ref::<EndpointRefusal>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::endpoint_refusal::EndpointRefusal;
+    use reqwest::Client;
+
+    #[test]
+    fn a_request_error_without_a_refusal_finds_none() {
+        let Err(error) = Client::new().get("not a url").build() else {
+            return;
+        };
+        assert!(EndpointRefusal::find_in(&error).is_none());
+    }
 }

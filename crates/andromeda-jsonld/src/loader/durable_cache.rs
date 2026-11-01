@@ -19,6 +19,7 @@ use crate::{
     },
     loader::{
         cache_lifetime::{CacheLifetime, ContextFreshness},
+        context_client::ContextClient,
         error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
         loaded_context::{ContextDurability, ContextProvenance, EntryLifetime, LoadedContext},
         pending_persistence::PendingPersistence,
@@ -27,7 +28,6 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use iri_rs::IriBuf;
-use reqwest::Client;
 use std::sync::Arc;
 use tracing::{trace, warn};
 
@@ -153,7 +153,7 @@ fn durable_hit(url: &IriBuf, hit: CachedContext, hosted_revalidation: CacheLifet
 /// Returns whatever [`fetch_and_parse_retrying`] reports; a failed durable write
 /// is not an error, only a downgrade to [`ContextDurability::Pending`].
 pub(crate) async fn fetch_and_persist(
-    client: &Client,
+    client: &ContextClient,
     url: &IriBuf,
     max_bytes: usize,
     default_lifetime: CacheLifetime,
@@ -292,12 +292,12 @@ mod tests {
             cache_lifetime::{CacheLifetime, ResidualLifetime},
             durable_cache::{durable_hit, fetch_and_persist},
             loaded_context::LoadedContext,
-            test_origin::{TestOrigin, ok, redirect},
+            test_origin::{TestOrigin, client, ok, redirect},
         },
         test_documents::{document_value, literal},
     };
+    use andromeda_outbound_http::address_policy::AddressPolicy;
     use iri_rs::IriBuf;
-    use reqwest::Client;
     use serde_json::{Value, json};
 
     fn iri(value: &str) -> IriBuf {
@@ -377,9 +377,15 @@ mod tests {
             )
             .await;
 
-        let loaded = fetch_and_persist(&Client::new(), &origin.url("/moved.jsonld"), 2_000_000, CacheLifetime::DEFAULT, None)
-            .await
-            .expect("the redirect is followed");
+        let loaded = fetch_and_persist(
+            &client(AddressPolicy::default()),
+            &origin.url("/moved.jsonld"),
+            2_000_000,
+            CacheLifetime::DEFAULT,
+            None,
+        )
+        .await
+        .expect("the redirect is followed");
 
         pretty_assertions::assert_eq!(
             processed(&loaded),

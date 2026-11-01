@@ -99,6 +99,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-outbound-http",
         "andromeda-persistence-failure",
         "andromeda-retry",
     ],

@@ -19,16 +19,17 @@ use crate::{
     loader::{
         alternate_link::{JsonLdAlternate, json_ld_alternate},
         cache_lifetime::{CacheLifetime, ContextFreshness, response_freshness},
+        context_client::ContextClient,
         error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     },
 };
-use andromeda_http_headers::json_ld_accept::JsonLdAccept;
 use andromeda_json_literal::JsonLiteral;
+use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
-use reqwest::{Client, Response, header::HeaderMap};
+use reqwest::{Response, header::HeaderMap};
 use std::{num::NonZeroU32, str::from_utf8, sync::Arc, time::Duration};
 use tracing::warn;
 
@@ -68,11 +69,11 @@ pub(crate) fn ld_json_media_type() -> MediaTypeBuf {
 /// # Errors
 ///
 /// Returns the [`LoaderError`] naming the step that refused the response: the
-/// request itself, a non-success status, a media type no context is read from
+/// address policy, the request itself, a non-success status, a media type no context is read from
 /// with no single alternate, a body past `max_bytes`, or a document that will
 /// not parse as a context.
 pub(crate) async fn fetch_and_parse(
-    client: &Client,
+    client: &ContextClient,
     url: &IriBuf,
     max_bytes: usize,
     default_lifetime: CacheLifetime,
@@ -98,15 +99,8 @@ pub(crate) async fn fetch_and_parse(
 
 /// Send the context request for `target` and require a success status,
 /// reporting any failure under `reported`.
-async fn successful_response(client: &Client, target: &IriBuf, reported: &IriBuf) -> Result<Response, LoaderError> {
-    let mut request_headers = HeaderMap::new();
-    request_headers.typed_insert(JsonLdAccept);
-    let response = client
-        .get(target.as_str())
-        .headers(request_headers)
-        .send()
-        .await
-        .map_err(|error| unavailable(reported, ContextUnavailable::Request(Arc::new(error))))?;
+async fn successful_response(client: &ContextClient, target: &IriBuf, reported: &IriBuf) -> Result<Response, LoaderError> {
+    let response = client.get(target).await.map_err(|reason| unavailable(reported, reason))?;
     if response.status().is_success() {
         Ok(response)
     } else {
@@ -201,7 +195,7 @@ const TRANSPORT_RETRY: RetryPolicy = RetryPolicy {
 /// resets one connection, but the same transience arises for any deployment
 /// fetching a remote `@context`.
 pub(crate) async fn fetch_and_parse_retrying(
-    client: &Client,
+    client: &ContextClient,
     url: &IriBuf,
     max_bytes: usize,
     default_lifetime: CacheLifetime,
@@ -226,12 +220,16 @@ pub(crate) async fn fetch_and_parse_retrying(
 
 /// Whether a loader failure is a transient transport error worth retrying.
 ///
-/// Only a network- or transport-level request failure recovers on a retry.
-/// A non-success HTTP status, an oversized body, an unparseable document, a
+/// Only a network- or transport-level request failure recovers on a retry, a
+/// failed resolution by the address guard included. A refused address, a
+/// non-success HTTP status, an oversized body, an unparseable document, a
 /// disabled fetch, or a degraded durable cache are all deterministic given the
 /// same request, so retrying them only delays the inevitable report.
 const fn is_transient_transport_failure(error: &LoaderError) -> bool {
-    matches!(error.kind, LoaderErrorKind::Unavailable(ContextUnavailable::Request(_)))
+    matches!(
+        error.kind,
+        LoaderErrorKind::Unavailable(ContextUnavailable::Request(_) | ContextUnavailable::Refused(EndpointRefusal::DnsFailed { .. }))
+    )
 }
 
 /// Why a response's `Content-Type` names nothing a context can be parsed from,
@@ -291,24 +289,53 @@ mod tests {
             cache_lifetime::CacheLifetime,
             error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
             remote_document::{RemoteContextDocument, fetch_and_parse, is_json_like, is_transient_transport_failure, ld_json_media_type},
-            test_origin::{TestOrigin, ok, redirect, untyped},
+            test_origin::{TestOrigin, client, ok, redirect, untyped},
         },
         test_documents::{as_value, literal},
     };
+    use andromeda_configuration::{address_rule::AddressRule, schema::private_ip_blocking::PrivateIpBlocking};
+    use andromeda_outbound_http::{address_policy::AddressPolicy, endpoint_refusal::EndpointRefusal};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use mediatype::MediaTypeBuf;
     use reqwest::{Client, StatusCode};
     use serde_json::{Value, json};
-    use std::sync::Arc;
+    use std::{
+        io,
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
 
     /// A context document naming one term.
     const TERMS: &str = r#"{"@context": {"speed": "https://example.org/speed"}}"#;
 
     /// Fetch `path` from `origin`.
     async fn fetched(origin: &TestOrigin, path: &str) -> Result<RemoteContextDocument, LoaderError> {
-        fetch_and_parse(&Client::new(), &origin.url(path), 2_000_000, CacheLifetime::DEFAULT).await
+        fetch_and_parse(&client(AddressPolicy::default()), &origin.url(path), 2_000_000, CacheLifetime::DEFAULT).await
     }
+
+    /// Fetch `path` from `origin` under `addresses`.
+    async fn fetched_under(addresses: AddressPolicy, origin: &TestOrigin, path: &str) -> Result<RemoteContextDocument, LoaderError> {
+        fetch_and_parse(&client(addresses), &origin.url(path), 2_000_000, CacheLifetime::DEFAULT).await
+    }
+
+    /// Private addresses refused, with the origin's own loopback address
+    /// exempt and every other loopback address refused.
+    fn refusing_all_but_the_origin() -> AddressPolicy {
+        let origin: AddressRule = "127.0.0.1".parse().expect("a well-formed rule");
+        AddressPolicy::new(PrivateIpBlocking::Refused, vec![origin], Vec::new())
+    }
+
+    /// Whether `error` is a refusal of `refused`.
+    fn is_refusal_of(error: &LoaderError, refused: Ipv4Addr) -> bool {
+        matches!(
+            &error.kind,
+            LoaderErrorKind::Unavailable(ContextUnavailable::Refused(EndpointRefusal::Blocked { ip })) if *ip == IpAddr::V4(refused)
+        )
+    }
+
+    /// A loopback address other than the origin's, on the origin's port.
+    const ELSEWHERE: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);
 
     /// The document as JSON.
     fn json_of(document: &RemoteContextDocument) -> Value {
@@ -445,6 +472,92 @@ mod tests {
             url: IriBuf::new("https://example.com/context.jsonld".to_owned()).expect("valid URL"),
             kind,
         }
+    }
+
+    #[tokio::test]
+    async fn a_context_url_in_refused_address_space_is_refused_without_a_request() {
+        let origin = TestOrigin::start().await;
+        origin.stage("/context.jsonld", ok("application/ld+json", TERMS, &[])).await;
+        let refusing = AddressPolicy::new(PrivateIpBlocking::Refused, Vec::new(), Vec::new());
+
+        let error = fetched_under(refusing, &origin, "/context.jsonld").await.expect_err("loopback is refused");
+
+        assert!(is_refusal_of(&error, Ipv4Addr::LOCALHOST), "{error:?}");
+        assert_eq!(origin.requests("/context.jsonld").await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_context_url_on_a_denied_address_is_refused_though_private_addresses_are_allowed() {
+        let origin = TestOrigin::start().await;
+        origin.stage("/context.jsonld", ok("application/ld+json", TERMS, &[])).await;
+        let denied: AddressRule = "127.0.0.1".parse().expect("a well-formed rule");
+        let denying = AddressPolicy::new(PrivateIpBlocking::Allowed, Vec::new(), vec![denied]);
+
+        let error = fetched_under(denying, &origin, "/context.jsonld")
+            .await
+            .expect_err("a denied address is refused");
+
+        assert!(is_refusal_of(&error, Ipv4Addr::LOCALHOST), "{error:?}");
+        assert_eq!(origin.requests("/context.jsonld").await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_context_url_on_an_allowed_address_is_downloaded_under_a_refusing_policy() {
+        let origin = TestOrigin::start().await;
+        origin.stage("/context.jsonld", ok("application/ld+json", TERMS, &[])).await;
+
+        let document = fetched_under(refusing_all_but_the_origin(), &origin, "/context.jsonld")
+            .await
+            .expect("an allowed address is downloaded");
+
+        assert_eq!(json_of(&document), json!({"@context": {"speed": "https://example.org/speed"}}));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_into_refused_address_space_is_refused() {
+        let origin = TestOrigin::start().await;
+        let elsewhere = format!("http://{ELSEWHERE}:{}/context.jsonld", origin.port());
+        origin.stage("/moved", redirect(&elsewhere)).await;
+
+        let error = fetched_under(refusing_all_but_the_origin(), &origin, "/moved")
+            .await
+            .expect_err("the redirect target is refused");
+
+        assert!(is_refusal_of(&error, ELSEWHERE), "{error:?}");
+        assert_eq!(error.url, origin.url("/moved"), "the failure is reported under the URL that was asked for");
+    }
+
+    #[tokio::test]
+    async fn a_json_ld_alternate_in_refused_address_space_is_refused() {
+        let origin = TestOrigin::start().await;
+        let alternate = format!(
+            r#"<http://{ELSEWHERE}:{}/context.jsonld>; rel="alternate"; type="application/ld+json""#,
+            origin.port()
+        );
+        origin.stage("/page", ok("text/html", "<html></html>", &[alternate.as_str()])).await;
+
+        let error = fetched_under(refusing_all_but_the_origin(), &origin, "/page")
+            .await
+            .expect_err("the alternate is refused");
+
+        assert!(is_refusal_of(&error, ELSEWHERE), "{error:?}");
+        assert_eq!(error.url, origin.url("/page"), "the failure is reported under the URL that was asked for");
+    }
+
+    #[test]
+    fn a_refused_address_is_not_retried_and_a_failed_guard_resolution_is() {
+        let blocked = EndpointRefusal::Blocked {
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        };
+        assert!(!is_transient_transport_failure(&error(LoaderErrorKind::Unavailable(
+            ContextUnavailable::Refused(blocked)
+        ))));
+        let unresolved = EndpointRefusal::DnsFailed {
+            source: Arc::new(io::Error::other("temporary failure in name resolution")),
+        };
+        assert!(is_transient_transport_failure(&error(LoaderErrorKind::Unavailable(
+            ContextUnavailable::Refused(unresolved)
+        ))));
     }
 
     #[test]

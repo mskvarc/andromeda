@@ -4,6 +4,7 @@ use crate::{
     engine::options::RemoteContextFetch,
     loader::{cache_lifetime::CacheLifetime, context_lifetimes::ContextLifetimes, loader_settings::LoaderSettings},
 };
+use andromeda_outbound_http::address_policy::AddressPolicy;
 use std::time::Duration;
 
 impl LoaderSettings {
@@ -14,6 +15,7 @@ impl LoaderSettings {
             .allow_remote(RemoteContextFetch::Deny)
             .timeout(Duration::from_secs(30))
             .max_redirects(5)
+            .addresses(AddressPolicy::default())
             .cache_capacity(1024)
             .lifetimes(ContextLifetimes {
                 heuristic: CacheLifetime::DEFAULT,

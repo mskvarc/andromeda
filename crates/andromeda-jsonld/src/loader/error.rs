@@ -9,6 +9,7 @@
 
 use crate::{context_cache::ContextCacheError, context_subtree::UnusableLocalContext, error::JsonLdError};
 use andromeda_json_literal::admission::JsonLiteralError;
+use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{MediaTypeBuf, MediaTypeError};
 use reqwest::StatusCode;
@@ -68,6 +69,11 @@ pub enum ContextUnavailable {
     /// by reference, and the conversion into [`JsonLdError`] keeps the source.
     #[error("request failed: {0}")]
     Request(#[source] Arc<reqwest::Error>),
+    /// The address policy refused the URL, a redirect or JSON-LD alternate it
+    /// led to, or the address one of them resolved to, so nothing was
+    /// requested there.
+    #[error("the context address is refused: {0}")]
+    Refused(#[source] EndpointRefusal),
     /// The attached durable cache failed while remote loading was unavailable.
     #[error("context cache failed: {0}")]
     Cache(#[source] ContextCacheError),

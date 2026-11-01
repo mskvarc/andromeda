@@ -16,6 +16,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-outbound-http.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-retry = { workspace = true, features = ["tokio"] }
 async-trait = "0.1.92"

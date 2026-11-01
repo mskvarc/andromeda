@@ -22,11 +22,13 @@ mod access_accounting;
 pub(crate) mod alternate_link;
 /// The lifetime a response grants a downloaded `@context` (clause 6.3.16).
 pub mod cache_lifetime;
+/// The durable-cache steps of context resolution.
+/// The HTTP client a remote `@context` is downloaded with.
+pub(crate) mod context_client;
 /// The lifetimes the resolver assigns where no response states one.
 pub(crate) mod context_lifetimes;
 /// The documents a processed context was built from.
 pub(crate) mod context_sources;
-/// The durable-cache steps of context resolution.
 pub mod durable_cache;
 /// Failures reported while resolving a context URL.
 pub mod error;
