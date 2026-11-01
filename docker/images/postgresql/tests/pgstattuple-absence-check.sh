@@ -125,7 +125,7 @@ sql "CREATE TEMP TABLE aged AS SELECT * FROM attribute_history LIMIT 1;
 		a.observed_at, a.created_at, a.modified_at, a.deleted_at, a.value_date_time, a.expires_at,
 		CASE WHEN a.generated_instance_id IS NULL THEN NULL ELSE gen_random_uuid() END,
 		a.value_type_key, a.value_datatype_key, a.unit_code_id, a.value_boolean, a.verbatim_instance_id, a.value_number, a.value_string,
-		a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_members, a.value_object, a.value_uri,
+		a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_reach, a.value_geometry_members, a.value_object, a.value_uri,
 		a.object_type_keys, a.proof_seals, a.sub_attributes
 	FROM aged a CROSS JOIN generate_series(1, 8) n;" > /dev/null
 wait_for "the sweep converts the aged chunk" 1 60 "$aged_status"
@@ -139,12 +139,19 @@ expect "an UPDATE into the converted chunk leaves it partial" 9 "$(sql "$aged_st
 # 10% dead share and its 16 MiB size and reclaim floors whatever the row
 # width.
 #
-# With autovacuum off a rewrite stops being HOT once the pages are full, so
-# every rewrite after that adds an entry per row to pk_ca_grain. They go on
-# until that B-tree reaches 16 MiB too: an index under the size floor is
-# never a probe candidate, and the absence of probes asserted below would
-# then prove nothing. A relation or index still short after the cap ends the
-# check here rather than after the fifteen-minute wait.
+# Page pruning reclaims a dead HOT version on the next visit to its page, so
+# a session holds the database's xmin horizon back while the rewrites run:
+# no version is removable, the pages fill, and every rewrite after that is
+# not HOT and adds an entry per row to pk_ca_grain. They go on until that
+# B-tree reaches 16 MiB too: an index under the size floor is never a probe
+# candidate, and the absence of probes asserted below would then prove
+# nothing. A relation or index still short after the cap ends the check here
+# rather than after the fifteen-minute wait.
+docker exec -d -u postgres "$database" psql -XAtq -d postgres -c "SET application_name = 'horizon-hold'; SELECT pg_sleep(3600)"
+for _ in $(seq 1 20); do
+	[ "$(sql "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'horizon-hold' AND state = 'active'")" = 1 ] && break
+	sleep 0.5
+done
 heap_floor=$((64 * 1024 * 1024))
 index_floor=$((16 * 1024 * 1024))
 rewrites=0
@@ -159,6 +166,7 @@ while [ "$rewrites" -lt 60 ]; do
 		break
 	fi
 done
+sql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'horizon-hold'" > /dev/null
 if [ "$heap_bytes" -lt "$heap_floor" ] || [ "$index_bytes" -lt "$index_floor" ]; then
 	fail "current_attributes reaches 64 MiB and pk_ca_grain 16 MiB: $heap_bytes and $index_bytes bytes after $rewrites rewrites"
 	exit 1

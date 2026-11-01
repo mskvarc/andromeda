@@ -113,7 +113,8 @@ start_broker() {
 
 # usage: grant_role DATABASE
 # The data privileges on every table and sequence of every schema the broker
-# writes, and MAINTAIN on every table of public.
+# writes, MAINTAIN on every table of public, and CREATE on public, which the
+# migrator needs to confirm its ledger table exists.
 grant_role() {
 	sql "$1" "DO \$\$
 	DECLARE
@@ -128,6 +129,7 @@ grant_role() {
 			EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO $role', schema_name);
 		END LOOP;
 		GRANT MAINTAIN ON ALL TABLES IN SCHEMA public TO $role;
+		GRANT CREATE ON SCHEMA public TO $role;
 	END
 	\$\$;" > /dev/null
 }
@@ -151,7 +153,7 @@ age_history() {
 			a.observed_at, a.created_at, a.modified_at, a.deleted_at, a.value_date_time, a.expires_at,
 			CASE WHEN a.generated_instance_id IS NULL THEN NULL ELSE gen_random_uuid() END,
 			a.value_type_key, a.value_datatype_key, a.unit_code_id, a.value_boolean, a.verbatim_instance_id, a.value_number, a.value_string,
-			a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_members, a.value_object, a.value_uri,
+			a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_reach, a.value_geometry_members, a.value_object, a.value_uri,
 			a.object_type_keys, a.proof_seals, a.sub_attributes
 		FROM aged a CROSS JOIN generate_series(1, $2) n;" > /dev/null
 }
@@ -225,7 +227,7 @@ END
 chunk="$(sql "$db" "SELECT format('%I.%I', chunk_schema, chunk_name) $kept_chunks AND pg_indexes_size(format('%I.%I', chunk_schema, chunk_name)::regclass) >= 16777216 ORDER BY range_start LIMIT 1")"
 expect "the role holds MAINTAIN on current_attributes and entities and none on the kept chunk" "t,t,f" \
 	"$(sql "$db" "SELECT concat_ws(',', has_table_privilege('$role', 'public.current_attributes', 'MAINTAIN'), has_table_privilege('$role', 'public.entities', 'MAINTAIN'), has_table_privilege('$role', '$chunk', 'MAINTAIN'))")"
-expect "the role owns neither attribute_history nor current_attributes" "f,f" \
+expect "the role owns neither attribute_history nor current_attributes" "false,false" \
 	"$(sql "$db" "SELECT string_agg(pg_has_role('$role', relowner, 'USAGE')::text, ',' ORDER BY relname) FROM pg_class WHERE oid IN ('public.attribute_history'::regclass, 'public.current_attributes'::regclass)")"
 
 start_broker "$broker" "postgres://$role:check@$database:5432/postgres" automatic

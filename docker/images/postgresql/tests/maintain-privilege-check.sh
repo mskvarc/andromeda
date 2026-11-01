@@ -86,7 +86,8 @@ start_broker() {
 
 # usage: grant_role DATABASE
 # The data privileges on every table and sequence of every schema the broker
-# writes, and MAINTAIN on every table of public.
+# writes, MAINTAIN on every table of public, and CREATE on public, which the
+# migrator needs to confirm its ledger table exists.
 grant_role() {
 	sql "$1" "DO \$\$
 	DECLARE
@@ -101,6 +102,7 @@ grant_role() {
 			EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO $role', schema_name);
 		END LOOP;
 		GRANT MAINTAIN ON ALL TABLES IN SCHEMA public TO $role;
+		GRANT CREATE ON SCHEMA public TO $role;
 	END
 	\$\$;" > /dev/null
 }
@@ -128,7 +130,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $te
 	"$base/entities")"
 expect "create the tenant's first entity" 201 "$status"
 db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
-sql "$db" "ALTER TABLE entities SET (autovacuum_enabled = false); ALTER TABLE attribute_census SET (autovacuum_enabled = false)" > /dev/null
+sql "$db" "ALTER TABLE entities SET (autovacuum_enabled = false); ALTER TABLE attribute_census SET (autovacuum_enabled = false); ALTER TABLE current_attributes SET (autovacuum_enabled = false)" > /dev/null
 for first in 1 501 1001 1501; do
 	expect "create entities $first to $((first + 499))" 201 "$(create_batch "$first" "$((first + 499))")"
 done
@@ -142,6 +144,10 @@ sql "$db" "UPDATE entities SET modified_at = modified_at; UPDATE entities SET mo
 	FROM (SELECT attribute_name_key FROM attribute_census LIMIT 1) a
 	CROSS JOIN generate_series(1, 2000) n
 	CROSS JOIN (VALUES (1::bigint), (-1::bigint)) d(delta);" > /dev/null
+# A heap's dead share is judged on the rows its last analyze counted, so
+# current_attributes, kept from autovacuum, is analyzed for the visit to have
+# a heap to sample; entities stays unanalyzed for its stale statistics.
+sql "$db" "ANALYZE current_attributes" > /dev/null
 
 sql postgres "CREATE ROLE $role LOGIN PASSWORD 'check'; GRANT pg_read_all_stats, pg_stat_scan_tables TO $role" > /dev/null
 grant_role postgres
@@ -157,9 +163,10 @@ key="$(sql postgres "SELECT tenant_key FROM tenants WHERE name = '$tenant'")"
 # are what a visit that stopped at the privilege check records.
 wait_for "the visit records its own outcome" 16 300 postgres \
 	"SELECT coalesce(last_result::text, 'none') FROM postgresql_maintenance_tenants WHERE tenant_key = $key"
-# Target 12 is entities, 23 entities_statistics; decision 3 is would-act.
-expect "the entities heap is sampled" 1 \
-	"$(sql postgres "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 12 AND last_sampled_at IS NOT NULL")"
+# Target 11 is current_attributes, 23 entities_statistics; decision 3 is
+# would-act.
+expect "the current_attributes heap is sampled" 1 \
+	"$(sql postgres "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 11 AND last_sampled_at IS NOT NULL")"
 expect "the stale entities statistics are reported as would-act" 3 \
 	"$(sql postgres "SELECT coalesce(last_decision::text, 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 23")"
 expect "no live target records an action result or a queued action" 0 \
