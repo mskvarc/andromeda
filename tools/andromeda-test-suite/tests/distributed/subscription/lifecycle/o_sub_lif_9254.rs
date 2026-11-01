@@ -10,7 +10,7 @@ use andromeda_test_suite::{
     source_answer,
     source_request::SourceRequest,
 };
-use chrono::{TimeDelta, Utc};
+use chrono::{SubsecRound, TimeDelta, Utc};
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode};
 use ngsi_ld::{
@@ -52,7 +52,6 @@ async fn o_sub_lif_9254_an_expired_subscription_given_a_future_expiry_places_its
             source_answer::status(StatusCode::NO_CONTENT),
         )
         .await?;
-    let in_4_seconds: DateTime = (Utc::now() + TimeDelta::seconds(4)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let registration = CSourceRegistration::builder(source.endpoint("a")?)
         .id(registration_id.clone())
         .information([RegistrationInfo::builder()
@@ -62,6 +61,9 @@ async fn o_sub_lif_9254_an_expired_subscription_given_a_future_expiry_places_its
         .operations([DistributedOperation::CreateSubscription, DistributedOperation::DeleteSubscription])
         .build()?;
     broker.registrations().register(&registration).send().await?;
+    // Taken once the Registration is answered, which can take seconds under load, so the expiry lies 4 s ahead of
+    // the create; milliseconds are kept, since a clause 4.6.3 DateTime holds no more than microseconds.
+    let in_4_seconds = DateTime::try_from((Utc::now() + TimeDelta::seconds(4)).trunc_subsecs(3))?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([vehicle_type.as_str()])
@@ -70,7 +72,7 @@ async fn o_sub_lif_9254_an_expired_subscription_given_a_future_expiry_places_its
         .build()?;
     broker.subscriptions().create(&subscription).send().await?;
     let creation = SourceRequest::new(Method::POST, "/a/ngsi-ld/v1/subscriptions").body(BodyPattern::Contains(format!("Vehicle_{namespace}")));
-    let in_an_hour: DateTime = (Utc::now() + TimeDelta::seconds(3600)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
+    let in_an_hour = DateTime::try_from((Utc::now() + TimeDelta::seconds(3600)).trunc_subsecs(3))?;
     let created = source.wait_for_matching(&creation, 1).await?;
     expect_that!(created, len(eq(1)));
     retried(async || {
