@@ -85,6 +85,19 @@ pub(crate) struct SceneSpec {
     pub(crate) registration_failures: usize,
     /// The copies of the local subscription the sources hold.
     pub(crate) copies: Vec<ForwardedCopy>,
+    /// Whether the store holds the companion the mappings link.
+    pub(crate) companion: StoredCompanion,
+}
+
+/// Whether the store holds the companion the mappings link to the local
+/// subscription.
+#[derive(Default)]
+pub(crate) enum StoredCompanion {
+    /// The store holds it.
+    #[default]
+    Held,
+    /// It was deleted underneath its mapping.
+    Missing,
 }
 
 /// The distributed subscription side under test and the doubles around it.
@@ -97,6 +110,8 @@ pub(crate) struct ReassemblyScene {
     maps: Arc<ForwardingMaps>,
     /// The loopback receiver the local subscription's endpoint names.
     receiver: MockServer,
+    /// The endpoint of the local subscription, which the receiver serves.
+    endpoint: String,
     /// How many of the receiver's recorded requests `delivered` has returned.
     returned: usize,
 }
@@ -154,6 +169,20 @@ pub(crate) fn companion_subscription() -> Identifier {
     identifier("urn:ngsi-ld:Subscription:companion")
 }
 
+/// The stored form of the companion: it mirrors the selection of the local
+/// subscription as the default members describe it.
+fn stored_companion() -> Value {
+    json!({
+        "id": companion_subscription().as_str(),
+        "type": "Subscription",
+        "entities": [{"type": default_iri("Vehicle")}],
+        "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/v1/notifications"}},
+        "status": "active",
+        "createdAt": "2020-01-01T00:00:00Z",
+        "modifiedAt": "2020-01-01T00:00:00Z"
+    })
+}
+
 /// The stored form of the local subscription: it watches `Vehicle`, notifies
 /// `endpoint` in the normalized format, and takes `members` over. The
 /// endpoint is always the receiver's, whatever `members` say about it.
@@ -183,11 +212,17 @@ impl ReassemblyScene {
             registrations,
             registration_failures,
             copies,
+            companion,
         } = spec;
         let receiver = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(204)).mount(&receiver).await;
         let endpoint = format!("{}/subscriber", receiver.uri());
-        let subscriptions = Arc::new(RecordingSubscriptions::holding(stored_subscription(&subscription_members, &endpoint)));
+        let local = stored_subscription(&subscription_members, &endpoint);
+        let stored = match companion {
+            StoredCompanion::Held => vec![local, stored_companion()],
+            StoredCompanion::Missing => vec![local],
+        };
+        let subscriptions = Arc::new(RecordingSubscriptions::holding(stored));
         let maps = Arc::new(ForwardingMaps::new(
             local_subscription(),
             sender_registration(),
@@ -252,6 +287,7 @@ impl ReassemblyScene {
             subscriptions,
             maps,
             receiver,
+            endpoint,
             returned: 0,
         }
     }
@@ -299,6 +335,43 @@ impl ReassemblyScene {
     /// The registrations whose copy mapping was removed.
     pub(crate) fn removed_mappings(&self) -> Vec<Identifier> {
         self.maps.removed()
+    }
+
+    /// The companion the mappings link to the local subscription.
+    pub(crate) fn linked_companion(&self) -> Identifier {
+        self.maps.companion()
+    }
+
+    /// Whether the store holds a subscription under `id`.
+    pub(crate) fn stores(&self, id: &Identifier) -> bool {
+        self.subscriptions.holds(id)
+    }
+
+    /// Store the local subscription with `members` in place of the defaults,
+    /// as a committed update leaves it.
+    pub(crate) fn store_local(&self, members: &Value) {
+        self.subscriptions.replace(stored_subscription(members, &self.endpoint));
+    }
+
+    /// Hold the deletions of subscriptions from now on, the companion's among
+    /// them, between their start and their effect.
+    pub(crate) fn hold_deletions(&self) {
+        self.subscriptions.hold_deletions();
+    }
+
+    /// Wait until a held deletion has started.
+    pub(crate) async fn deletion_reached(&self) {
+        self.subscriptions.deletion_reached().await;
+    }
+
+    /// Let the held deletion take effect.
+    pub(crate) fn release_deletions(&self) {
+        self.subscriptions.release_deletions();
+    }
+
+    /// The most companion updates that ran at once.
+    pub(crate) fn most_updates_at_once(&self) -> usize {
+        self.subscriptions.most_updates_at_once()
     }
 
     /// The local subscription as the store holds it.

@@ -1,5 +1,7 @@
 //! The identifier mappings of a re-assembly test: one local subscription, the
-//! copy a source holds of it, and the companion that mirrors it.
+//! copy a source holds of it, and the companion that mirrors it. A copy
+//! withdrawn is forgotten, while a copy placed is read off the source and not
+//! recorded here.
 
 use crate::{
     error::SubscriptionForwardingError,
@@ -24,10 +26,11 @@ pub(crate) struct ForwardingMaps {
     /// The identifier the copy carries at that source, which its notifications
     /// are posted under.
     pub(crate) copy: Identifier,
-    /// The identifier of the companion subscription mirroring `local`.
-    pub(crate) companion: Identifier,
+    /// The identifier of the companion subscription linked to `local`, which
+    /// a companion provisioned in place of a missing one replaces.
+    companion: Mutex<Identifier>,
     /// The copies of `local` the sources hold, as `forwarded_of` answers them.
-    pub(crate) copies: Vec<ForwardedCopy>,
+    copies: Mutex<Vec<ForwardedCopy>>,
     /// How many times the copies of `local` were asked for.
     copies_asked: AtomicUsize,
     /// The registrations whose copy mapping was removed, in the order they were.
@@ -42,11 +45,16 @@ impl ForwardingMaps {
             local,
             sender,
             copy,
-            companion,
-            copies,
+            companion: Mutex::new(companion),
+            copies: Mutex::new(copies),
             copies_asked: AtomicUsize::new(0),
             removed: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The companion linked to the local subscription.
+    pub(crate) fn companion(&self) -> Identifier {
+        self.companion.lock().expect("the companion link is never poisoned").clone() // clone: the caller owns its snapshot
     }
 
     /// How many times the copies of the local subscription were asked for.
@@ -62,16 +70,17 @@ impl ForwardingMaps {
 
 #[async_trait]
 impl SubscriptionForwardingStore for ForwardingMaps {
-    async fn link_companion(&self, _local: &Identifier, _companion: &Identifier) -> Result<(), SubscriptionForwardingError> {
+    async fn link_companion(&self, _local: &Identifier, companion: &Identifier) -> Result<(), SubscriptionForwardingError> {
+        *self.companion.lock().expect("the companion link is never poisoned") = companion.clone(); // clone: the link owns the identifier
         Ok(())
     }
 
     async fn companion_of(&self, local: &Identifier) -> Result<Option<Identifier>, SubscriptionForwardingError> {
-        Ok((*local == self.local).then(|| self.companion.clone())) // clone: the answer owns the identifier
+        Ok((*local == self.local).then(|| self.companion()))
     }
 
     async fn local_of_companion(&self, companion: &Identifier) -> Result<Option<Identifier>, SubscriptionForwardingError> {
-        Ok((*companion == self.companion).then(|| self.local.clone())) // clone: the answer owns the identifier
+        Ok((*companion == self.companion()).then(|| self.local.clone())) // clone: the answer owns the identifier
     }
 
     async fn record_forwarded(&self, _local: &Identifier, _copy: &ForwardedCopy) -> Result<(), SubscriptionForwardingError> {
@@ -80,7 +89,11 @@ impl SubscriptionForwardingStore for ForwardingMaps {
 
     async fn forwarded_of(&self, local: &Identifier) -> Result<Vec<ForwardedCopy>, SubscriptionForwardingError> {
         self.copies_asked.fetch_add(1, Ordering::SeqCst);
-        Ok(if *local == self.local { self.copies.clone() } else { Vec::new() }) // clone: the answer owns the copies
+        Ok(if *local == self.local {
+            self.copies.lock().expect("the copies are never poisoned").clone() // clone: the answer owns the copies
+        } else {
+            Vec::new()
+        })
     }
 
     async fn forwarded_for_registration(&self, _registration: &Identifier) -> Result<Vec<ForwardedSubscriptionCopy>, SubscriptionForwardingError> {
@@ -93,6 +106,10 @@ impl SubscriptionForwardingStore for ForwardingMaps {
     }
 
     async fn remove_forwarded(&self, _local: &Identifier, registration: &Identifier) -> Result<(), SubscriptionForwardingError> {
+        self.copies
+            .lock()
+            .expect("the copies are never poisoned")
+            .retain(|copy| copy.registration != *registration);
         self.removed.lock().expect("the removal record is never poisoned").push(registration.clone()); // clone: the record owns the identifier
         Ok(())
     }

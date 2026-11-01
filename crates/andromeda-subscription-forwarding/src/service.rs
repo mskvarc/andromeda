@@ -9,8 +9,10 @@ use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, lifecycle::SubscriptionService, store::SubscriptionStore};
 use andromeda_tenancy::tenant_ref::TenantRef;
+use lockable::LockPool;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -39,4 +41,13 @@ pub struct SubscriptionForwardingService {
     pub(crate) transport: Arc<TransportDispatcher>,
     /// JSON-LD processing for the entities re-assembled.
     pub(crate) engine: JsonLdEngine,
+    /// One lock per local subscription whose lifecycle step is in flight.
+    ///
+    /// The steps of one subscription (creation, update, expiry, deletion) read
+    /// the companion and copy mappings and then act on them at the sources, so
+    /// two of them running at once act on what the other is changing. A pool
+    /// entry exists only while a step holds or awaits it. One broker serves a
+    /// tenant database, so the lock is per process.
+    #[builder(default = LockPool::new(), setter(skip))]
+    pub(crate) lifecycle_steps: LockPool<Identifier>,
 }

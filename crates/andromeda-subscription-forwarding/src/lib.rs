@@ -36,6 +36,13 @@ pub mod inbound;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod late_placement_tests;
+/// The lifecycle steps of one local subscription, run one after the other.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod lifecycle_step_tests;
 /// The identifier mappings the distributed side keeps.
 pub mod mapping;
 /// The identifier this broker mints for a subscription it hands to a peer.

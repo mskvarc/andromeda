@@ -25,8 +25,8 @@ use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A registration store that answers every matching query with its fixed list,
-/// except for the first few, which it fails, and a lookup by identifier from
-/// the same list. A creation is refused as an unavailable store, and an update
+/// except for the first few, which it fails, and a lookup by identifier and a
+/// listing of the active registrations from the same list. A creation is refused as an unavailable store, and an update
 /// or deletion finds no registration.
 pub(crate) struct ScriptedRegistrations {
     /// The registrations every matching query answers.
@@ -101,8 +101,15 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(Vec::new())
     }
 
-    async fn find_all_active(&self, _after: Option<&Identifier>, _limit: u32) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-        Ok(Vec::new())
+    /// Pages through the fixed list, which a scene names in identifier order.
+    async fn find_all_active(&self, after: Option<&Identifier>, limit: u32) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        Ok(self
+            .registrations
+            .iter()
+            .filter(|registration| after.is_none_or(|after| registration.id.as_str() > after.as_str()))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .cloned() // clone: the page owns its registrations
+            .collect())
     }
 
     async fn delete(&self, _id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {

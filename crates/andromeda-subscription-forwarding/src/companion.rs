@@ -38,7 +38,7 @@ use andromeda_subscription::{
     subscription_invariant::SubscriptionInvariant,
 };
 use chrono::Utc;
-use futures::{TryFutureExt, future::BoxFuture};
+use futures::future::BoxFuture;
 use tracing::debug;
 
 /// The companion request mirroring `subscription` (clause 5.11.2): the same
@@ -168,22 +168,12 @@ impl SubscriptionForwardingService {
     ///
     /// An update that leaves the subscription expired withdraws it as the
     /// expiry did, and one that makes it active again finds no companion and
-    /// provisions one.
+    /// provisions one, which places the copies the update calls for.
     async fn follow_update(&self, subscription: &Subscription, deleted: &DeletedMembers) -> Result<(), SubscriptionForwardingError> {
         if stays_local(subscription, Utc::now()) {
             return self.withdraw(&subscription.id).await;
         }
-        let companion = if let Some(companion) = self.mappings.companion_of(&subscription.id).await? {
-            self.csource_subscriptions
-                .update(
-                    &self.live_target,
-                    &companion,
-                    companion_request(subscription, &self.receiver),
-                    &AdmittedContext::core_only(),
-                )
-                .await?;
-            companion
-        } else {
+        let Some(companion) = self.update_companion(subscription).await? else {
             // An update that first provisions the companion carries no
             // creation-time `Via` chain here; the update path forwards to
             // every selected source.
@@ -198,6 +188,59 @@ impl SubscriptionForwardingService {
             }
         }
         Ok(())
+    }
+
+    /// Update the companion of `subscription` to mirror it, answering the
+    /// companion updated, or `None` when no companion stands.
+    ///
+    /// A companion the mappings name but the store no longer holds was deleted
+    /// underneath its mapping. Its route and every copy still recorded are
+    /// withdrawn, so the companion provisioned in its place starts from no
+    /// copy; linking that companion replaces the stale mapping.
+    async fn update_companion(&self, subscription: &Subscription) -> Result<Option<Identifier>, SubscriptionForwardingError> {
+        let Some(companion) = self.mappings.companion_of(&subscription.id).await? else {
+            return Ok(None);
+        };
+        let updated = self
+            .csource_subscriptions
+            .update(
+                &self.live_target,
+                &companion,
+                companion_request(subscription, &self.receiver),
+                &AdmittedContext::core_only(),
+            )
+            .await;
+        match updated {
+            Ok(()) => Ok(Some(companion)),
+            Err(SubscriptionError::NotFound { .. }) => {
+                debug!(subscription = %subscription.id, %companion, "companion subscription is gone; provisioning a new one");
+                let leftover = SubscriptionTeardown {
+                    companion: None,
+                    forwarded: self.mappings.forwarded_of(&subscription.id).await?,
+                };
+                self.tear_down(&subscription.id, &leftover, CopyMappings::StillRecorded).await;
+                self.router.unregister(&companion).await?;
+                Ok(None)
+            }
+            Err(other) => Err(other.into()),
+        }
+    }
+
+    /// Follow the expiry of `local` (clause 5.8.1.4) by withdrawing its
+    /// companion and every forwarded copy, unless a step that ran between the
+    /// committed expiry and this one changed the subscription: an update that
+    /// made it active again keeps what it placed, and a deletion has torn
+    /// everything down already.
+    async fn follow_expiry(&self, local: &Identifier) -> Result<(), SubscriptionForwardingError> {
+        let Some(stored) = self.subscriptions.get(&self.live_target, local).await? else {
+            debug!(subscription = %local, "expired subscription was deleted before its withdrawal");
+            return Ok(());
+        };
+        if !stays_local(&stored.subscription, Utc::now()) {
+            debug!(subscription = %local, "expired subscription was made active again; nothing is withdrawn");
+            return Ok(());
+        }
+        self.withdraw(local).await
     }
 }
 
@@ -217,6 +260,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
             if stays_local(subscription, Utc::now()) {
                 return Ok(());
             }
+            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await; // clone: the pool owns the key while the step holds it
             self.create_companion(subscription, encountered_sources)
                 .await
                 .map_err(into_subscription_error)?;
@@ -235,9 +279,11 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        // The update future is large, so it is boxed as it stands rather than
-        // moved into a wrapping async block.
-        Box::pin(self.follow_update(subscription, deleted).map_err(into_subscription_error))
+        Box::pin(async move {
+            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await; // clone: the pool owns the key while the step holds it
+            // The update future is large, so it is boxed rather than held inline.
+            Box::pin(self.follow_update(subscription, deleted)).await.map_err(into_subscription_error)
+        })
     }
 
     fn teardown_of<'life0, 'life1, 'async_trait>(
@@ -264,6 +310,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Self: 'async_trait,
     {
         Box::pin(async move {
+            let _step = self.lifecycle_steps.async_lock(id.clone()).await; // clone: the pool owns the key while the step holds it
             self.tear_down(id, teardown, CopyMappings::RemovedWithSubscription).await;
             Ok(())
         })
@@ -275,7 +322,10 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        Box::pin(self.withdraw(id).map_err(into_subscription_error))
+        Box::pin(async move {
+            let _step = self.lifecycle_steps.async_lock(id.clone()).await; // clone: the pool owns the key while the step holds it
+            self.follow_expiry(id).await.map_err(into_subscription_error)
+        })
     }
 }
 

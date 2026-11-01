@@ -2172,6 +2172,7 @@ dependencies = [
  "futures",
  "http",
  "indexmap 2.14.2",
+ "lockable",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -6409,6 +6410,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
 dependencies = [
  "scopeguard",
+]
+
+[[package]]
+name = "lockable"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b0f35193d57711b7b4730a3b888a5033347fb7be1ee9a64a755fa4ee013ef80"
+dependencies = [
+ "derive_more",
+ "futures",
+ "itertools 0.14.0",
+ "tokio",
 ]
 
 [[package]]
