@@ -27,11 +27,7 @@ cd "$root"
 compose=(docker compose -f "tools/andromeda-test-suite/stacks/${stack}/docker-compose.yaml")
 report_dir="${REPORT_DIR:-target/suite-reports}"
 
-teardown() {
-    "${compose[@]}" --profile runner rm --stop --force -v
-    "${compose[@]}" down --remove-orphans
-}
-trap teardown EXIT
+trap '"${compose[@]}" --profile runner rm --stop --force -v; "${compose[@]}" down --remove-orphans' EXIT
 
 "${compose[@]}" --profile runner build runner
 "${compose[@]}" up --detach --wait --build
