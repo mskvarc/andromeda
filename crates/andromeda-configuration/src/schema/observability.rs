@@ -98,7 +98,7 @@ pub struct LogFileConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         title = "path",
-        description = "The directory the log files go in. Left out, an `andromeda` directory in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one."
+        description = "Where the log files are written. Left out, they go in an `andromeda` directory in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one."
     )]
     pub directory: Option<PathBuf>,
     /// The name of the active log file, before the rotation suffix.
@@ -115,7 +115,7 @@ pub struct LogFileConfig {
     pub compression: LogCompression,
     /// The most rotated files kept; the oldest is deleted past it. At least
     /// one, since the file being written is one of them.
-    #[schemars(description = "The most rotated files kept. Past it, the oldest is deleted. Zero is refused.")]
+    #[schemars(description = "The most rotated files kept. Past it, the oldest is deleted.")]
     pub max_retained_files: NonZeroUsize,
     /// Maximum verbosity written to the file, independent of the stdout level.
     #[schemars(description = "The most verbose level written to the file, independent of `observability.log.level`.")]
@@ -187,8 +187,8 @@ pub struct ObservabilityConfig {
     /// What the broker logs, and where.
     #[schemars(description = "What the broker logs, and where.")]
     pub log: LogConfig,
-    /// Whether the broker exposes its metrics.
-    #[schemars(description = "Whether the broker exposes metrics.")]
+    /// Which exporters the broker's metrics go to.
+    #[schemars(description = "Which exporters the broker's metrics go to, one table each.")]
     pub metrics: MetricsConfig,
 }
 

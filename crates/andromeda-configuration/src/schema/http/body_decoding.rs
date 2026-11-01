@@ -36,7 +36,7 @@ pub struct BodyDecodingConfig {
     /// decode holds memory in proportion to its payload while it runs; a
     /// payload waiting for its turn holds only its bytes.
     #[schemars(
-        description = "How many large bodies are parsed on the separate thread pool at once. A parse holds memory in proportion to its body while it runs; a body waiting for its turn holds only its bytes. Zero is refused."
+        description = "How many large bodies are parsed on the separate thread pool at once. A parse holds memory in proportion to its body while it runs; a body waiting for its turn holds only its bytes."
     )]
     pub max_concurrent_blocking: NonZeroUsize,
 }

@@ -18,7 +18,7 @@ use strum::{Display, EnumString};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "Where, and whether, the broker serves its management endpoints (`/livez`, `/readyz` and `/metrics`).")]
+#[schemars(description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics`.")]
 pub enum ManagementMode {
     /// No management plane is served; the data-plane probes remain and metrics
     /// cannot be enabled.
@@ -46,11 +46,13 @@ pub enum ManagementMode {
 /// [`ManagementMode::Disabled`] no management listener is bound.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
 #[schemars(deny_unknown_fields)]
-#[schemars(description = "Where the broker serves its health probes and metrics, kept apart from the NGSI-LD API.")]
+#[schemars(description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics`.")]
 pub struct ManagementConfig {
     /// Where the management endpoints are served: `disabled`, `shared-port` or
     /// `separate-port`.
-    #[schemars(description = "Where the management endpoints are served: on a port of their own, on the API port, or not at all.")]
+    #[schemars(
+        description = "Where the management endpoints are served: on a port of their own, on the API port, or not at all. A port of their own by default, so probes and metrics keep answering while the API is saturated or draining."
+    )]
     pub mode: ManagementMode,
     /// Management listener address. Read only when `mode` is `separate-port`.
     #[schemars(description = "The address the management listener binds. Read only when `management.mode` is `\"separate-port\"`.")]

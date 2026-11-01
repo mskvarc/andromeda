@@ -18,7 +18,7 @@ use url::Url;
 pub struct CsrfConfig {
     /// Whether the CSRF layer is installed.
     #[schemars(
-        description = "Whether a cross-site request from an origin outside `http.csrf.trusted_origins` is answered `403`. Same-origin requests, requests with neither `Origin` nor `Sec-Fetch-Site`, and `GET`, `HEAD` and `OPTIONS` always go through."
+        description = "Whether a cross-site request from an origin outside `http.csrf.trusted_origins` is answered `403`. Same-origin requests, requests with neither `Origin` nor `Sec-Fetch-Site`, and `GET`, `HEAD` and `OPTIONS` always go through. Off by default, since the broker itself authenticates no one. Turn it on when a proxy in front authenticates browsers, by cookie or by HTTP authentication, because a forged cross-site request would then carry the user's credentials."
     )]
     pub mode: FeatureMode,
     /// Browser origins whose cross-site requests are trusted, in addition to

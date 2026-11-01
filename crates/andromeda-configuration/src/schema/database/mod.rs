@@ -73,7 +73,7 @@ pub struct DatabaseConfig {
     /// platform database that holds the tenant registry, the wake schedule and
     /// the forwarded-subscription routes. Always direct to PostgreSQL.
     #[schemars(
-        description = "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.url`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`. Zero is refused."
+        description = "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.url`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`."
     )]
     pub platform_max_connections: NonZeroU32,
     /// Percentage of each tenant pool that read requests (queries, retrievals,

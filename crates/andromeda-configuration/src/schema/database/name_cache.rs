@@ -137,7 +137,7 @@ mod tests {
     fn both_idle_eviction_spellings_render_as_they_are_written() {
         let rendered = toml::to_string(&NameCacheConfig::default()).expect("the default renders");
         assert!(rendered.contains("idle_eviction_after = \"8h\""), "{rendered}");
-        assert!(rendered.contains("max_size_per_dictionary = \"16.0 MiB\""), "{rendered}");
+        assert!(rendered.contains("max_size_per_dictionary = \"16 MiB\""), "{rendered}");
         let unlimited = NameCacheConfig {
             idle_eviction_after: Ceiling::Unlimited(Unlimited::Unlimited),
             ..NameCacheConfig::default()

@@ -24,7 +24,7 @@ pub struct EvaluationConfig {
     /// kilobyte a slot, a full buffer at the default holds under 4 MB per
     /// tenant.
     #[schemars(
-        description = "The most committed entity changes each tenant buffers for live evaluation. No change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer. Zero is refused."
+        description = "The most committed entity changes each tenant buffers for live evaluation. No change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer."
     )]
     pub max_queued_changes: NonZeroUsize,
     /// The most committed entity changes evaluated at once.
@@ -34,7 +34,7 @@ pub struct EvaluationConfig {
     /// reading its Entity and recording a notification per matched
     /// subscription, so they share the tenant's pool with request handling.
     #[schemars(
-        description = "The most committed entity changes evaluated at once. Changes to one entity are evaluated one at a time in commit order; changes to different entities run side by side, each reading its entity and recording a notification per matched subscription, so they share the tenant's database pool with request handling. Zero is refused."
+        description = "The most committed entity changes evaluated at once. Changes to one entity are evaluated one at a time in commit order; changes to different entities run side by side, each reading its entity and recording a notification per matched subscription, so they share the tenant's database pool with request handling."
     )]
     pub max_concurrent_changes: NonZeroUsize,
 }

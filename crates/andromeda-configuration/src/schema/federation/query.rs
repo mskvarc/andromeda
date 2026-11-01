@@ -77,7 +77,7 @@ pub struct FederatedQueryConfig {
     /// `TooManyResults` (403, clause 4.12) rather than answered with a
     /// truncated collection.
     #[schemars(
-        description = "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers counts too. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection. Zero is refused."
+        description = "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers counts too. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection."
     )]
     pub max_entities: NonZeroU32,
     /// The most entities the Context Sources of one federated query send
@@ -94,7 +94,7 @@ pub struct FederatedQueryConfig {
     /// (clause 5.7.4.4); a query whose sources exceed it is refused with
     /// `TooManyResults` (403, clause 4.12).
     #[schemars(
-        description = "The most attribute instances one federated temporal query gathers from the context sources whose history it reads to the end, as an aggregated representation of an entity held in several parts needs. A query that would gather more is refused with `403` `TooManyResults`. Zero is refused."
+        description = "The most attribute instances one federated temporal query gathers from the context sources whose history it reads to the end, as an aggregated representation of an entity held in several parts needs. A query that would gather more is refused with `403` `TooManyResults`."
     )]
     pub max_instances: NonZeroU32,
     /// How a distributed temporal query asking for an aggregated

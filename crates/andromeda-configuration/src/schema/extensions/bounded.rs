@@ -20,7 +20,7 @@ pub struct TemporalDeleteByQueryConfig {
     /// deleted, so an oversized purge is refused whole rather than
     /// half-executed.
     #[schemars(
-        description = "The most history instances one delete-by-query may remove. The matches are counted before anything is deleted, so a larger purge is refused whole with `403` `TooManyResults` and deletes nothing. Zero is refused."
+        description = "The most history instances one delete-by-query may remove. The matches are counted before anything is deleted, so a larger purge is refused whole with `403` `TooManyResults` and deletes nothing."
     )]
     pub max_matches: NonZeroU64,
 }
@@ -49,7 +49,7 @@ pub struct TemporalAggregationGroupingConfig {
     /// computed, so an oversized grouping is refused whole rather than
     /// partly returned.
     #[schemars(
-        description = "The most distinct groups one grouped aggregation may produce. The groups are counted before they are computed, so a larger grouping is refused whole with `403` `TooManyResults`. Zero is refused."
+        description = "The most distinct groups one grouped aggregation may produce. The groups are counted before they are computed, so a larger grouping is refused whole with `403` `TooManyResults`."
     )]
     pub max_groups: NonZeroU64,
 }

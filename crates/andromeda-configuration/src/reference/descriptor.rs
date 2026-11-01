@@ -8,12 +8,13 @@
 //! settings.
 
 use crate::{
+    human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
     load::ENVIRONMENT_PREFIX,
     redact::SENSITIVE_KEYS,
     reference::{
         ReferenceError,
-        key_listing::{KeyEntry, KeyState, ReferenceEntry, TableEntry, TableShape, key_listing},
+        key_listing::{KeyEntry, KeyLimit, KeyState, ReferenceEntry, TableEntry, TableShape, key_listing},
         schema_node::{Choice, SchemaNode},
     },
     schema::apply_mode::ApplyMode,
@@ -22,7 +23,6 @@ use crate::{
         rule::{Limit, Rule},
     },
 };
-use bytesize::ByteSize;
 use serde::Serialize;
 
 /// Every table and key of the configuration, in the order the file holds
@@ -179,7 +179,7 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
         .any(|table| matches!(table.shape, TableShape::Array) && key.path.starts_with(&table.path));
     KeyDescriptor {
         type_name: type_name(node.map(SchemaNode::type_name).unwrap_or_default(), &key.limits),
-        choices: node.map(SchemaNode::choices).unwrap_or_default(),
+        choices: key.choices,
         environment_variable: (!in_list).then(|| {
             let segments: Vec<String> = key.path.segments().map(str::to_uppercase).collect();
             format!("{ENVIRONMENT_PREFIX}{}", segments.join("__"))
@@ -196,11 +196,13 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
     }
 }
 
-/// The type name, narrowed by a rule that keeps the value above zero.
+/// The type name, narrowed by a limit that keeps the value above zero.
 ///
 /// A name of several shapes, such as `string or duration`, is left as it is.
-fn type_name(name: String, limits: &[Rule]) -> String {
-    let positive = limits.iter().any(|rule| matches!(rule, Rule::Positive(_)));
+fn type_name(name: String, limits: &[KeyLimit]) -> String {
+    let positive = limits
+        .iter()
+        .any(|limit| matches!(limit, KeyLimit::PositiveByType | KeyLimit::Declared(Rule::Positive(_))));
     match name.as_str() {
         "integer" if positive => String::from("positive integer"),
         "positive integer" => name,
@@ -209,9 +211,21 @@ fn type_name(name: String, limits: &[Rule]) -> String {
     }
 }
 
-/// One rule as the descriptor writes it.
-fn limit_descriptor(rule: Rule) -> LimitDescriptor {
-    let shape = match rule {
+/// One limit as the descriptor writes it.
+fn limit_descriptor(limit: KeyLimit) -> LimitDescriptor {
+    let shape = match limit {
+        KeyLimit::PositiveByType => LimitShape::Positive,
+        KeyLimit::Declared(rule) => declared_shape(rule),
+    };
+    LimitDescriptor {
+        statement: limit.to_string(),
+        shape,
+    }
+}
+
+/// What a declared rule compares, as the descriptor writes it.
+fn declared_shape(rule: Rule) -> LimitShape {
+    match rule {
         Rule::Positive(_) => LimitShape::Positive,
         Rule::WholeDays(_) => LimitShape::WholeDays,
         Rule::Ordered { relation, limit, .. } => LimitShape::Ordered {
@@ -222,7 +236,7 @@ fn limit_descriptor(rule: Rule) -> LimitDescriptor {
                 },
                 Limit::Fixed(Quantity::Count(value)) => BoundShape::Fixed { value: value.to_string() },
                 Limit::Fixed(Quantity::Bytes(value)) => BoundShape::Fixed {
-                    value: ByteSize::b(value).to_string(),
+                    value: HumanByteSize::b(value).to_string(),
                 },
                 Limit::Key(key) => BoundShape::Key { key: key.to_string() },
                 Limit::KeyPlusMargin(key, margin) => BoundShape::KeyPlusMargin {
@@ -231,9 +245,5 @@ fn limit_descriptor(rule: Rule) -> LimitDescriptor {
                 },
             },
         },
-    };
-    LimitDescriptor {
-        statement: rule.to_string(),
-        shape,
     }
 }

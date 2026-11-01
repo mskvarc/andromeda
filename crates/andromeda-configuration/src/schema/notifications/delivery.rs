@@ -136,18 +136,18 @@ pub struct DeliveryConfig {
     /// reserved address space is `allowed` or `refused`. Checked against the
     /// address actually resolved.
     #[schemars(
-        description = "Whether a notification endpoint, an HTTP URL or an MQTT broker, resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name. `allowed_addresses` exempts addresses from a `refused`, and `denied_addresses` refuses addresses whatever this is set to."
+        description = "Whether a notification endpoint (an HTTP URL or an MQTT server) resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name. `notifications.delivery.allowed_addresses` exempts addresses from `\"refused\"`, and `notifications.delivery.denied_addresses` refuses addresses whatever this is set to. Allowed by default because subscribers and MQTT servers commonly run on the broker's own private network; set `\"refused\"` when clients you do not trust create subscriptions."
     )]
     pub private_addresses: PrivateAddresses,
     /// Addresses and subnets a notification endpoint may resolve into even
     /// when `private_addresses` is `refused`.
     #[schemars(
-        description = "IP addresses and subnets (`\"10.2.0.0/24\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a notification endpoint, an HTTP URL or an MQTT broker, may resolve into even though `private_addresses` is `refused`. Empty by default. An entry in `denied_addresses` takes precedence."
+        description = "IP addresses and subnets (`\"10.2.0.0/24\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a notification endpoint (an HTTP URL or an MQTT server) may resolve into even though `notifications.delivery.private_addresses` is `\"refused\"`. Empty by default. An entry in `notifications.delivery.denied_addresses` takes precedence."
     )]
     pub allowed_addresses: Vec<AddressRule>,
     /// Addresses and subnets a notification endpoint is never notified at.
     #[schemars(
-        description = "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a notification endpoint, an HTTP URL or an MQTT broker, must not resolve into, public ones included and whatever `private_addresses` is set to. Empty by default. Takes precedence over `allowed_addresses`."
+        description = "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a notification endpoint (an HTTP URL or an MQTT server) must not resolve into, public ones included and whatever `notifications.delivery.private_addresses` is set to. Empty by default. Takes precedence over `notifications.delivery.allowed_addresses`."
     )]
     pub denied_addresses: Vec<AddressRule>,
     /// The largest notification body an HTTP delivery sends, in human-readable

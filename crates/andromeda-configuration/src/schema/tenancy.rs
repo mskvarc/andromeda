@@ -48,7 +48,7 @@ impl Default for TenantDatabasesConfig {
 pub struct DefaultTenantConfig {
     /// The most connections the default tenant's pool opens.
     #[schemars(
-        description = "The most connections the default tenant's pool opens, in each broker process. Named tenants size theirs with `tenancy.databases.max_connections`. Zero is refused."
+        description = "The most connections the default tenant's pool opens, in each broker process. Named tenants size theirs with `tenancy.databases.max_connections`."
     )]
     pub max_connections: NonZeroU32,
 }
@@ -191,7 +191,7 @@ impl Default for TenantBuildConfig {
 pub struct TenancyConfig {
     /// Whether named tenants are served: `enabled` or `disabled`.
     #[schemars(
-        description = "Whether named tenants are served. With `\"disabled\"` only the default tenant exists, and a request naming a tenant in `NGSILD-Tenant` is answered `501` `NoMultiTenantSupport`."
+        description = "Whether named tenants are served. With `\"disabled\"` only the default tenant exists, and a request naming a tenant in `NGSILD-Tenant` is answered `501` `NoMultiTenantSupport`. On by default, so a client can name a tenant without any setup on the broker: the first operation that creates something in a tenant creates the tenant."
     )]
     pub mode: FeatureMode,
     /// How long a provisional tenant whose database holds no information is

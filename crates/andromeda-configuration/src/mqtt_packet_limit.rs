@@ -111,7 +111,7 @@ mod tests {
         let holder: Holder = toml::from_str("limit = \"16 MiB\"")?;
         assert_eq!(holder.limit.octets(), 16_777_216);
         let rendered = toml::to_string(&holder)?;
-        assert!(rendered.contains("limit = \"16.0 MiB\""), "{rendered}");
+        assert!(rendered.contains("limit = \"16 MiB\""), "{rendered}");
         Ok(())
     }
 

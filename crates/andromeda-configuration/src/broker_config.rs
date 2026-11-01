@@ -96,8 +96,8 @@ pub struct BrokerConfig {
     #[schemars(description = "Snapshot lifetimes, quotas and preparation.")]
     pub snapshot: SnapshotConfig,
 
-    /// Andromeda's opt-in, non-standard features.
-    #[schemars(description = "Andromeda's opt-in features beyond the NGSI-LD specification.")]
+    /// Andromeda's features beyond the NGSI-LD specification.
+    #[schemars(description = "Andromeda's features beyond the NGSI-LD specification.")]
     pub extensions: ExtensionsConfig,
 
     /// Logging and metrics.

@@ -23,7 +23,7 @@ pub enum NotificationBodyLimitError {
 /// (`"128 MiB"`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(try_from = "HumanByteSize", into = "HumanByteSize")]
-#[schemars(description = "A notification body size, written as a byte size such as `\"128 MiB\"`. Zero is refused.")]
+#[schemars(description = "A notification body size, written as a byte size such as `\"128 MiB\"`.")]
 pub struct NotificationBodyLimit {
     /// The limit in octets, as the delivery compares a body's length with it.
     #[schemars(description = "The limit in bytes.")]
@@ -121,7 +121,7 @@ mod tests {
         let holder: Holder = toml::from_str("limit = \"20 MiB\"")?;
         assert_eq!(holder.limit.octets(), 20_971_520);
         let rendered = toml::to_string(&holder)?;
-        assert!(rendered.contains("limit = \"20.0 MiB\""), "{rendered}");
+        assert!(rendered.contains("limit = \"20 MiB\""), "{rendered}");
         Ok(())
     }
 }

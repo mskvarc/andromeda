@@ -37,10 +37,13 @@ pub fn configuration_template() -> Result<String, ReferenceError> {
             ReferenceEntry::Key(key) => {
                 let limits: Vec<String> = key.limits.iter().map(ToString::to_string).collect();
                 let rules = (!limits.is_empty()).then(|| format!("Must be {}.", limits.join(", and ")));
+                let values: Vec<&str> = key.choices.iter().map(|choice| choice.value.as_str()).collect();
+                let choices = (!values.is_empty()).then(|| format!("One of {}.", values.join(", ")));
                 let paragraphs: Vec<&str> = key
                     .description
                     .as_deref()
                     .into_iter()
+                    .chain(choices.as_deref())
                     .chain(rules.as_deref())
                     .chain(key.conditions.iter().copied())
                     .collect();

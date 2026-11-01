@@ -301,7 +301,7 @@ fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: 
             // Above any batch these tests submit, so preparation stays inline on
             // the calling task rather than offloading to the stub blocking pool.
             prepare_blocking_threshold: 1024,
-            async_side_effect_threshold: None,
+            async_side_effect_threshold: 1,
         },
         budget,
     );

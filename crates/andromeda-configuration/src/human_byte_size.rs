@@ -3,7 +3,18 @@
 use bytesize::ByteSize;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt};
+
+/// The binary units a size is written in, largest first, with the bytes in
+/// each.
+const BINARY_UNITS: [(&str, u64); 6] = [
+    ("EiB", 1 << 60),
+    ("PiB", 1 << 50),
+    ("TiB", 1 << 40),
+    ("GiB", 1 << 30),
+    ("MiB", 1 << 20),
+    ("KiB", 1 << 10),
+];
 
 /// A [`ByteSize`] whose wire form is the human-readable spelling (`"64 MiB"`,
 /// `"512 kB"`) and which also accepts a bare integer byte count.
@@ -53,12 +64,25 @@ impl HumanByteSize {
     }
 }
 
+// Manual: the size is written in the largest binary unit that holds it a whole
+// number of times, and in bytes when none does, so the spelling reads back to
+// the same size. `ByteSize`'s own display rounds to one decimal, which does not.
+impl fmt::Display for HumanByteSize {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.0.as_u64();
+        match BINARY_UNITS.iter().find(|(_, unit)| bytes != 0 && bytes.is_multiple_of(*unit)) {
+            Some((name, unit)) => write!(formatter, "{} {name}", bytes / unit),
+            None => write!(formatter, "{bytes} B"),
+        }
+    }
+}
+
 impl Serialize for HumanByteSize {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        self.0.serialize(serializer)
+        serializer.collect_str(self)
     }
 }
 
@@ -103,10 +127,35 @@ mod tests {
     }
 
     #[test]
-    fn human_byte_size_serialises_as_a_human_string() {
+    fn human_byte_size_serialises_in_the_largest_whole_unit() {
         let holder = Holder { size: HumanByteSize::mib(64) };
         let rendered = toml::to_string(&holder).expect("holder serialises");
-        assert!(rendered.contains("size = \"64"), "{rendered}");
+        pretty_assertions::assert_eq!(rendered, "size = \"64 MiB\"\n");
+    }
+
+    #[test]
+    fn a_size_is_written_in_the_largest_unit_that_holds_it_whole() {
+        for (size, written) in [
+            (HumanByteSize::b(0), "0 B"),
+            (HumanByteSize::b(1500), "1500 B"),
+            (HumanByteSize::b(1536), "1536 B"),
+            (HumanByteSize::kib(8), "8 KiB"),
+            (HumanByteSize::kib(1536), "1536 KiB"),
+            (HumanByteSize::kib(2048), "2 MiB"),
+            (HumanByteSize::gib(1024), "1 TiB"),
+        ] {
+            pretty_assertions::assert_eq!(size.to_string(), written);
+        }
+    }
+
+    /// Every spelling reads back to the size it was written from.
+    #[test]
+    fn a_written_size_reads_back_to_the_same_size() {
+        for bytes in [0, 1, 1500, 1536, 8191, 8192, 67_108_864, 67_108_865, 3 << 40, u64::MAX] {
+            let rendered = toml::to_string(&Holder { size: HumanByteSize::b(bytes) }).expect("holder serialises");
+            let read: Holder = toml::from_str(&rendered).expect("holder parses");
+            pretty_assertions::assert_eq!(read.size.as_u64(), bytes, "{rendered}");
+        }
     }
 
     #[test]

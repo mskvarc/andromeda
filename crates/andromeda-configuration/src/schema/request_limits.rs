@@ -77,7 +77,7 @@ pub struct RequestLimitsConfig {
     /// payload's processing cost follows this count rather than its bytes; a
     /// request over it is answered 413 like one over `max_body`.
     #[schemars(
-        description = "The most JSON values one request body may hold, counted before it is parsed. Every object, array, string, number, boolean and `null` counts once, so the count follows the cost of processing the body rather than its bytes. A body over it is answered `413`. Zero is refused."
+        description = "The most JSON values one request body may hold, counted before it is parsed. Every object, array, string, number, boolean and `null` counts once, so the count follows the cost of processing the body rather than its bytes. A body over it is answered `413`."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_json_values: NonZeroUsize,
@@ -86,7 +86,7 @@ pub struct RequestLimitsConfig {
     /// entity it stores; a write over it is answered 413. A write to an entity
     /// already over a lowered limit lands when it does not grow the entity.
     #[schemars(
-        description = "The most JSON values one entity may hold outside its geometries and JSON literals, counted on the expanded document and on the entity a write stores, so several writes cannot grow one entity past it. A write over it is answered `413`. After the limit is lowered, an entity already over it can still be shrunk or rewritten at its size, but not grown. Zero is refused."
+        description = "The most JSON values one entity may hold outside its geometries and JSON literals, counted on the expanded document and on the entity a write stores, so several writes cannot grow one entity past it. A write over it is answered `413`. After the limit is lowered, an entity already over it can still be shrunk or rewritten at its size, but not grown."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_entity_json_values: NonZeroUsize,
@@ -95,7 +95,7 @@ pub struct RequestLimitsConfig {
     /// entity's geometry is counted before it is expanded. A written geometry
     /// over it is answered 413, a query's 403 `TooComplexQuery`.
     #[schemars(
-        description = "The most positions one geometry may hold, in a written entity and in a query, subscription or registration geometry. A written geometry over it is answered `413`, a query's `403` `TooComplexQuery`. Zero is refused."
+        description = "The most positions one geometry may hold, in a written entity and in a query, subscription or registration geometry. A written geometry over it is answered `413`, a query's `403` `TooComplexQuery`."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_geometry_positions: NonZeroUsize,
@@ -113,7 +113,7 @@ pub struct RequestLimitsConfig {
     /// query or a subscription: each Query Term is one, and a value list one
     /// per value. A filter over it is answered 403 `TooComplexQuery`.
     #[schemars(
-        description = "The most comparisons one `q` filter may make, in an entity or temporal query, a delete by query, or a subscription. Each Query Term is one comparison, and a value list such as `a==1,2,3` one per value. A filter over it is answered `403` `TooComplexQuery`. A stored subscription is not checked again after the limit is lowered. Zero is refused."
+        description = "The most comparisons one `q` filter may make, in an entity or temporal query, a delete by query, or a subscription. Each Query Term is one comparison, and a value list such as `a==1,2,3` one per value. A filter over it is answered `403` `TooComplexQuery`. A stored subscription is not checked again after the limit is lowered."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_q_comparisons: NonZeroUsize,
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn the_table_parses_human_readable_values_and_refuses_a_zero_count() {
         let rendered = toml::to_string(&RequestLimitsConfig::default()).expect("the defaults render");
-        let parsed: RequestLimitsConfig = toml::from_str(&rendered.replace("\"32.0 KiB\"", "\"8 KiB\"")).expect("the defaults parse");
+        let parsed: RequestLimitsConfig = toml::from_str(&rendered.replace("\"32 KiB\"", "\"8 KiB\"")).expect("the defaults parse");
         assert_eq!(parsed.max_header_section, HeaderSectionLimit::MINIMUM);
         let zero = rendered.replace("max_json_values = 4000000", "max_json_values = 0");
         assert!(toml::from_str::<RequestLimitsConfig>(&zero).is_err());

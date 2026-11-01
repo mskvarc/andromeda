@@ -36,7 +36,7 @@ pub struct DurableQueue {
     /// form (`"30s"`). A worker that dies leaves its jobs unclaimable for the
     /// rest of the term.
     #[schemars(
-        description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. `notifications.delivery.queue` reads it in whole seconds, rounded down."
+        description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. It is applied in whole seconds, rounded down."
     )]
     pub lease_timeout: HumanDuration,
     /// The delay before the first retry of a failed job, in human-readable

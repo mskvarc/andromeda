@@ -27,12 +27,10 @@ pub struct BatchExecutionConfig {
     pub large_threshold: usize,
     /// Entity-count threshold that offloads preparation post-processing to blocking workers.
     pub prepare_blocking_threshold: usize,
-    /// Minimum batch size for honouring `Prefer: respond-async`. When `None`,
-    /// the async durable-queue path is honoured for any batch size whenever
-    /// the client opts in via the header. When `Some(t)`, the async path is
-    /// only taken for batches of size `>= t` (smaller batches stay inline
-    /// regardless of the client preference).
-    pub async_side_effect_threshold: Option<usize>,
+    /// The smallest batch whose side effects are deferred when the client
+    /// sends `Prefer: respond-async`; a smaller batch runs them inline
+    /// whatever the client prefers. At 1, every such batch defers them.
+    pub async_side_effect_threshold: usize,
 }
 
 impl BatchExecutionConfig {
@@ -49,7 +47,7 @@ impl BatchExecutionConfig {
             chunk_size: self.chunk_size.max(1),
             large_threshold: self.large_threshold.max(1),
             prepare_blocking_threshold: self.prepare_blocking_threshold.max(1),
-            async_side_effect_threshold: self.async_side_effect_threshold,
+            async_side_effect_threshold: self.async_side_effect_threshold.max(1),
         }
     }
 }

@@ -230,7 +230,9 @@ pub enum CorsPermission {
 pub struct CorsConfig {
     /// The overall CORS mode. `permissive` and `very-permissive` ignore every
     /// other field in this table.
-    #[schemars(description = "Which CORS policy applies. Only `\"configured\"` reads the other keys of this table.")]
+    #[schemars(
+        description = "Which CORS policy applies. Only `\"configured\"` reads the other keys of this table. `\"permissive\"` by default, so a browser-based interface works against the broker from any origin, and since it allows no credentials a page cannot act with a user's cookies; set `\"configured\"` to name the origins a deployment serves."
+    )]
     pub mode: CorsMode,
     /// Origins accepted when `mode = configured`.
     #[schemars(

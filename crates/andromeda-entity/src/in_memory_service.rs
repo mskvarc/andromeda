@@ -45,7 +45,7 @@ pub(crate) fn in_memory_service(store: &Arc<InMemoryStore>, writes: Arc<dyn Cont
             chunk_size: 64,
             large_threshold: 1024,
             prepare_blocking_threshold: 1024,
-            async_side_effect_threshold: None,
+            async_side_effect_threshold: 1,
         },
         payload_budget(&RequestLimitsConfig::default()),
     )

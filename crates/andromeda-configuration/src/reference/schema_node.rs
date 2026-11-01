@@ -138,13 +138,19 @@ impl SchemaNode {
             return String::from("string");
         }
         match self.types.writable().first().copied() {
-            Some("integer") if self.minimum.is_some_and(|minimum| minimum >= 1.0) => String::from("positive integer"),
+            Some("integer") if self.is_positive_integer() => String::from("positive integer"),
             Some("string") if self.format.as_deref() == Some("uri") => String::from("URL"),
             Some("array") => format!("list of {}", self.items.as_deref().map(SchemaNode::type_name).unwrap_or_default()),
             Some("object") => String::from("table"),
             Some(other) => other.to_owned(),
             None => String::new(),
         }
+    }
+
+    /// Whether the value is an integer its type keeps above zero, as a
+    /// non-zero count is.
+    pub(crate) fn is_positive_integer(&self) -> bool {
+        self.types.writable().first() == Some(&"integer") && self.minimum.is_some_and(|minimum| minimum >= 1.0)
     }
 
     /// The values a choice allows, with what each means; empty for a value

@@ -59,16 +59,13 @@ pub enum AsyncPreference {
 /// constructing a full service.
 pub(crate) const fn resolve_side_effect_placement(
     target: &ContextTarget,
-    async_threshold: Option<usize>,
+    async_threshold: usize,
     preference: AsyncPreference,
     batch_size: usize,
 ) -> SideEffectPlacement<'_> {
-    match (target, preference, async_threshold) {
-        (ContextTarget::Live, AsyncPreference::Requested, None) => SideEffectPlacement::DeferredOnLive,
-        (ContextTarget::Live, AsyncPreference::Requested, Some(threshold)) if batch_size >= threshold => SideEffectPlacement::DeferredOnLive,
-        (ContextTarget::Live, AsyncPreference::Requested | AsyncPreference::NotRequested, Some(_))
-        | (ContextTarget::Live, AsyncPreference::NotRequested, None)
-        | (ContextTarget::Snapshot(_), AsyncPreference::Requested | AsyncPreference::NotRequested, _) => SideEffectPlacement::Inline(target),
+    match (target, preference) {
+        (ContextTarget::Live, AsyncPreference::Requested) if batch_size >= async_threshold => SideEffectPlacement::DeferredOnLive,
+        (ContextTarget::Live | ContextTarget::Snapshot(_), AsyncPreference::Requested | AsyncPreference::NotRequested) => SideEffectPlacement::Inline(target),
     }
 }
 
@@ -95,11 +92,11 @@ mod tests {
     #[test]
     fn a_snapshot_scoped_batch_runs_its_side_effects_inline_on_its_snapshot_even_when_async_is_requested() {
         let snapshot = snapshot();
-        for threshold in [None, Some(0), Some(1)] {
+        for threshold in [1, 10] {
             pretty_assertions::assert_eq!(
                 resolve_side_effect_placement(&snapshot, threshold, AsyncPreference::Requested, 10),
                 SideEffectPlacement::Inline(&snapshot),
-                "threshold {threshold:?}"
+                "threshold {threshold}"
             );
         }
     }
@@ -115,9 +112,9 @@ mod tests {
     }
 
     #[test]
-    fn prefer_respond_async_with_none_threshold_defers_on_the_live_branch() {
+    fn prefer_respond_async_with_a_threshold_of_one_defers_every_batch_on_the_live_branch() {
         pretty_assertions::assert_eq!(
-            resolve_side_effect_placement(&ContextTarget::Live, None, AsyncPreference::Requested, 1),
+            resolve_side_effect_placement(&ContextTarget::Live, 1, AsyncPreference::Requested, 1),
             SideEffectPlacement::DeferredOnLive
         );
     }
@@ -125,7 +122,7 @@ mod tests {
     #[test]
     fn prefer_respond_async_with_threshold_above_batch_size_runs_inline() {
         pretty_assertions::assert_eq!(
-            resolve_side_effect_placement(&ContextTarget::Live, Some(100), AsyncPreference::Requested, 10),
+            resolve_side_effect_placement(&ContextTarget::Live, 100, AsyncPreference::Requested, 10),
             SideEffectPlacement::Inline(&ContextTarget::Live)
         );
     }
@@ -134,7 +131,7 @@ mod tests {
     fn prefer_respond_async_at_or_above_threshold_defers_on_the_live_branch() {
         for batch_size in [100, 512] {
             pretty_assertions::assert_eq!(
-                resolve_side_effect_placement(&ContextTarget::Live, Some(100), AsyncPreference::Requested, batch_size),
+                resolve_side_effect_placement(&ContextTarget::Live, 100, AsyncPreference::Requested, batch_size),
                 SideEffectPlacement::DeferredOnLive,
                 "batch size {batch_size}"
             );
@@ -142,20 +139,20 @@ mod tests {
     }
 
     #[test]
-    fn prefer_respond_sync_forces_inline_with_threshold_zero() {
+    fn without_the_preference_a_batch_runs_inline_at_the_lowest_threshold() {
         pretty_assertions::assert_eq!(
-            resolve_side_effect_placement(&ContextTarget::Live, Some(0), AsyncPreference::NotRequested, 1000),
+            resolve_side_effect_placement(&ContextTarget::Live, 1, AsyncPreference::NotRequested, 1000),
             SideEffectPlacement::Inline(&ContextTarget::Live)
         );
     }
 
     #[test]
     fn no_async_opt_in_runs_inline_regardless_of_threshold() {
-        for threshold in [None, Some(1)] {
+        for threshold in [1, 100] {
             pretty_assertions::assert_eq!(
                 resolve_side_effect_placement(&ContextTarget::Live, threshold, AsyncPreference::NotRequested, 1000),
                 SideEffectPlacement::Inline(&ContextTarget::Live),
-                "threshold {threshold:?}"
+                "threshold {threshold}"
             );
         }
     }

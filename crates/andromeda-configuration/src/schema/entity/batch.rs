@@ -27,14 +27,12 @@ pub struct EntityBatchConfig {
     #[schemars(description = "The most chunks of a batch written to the database at once.")]
     pub max_concurrent_chunk_writes: NonZeroUsize,
     /// The batch size from which a `respond-async` batch's side effects run
-    /// after it commits rather than inside it. `None` defers them for every
-    /// `respond-async` batch; a batch without the preference, or one scoped
-    /// to a Snapshot, always runs them inside it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// after it commits rather than inside it; a batch without the
+    /// preference, or one scoped to a Snapshot, always runs them inside it.
     #[schemars(
-        description = "The smallest batch whose notifications and temporal history are deferred to background workers when the client sends `Prefer: respond-async`; a smaller batch runs them before it is answered. Left out, every batch that sends the preference defers them. A batch without the preference, or one scoped to a Snapshot, always runs them before it is answered."
+        description = "The smallest batch whose notifications and temporal history are deferred to background workers when the client sends `Prefer: respond-async`; a smaller batch runs them before it is answered. At 1, every batch that sends the preference defers them. A batch without the preference, or one scoped to a Snapshot, always runs them before it is answered."
     )]
-    pub async_side_effect_threshold: Option<NonZeroUsize>,
+    pub async_side_effect_threshold: NonZeroUsize,
 }
 
 impl Default for EntityBatchConfig {
@@ -45,7 +43,7 @@ impl Default for EntityBatchConfig {
             prepare_blocking_threshold: NonZeroUsize::MIN.saturating_add(127),
             max_concurrent_chunks: NonZeroUsize::MIN.saturating_add(3),
             max_concurrent_chunk_writes: NonZeroUsize::MIN.saturating_add(3),
-            async_side_effect_threshold: None,
+            async_side_effect_threshold: NonZeroUsize::MIN,
         }
     }
 }
@@ -54,6 +52,7 @@ impl Default for EntityBatchConfig {
 mod tests {
     use crate::schema::entity::batch::EntityBatchConfig;
     use pretty_assertions::assert_eq;
+    use std::num::NonZeroUsize;
 
     #[test]
     fn the_defaults_run_four_chunks_of_512_at_once() {
@@ -61,7 +60,7 @@ mod tests {
         assert_eq!(config.chunk_size.get(), 512);
         assert_eq!(config.max_concurrent_chunks.get(), 4);
         assert_eq!(config.max_concurrent_chunk_writes.get(), 4);
-        assert_eq!(config.async_side_effect_threshold, None);
+        assert_eq!(config.async_side_effect_threshold, NonZeroUsize::MIN);
     }
 
     #[test]

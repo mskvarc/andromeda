@@ -1,4 +1,5 @@
-//! The `[extensions]` tables: Andromeda's opt-in, non-standard features.
+//! The `[extensions]` tables: Andromeda's features beyond the NGSI-LD
+//! specification.
 //!
 //! Every extension is additive: inert unless a client asks for it, and its
 //! "off" state is exactly the behaviour of a conformant broker that never
@@ -129,11 +130,11 @@ impl From<QTargetLanguages> for QTargetLanguagesConfig {
     }
 }
 
-/// Andromeda's opt-in, non-standard features.
+/// Andromeda's features beyond the NGSI-LD specification.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[schemars(deny_unknown_fields)]
 #[schemars(
-    description = "Andromeda's opt-in, non-standard features, one table each. Every extension is inert unless a client asks for it, and its off state is the behaviour of a conformant broker."
+    description = "Andromeda's features beyond the NGSI-LD specification, one table each. Each is off by default except `cursor_pagination`, and an extension that is off answers as a conformant broker does. `cursor_pagination` is on because NGSI-LD permits page pointers implemented in a completely opaque way and `offset` keeps working beside it; `extensions.mode = \"conformance\"` turns it off with the rest."
 )]
 pub struct ExtensionsConfig {
     /// Whether the extensions follow their own tables (`configured`) or are

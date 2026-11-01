@@ -206,7 +206,7 @@ fn compose_entity_service(
             chunk_size: batch.chunk_size.get(),
             large_threshold: batch.large_threshold.get(),
             prepare_blocking_threshold: batch.prepare_blocking_threshold.get(),
-            async_side_effect_threshold: batch.async_side_effect_threshold.map(NonZeroUsize::get),
+            async_side_effect_threshold: batch.async_side_effect_threshold.get(),
         },
         payload_budget(&config.request_limits),
     ))

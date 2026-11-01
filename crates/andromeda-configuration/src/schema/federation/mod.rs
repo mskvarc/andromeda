@@ -19,7 +19,7 @@ use std::num::NonZeroUsize;
 pub struct ResponseCacheConfig {
     /// The most responses one tenant's cache holds.
     #[schemars(
-        description = "The most forwarded `GET /entities` and `GET /entities/{id}` answers each tenant's cache holds, for registrations that set `management.cacheDuration`. An answer served from the cache carries a `110` warning. Zero is refused."
+        description = "The most forwarded `GET /entities` and `GET /entities/{id}` answers each tenant's cache holds, for registrations that set `management.cacheDuration`. An answer served from the cache carries a `110` warning."
     )]
     pub max_entries: NonZeroUsize,
 }

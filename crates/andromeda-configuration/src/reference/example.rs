@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use iri_rs::iri;
-use std::{num::NonZeroUsize, path::PathBuf};
+use std::path::PathBuf;
 use url_macro::url;
 
 /// The built-in defaults with every key that is not set by default set to an
@@ -36,7 +36,6 @@ pub(crate) fn example_configuration() -> Result<BrokerConfig, ReferenceError> {
         url: url!("https://example.org/ngsi-ld/context.jsonld"),
         path: PathBuf::from("contexts/example.jsonld"),
     }];
-    config.entity.batch.async_side_effect_threshold = NonZeroUsize::new(1000);
     config.temporal.storage.chunk_interval = Some(HumanDuration::from_days(7));
     config.temporal.storage.retention.delete_after = Some(HumanDuration::from_days(365));
     config.federation.identity.source_id = Some(SourceIdentifier::from_static(iri!("urn:ngsi-ld:ContextSourceIdentity:broker-a")));

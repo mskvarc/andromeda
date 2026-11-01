@@ -77,7 +77,7 @@ pub struct TemporalQueryConfig {
     /// the bound alone is read whole, since a period is never split. At most
     /// 100,000,000.
     #[schemars(
-        description = "The most raw instances per attribute one page of an aggregated temporal read folds, beside its `temporal.query.max_last_n` periods. A page that would fold more ends at the start of the period the first instance beyond the bound falls in; a first period holding more than the bound is read whole, since a period is never split. Zero is refused."
+        description = "The most raw instances per attribute one page of an aggregated temporal read folds, beside its `temporal.query.max_last_n` periods. A page that would fold more ends at the start of the period the first instance beyond the bound falls in; a first period holding more than the bound is read whole, since a period is never split."
     )]
     pub max_aggregation_instances: NonZeroU64,
 }

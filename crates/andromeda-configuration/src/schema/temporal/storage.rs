@@ -107,7 +107,7 @@ pub struct TemporalStorageConfig {
     /// tenant opens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "The span of time one history partition covers. Left out, a partition covers 7 days. A change is reconciled against the stored partitioning when the broker next opens the tenant; shorten it if the largest partition still in the rowstore keeps passing 4 GB."
+        description = "The span of time one history partition covers. Left out, the broker leaves each history table's partitioning as it stands, which is 7 days on a table it created. A change is reconciled against the stored partitioning when the broker next opens the tenant; shorten it if the largest partition still in the rowstore keeps passing 4 GB."
     )]
     pub chunk_interval: Option<HumanDuration>,
     /// When a history partition is converted to the columnstore.

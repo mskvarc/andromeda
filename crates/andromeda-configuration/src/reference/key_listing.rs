@@ -4,13 +4,18 @@
 
 use crate::{
     broker_config::BrokerConfig,
-    reference::{ReferenceError, example::example_configuration, schema_node::SchemaNode},
+    reference::{
+        ReferenceError,
+        example::example_configuration,
+        schema_node::{Choice, SchemaNode},
+    },
     validate::{
         compound_rules,
         declared_rules,
         rule::{CompoundRule, Rule},
     },
 };
+use derive_more::Display;
 use serde::Serialize;
 use toml_edit::{DocumentMut, Item, Key, Table, Value};
 
@@ -115,6 +120,18 @@ impl TableEntry {
     }
 }
 
+/// One condition a key's value meets, displayed as the condition it states.
+#[derive(Debug, Clone, Copy, Display)]
+pub(crate) enum KeyLimit {
+    /// A comparison the validator runs.
+    #[display("{_0}")]
+    Declared(Rule),
+    /// A floor the key's type holds: a non-zero count cannot spell zero, so
+    /// no rule needs to check it.
+    #[display("above zero")]
+    PositiveByType,
+}
+
 /// One key of the file.
 #[derive(Debug)]
 pub(crate) struct KeyEntry {
@@ -126,8 +143,12 @@ pub(crate) struct KeyEntry {
     pub(crate) value: String,
     /// Its operator description.
     pub(crate) description: Option<String>,
-    /// Every comparison the validator holds it to.
-    pub(crate) limits: Vec<Rule>,
+    /// The values it allows, with what each means; empty for a key that is
+    /// no choice.
+    pub(crate) choices: Vec<Choice>,
+    /// Every condition its value meets: the comparisons the validator holds
+    /// it to, and a floor its type holds.
+    pub(crate) limits: Vec<KeyLimit>,
     /// Every rule beyond a comparison that involves it.
     pub(crate) conditions: Vec<&'static str>,
 }
@@ -167,7 +188,14 @@ pub(crate) fn key_listing() -> Result<Vec<ReferenceEntry>, ReferenceError> {
     for entry in &mut entries {
         if let ReferenceEntry::Key(key) = entry {
             let path = key.path.dotted();
-            key.limits = rules.iter().copied().filter(|rule| rule.key().to_string() == path).collect();
+            let declared: Vec<Rule> = rules.iter().copied().filter(|rule| rule.key().to_string() == path).collect();
+            let positive_by_type = schema.descendant(key.path.segments()).is_some_and(SchemaNode::is_positive_integer)
+                && !declared.iter().any(|rule| matches!(rule, Rule::Positive(_)));
+            key.limits = positive_by_type
+                .then_some(KeyLimit::PositiveByType)
+                .into_iter()
+                .chain(declared.into_iter().map(KeyLimit::Declared))
+                .collect();
             key.conditions = compound
                 .iter()
                 .filter(|rule| rule.keys.iter().any(|named| named.to_string() == path))
@@ -200,6 +228,7 @@ fn list_table(entries: &mut Vec<ReferenceEntry>, path: &KeyPath, example: &Table
             state,
             value: literal(default.unwrap_or(value)),
             description: described(schema.child(name)),
+            choices: schema.child(name).map(SchemaNode::choices).unwrap_or_default(),
             limits: Vec::new(),
             conditions: Vec::new(),
         }));

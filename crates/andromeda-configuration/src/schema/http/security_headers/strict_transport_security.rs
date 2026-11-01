@@ -19,7 +19,7 @@ const DEFAULT_MAX_AGE: HumanDuration = HumanDuration::from_days(180);
 pub struct StrictTransportSecurityConfig {
     /// Whether the field is sent over the TLS listener: `enabled` or `disabled`.
     #[schemars(
-        description = "Whether a response to a request over the TLS listener carries `Strict-Transport-Security`. A browser that sees it uses HTTPS for the host until `max_age` passes."
+        description = "Whether a response to a request over the TLS listener carries `Strict-Transport-Security`. A browser that sees it uses HTTPS for the host until `max_age` passes. Off by default, since a browser that has seen it cannot reach the host over plain HTTP again until then; turn it on once HTTPS is the only way the host is reached."
     )]
     pub mode: FeatureMode,
     /// How long a browser remembers to use HTTPS for the host.

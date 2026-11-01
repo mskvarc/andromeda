@@ -12,7 +12,7 @@ use std::{num::NonZeroUsize, time::Duration};
 #[schemars(description = "How requests reach context sources: fan-out, timeouts and the addresses a source may resolve into.")]
 pub struct ForwardingConfig {
     /// The most forwarded requests in flight at once.
-    #[schemars(description = "The most forwarded requests one operation has in flight at once. Zero is refused.")]
+    #[schemars(description = "The most forwarded requests one operation has in flight at once.")]
     pub max_concurrent: NonZeroUsize,
     /// How long connecting to a Context Source may take, in human-readable
     /// form (`"3s"`).
@@ -29,7 +29,7 @@ pub struct ForwardingConfig {
     /// reserved address space is `allowed` or `refused`. Checked against the
     /// address actually resolved. Redirects are never followed.
     #[schemars(
-        description = "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. `federation.forwarding.allowed_addresses` exempts addresses from `\"refused\"`, and `federation.forwarding.denied_addresses` refuses addresses whatever this is set to. A redirect from a context source is never followed, whatever this is set to."
+        description = "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. `federation.forwarding.allowed_addresses` exempts addresses from `\"refused\"`, and `federation.forwarding.denied_addresses` refuses addresses whatever this is set to. A redirect from a context source is never followed, whatever this is set to. Allowed by default because context sources commonly run beside the broker on a private network; set `\"refused\"` when clients you do not trust create registrations."
     )]
     pub private_addresses: PrivateAddresses,
     /// Addresses and subnets a Context Source may resolve into even when

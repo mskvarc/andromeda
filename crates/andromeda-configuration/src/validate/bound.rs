@@ -1,7 +1,6 @@
 //! What an ordering rule compares a configured value against.
 
-use crate::{human_duration::HumanDuration, validate::config_key::ConfigKey};
-use bytesize::ByteSize;
+use crate::{human_byte_size::HumanByteSize, human_duration::HumanDuration, validate::config_key::ConfigKey};
 use derive_more::{Display, From};
 use serde::Serialize;
 use std::time::Duration;
@@ -21,8 +20,8 @@ pub enum Quantity {
     #[display("{_0}")]
     #[from]
     Count(u64),
-    /// A number of bytes, displayed in its `bytesize` spelling.
-    #[display("{}", ByteSize::b(*_0))]
+    /// A number of bytes, displayed as a configuration file writes it.
+    #[display("{}", HumanByteSize::b(*_0))]
     #[from(skip)]
     Bytes(u64),
 }

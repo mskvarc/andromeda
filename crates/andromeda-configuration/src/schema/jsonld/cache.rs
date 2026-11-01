@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 #[schemars(description = "How long resolved contexts are kept in memory.")]
 pub struct JsonLdCacheConfig {
     /// The most entries each in-process context cache holds.
-    #[schemars(description = "The most entries each in-process context cache holds. Zero is refused.")]
+    #[schemars(description = "The most entries each in-process context cache holds.")]
     pub max_entries: NonZeroU64,
     /// How long a term-cache entry lives, and how long a downloaded `@context`
     /// whose response states no expiration time is kept, in human-readable form

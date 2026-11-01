@@ -125,3 +125,26 @@ fn the_descriptor_leaves_nothing_undescribed() -> Result<(), ReferenceError> {
     assert_eq!(undescribed, [] as [String; 0]);
     Ok(())
 }
+
+/// A non-zero count refuses zero by its type alone, so the descriptor and the
+/// template list that floor as a limit beside the rules the validator runs.
+#[test]
+fn every_key_typed_above_zero_lists_the_floor() -> Result<(), ReferenceError> {
+    let value = serde_json::to_value(configuration_descriptor()?)?;
+    let unlisted: Vec<String> = value["keys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|key| {
+            key["type_name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("positive") || name.starts_with("non-zero"))
+        })
+        .filter(|key| !key["limits"].as_array().into_iter().flatten().any(|limit| limit["kind"] == "positive"))
+        .map(|key| key["path"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(unlisted, [] as [String; 0]);
+    let template = configuration_template()?;
+    assert!(template.contains("# Must be above zero.\nmax_retained_files = 7\n"), "{template}");
+    Ok(())
+}
