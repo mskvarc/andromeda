@@ -115,6 +115,7 @@ impl EntityRowRefs {
             | Entities::ModifiedAt
             | Entities::EvolutionCreatedAt
             | Entities::EvolutionModifiedAt
+            | Entities::EvolutionActiveUntil
             | Entities::EvolutionTypeNameKeys => &self.identity,
         };
         Expr::col((relation.clone(), column.into_iden()))

@@ -42,6 +42,7 @@ use crate::{
             claims_statement,
             extent_growth_statement,
             history_statement,
+            horizon_statement,
             released_claims_statement,
             replaced_instances_statement,
             scope_history_statement,
@@ -185,7 +186,8 @@ impl Step {
 /// evolutions the source itself creates, the streams of the intents stating
 /// no type after that refusal, the instance replacements before the claims
 /// and rows that take their place, the stream extents and shapes after the
-/// history rows whose geometries and values they cover. Every statement
+/// history rows whose geometries and values they cover, and the activity
+/// horizons beside the history rows whose instants they bound. Every statement
 /// reading attribute entries after the evolutions are written reads the keys
 /// of the ones the application created, which decide the ends of an instance
 /// it records.
@@ -218,6 +220,9 @@ fn application_steps() -> Vec<Step> {
         }),
         Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), everything, |source, schema| {
             history_statement(source, schema).map(StepStatement::from)
+        }),
+        Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), everything, |source, schema| {
+            Ok(horizon_statement(source, schema).into())
         }),
         Step::of(StepRole::Write, Some(TemporalIntentReach::AttributeEntry), everything, |source, schema| {
             Ok(extent_growth_statement(source, schema).into())

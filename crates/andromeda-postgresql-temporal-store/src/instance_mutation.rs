@@ -10,6 +10,7 @@ use crate::{
         delete_instance_statement,
         grow_stream_extent_statement,
         grow_stream_shapes_statement,
+        instance_horizon_statement,
         release_verbatim_instance_claim_statement,
         select_instance_statement,
         update_instance_statement,
@@ -175,6 +176,10 @@ impl TemporalRepository {
         }
         prune_stream_shapes(&mut tx, schema.as_ref(), &modified).await?;
         grow_stream_shapes_statement(instance, target, &modified).to_query().execute(&mut *tx).await?;
+        instance_horizon_statement(target, entity_id, state.observed_at)
+            .to_query()
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }

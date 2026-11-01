@@ -14,7 +14,11 @@
 //! summary, and a subquery would have it decompress every batch whose bloom
 //! summary admits the identifier, across every stream of the chunk.
 
-use crate::{attribute_history_value::AttributeHistoryValue, stream_shape_growth::shape_growth_statement};
+use crate::{
+    attribute_history_value::AttributeHistoryValue,
+    evolution_horizon::{horizon_of, horizon_raise_statement, project_horizon},
+    stream_shape_growth::shape_growth_statement,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_postgresql_branch::table_of;
@@ -33,7 +37,7 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use chrono::{DateTime, Utc};
-use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement};
+use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use serde_json::value::RawValue;
 use std::borrow::Cow;
 
@@ -218,6 +222,20 @@ pub(crate) fn update_instance_statement(
         .to_owned()
 }
 
+/// Raise the activity horizon of `entity_id`'s Evolution to cover the
+/// instants a modification writes into its instance: the `modifiedAt` it
+/// stamps and the `observedAt` the replacement declares, which clause 5.6.14
+/// lets lie anywhere.
+pub(crate) fn instance_horizon_statement(target: &ContextTarget, entity_id: &Identifier, observed_at: Option<DateTime<Utc>>) -> UpdateStatement {
+    let mut reached = Query::select();
+    reached
+        .column((Te, Entities::EntityKey))
+        .from(table_of(target, Entities::Table).alias(Te))
+        .and_where(Expr::col((Te, Entities::Id)).eq(entity_id.as_str()));
+    project_horizon(&mut reached, horizon_of(Func::greatest([now(), Expr::val(observed_at)]).into()));
+    horizon_raise_statement(table_of(target, Entities::Table), reached)
+}
+
 /// Grow the extent of `stream_keys` to cover `ewkb`, the replacing geometry's
 /// great-circle reach where it has one, else the geometry as written: either
 /// box also bounds the repaired form a spatial predicate judges, which
@@ -292,6 +310,7 @@ mod tests {
             delete_instance_statement,
             grow_stream_extent_statement,
             grow_stream_shapes_statement,
+            instance_horizon_statement,
             release_verbatim_instance_claim_statement,
             select_instance_statement,
             update_instance_statement,
@@ -355,6 +374,26 @@ mod tests {
             concat!(
                 r#"UPDATE "temporal_attribute_streams" SET "value_extent" = ST_Envelope(ST_Collect("value_extent", ST_Envelope(ST_GeomFromEWKB($1))))"#,
                 r#" WHERE "stream_key" = ANY($2) AND ("value_extent" IS NULL OR (NOT ("value_extent" ~ ST_GeomFromEWKB($3))))"#
+            )
+        );
+        assert_eq!(values.0.len(), 3);
+    }
+
+    /// Clause 5.6.14 lets a replacement declare any `observedAt`, so the
+    /// Evolution's horizon is raised to cover it and the `modifiedAt` the
+    /// modification stamps.
+    #[test]
+    fn an_instance_modification_raises_its_evolutions_horizon() {
+        let observed = "2031-05-04T10:15:00Z".parse().expect("an instant");
+        let (sql, values) = instance_horizon_statement(&ContextTarget::Live, &entity(), Some(observed)).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"UPDATE "entities" SET "evolution_active_until" = "reached"."reached""#,
+                r#" FROM (SELECT "te"."entity_key", date_trunc('hour', GREATEST(NOW(), $1), 'UTC') + (make_interval(secs => $2)) AS "reached""#,
+                r#" FROM "entities" AS "te" WHERE "te"."id" = $3) AS "reached""#,
+                r#" WHERE "entities"."entity_key" = "reached"."entity_key""#,
+                r#" AND ("entities"."evolution_active_until" IS NULL OR "entities"."evolution_active_until" < "reached"."reached")"#
             )
         );
         assert_eq!(values.0.len(), 3);

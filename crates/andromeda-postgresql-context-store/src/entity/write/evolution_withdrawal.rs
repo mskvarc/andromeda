@@ -38,7 +38,7 @@ struct Withdrawn;
 ///
 /// ```sql
 /// WITH withdrawn AS (UPDATE entities SET evolution_created_at = NULL, evolution_modified_at = NULL,
-///                    evolution_type_name_keys = NULL WHERE id = ANY($1) RETURNING entity_key)
+///                    evolution_active_until = NULL, evolution_type_name_keys = NULL WHERE id = ANY($1) RETURNING entity_key)
 /// UPDATE entity_type_members SET is_evolution_member = FALSE WHERE entity_key IN (SELECT entity_key FROM withdrawn)
 /// ```
 ///
@@ -52,6 +52,7 @@ fn withdrawal_statement(target: &ContextTarget, ids: &[Identifier]) -> WithQuery
         .values([
             (Entities::EvolutionCreatedAt, Keyword::Null.into()),
             (Entities::EvolutionModifiedAt, Keyword::Null.into()),
+            (Entities::EvolutionActiveUntil, Keyword::Null.into()),
             (Entities::EvolutionTypeNameKeys, Keyword::Null.into()),
         ])
         .and_where(Expr::col(Entities::Id).eq(any(text_array(&ids))))
@@ -108,7 +109,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"WITH "withdrawn" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_type_name_keys" = NULL "#,
+                r#"WITH "withdrawn" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_active_until" = NULL, "evolution_type_name_keys" = NULL "#,
                 r#"WHERE "id" = ANY($1) RETURNING "entity_key") "#,
                 r#"UPDATE "entity_type_members" SET "is_evolution_member" = FALSE WHERE "entity_key" IN (SELECT "entity_key" FROM "withdrawn")"#
             )

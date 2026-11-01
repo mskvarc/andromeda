@@ -1,119 +1,82 @@
-//! The candidates of a temporal window (clause 4.11): the Evolutions holding
-//! an instance of a concerned attribute whose instant on the window's axis
-//! lies inside it, read from the history rows the window names.
+//! The candidates of a temporal window (clause 4.11) that opens at an
+//! instant: the Evolutions whose activity horizon is at or after it, read from
+//! the horizon index of the catalogue.
 //!
 //! Clause 5.7.4.4 step S1 keeps an Entity any of whose instances of the
 //! concerned attributes, or of every attribute when the request names none,
-//! falls in the window, a test on history rows alone, so the recorded rows
-//! inside the window name exactly the recorded Evolutions S1 keeps. The read
-//! takes rows, not Evolutions, and bounds them, so a window many rows answer
-//! walks. Clause 5.7.4.4 refuses a query without a temporal query, so every
-//! query takes this step when no other applies, unless each of its selectors
-//! names identifiers, which the identifier index answers already. The window
-//! match stays in the residual: it judges the queued entries and the rows a
-//! queued entry replaces, which no index read decides.
+//! falls in the window, and an instance falls in an `after` or `between`
+//! window only at or after its start. The horizon of an Evolution bounds every
+//! instant its instances hold on every axis, so an Evolution S1 keeps has a
+//! horizon at or after the start: the candidates hold every Evolution the
+//! window keeps, and only Evolutions written within the hour before the start
+//! or later. A `before` window reaches back without limit, so no horizon
+//! narrows it and it takes no step. Clause 5.7.4.4 refuses a query without a
+//! temporal query, so every query takes this step when no other applies,
+//! unless each of its selectors names identifiers, which the identifier index
+//! answers already. The window match stays in the residual: it decides which
+//! candidates S1 keeps, and judges the queued entries and the rows a queued
+//! entry replaces, which no horizon covers.
 
-use crate::{
-    alias::{Rh, Rs},
-    axis::axis_column,
-    stage1::{
-        evolution_walk::concerned_attribute_keys,
-        queued_candidates::{queued_candidates, stream_holder},
-    },
-};
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow};
-use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::query_names::QueryNames,
-    history_source::{HistoryBranch, PendingEntries},
-    time_interval_predicate::within_interval,
-};
-use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
-use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
+use crate::stage1::queued_candidates::queued_candidates;
+use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::branch::qualified;
+use chrono::{DateTime, Utc};
+use sea_query::{Expr, ExprTrait, Query, SelectStatement, UnionType};
 
 /// How many Evolutions a windowed page walks before it reads the candidates:
 /// a window most Evolutions answer fills the page within them.
 pub(super) const WINDOW_SHORT_WALK: u32 = 200;
 
-/// The most history rows a page reads before it walks instead.
+/// The most candidate Evolutions a page reads before it walks instead.
 pub(super) const WINDOW_CANDIDATE_BOUND: u64 = 10_000;
 
 /// The most Evolutions a windowed page walks in place of reading the
 /// candidates, when the matches the short walk found project the page full
 /// within them.
 ///
-/// A converted chunk keeps no rowstore index, so the candidate read reaches
-/// it only by scanning every batch summary it holds, a floor that grows with
-/// the archive whatever the window; a walk costs the Evolutions it visits.
+/// The candidates are every Evolution written since the hour before the
+/// window's start, up to the bound, however few of them the window keeps;
+/// a window dense enough to fill the page within this walk finds its page
+/// for fewer probes than reading them costs.
 pub(super) const WINDOW_DENSE_WALK: u32 = 1_500;
 
-/// Whose instances a window read takes.
-#[derive(Debug, Clone)]
-enum ConcernedAttributes {
-    /// Every attribute's: the request names none.
-    Every,
-    /// Those of the attributes the request names, by dictionary key; an
-    /// attribute the dictionary never keyed has no history and no key.
-    Keyed(Vec<AttributeNameKey>),
+/// The horizon read a temporal window opening at an instant admits.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WindowRead {
+    /// The instant the window opens at: every instance it keeps lies at or
+    /// after it.
+    opening: DateTime<Utc>,
 }
 
-/// The history read a bounded temporal window admits.
-#[derive(Debug, Clone)]
-pub(super) struct WindowRead<'q> {
-    /// The window: its axis and its interval.
-    window: &'q TemporalWindow,
-    /// Whose instances it reads.
-    concerned: ConcernedAttributes,
-}
-
-impl<'q> WindowRead<'q> {
-    /// The window read of `compiled`: `None` for an unbounded window, which
-    /// every Evolution holding a stream of a concerned attribute meets, and
-    /// for selectors that each name identifiers.
-    pub(super) fn of(compiled: &'q CompiledTemporalQuery, names: &QueryNames) -> Option<WindowRead<'q>> {
-        if !compiled.window.interval.is_bounded() {
-            return None;
-        }
+impl WindowRead {
+    /// The window read of `compiled`: `None` for a window that reaches back
+    /// without limit, an unbounded or a `before` one, and for selectors that
+    /// each name identifiers.
+    pub(super) fn of(compiled: &CompiledTemporalQuery) -> Option<WindowRead> {
+        let opening = *compiled.window.interval.opening()?;
         let selectors = &compiled.entities.selectors;
         if !selectors.is_empty() && selectors.iter().all(|selector| !selector.ids.is_empty()) {
             return None;
         }
-        let concerned = if compiled.instances.attr_filter.is_empty() {
-            ConcernedAttributes::Every
-        } else {
-            ConcernedAttributes::Keyed(concerned_attribute_keys(compiled, &names.attributes))
-        };
-        Some(WindowRead {
-            window: &compiled.window,
-            concerned,
-        })
+        Some(WindowRead { opening })
     }
 
-    /// The Evolutions of `branch` with a recorded row of a concerned
-    /// attribute inside the window, once for each such row: their surrogate
-    /// keys over recorded rows alone; where the branch reads its queue, their
-    /// identifiers beside every queued Entity, whose queued entries no index
-    /// holds.
+    /// The Evolutions of `branch` whose horizon is at or after the window's
+    /// start: their surrogate keys over recorded rows alone; where the branch
+    /// reads its queue, their identifiers beside every queued Entity, whose
+    /// queued entries no horizon covers yet.
     pub(super) fn candidates(&self, branch: &HistoryBranch) -> SelectStatement {
+        let column = match branch.pending() {
+            PendingEntries::Absent => Entities::EntityKey,
+            PendingEntries::Unioned => Entities::Id,
+        };
         let mut candidates = Query::select();
-        candidates.from(qualified(branch.schema(), AttributeHistory::Table).alias(Rh)).join_as(
-            JoinType::Join,
-            qualified(branch.schema(), TemporalAttributeStreams::Table),
-            Rs,
-            Expr::col((Rs, TemporalAttributeStreams::StreamKey)).equals((Rh, AttributeHistory::StreamKey)),
-        );
-        stream_holder(&mut candidates, branch);
-        candidates.cond_where(within_interval(&Expr::col((Rh, axis_column(self.window.timeproperty))), &self.window.interval));
-        match &self.concerned {
-            ConcernedAttributes::Every => {}
-            ConcernedAttributes::Keyed(keys) => {
-                candidates.and_where(is_any_of(
-                    Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey)),
-                    keys.iter().map(|key| key.get()),
-                ));
-            }
-        }
+        candidates
+            .column((Entities::Table, column))
+            .from(qualified(branch.schema(), Entities::Table))
+            .and_where(Expr::col((Entities::Table, Entities::EvolutionActiveUntil)).gte(self.opening));
         match branch.pending() {
             PendingEntries::Absent => {}
             PendingEntries::Unioned => {
@@ -127,7 +90,6 @@ impl<'q> WindowRead<'q> {
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
@@ -142,6 +104,7 @@ mod tests {
     use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value};
+    use strum::IntoEnumIterator;
 
     /// A query of the `Sensor` type over `interval` on `timeproperty`.
     fn windowed(timeproperty: TimeProp, interval: TimeInterval) -> CompiledTemporalQuery {
@@ -164,42 +127,35 @@ mod tests {
     }
 
     #[test]
-    fn a_window_over_a_type_walk_reads_the_axis_rows() {
+    fn a_window_over_a_type_walk_reads_the_horizons_at_or_after_its_start() {
         let stage1 = recorded_stage1(&modified_after());
-        assert_eq!(stage1.planning, StatementPlanning::BoundValues);
+        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
-            candidates.starts_with(concat!(
-                r#"SELECT "rs"."entity_key" FROM "attribute_history" AS "rh""#,
-                r#" JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key""#,
-                r#" WHERE "rh"."modified_at" >= $"#
-            )),
+            candidates.starts_with(r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= $"#),
             "{candidates}"
         );
+        assert!(!candidates.contains("attribute_history"), "{candidates}");
         assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
     }
 
+    /// The horizon bounds the instants of every axis at once, so the axis
+    /// changes only the residual window match.
     #[test]
-    fn each_axis_reads_its_own_column() {
-        let axes = [
-            (TimeProp::Observed, "observed_at"),
-            (TimeProp::Created, "created_at"),
-            (TimeProp::Modified, "modified_at"),
-            (TimeProp::Deleted, "deleted_at"),
-        ];
-        for (timeproperty, column) in axes {
-            let candidates = candidates_of(&windowed(timeproperty, TimeInterval::After(instant("2026-10-18T03:00:00Z"))));
-            assert!(candidates.contains(&format!(r#""rh"."{column}" >= "#)), "{timeproperty}: {candidates}");
-            for (_, other) in axes.iter().filter(|(_, other)| *other != column) {
-                assert!(!candidates.contains(other), "{timeproperty}: {candidates}");
-            }
-            assert!(!candidates.contains("recorded_at"), "{timeproperty}: {candidates}");
-        }
+    fn every_axis_reads_the_same_horizons() {
+        let candidates: Vec<String> = TimeProp::iter()
+            .map(|timeproperty| candidates_of(&windowed(timeproperty, TimeInterval::After(instant("2026-10-18T03:00:00Z")))))
+            .collect();
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some(r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= '2026-10-18 03:00:00.000000 +00:00'"#)
+        );
+        assert!(candidates.windows(2).all(|pair| pair[0] == pair[1]), "{candidates:?}");
     }
 
     #[test]
-    fn between_and_before_windows_bound_both_or_one_side() {
+    fn a_between_window_reads_the_horizons_from_its_start() {
         let between = candidates_of(&windowed(
             TimeProp::Modified,
             TimeInterval::Between {
@@ -207,34 +163,28 @@ mod tests {
                 to: instant("2026-10-19T03:00:00Z"),
             },
         ));
-        assert!(
-            between.contains(r#""rh"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' AND "rh"."modified_at" < '2026-10-19 03:00:00.000000 +00:00'"#),
-            "{between}"
+        assert_eq!(
+            between,
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= '2026-10-18 03:00:00.000000 +00:00'"#
         );
-        let before = candidates_of(&windowed(TimeProp::Modified, TimeInterval::Before(instant("2026-10-18T03:00:00Z"))));
-        assert!(before.contains(r#""rh"."modified_at" < '2026-10-18 03:00:00.000000 +00:00'"#), "{before}");
-        assert!(!before.contains(">="), "{before}");
     }
 
+    /// A `before` window reaches back without limit, which no horizon bounds.
     #[test]
-    fn the_concerned_attributes_narrow_the_window_candidates() {
+    fn a_before_window_has_no_window_step() {
+        let stage1 = recorded_stage1(&windowed(TimeProp::Modified, TimeInterval::Before(instant("2026-10-18T03:00:00Z"))));
+        let sql = stage1.select.to_string(PostgresQueryBuilder);
+        assert!(!sql.contains("candidates"), "{sql}");
+        assert!(!sql.contains("evolution_active_until"), "{sql}");
+    }
+
+    /// The horizon covers every attribute of the Evolution, so the concerned
+    /// attributes narrow only the residual window match.
+    #[test]
+    fn the_concerned_attributes_leave_the_candidates_alone() {
         let mut compiled = modified_after();
         compiled.instances.attr_filter = vec![iri("https://uri.etsi.org/ngsi-ld/default-context/temperature")];
-        let (sql, values) = recorded_stage1(&compiled).select.build(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        let (_, keys) = candidates
-            .split_once(r#" AND "rs"."attribute_name_key" = ANY($"#)
-            .unwrap_or_else(|| panic!("the concerned keys: {candidates}"));
-        let position: usize = keys
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>()
-            .parse()
-            .expect("a placeholder");
-        assert!(
-            matches!(values.0.get(position - 1), Some(Value::Array(_, Some(keys))) if keys.as_slice() == [Value::Int(Some(1))]),
-            "{sql}"
-        );
+        assert_eq!(candidates_of(&compiled), candidates_of(&modified_after()));
     }
 
     #[test]
@@ -343,7 +293,9 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
         assert!(
-            branches.candidates.starts_with(r#"SELECT "ri"."id" FROM "attribute_history" AS "rh" JOIN"#),
+            branches
+                .candidates
+                .starts_with(r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."evolution_active_until" >= "#),
             "{}",
             branches.candidates
         );
@@ -372,7 +324,7 @@ mod tests {
         .to_string(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
-            candidates.starts_with(r#"SELECT "rs"."entity_key" FROM "snap_7"."attribute_history" AS "rh" JOIN "snap_7"."temporal_attribute_streams" AS "rs""#),
+            candidates.starts_with(r#"SELECT "entities"."entity_key" FROM "snap_7"."entities" WHERE "entities"."evolution_active_until" >= "#),
             "{candidates}"
         );
     }

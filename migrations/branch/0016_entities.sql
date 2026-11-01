@@ -50,6 +50,16 @@ create table entities (
     -- none.
     evolution_created_at timestamptz,
     evolution_modified_at timestamptz,
+    -- The activity horizon of the Temporal Evolution: an upper bound on every
+    -- instant its attribute instances hold on any clause 4.11 time axis,
+    -- rounded up to the end of its UTC hour. The writes recording history
+    -- raise it and nothing else lowers it while the Evolution lasts, so an
+    -- Evolution without an instance at or after an instant has a horizon
+    -- before it or none, and a bounded temporal window reads its candidates
+    -- from the horizons at or after its start. The rounding keeps the column
+    -- out of almost every recording write: one moves it only when it passes
+    -- into a later hour. NULL while the Evolution holds no attribute instance.
+    evolution_active_until timestamptz,
     -- The `entity_type_names` keys the Temporal Evolution is recorded under.
     -- Clauses 5.6.11.4 and 5.6.12.4 add the types a write states that it
     -- lacks and no operation removes one, so the list only grows; a core
@@ -61,7 +71,7 @@ create table entities (
     constraint chk_entities_id_length check (octet_length(id) <= 1024),
     constraint chk_entities_write_count check (write_count > 0),
     constraint chk_entities_current_state check ((created_at is null) = (modified_at is null) and (created_at is not null or (expires_at is null and min_attribute_expires_at is null))),
-    constraint chk_entities_evolution check ((evolution_created_at is null) = (evolution_modified_at is null) and (evolution_created_at is null) = (evolution_type_name_keys is null) and (evolution_type_name_keys is null or cardinality(evolution_type_name_keys) > 0)),
+    constraint chk_entities_evolution check ((evolution_created_at is null) = (evolution_modified_at is null) and (evolution_created_at is null) = (evolution_type_name_keys is null) and (evolution_type_name_keys is null or cardinality(evolution_type_name_keys) > 0) and (evolution_active_until is null or evolution_created_at is not null)),
     constraint chk_entities_held check (created_at is not null or evolution_created_at is not null)
 )
 with (
@@ -81,6 +91,12 @@ where
 create index idx_entities_min_attribute_expires_at on entities (min_attribute_expires_at)
 where
     min_attribute_expires_at is not null;
+
+-- The candidates of a bounded temporal window (clause 4.11): the Evolutions
+-- whose activity horizon is at or after the window's start.
+create index idx_entities_evolution_active_until on entities (evolution_active_until)
+where
+    evolution_active_until is not null;
 
 -- An `idPattern` that leaves the identifier's start open (clause 5.7.2).
 -- The trigram column is collated under the database's default, the

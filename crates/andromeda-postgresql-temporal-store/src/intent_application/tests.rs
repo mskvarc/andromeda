@@ -645,6 +645,37 @@ fn the_shapes_of_the_recorded_instances_are_added_to_their_streams() {
     );
 }
 
+/// The head of the statement raising the activity horizons.
+const HORIZON_RAISE: &str = r#"UPDATE "entities" SET "evolution_active_until" = "reached"."reached" FROM (SELECT"#;
+
+/// Every instant an attribute entry records, on each clause 4.11 axis, stays
+/// at or before its Evolution's horizon, which is raised once per Evolution
+/// and only where it would move.
+#[test]
+fn the_horizon_of_every_recorded_evolution_covers_the_instants_its_entries_record() {
+    assert!(position(r#"INSERT INTO "attribute_history""#) < position(HORIZON_RAISE));
+    let horizon = rendered_steps()
+        .into_iter()
+        .map(|(_, sql)| sql)
+        .find(|sql| sql.starts_with(HORIZON_RAISE))
+        .expect("a horizon raise");
+    assert!(
+        horizon.contains(concat!(
+            r#"date_trunc('hour', MAX(GREATEST("e"."observed_at", "e"."created_at", "e"."modified_at", "e"."deleted_at")), 'UTC')"#,
+            r#" + (make_interval(secs => 3600)) AS "reached""#
+        )),
+        "{horizon}"
+    );
+    assert!(
+        horizon.contains(r#"GROUP BY "te"."entity_key") AS "reached" WHERE "entities"."entity_key" = "reached"."entity_key""#),
+        "{horizon}"
+    );
+    assert!(
+        horizon.ends_with(r#"AND ("entities"."evolution_active_until" IS NULL OR "entities"."evolution_active_until" < "reached"."reached")"#),
+        "{horizon}"
+    );
+}
+
 /// A source may hold several intents of one Entity, and a conflict action
 /// changes a row once per statement, so the evolution is written in one row
 /// carrying every type the Entity's intents state, at the instant of its
@@ -1165,6 +1196,7 @@ fn only_the_statements_after_the_evolutions_name_the_created_keys() {
                 (StepRole::Replace, true),
                 (StepRole::Write, true),
                 (StepRole::Claim, true),
+                (StepRole::Write, true),
                 (StepRole::Write, true),
                 (StepRole::Write, true),
                 (StepRole::Write, true),

@@ -10,6 +10,7 @@
 //! after the other leaves it.
 
 use crate::{
+    evolution_horizon::{horizon_of, horizon_raise_statement, project_horizon},
     intent_application::{
         deletion_judgement::{created_by_application, ended_before_evolution},
         intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, intent_entity_key, source_entries, write_ordinal},
@@ -40,6 +41,7 @@ use sea_query::{
     DynIden,
     Expr,
     ExprTrait,
+    Func,
     Iden,
     InsertStatement,
     IntoIden,
@@ -224,6 +226,24 @@ pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynId
         )
         .select_from(select)?;
     Ok(statement)
+}
+
+/// Raise the activity horizon of every Evolution an attribute entry of the
+/// source records an instance of to cover the instants the entry records on
+/// each time axis (clause 4.11), so every instant its history holds stays at or
+/// before its horizon.
+pub(crate) fn horizon_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
+    let axes = [
+        TemporalEntry::ObservedAt,
+        TemporalEntry::CreatedAt,
+        TemporalEntry::ModifiedAt,
+        TemporalEntry::DeletedAt,
+    ];
+    let latest: SimpleExpr = Func::greatest(axes.map(entry)).into();
+    let mut reached = recorded_attribute_entries(source, schema);
+    reached.column((Te, Entities::EntityKey)).group_by_col((Te, Entities::EntityKey));
+    project_horizon(&mut reached, horizon_of(Func::max(latest).into()));
+    horizon_raise_statement(qualified(schema, Entities::Table), reached)
 }
 
 /// Grow the extent of every stream an entry of the source records a geometry

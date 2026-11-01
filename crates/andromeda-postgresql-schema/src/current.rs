@@ -45,6 +45,12 @@ pub enum Entities {
     /// Instant the Temporal Evolution was last extended (clause 4.8
     /// `modifiedAt`); NULL while the Entity has no Temporal Evolution
     EvolutionModifiedAt,
+    /// An upper bound on every instant the Temporal Evolution's attribute
+    /// instances hold on any time axis (`observedAt`, `createdAt`,
+    /// `modifiedAt`, `deletedAt`), rounded up to the end of its UTC hour and
+    /// never lowered while the Evolution lasts; NULL while the Entity has no
+    /// Temporal Evolution or its Evolution holds no attribute instance yet
+    EvolutionActiveUntil,
     /// The `entity_type_names` keys the Temporal Evolution is recorded under,
     /// which only grow (clauses 5.6.11.4 and 5.6.12.4); NULL while the Entity
     /// has no Temporal Evolution
@@ -306,6 +312,7 @@ mod tests {
         assert_eq!(Entities::MinAttributeExpiresAt.to_string(), "min_attribute_expires_at");
         assert_eq!(Entities::EvolutionCreatedAt.to_string(), "evolution_created_at");
         assert_eq!(Entities::EvolutionModifiedAt.to_string(), "evolution_modified_at");
+        assert_eq!(Entities::EvolutionActiveUntil.to_string(), "evolution_active_until");
         assert_eq!(Entities::EvolutionTypeNameKeys.to_string(), "evolution_type_name_keys");
     }
 

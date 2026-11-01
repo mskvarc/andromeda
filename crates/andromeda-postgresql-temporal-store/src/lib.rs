@@ -37,6 +37,8 @@ pub(crate) mod decompression_allowance;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
+/// The activity horizon bounding every instant a Temporal Evolution holds.
+pub(crate) mod evolution_horizon;
 /// Giving up the Temporal Evolution of identity rows.
 pub(crate) mod evolution_vacancy;
 /// Reading which disqualifying shapes the instances a request aggregates carry.

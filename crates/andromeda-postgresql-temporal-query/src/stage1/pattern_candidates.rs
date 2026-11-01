@@ -62,7 +62,7 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
 mod tests {
     use crate::stage1::{
         Stage1Query,
-        query_fixture::{CountParts, PageBranches, id_pattern, recorded_stage1, stage1_on},
+        query_fixture::{CountParts, PageBranches, id_pattern, opened, recorded_stage1, stage1_on},
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelector,
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn an_anchored_pattern_reads_no_trigrams() {
         for raw in ["^urn:ngsi-ld:Sensor:0123.*", "^urn:ngsi-ld:Sensor:012345$"] {
-            let sql = recorded_stage1(&id_pattern(None, raw)).select.to_string(PostgresQueryBuilder);
+            let sql = recorded_stage1(&opened(id_pattern(None, raw))).select.to_string(PostgresQueryBuilder);
             let branches = PageBranches::of(&sql);
             assert!(!branches.candidates.contains(r#""entities"."id" ~"#), "{raw}: {sql}");
             assert!(branches.indexed.contains(r#""e"."id" ~ '^urn:ngsi-ld:Sensor:012"#), "{raw}: {sql}");
@@ -153,7 +153,7 @@ mod tests {
     /// requested ordering takes no step at all.
     #[test]
     fn paired_selectors_read_no_trigrams_and_an_ordering_keeps_the_plain_walk() {
-        let mut paired = id_pattern(Some("Sensor"), ".*:0123.*");
+        let mut paired = opened(id_pattern(Some("Sensor"), ".*:0123.*"));
         paired.entities.selectors.push(
             EntitySelector::builder()
                 .id_pattern(Some(Pattern::parse(".*:9.*").expect("valid pattern")))

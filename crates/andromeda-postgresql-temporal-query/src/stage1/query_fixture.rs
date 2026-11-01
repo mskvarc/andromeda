@@ -186,6 +186,13 @@ pub(super) fn sensors() -> CompiledTemporalQuery {
     compiled
 }
 
+/// `compiled` over the window `after 2026-10-18T03:00:00Z`, which opens at an
+/// instant and so takes the window's step when no other step applies.
+pub(super) fn opened(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
+    compiled.window.interval = TimeInterval::After(instant("2026-10-18T03:00:00Z"));
+    compiled
+}
+
 /// A query of the selector `idPattern=<raw>`, of the type `ty` of the default
 /// context when one is named, over the window of [`sensors`].
 pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {

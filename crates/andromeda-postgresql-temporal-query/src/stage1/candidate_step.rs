@@ -47,10 +47,9 @@ pub(super) enum CandidateStep<'q> {
     /// extent index yields the Evolutions holding a stream of the
     /// `GeoProperty` whose extent meets it, beside the contributed Entities.
     GeometryExtents(ExtentRead<'q>),
-    /// The window (clause 4.11) when it is bounded: the history rows inside
-    /// it yield the Evolutions with an instance of a concerned attribute
-    /// there.
-    Window(WindowRead<'q>),
+    /// The window (clause 4.11) when it opens at an instant: the horizon
+    /// index yields the Evolutions whose instances may reach the window.
+    Window(WindowRead),
 }
 
 /// How the count of a stage 1 statement with a candidate step is read.
@@ -111,7 +110,7 @@ impl<'q> CandidateStep<'q> {
         if let Some(extents) = ExtentRead::of(compiled, names)? {
             return Ok(Some(CandidateStep::GeometryExtents(extents)));
         }
-        Ok(WindowRead::of(compiled, names).map(CandidateStep::Window))
+        Ok(WindowRead::of(compiled).map(CandidateStep::Window))
     }
 
     /// How many Evolutions the short walk visits before the candidates are
@@ -140,9 +139,10 @@ impl<'q> CandidateStep<'q> {
     /// them; `None` when the candidates are read whenever the short walk falls
     /// short.
     ///
-    /// Only the window's read has a floor of its own: it reaches converted
-    /// history through every batch summary, while the trigram, Scope path and
-    /// extent reads cost what they find.
+    /// Only the window's read costs what it reads rather than what the
+    /// filter keeps: it yields every Evolution written since the hour before
+    /// the window's start, while the trigram, Scope path and extent reads
+    /// yield close to the Evolutions their filter keeps.
     pub(super) const fn dense_walk(&self) -> Option<u32> {
         match self {
             CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => None,
@@ -155,10 +155,9 @@ impl<'q> CandidateStep<'q> {
         match self {
             // A gated-off branch still launches the workers of a Gather under
             // it, so the index reads run serially.
-            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) => StatementPlanning::GatedBranches,
-            // The window's read scans every batch summary of converted
-            // history, which workers split.
-            CandidateStep::Window(_) => StatementPlanning::BoundValues,
+            CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) | CandidateStep::Window(_) => {
+                StatementPlanning::GatedBranches
+            }
         }
     }
 
@@ -198,7 +197,7 @@ impl<'q> CandidateStep<'q> {
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{PageBranches, id_pattern, instant, near_query, recorded_stage1, sensor_names, sensors},
+        query_fixture::{PageBranches, id_pattern, instant, near_query, opened, recorded_stage1, sensor_names, sensors},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
@@ -218,7 +217,7 @@ mod tests {
     /// takes.
     #[test]
     fn a_q_filter_takes_no_step_of_its_own() {
-        let mut compiled = sensors();
+        let mut compiled = opened(sensors());
         compiled.entities.q_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99").expect("valid q"));
         let stage1 = build_stage1_entity_ids(
             &HistoryBranch::live_recorded(),
@@ -230,12 +229,12 @@ mod tests {
         .expect("valid temporal query");
         let page = stage1.select.to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&page);
-        assert!(branches.candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{page}");
+        assert!(branches.candidates.contains(r#""evolution_active_until" >= "#), "{page}");
         assert!(!branches.candidates.contains("value_number"), "{page}");
         assert!(branches.indexed.contains("value_number"), "{page}");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(!count.contains("candidates"), "{count}");
-        assert_eq!(stage1.planning, StatementPlanning::BoundValues);
+        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
     }
 
     #[test]

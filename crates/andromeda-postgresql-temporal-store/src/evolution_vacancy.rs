@@ -78,6 +78,7 @@ pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: Select
         .values([
             (Entities::EvolutionCreatedAt, Keyword::Null.into()),
             (Entities::EvolutionModifiedAt, Keyword::Null.into()),
+            (Entities::EvolutionActiveUntil, Keyword::Null.into()),
             (Entities::EvolutionTypeNameKeys, Keyword::Null.into()),
         ])
         .and_where(Expr::col(Entities::EntityKey).in_subquery(kept()))
@@ -144,7 +145,7 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#""retired" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_type_name_keys" = NULL "#,
+                r#""retired" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_active_until" = NULL, "evolution_type_name_keys" = NULL "#,
                 r#"WHERE "entity_key" IN (SELECT "entity_key" FROM "vacated" WHERE "current"))"#
             )),
             "{sql}"

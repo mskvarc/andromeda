@@ -117,7 +117,7 @@ mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
         extent_candidates::ExtentRead,
-        query_fixture::{CountParts, PageBranches, geo_query, ids, near_query, point, recorded_stage1, sensor_names, stage1_on},
+        query_fixture::{CountParts, PageBranches, geo_query, ids, near_query, opened, point, recorded_stage1, sensor_names, stage1_on},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, great_circle::great_circle_bounds, near_envelope::NearEnvelope, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::{
@@ -245,11 +245,11 @@ mod tests {
             },
             &serde_json::json!([4.5, 52.5]),
         );
-        for compiled in [geo_query(GeoRel::Disjoint, &serde_json::json!([4.5, 52.5])), far] {
+        for compiled in [opened(geo_query(GeoRel::Disjoint, &serde_json::json!([4.5, 52.5]))), opened(far)] {
             let sql = type_page(&compiled);
             let branches = PageBranches::of(&sql);
             assert!(!sql.contains("value_extent"), "{sql}");
-            assert!(branches.candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{sql}");
+            assert!(branches.candidates.contains(r#""evolution_active_until" >= "#), "{sql}");
             assert!(branches.indexed.contains(r#""qh"."value_geometry""#), "{sql}");
         }
     }
@@ -280,7 +280,7 @@ mod tests {
         };
         let stage1 = build_stage1_entity_ids(
             &HistoryBranch::live_recorded(),
-            &near_query(4.5, "2000"),
+            &opened(near_query(4.5, "2000")),
             &PageWindow::offset(20, 0),
             CountPolicy::Emit,
             &types_alone,
@@ -288,7 +288,7 @@ mod tests {
         .expect("valid temporal query");
         let sql = stage1.select.to_string(PostgresQueryBuilder);
         assert!(!sql.contains("value_extent"), "{sql}");
-        assert!(PageBranches::of(&sql).candidates.contains(r#"FROM "attribute_history" AS "rh" JOIN"#), "{sql}");
+        assert!(PageBranches::of(&sql).candidates.contains(r#""evolution_active_until" >= "#), "{sql}");
     }
 
     #[test]
