@@ -39,8 +39,6 @@ pub enum MaintenanceDecision {
     TenantUnavailable,
     /// Tenant schema is behind the running contract.
     SchemaBehind,
-    /// Required extension or privileges are absent.
-    CapabilityUnavailable,
     /// No suspicious target was found.
     Idle,
     /// One detailed physical probe completed.

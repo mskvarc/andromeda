@@ -1,10 +1,11 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 //!
-//! Inspection and acting are checked apart. The `pgstattuple` extension and
-//! its functions gate a whole visit: without them nothing can be sampled. The
-//! privilege to maintain a branch's heaps is checked per branch and only
-//! decides whether automatic mode acts there; a branch without it is still
-//! sampled.
+//! The `pgstattuple` extension and its function measure one thing: the exact
+//! free space of a probeable index. Without it, or without the privilege to
+//! execute it, a visit probes no index and runs every other check, all of
+//! which read the statistics views and the catalogs. The privilege to maintain
+//! a branch's heaps is checked per branch and only decides whether automatic
+//! mode acts there; a branch without it is still sampled.
 //!
 //! PostgreSQL 17 grants maintenance through `MAINTAIN`, which owners and
 //! superusers hold implicitly. An earlier server has no such privilege: there
@@ -12,7 +13,7 @@
 //! ownership is what the check asks for, and every server answers the same
 //! question.
 
-use crate::{branch::Branch, error::MaintenanceError};
+use crate::{branch::Branch, error::MaintenanceError, inspection::IndexSize};
 use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
 use andromeda_postgresql_seaquery::{
     introspection::server_version_num,
@@ -21,16 +22,29 @@ use andromeda_postgresql_seaquery::{
 };
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgConnection;
+use strum::IntoStaticStr;
 
-/// Whether a tenant database can be inspected at all.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CapabilityStatus {
-    /// The extension is installed and the role may execute its functions.
+/// Whether a visit may measure an index with `pgstattuple`.
+#[derive(Clone, Copy, Debug, Eq, IntoStaticStr, PartialEq)]
+#[strum(serialize_all = "kebab-case")]
+pub(crate) enum ProbeCapability {
+    /// The extension is installed and the role may execute `pgstattuple`.
     Ready,
-    /// The optional supplied extension is not installed.
+    /// The extension is not installed in the tenant database.
     MissingPgstattuple,
-    /// The role cannot execute required physical inspection functions.
+    /// The extension is installed and the role may not execute `pgstattuple`.
     MissingPgstattupleExecute,
+}
+
+impl ProbeCapability {
+    /// The probes a visit runs out of `candidates`: all of them when the
+    /// extension can measure them, none otherwise.
+    pub(crate) fn probe_candidates(self, candidates: Vec<IndexSize>) -> Vec<IndexSize> {
+        match self {
+            ProbeCapability::Ready => candidates,
+            ProbeCapability::MissingPgstattuple | ProbeCapability::MissingPgstattupleExecute => Vec::new(),
+        }
+    }
 }
 
 /// Whether the broker role may run maintenance statements in one branch.
@@ -43,16 +57,16 @@ pub(crate) enum MaintainPrivilege {
     NotGranted,
 }
 
-/// Validate the optional diagnostic extension and the role's privilege to run
-/// its inspection functions.
-pub(crate) async fn validate_capabilities(connection: &mut PgConnection) -> Result<CapabilityStatus, MaintenanceError> {
+/// Whether the optional `pgstattuple` extension is installed and the role may
+/// execute the one function an index probe calls.
+pub(crate) async fn probe_capability(connection: &mut PgConnection) -> Result<ProbeCapability, MaintenanceError> {
     if !extension_present_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
-        return Ok(CapabilityStatus::MissingPgstattuple);
+        return Ok(ProbeCapability::MissingPgstattuple);
     }
-    if !inspection_privilege_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
-        return Ok(CapabilityStatus::MissingPgstattupleExecute);
+    if !probe_privilege_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
+        return Ok(ProbeCapability::MissingPgstattupleExecute);
     }
-    Ok(CapabilityStatus::Ready)
+    Ok(ProbeCapability::Ready)
 }
 
 /// The first PostgreSQL release with the `MAINTAIN` privilege.
@@ -109,11 +123,15 @@ fn extension_present_statement() -> SelectStatement {
     Query::select().expr(Expr::exists(inner)).to_owned()
 }
 
-/// Required `pgstattuple` function execution privileges.
-fn inspection_privilege_statement() -> SelectStatement {
-    let exact = current_user_has_function_privilege(to_regprocedure(Expr::val("pgstattuple(regclass)")), Expr::val("EXECUTE"));
-    let approximate = current_user_has_function_privilege(to_regprocedure(Expr::val("pgstattuple_approx(regclass)")), Expr::val("EXECUTE"));
-    Query::select().expr(exact.and(approximate)).to_owned()
+/// The privilege to execute `pgstattuple(regclass)`, the function an index
+/// probe calls.
+fn probe_privilege_statement() -> SelectStatement {
+    Query::select()
+        .expr(current_user_has_function_privilege(
+            to_regprocedure(Expr::val("pgstattuple(regclass)")),
+            Expr::val("EXECUTE"),
+        ))
+        .to_owned()
 }
 
 /// Required PostgreSQL 17 `MAINTAIN` privileges on every allowlisted heap
@@ -134,11 +152,13 @@ fn maintain_privilege_statement(branch: Branch) -> SelectStatement {
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::heap_target::HeapTarget,
-        capability::{maintain_privilege_statement, maintain_probe, ownership_statement, server_version_statement},
+        candidate::{heap_target::HeapTarget, index_target::IndexTarget},
+        capability::{ProbeCapability, maintain_privilege_statement, maintain_probe, ownership_statement, probe_privilege_statement, server_version_statement},
+        inspection::IndexSize,
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -201,5 +221,41 @@ mod tests {
             server_version_statement().to_string(PostgresQueryBuilder),
             "SELECT current_setting('server_version_num')::integer"
         );
+    }
+
+    fn candidates() -> Vec<IndexSize> {
+        [IndexTarget::PkCaGrain, IndexTarget::IdxCaValueGeometry]
+            .map(|target| IndexSize {
+                branch: Branch::Live,
+                target,
+                bytes: 1 << 30,
+            })
+            .to_vec()
+    }
+
+    #[test]
+    fn a_visit_with_pgstattuple_runs_every_probe_candidate() {
+        assert_eq!(ProbeCapability::Ready.probe_candidates(candidates()), candidates());
+    }
+
+    #[test]
+    fn a_visit_without_pgstattuple_or_its_execute_privilege_probes_no_index() {
+        for capability in [ProbeCapability::MissingPgstattuple, ProbeCapability::MissingPgstattupleExecute] {
+            assert_eq!(capability.probe_candidates(candidates()), [], "{capability:?}");
+        }
+    }
+
+    #[test]
+    fn the_probe_privilege_check_asks_only_for_the_function_a_probe_calls() {
+        assert_eq!(
+            probe_privilege_statement().to_string(PostgresQueryBuilder),
+            "SELECT has_function_privilege(current_user, to_regprocedure('pgstattuple(regclass)'), 'EXECUTE')"
+        );
+    }
+
+    #[test]
+    fn the_missing_capability_is_named_after_what_is_missing() {
+        assert_eq!(<&str>::from(ProbeCapability::MissingPgstattuple), "missing-pgstattuple");
+        assert_eq!(<&str>::from(ProbeCapability::MissingPgstattupleExecute), "missing-pgstattuple-execute");
     }
 }

@@ -14,11 +14,17 @@ compact_code_registry! {
             Started = 1, "started";
             /// The tenant database could not be reached.
             Unavailable = 2, "unavailable";
-            /// Every capability the controller needs is present.
+            /// A capability check found every capability present. Nothing
+            /// writes it: a visit records its own outcome. It decodes so a
+            /// stored row keeps its meaning.
             Ready = 3, "ready";
-            /// The `pgstattuple` extension is absent.
+            /// A visit stopped at an absent `pgstattuple` extension. Nothing
+            /// writes it: such a visit probes no index and records its own
+            /// outcome. It decodes so a stored row keeps its meaning.
             MissingPgstattuple = 4, "missing-pgstattuple";
-            /// The broker role may not execute `pgstattuple`.
+            /// A visit stopped at a role that may not execute `pgstattuple`.
+            /// Nothing writes it: such a visit probes no index and records
+            /// its own outcome. It decodes so a stored row keeps its meaning.
             MissingPgstattupleExecute = 5, "missing-pgstattuple-execute";
             /// A visit stopped at a missing `MAINTAIN` privilege. Nothing
             /// writes it: such a visit observes and records its own outcome.
@@ -34,7 +40,9 @@ compact_code_registry! {
             TenantUnavailable = 10, "tenant-unavailable";
             /// The tenant schema is behind the binary.
             SchemaBehind = 11, "schema-behind";
-            /// A required capability is missing.
+            /// A visit stopped at a missing capability. Nothing writes it: a
+            /// missing capability narrows a visit and never ends it. It
+            /// decodes so a stored row keeps its meaning.
             CapabilityUnavailable = 12, "capability-unavailable";
             /// Nothing needed attention.
             Idle = 13, "idle";

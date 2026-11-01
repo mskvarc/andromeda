@@ -1778,6 +1778,7 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-tenancy",
  "chrono",
+ "dashmap",
  "pretty_assertions",
  "sea-query",
  "sqlx",

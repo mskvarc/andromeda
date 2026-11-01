@@ -1,27 +1,21 @@
 //! What one tenant's inspection came to.
 
-use crate::{capability::CapabilityStatus, controller::PassOutcome};
+use crate::controller::PassOutcome;
 use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use strum::EnumIter;
 
 /// What the last maintenance inspection of a tenant came to.
 ///
 /// One vocabulary for every value `postgresql_maintenance_tenants.last_result`
-/// holds: the pass bookkeeping of the controller itself, the capability a
-/// tenant lacks, and the outcome of a pass. Each source enum is folded into it
-/// by an exhaustive match, so the stored column has exactly one owner.
+/// holds: the pass bookkeeping of the controller itself and the outcome of a
+/// pass. The pass outcome is folded into it by an exhaustive match, so the
+/// stored column has exactly one owner.
 #[derive(Clone, Copy, Debug, EnumIter, Eq, PartialEq)]
 pub(crate) enum InspectionResult {
     /// The inspection started and has not finished.
     Started,
     /// The tenant database could not be reached.
     Unavailable,
-    /// Every capability the controller needs is present.
-    Ready,
-    /// The `pgstattuple` extension is absent.
-    MissingPgstattuple,
-    /// The broker role may not execute `pgstattuple`.
-    MissingPgstattupleExecute,
     /// The controller is disabled.
     Disabled,
     /// Another replica holds the fleet-wide lock.
@@ -32,8 +26,6 @@ pub(crate) enum InspectionResult {
     TenantUnavailable,
     /// The tenant schema is behind the binary.
     SchemaBehind,
-    /// A required capability is missing.
-    CapabilityUnavailable,
     /// Nothing needed attention.
     Idle,
     /// A detailed probe ran.
@@ -53,15 +45,6 @@ pub(crate) enum InspectionResult {
 }
 
 impl InspectionResult {
-    /// The result a capability check records.
-    pub(crate) const fn of_capability(status: CapabilityStatus) -> InspectionResult {
-        match status {
-            CapabilityStatus::Ready => InspectionResult::Ready,
-            CapabilityStatus::MissingPgstattuple => InspectionResult::MissingPgstattuple,
-            CapabilityStatus::MissingPgstattupleExecute => InspectionResult::MissingPgstattupleExecute,
-        }
-    }
-
     /// The result a finished pass records.
     pub(crate) const fn of_pass(outcome: PassOutcome) -> InspectionResult {
         match outcome {
@@ -70,7 +53,6 @@ impl InspectionResult {
             PassOutcome::NoTenant => InspectionResult::NoTenant,
             PassOutcome::TenantUnavailable => InspectionResult::TenantUnavailable,
             PassOutcome::SchemaBehind => InspectionResult::SchemaBehind,
-            PassOutcome::CapabilityUnavailable => InspectionResult::CapabilityUnavailable,
             PassOutcome::Idle => InspectionResult::Idle,
             PassOutcome::Probed => InspectionResult::Probed,
             PassOutcome::Queued => InspectionResult::Queued,
@@ -87,15 +69,11 @@ impl InspectionResult {
         match self {
             InspectionResult::Started => MaintenanceInspectionResultCode::Started,
             InspectionResult::Unavailable => MaintenanceInspectionResultCode::Unavailable,
-            InspectionResult::Ready => MaintenanceInspectionResultCode::Ready,
-            InspectionResult::MissingPgstattuple => MaintenanceInspectionResultCode::MissingPgstattuple,
-            InspectionResult::MissingPgstattupleExecute => MaintenanceInspectionResultCode::MissingPgstattupleExecute,
             InspectionResult::Disabled => MaintenanceInspectionResultCode::Disabled,
             InspectionResult::GlobalLockUnavailable => MaintenanceInspectionResultCode::GlobalLockUnavailable,
             InspectionResult::NoTenant => MaintenanceInspectionResultCode::NoTenant,
             InspectionResult::TenantUnavailable => MaintenanceInspectionResultCode::TenantUnavailable,
             InspectionResult::SchemaBehind => MaintenanceInspectionResultCode::SchemaBehind,
-            InspectionResult::CapabilityUnavailable => MaintenanceInspectionResultCode::CapabilityUnavailable,
             InspectionResult::Idle => MaintenanceInspectionResultCode::Idle,
             InspectionResult::Probed => MaintenanceInspectionResultCode::Probed,
             InspectionResult::Queued => MaintenanceInspectionResultCode::Queued,
@@ -121,16 +99,24 @@ mod tests {
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 
-    /// The mapping is one-to-one, and onto every number but `missing-maintain`:
-    /// a missing `MAINTAIN` privilege leaves a visit observing, so its own
-    /// outcome is recorded and that number is only ever decoded.
+    /// The mapping is one-to-one, and onto every number but the capability
+    /// ones: a missing `MAINTAIN` privilege leaves a visit observing, and a
+    /// missing `pgstattuple` leaves it without index probes, so either visit
+    /// records its own outcome and those numbers are only ever decoded.
     #[test]
-    fn every_inspection_result_has_its_own_stored_number_and_only_missing_maintain_is_unwritten() {
+    fn every_inspection_result_has_its_own_stored_number_and_only_the_capability_numbers_are_unwritten() {
+        let unwritten = [
+            MaintenanceInspectionResultCode::Ready,
+            MaintenanceInspectionResultCode::MissingPgstattuple,
+            MaintenanceInspectionResultCode::MissingPgstattupleExecute,
+            MaintenanceInspectionResultCode::MissingMaintain,
+            MaintenanceInspectionResultCode::CapabilityUnavailable,
+        ];
         let stored: Vec<MaintenanceInspectionResultCode> = InspectionResult::iter().map(InspectionResult::code).collect();
         let written: Vec<MaintenanceInspectionResultCode> = MaintenanceInspectionResultCode::ALL
             .iter()
             .copied()
-            .filter(|code| *code != MaintenanceInspectionResultCode::MissingMaintain)
+            .filter(|code| !unwritten.contains(code))
             .collect();
         assert_eq!(stored, written);
     }

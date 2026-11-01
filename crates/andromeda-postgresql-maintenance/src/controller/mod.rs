@@ -4,6 +4,7 @@ mod branch_sampling;
 mod catalog_sampling;
 mod density_sampling;
 mod index_probing;
+mod probe_notices;
 mod probe_selection;
 mod visit_branches;
 
@@ -12,8 +13,8 @@ use crate::{
     autovacuum_health,
     branch::Branch,
     branch_selection,
-    capability::{self, CapabilityStatus},
-    controller::visit_branches::VisitBranches,
+    capability,
+    controller::{probe_notices::ProbeNotices, visit_branches::VisitBranches},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     expected_deployment::ExpectedDeployment,
@@ -58,8 +59,6 @@ pub enum PassOutcome {
     TenantUnavailable,
     /// Normal tenant startup has not migrated the database to this binary's contract.
     SchemaBehind,
-    /// The selected database lacks an enabled maintenance capability.
-    CapabilityUnavailable,
     /// Cheap inspection found no target requiring a detailed probe.
     Idle,
     /// Detailed index probes completed and none queued or would act.
@@ -98,12 +97,14 @@ pub struct MaintenanceController {
     /// The highest branch migration this binary embeds. A Snapshot branch
     /// behind it is quarantined and left out of every visit.
     branch_version: BranchSchemaVersion,
+    /// The tenants whose missing `pgstattuple` this process has warned about.
+    probe_notices: ProbeNotices,
 }
 
 impl MaintenanceController {
     /// Construct a controller over the shared platform registry.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         platform_pool: PgPool,
         direct_url: DatabaseUrl,
         config: MaintenanceConfig,
@@ -118,6 +119,7 @@ impl MaintenanceController {
             acquire_timeout,
             expected,
             branch_version,
+            probe_notices: ProbeNotices::default(),
         }
     }
 
@@ -192,13 +194,8 @@ impl MaintenanceController {
         timescale_observation::report_timescale_state(&mut connection, tenant, self.expected.columnstore_conversion, Utc::now()).await?;
         extension_observation::report_extension_updates(&mut connection, tenant).await?;
         statement_statistics::report_statement_statistics(&mut connection, tenant).await?;
-        let capability = capability::validate_capabilities(&mut connection).await?;
-        if capability != CapabilityStatus::Ready {
-            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_capability(capability)).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
-            return Ok(PassOutcome::CapabilityUnavailable);
-        }
-
+        let capability = capability::probe_capability(&mut connection).await?;
+        self.probe_notices.report(tenant, capability);
         let profile = PolicyProfile::from_profile(self.config.profile);
         let published = inspection::published_branches(&mut connection).await?;
         branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
@@ -230,7 +227,8 @@ impl MaintenanceController {
             return action::execute_pending(mode, platform, &mut connection, tenant, row, profile, cancellation).await;
         }
 
-        let outcome = index_probing::probe_indexes(&branches, platform, &mut connection, tenant, &sampling.probe_candidates, profile, cancellation)
+        let candidates = capability.probe_candidates(sampling.probe_candidates);
+        let outcome = index_probing::probe_indexes(&branches, platform, &mut connection, tenant, &candidates, profile, cancellation)
             .await?
             .pass_outcome(sampling.flagged);
         if outcome != PassOutcome::Cancelled {
@@ -313,7 +311,6 @@ const fn metric_decision(outcome: PassOutcome) -> MaintenanceDecision {
         PassOutcome::NoTenant => MaintenanceDecision::NoTenant,
         PassOutcome::TenantUnavailable => MaintenanceDecision::TenantUnavailable,
         PassOutcome::SchemaBehind => MaintenanceDecision::SchemaBehind,
-        PassOutcome::CapabilityUnavailable => MaintenanceDecision::CapabilityUnavailable,
         PassOutcome::Idle => MaintenanceDecision::Idle,
         PassOutcome::Probed => MaintenanceDecision::Probed,
         PassOutcome::Queued => MaintenanceDecision::Queued,
