@@ -5,8 +5,9 @@
 //! types: a JSON string declared as an XSD number is a number, one declared
 //! as `xsd:boolean` a Boolean, one declared as a clause 4.6.3 time value that
 //! time value, and every other JSON string a String. A member is declared by
-//! the instance's `valueType` when it has one, which declares every primitive
-//! member of its value (clause 4.5.2), and by its own `@type` otherwise. A
+//! the `valueType` of a Property or a `ListProperty` when it has one, which
+//! declares every primitive member of its value (clause 4.5.2), and by its own
+//! `@type` otherwise. A
 //! containment probe that matches a JSON string therefore only narrows the
 //! candidates, and each member of a candidate is read the way one JSON value
 //! is read ([`lift_comparison`]) to decide it.
@@ -33,8 +34,9 @@ const MEMBER_VALUE: &str = "value";
 /// under.
 const VALUE_TYPE: &str = "dmt";
 
-/// Whether some member of the structured value in `column`, `value_type`
-/// being the instance's `valueType` key, equals `scalar`.
+/// Whether some member of the structured value in `column` equals `scalar`,
+/// `value_type` being the `valueType` key that declares the members, NULL
+/// when none does.
 ///
 /// A member is its own value when it is a scalar and its `@value` when it is
 /// a value node. A value that is not an array holds no member: the array test

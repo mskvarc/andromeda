@@ -39,8 +39,10 @@
 //! there is no equality between the target value data type and the Query Term
 //! value data type, then it shall be considered as not matching", and, under
 //! `unequal`, "considered unequal". A member's data type is its declared
-//! datatype, the instance's `valueType` before the member's own `@type`, so a
-//! JSON string may be a number, a Boolean or a time value. A number or a
+//! datatype, the `valueType` of a Property or a `ListProperty` before the
+//! member's own `@type`, so a JSON string may be a number, a Boolean or a time
+//! value. A `JsonProperty` holds one JSON literal, which equals no scalar
+//! operand, so it carries none. A number or a
 //! Boolean operand is therefore probed as its JSON value and as each JSON
 //! string a member declared as one is committed in (its canonical lexical
 //! forms), and a String operand as its text; [`some_member_equals`] then
@@ -66,15 +68,16 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_ngsi_ld_vocabulary::keyword;
+use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::{jsonb_build_array, jsonb_build_object},
-    literal::text_literal,
+    literal::{int_literal, text_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
+use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// Whether the structured value in `column` carries `scalar` as its clause 4.9
 /// target value, `value_type` being the instance's `valueType` key.
@@ -86,8 +89,33 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuil
 /// value from any of the key-value pairs held within the languageMap"; a
 /// `ListProperty`'s is its whole `valueList`; a `ListRelationship`'s is its
 /// whole `objectList`.
+///
+/// `family` is the instance's attribute family code. A `JsonProperty` is no
+/// structured target: its value is one JSON literal, an object or an array of
+/// objects, which equals no scalar operand, and a member it holds under
+/// `@value` is JSON, no value node. Only a Property's and a `ListProperty`'s
+/// `valueType` declares their members (clause 4.5.2).
 #[must_use]
-pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Scalar) -> Condition {
+pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, family: &SimpleExpr, scalar: &Scalar) -> Condition {
+    let declaring = declaring_value_type(value_type, family);
+    Condition::all()
+        // clone: sea-query owns every operand, and one column is read by several tests
+        .add(family.clone().ne(int_literal(i64::from(AttributeKind::JsonProperty.code()))))
+        .add(carried(column, &declaring, scalar))
+}
+
+/// The `valueType` key that declares the members of the instance of the
+/// attribute family `family`: its own `value_type` for a Property or a
+/// `ListProperty`, NULL for every other family.
+fn declaring_value_type(value_type: &SimpleExpr, family: &SimpleExpr) -> SimpleExpr {
+    let declaring = [AttributeKind::Property, AttributeKind::ListProperty].map(|kind| int_literal(i64::from(kind.code())));
+    // clone: sea-query owns every operand, and one column is read by several tests
+    CaseStatement::new().case(family.clone().is_in(declaring), value_type.clone()).into()
+}
+
+/// [`carries_operand`] once the instance's family holds a structured target,
+/// `value_type` being the `valueType` key that declares its members.
+fn carried(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Scalar) -> Condition {
     match member_text(scalar) {
         MemberText::Read { native, spellings } => {
             let probes = native
@@ -268,7 +296,7 @@ mod tests {
         // Clause 4.9 names an `objectList` of bare URIs and a `valueList` of
         // value nodes as targets of the same Query Term, so one comparison has
         // to reach both element shapes.
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &Scalar::Str("red".to_owned())));
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("red".to_owned())));
         assert!(sql.contains("\"value_object\" @> jsonb_build_array($1::text)"), "{sql}");
         assert!(
             sql.contains("\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $2::text))"),
@@ -285,6 +313,7 @@ mod tests {
         let (sql, binds) = render(carries_operand(
             &column(),
             &value_type(),
+            &family(),
             &Scalar::Number(JsonNumber::from(9_007_199_254_740_993_i64)),
         ));
         assert!(sql.contains("$1::numeric"), "{sql}");
@@ -296,7 +325,7 @@ mod tests {
 
     #[test]
     fn a_boolean_operand_binds_a_native_boolean() {
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Bool(true)));
+        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Bool(true)));
         assert!(sql.contains("$1::boolean"), "{sql}");
         assert!(binds.iter().any(|bind| matches!(bind, Value::Bool(Some(true)))), "{binds:?}");
     }
@@ -307,7 +336,7 @@ mod tests {
     #[test]
     fn a_number_operand_is_probed_as_each_canonical_spelling_and_read_back() {
         let number = "1E-7".parse::<JsonNumber>().expect("a JSON number");
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Number(number)));
+        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(number)));
         let texts: Vec<&str> = binds
             .iter()
             .filter_map(|bind| if let Value::String(Some(text)) = bind { Some(text.as_str()) } else { None })
@@ -319,7 +348,7 @@ mod tests {
 
     #[test]
     fn a_number_spelled_alike_in_both_forms_is_probed_once_as_text() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
         pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ").count(), 4, "{sql}");
     }
 
@@ -327,7 +356,7 @@ mod tests {
     /// so containment of the text only narrows the candidates.
     #[test]
     fn a_string_operand_reads_the_members_of_a_candidate_under_their_declarations() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &Scalar::Str("4".to_owned())));
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("4".to_owned())));
         assert!(sql.contains(") AND EXISTS(SELECT 1 FROM jsonb_array_elements"), "{sql}");
         assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#integer'"), "{sql}");
     }
@@ -335,6 +364,30 @@ mod tests {
     /// The column naming the datatype the row's `valueType` declares.
     fn value_type() -> SimpleExpr {
         SeaExpr::col(Alias::new("value_type_key"))
+    }
+
+    /// The column naming the row's attribute family.
+    fn family() -> SimpleExpr {
+        SeaExpr::col(Alias::new("attribute_kind"))
+    }
+
+    /// A `JsonProperty` holds one JSON literal, which equals no scalar
+    /// operand.
+    #[test]
+    fn a_json_property_carries_no_operand() {
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        assert!(sql.starts_with(r#"SELECT 1 WHERE "attribute_kind" <> (6) AND "#), "{sql}");
+    }
+
+    /// Clause 4.5.2: the `valueType` of a Property or a `ListProperty`
+    /// declares their members; no other family's does.
+    #[test]
+    fn only_a_property_or_a_list_property_value_type_declares_the_members() {
+        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        assert!(
+            sql.contains(r#"ON "dmt"."entity_type_name_key" = (CASE WHEN ("attribute_kind" IN (1, 7)) THEN "value_type_key" END)"#),
+            "{sql}"
+        );
     }
 
     fn json_binds(binds: &[Value]) -> Vec<&str> {
@@ -350,10 +403,10 @@ mod tests {
     #[test]
     fn a_date_time_operand_is_contained_once_as_a_declared_member() {
         let instant = parse_date_time("2024-01-01T00:00:00.000Z").expect("valid date-time");
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &Scalar::DateTime(instant)));
+        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::DateTime(instant)));
         pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ($").count(), 3, "{sql}");
         assert!(
-            sql.contains("\"value_type_key\" = (SELECT \"entity_type_name_key\" FROM \"entity_type_names\""),
+            sql.contains(r#"THEN "value_type_key" END) = (SELECT "entity_type_name_key" FROM "entity_type_names""#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(
@@ -370,7 +423,7 @@ mod tests {
     #[test]
     fn a_time_operand_is_contained_in_its_served_spelling() {
         let time = parse_time("12:00:00,5Z").expect("valid time");
-        let (_, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Time(time)));
+        let (_, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Time(time)));
         assert!(
             json_binds(&binds).contains(&r#"[{"@value": "12:00:00.500Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]"#),
             "{binds:?}"
@@ -380,7 +433,7 @@ mod tests {
     #[test]
     fn a_date_operand_is_contained_as_its_one_text() {
         let date = parse_date("2024-01-01").expect("valid date");
-        let (_, binds) = render(carries_operand(&column(), &value_type(), &Scalar::Date(date)));
+        let (_, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Date(date)));
         assert!(json_binds(&binds).contains(&r#"["2024-01-01"]"#), "{binds:?}");
     }
 }

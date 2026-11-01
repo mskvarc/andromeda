@@ -10,7 +10,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    model::{AttributeDraft, Entity, EntityId, EntityTypeName, Input, ListProperty, Lossless, NgsiLdMediaType, Property, Value},
+    model::{AttributeDraft, Entity, EntityId, EntityTypeName, Input, JsonProperty, ListProperty, Lossless, NgsiLdMediaType, Property, RawJson, Value},
     query::q::{self, builders::QueryBuilder},
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
@@ -38,12 +38,13 @@ fn sorted(ids: &[&EntityId]) -> Vec<String> {
 
 /// Pins: over Sensors whose `reading` holds `["4","7"]` declared xsd:integer by each @type, `["4","7"]` declared
 /// xsd:integer by the valueType, `[4,7]`, the plain `["4","7"]`, `["true","false"]` declared xsd:boolean, and a
-/// `ListProperty` whose `valueList` is `["4"]` declared xsd:integer, and a Sensor whose `level` holds the sub-attribute
+/// `ListProperty` whose `valueList` is `["4"]` declared xsd:integer, a `JsonProperty` holding `[{"@value":"4"}]` beside
+/// the valueType xsd:integer, and a Sensor whose `level` holds the sub-attribute
 /// `raw` `["4","7"]` declared xsd:integer by the valueType, a subscription with `q=reading==4` is notified of both
 /// declared integers, the numbers and the list, one with `reading=="4"` of the plain strings, one with `reading!=4`
-/// of the plain strings and the Booleans, one with `reading==true` of the Booleans, and one with `level.raw==4` of
+/// of the plain strings, the Booleans and the `JsonProperty`, one with `reading==true` of the Booleans, and one with `level.raw==4` of
 /// the Sensor holding `raw`, exactly the Entities Query Entities selects with the same q
-/// Clause: 4.9, 4.5.2, 5.8.6, C.6
+/// Clause: 4.9, 4.5.2, 4.5.24, 5.8.6, C.6
 #[gtest]
 #[tokio::test]
 async fn n_ntf_trg_9032_a_subscription_q_equality_includes_a_declared_value_held_among_several_values() -> Result<()> {
@@ -57,12 +58,13 @@ async fn n_ntf_trg_9032_a_subscription_q_equality_includes_a_declared_value_held
     let strings_id = namespace.urn("Sensor", "strings")?;
     let typed_booleans_id = namespace.urn("Sensor", "typed-booleans")?;
     let list_id = namespace.urn("Sensor", "list")?;
+    let json_id = namespace.urn("Sensor", "json")?;
     let raw_id = namespace.urn("Sensor", "raw")?;
     let reading = || q::attr("reading");
     let expectations: [(QueryBuilder, Vec<&EntityId>); 5] = [
         (reading().eq(4), vec![&typed_integers_id, &value_type_integers_id, &numbers_id, &list_id]),
         (reading().eq("4"), vec![&strings_id]),
-        (reading().ne(4), vec![&strings_id, &typed_booleans_id]),
+        (reading().ne(4), vec![&strings_id, &typed_booleans_id, &json_id]),
         (reading().eq(true), vec![&typed_booleans_id]),
         (q::attr("level").sub_attr("raw").eq(4), vec![&raw_id]),
     ];
@@ -106,6 +108,14 @@ async fn n_ntf_trg_9032_a_subscription_q_equality_includes_a_declared_value_held
             .id(list_id.clone())
             .entity_type(sensor_type.clone())
             .list_property("reading", ListProperty::builder(vec![xsd_typed("integer", "4")?]))
+            .build()?,
+        Entity::builder()
+            .id(json_id.clone())
+            .entity_type(sensor_type.clone())
+            .json_property(
+                "reading",
+                JsonProperty::builder(r#"[{"@value":"4"}]"#.parse::<RawJson>()?).value_type(xsd("integer")?),
+            )
             .build()?,
         sensor(
             &raw_id,

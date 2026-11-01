@@ -4,7 +4,6 @@ use crate::{error::TemporalStoreError, temporal_store_invariant::TemporalStoreIn
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
-use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
     stored_json::StoredJson,
@@ -150,35 +149,6 @@ impl AttributeHistoryValue {
     #[must_use]
     pub fn language(&self) -> Option<&LangTagBuf> {
         self.recorded().and_then(StoredValue::language)
-    }
-
-    /// `NUMERIC` literal for the numeric column.
-    ///
-    /// The column is arbitrary-precision, so the value is handed over as its
-    /// decimal text rather than as a double: a JSON integer beyond the range the
-    /// double format names individually reaches storage unchanged instead of
-    /// being refused or rounded at the boundary. Every finite number renders a
-    /// literal without an exponent, which is exactly what `NUMERIC` parses; a
-    /// number beyond the decimals has none.
-    #[must_use]
-    pub fn numeric_literal(&self) -> Option<String> {
-        match self.recorded()? {
-            StoredValue::Number { number, .. }
-            | StoredValue::DeclaredNumber {
-                number: DeclaredNumber::Finite(number),
-                ..
-            } => Some(number.to_string()),
-            StoredValue::String { .. }
-            | StoredValue::Boolean { .. }
-            | StoredValue::DeclaredNumber { .. }
-            | StoredValue::DeclaredBoolean { .. }
-            | StoredValue::DateTime { .. }
-            | StoredValue::Date { .. }
-            | StoredValue::Time { .. }
-            | StoredValue::Geometry { .. }
-            | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
-        }
     }
 
     /// `value_number` content: the exact number, for a `NUMERIC` bind.
@@ -343,10 +313,14 @@ mod tests {
     use crate::attribute_history_value::AttributeHistoryValue;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference};
     use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnnotation};
-    use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_number::{
+        JsonNumber,
+        declared_number::{DeclaredNumber, NonFinite},
+    };
     use andromeda_postgresql_attribute_instance::{
         name_keys::NameKeys,
         stored_json::StoredJson,
+        stored_number::StoredNumber,
         stored_value::{LiteralAnnotation, StoredValue},
     };
     use andromeda_postgresql_codes::value_kind::ValueKind;
@@ -375,7 +349,7 @@ mod tests {
         let value = AttributeHistoryValue::Tombstone { deleted_at };
         pretty_assertions::assert_eq!(value.kind(), ValueKind::Tombstone);
         pretty_assertions::assert_eq!(value.deleted_at(), Some(deleted_at));
-        assert!(value.numeric_literal().is_none());
+        assert!(value.number().is_none());
         assert!(value.string().is_none());
         assert!(value.boolean().is_none());
         assert!(value.geometry().is_none());
@@ -393,16 +367,29 @@ mod tests {
             number: JsonNumber::from(9_007_199_254_740_993_i64),
             datatype: None,
         });
-        pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("9007199254740993"));
+        pretty_assertions::assert_eq!(value.number(), Some(StoredNumber::Finite("9007199254740993".parse().expect("a decimal"))));
     }
 
     #[test]
-    fn a_fractional_number_renders_a_literal_numeric_parses() {
+    fn a_fractional_number_reaches_the_numeric_column_as_its_exact_decimal() {
         let value = recorded(StoredValue::Number {
             number: JsonNumber::try_from(-2.5e-4).expect("a finite number"),
             datatype: None,
         });
-        pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("-0.00025"));
+        pretty_assertions::assert_eq!(value.number(), Some(StoredNumber::Finite("-0.00025".parse().expect("a decimal"))));
+    }
+
+    /// A declared number beyond the decimals is held in the number column,
+    /// which a write never leaves NULL for a declared number.
+    #[test]
+    fn a_declared_non_finite_number_reaches_the_numeric_column() {
+        for non_finite in [NonFinite::PositiveInfinity, NonFinite::NegativeInfinity, NonFinite::NotANumber] {
+            let value = recorded(StoredValue::DeclaredNumber {
+                number: DeclaredNumber::NonFinite(non_finite),
+                datatype: None,
+            });
+            pretty_assertions::assert_eq!(value.number(), Some(StoredNumber::NonFinite(non_finite)));
+        }
     }
 
     #[test]
@@ -430,7 +417,7 @@ mod tests {
             recorded(StoredValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI"))),
         ];
         for value in &values {
-            let populated = usize::from(value.numeric_literal().is_some())
+            let populated = usize::from(value.number().is_some())
                 + usize::from(value.string().is_some())
                 + usize::from(value.boolean().is_some())
                 + usize::from(value.geometry().is_some())

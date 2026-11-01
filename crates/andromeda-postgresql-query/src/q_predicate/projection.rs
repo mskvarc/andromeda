@@ -1181,9 +1181,9 @@ mod tests {
                 r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
                 r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
                 r#"AND (("ca"."value_string" = $3 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $4 "#,
-                r#"OR ((("ca"."value_object" @> jsonb_build_array($5::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text)))) "#,
+                r#"OR ("ca"."attribute_kind" <> (6) AND ((("ca"."value_object" @> jsonb_build_array($5::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text)))) "#,
                 r#"AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" "#,
-                r#"LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = "ca"."value_type_key" WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" "#,
+                r#"LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" "#,
                 r#"-> ('@value'), "dm"."value")) = ('string') AND (NOT COALESCE(COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', "#,
                 r#"'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', "#,
                 r#"'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', "#,
@@ -1191,7 +1191,7 @@ mod tests {
                 r#"'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', "#,
                 r#"'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', "#,
                 r#"'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = "#,
-                r#"('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $7))) "#,
+                r#"('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $7)))) "#,
                 r#"AND "ca"."entity_key" = "le1"."entity_key"))"#,
             )
         );

@@ -79,7 +79,7 @@ fn equality_condition(scalar: &Scalar, membership: SetMembership, row: InstanceR
 fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar, row: InstanceRow) -> Condition {
     Condition::any()
         .add(typed_column_condition(scalar, CmpOp::Equal, row))
-        .add(carries_operand(column, &row.value_type_key(), scalar))
+        .add(carries_operand(column, &row.value_type_key(), &row.attribute_family(), scalar))
 }
 
 /// Compile a range operand (`==10..20` / `!=10..20`).

@@ -5,8 +5,10 @@
 //! which it reaches through `parent`. An element holding one scalar has its
 //! value's key; one holding an array has the key of every scalar member
 //! ([`stored_array_members`]); one holding a geometry or a structured object
-//! has none. An array member is read under the element's `valueType`
-//! ([`stored_array_members`]). A value declared as a time value is keyed under its kind, a
+//! has none, and so does a `JsonProperty`, whose value is one JSON literal
+//! that equals no scalar operand. An array member of a Property or a
+//! `ListProperty` is read under the element's `valueType`, which declares it
+//! (clause 4.5.2). A value declared as a time value is keyed under its kind, a
 //! String under its own. A declared number keys as the number it names and a
 //! declared Boolean as the Boolean, so an equality operand probes one key for
 //! either; a number beyond the decimals equals no operand and has none.
@@ -14,14 +16,17 @@
 use crate::{
     name_keys::NameKeys,
     stored_array_members::{ArrayMember, StoredArrayMemberError, stored_array_members},
+    stored_members::InstanceMembers,
     stored_value::StoredValue,
     sub_attribute::SubAttributeElement,
 };
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::value::TimeValue};
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
+use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
     sub_attribute_key::{
         key::{KeyedValue, SubAttributeKey, TextKind},
         path_hash::PathHash,
@@ -85,9 +90,10 @@ pub fn sub_attribute_keys(
         })?;
         let path = parent.child(element.members.attribute_name_key);
         paths.push(path);
-        let value_type = element
-            .members
-            .value_type_key
+        if matches!(element.members.attribute_kind, AttributeKind::JsonProperty) {
+            continue;
+        }
+        let value_type = member_declaration(&element.members)
             .map(|key| {
                 names.type_reference(key).ok_or(SubAttributeKeyError::ValueType {
                     position: index + 1,
@@ -98,6 +104,25 @@ pub fn sub_attribute_keys(
         push_value_keys(path, &element.members.value, value_type, &mut keys)?;
     }
     Ok((!keys.is_empty()).then(|| IntegerArrayLiteral::of(keys.into_iter().map(SubAttributeKey::get))))
+}
+
+/// The `valueType` key that declares the array members `members` holds: the
+/// `valueType` of a Property or a `ListProperty` holding an array (clause
+/// 4.5.2), none for a scalar, which carries its declaration already, and none
+/// for any other family.
+const fn member_declaration(members: &InstanceMembers) -> Option<EntityTypeNameKey> {
+    let StoredValue::Object(_) = members.value else {
+        return None;
+    };
+    match members.attribute_kind {
+        AttributeKind::Property | AttributeKind::ListProperty => members.value_type_key,
+        AttributeKind::Relationship
+        | AttributeKind::GeoProperty
+        | AttributeKind::VocabProperty
+        | AttributeKind::LanguageProperty
+        | AttributeKind::JsonProperty
+        | AttributeKind::ListRelationship => None,
+    }
 }
 
 /// Push the keys `value`, beside the `valueType` `value_type`, has at `path`
@@ -374,6 +399,44 @@ mod tests {
         assert_eq!(
             keys(&[declared(5, object(r#"["true","false"]"#), BOOLEAN)]),
             Some(vec![key_at(&[5], KeyedValue::Boolean(true)), key_at(&[5], KeyedValue::Boolean(false))])
+        );
+    }
+
+    /// `element` as an instance of the attribute family `kind`.
+    fn of_kind(kind: AttributeKind, mut element: SubAttributeElement) -> SubAttributeElement {
+        element.members.attribute_kind = kind;
+        element
+    }
+
+    #[test]
+    fn a_list_property_item_declared_a_number_by_the_value_type_carries_its_number_key() {
+        let four = BigDecimal::from(4);
+        assert_eq!(
+            keys(&[of_kind(AttributeKind::ListProperty, declared(5, object(r#"[{"@value":"4"}]"#), INTEGER))]),
+            Some(vec![key_at(&[5], KeyedValue::Number(&four))])
+        );
+    }
+
+    /// A `JsonProperty`'s value is one JSON literal, which its `valueType`
+    /// does not declare and which equals no scalar operand.
+    #[test]
+    fn a_json_property_has_no_key_whatever_its_value_type() {
+        assert_eq!(
+            keys(&[of_kind(
+                AttributeKind::JsonProperty,
+                declared(5, object(r#"[{"@value":"abc"},{"@value":4}]"#), INTEGER)
+            )]),
+            None
+        );
+    }
+
+    /// Clause 4.5.2: only a Property's and a `ListProperty`'s `valueType`
+    /// declares their members.
+    #[test]
+    fn a_vocab_property_value_type_declares_no_member() {
+        assert_eq!(
+            keys(&[of_kind(AttributeKind::VocabProperty, declared(5, object(r#"["4"]"#), INTEGER))]),
+            Some(vec![key_at(&[5], KeyedValue::Text("4", TextKind::String))])
         );
     }
 

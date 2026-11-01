@@ -13,7 +13,7 @@ use crate::{flatten::scalar_literal, stored_members::InstanceMembers, sub_attrib
 use andromeda_ngsi_ld_entity::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::OnceLock};
 
 /// The keys of the names an Entity's attributes mention.
 #[derive(Debug, Default)]
@@ -23,22 +23,29 @@ pub struct NameKeys {
     /// `entity_type_names` keys.
     types: ResolvedNames<EntityTypeName>,
     /// The type IRI behind each key of `types`, which the equality keys of a
-    /// sub-attribute read an element's `valueType` from.
-    type_names: HashMap<EntityTypeNameKey, NgsiLdReference>,
+    /// sub-attribute read an element's `valueType` from. Built on the first
+    /// such read: most writes hold no element whose `valueType` declares the
+    /// members of an array.
+    type_names: OnceLock<HashMap<EntityTypeNameKey, NgsiLdReference>>,
 }
 
 impl NameKeys {
     /// The keys of the given attribute names and type IRIs.
     #[must_use]
-    pub fn new(attributes: ResolvedNames<AttributeName>, types: ResolvedNames<EntityTypeName>) -> NameKeys {
-        let type_names = types.iter().map(|(name, key)| (key, NgsiLdReference::from(name))).collect();
-        NameKeys { attributes, types, type_names }
+    pub const fn new(attributes: ResolvedNames<AttributeName>, types: ResolvedNames<EntityTypeName>) -> NameKeys {
+        NameKeys {
+            attributes,
+            types,
+            type_names: OnceLock::new(),
+        }
     }
 
     /// The type IRI behind the `entity_type_names` key `key`.
     #[must_use]
     pub fn type_reference(&self, key: EntityTypeNameKey) -> Option<&NgsiLdReference> {
-        self.type_names.get(&key)
+        self.type_names
+            .get_or_init(|| self.types.iter().map(|(name, key)| (key, NgsiLdReference::from(name))).collect())
+            .get(&key)
     }
 
     /// The `attribute_names` key of `name`.
