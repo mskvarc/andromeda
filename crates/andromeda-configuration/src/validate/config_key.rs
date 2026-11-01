@@ -123,6 +123,9 @@ pub enum ConfigKey {
     /// `database.max_connections`.
     #[display("database.max_connections")]
     DatabaseMaxConnections,
+    /// `database.pooler.max_connections_per_tenant`.
+    #[display("database.pooler.max_connections_per_tenant")]
+    DatabasePoolerMaxConnectionsPerTenant,
     /// `database.write_reserve_percent`.
     #[display("database.write_reserve_percent")]
     DatabaseWriteReservePercent,
@@ -138,6 +141,9 @@ pub enum ConfigKey {
     /// `tenancy.provisional_tenant_lifetime`.
     #[display("tenancy.provisional_tenant_lifetime")]
     TenancyProvisionalTenantLifetime,
+    /// `tenancy.databases.max_connections`.
+    #[display("tenancy.databases.max_connections")]
+    TenancyDatabasesMaxConnections,
     /// `tenancy.residency.idle_eviction_after`.
     #[display("tenancy.residency.idle_eviction_after")]
     TenancyResidencyIdleEvictionAfter,

@@ -4,7 +4,14 @@ use crate::{
     human_duration::HumanDuration,
     mqtt_packet_limit::{MqttPacketLimit, MqttPacketLimitError},
     notification_body_limit::{NotificationBodyLimit, NotificationBodyLimitError},
-    schema::{feature_mode::FeatureMode, http3::Http3Mode, listener_transport::ListenerTransport, management::ManagementMode, tls::ClientAuthenticationMode},
+    schema::{
+        database::pooler::PoolerConfig,
+        feature_mode::FeatureMode,
+        http3::Http3Mode,
+        listener_transport::ListenerTransport,
+        management::ManagementMode,
+        tls::ClientAuthenticationMode,
+    },
     validate::{
         bound::{Bound, Quantity, Relation},
         config_key::{ConfigKey, QueueKey, QueueName},
@@ -13,7 +20,8 @@ use crate::{
     },
 };
 use pretty_assertions::assert_eq;
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroU32, path::PathBuf, time::Duration};
+use url_macro::url;
 
 /// The refusal of a duration `key` holding `value` against the request
 /// timeout `request`.
@@ -198,6 +206,28 @@ fn an_mqtt_packet_limit_at_the_request_body_limit_is_refused_and_one_byte_above_
     config.notifications.delivery.max_mqtt_packet = MqttPacketLimit::try_from(HumanByteSize::b(67_108_865))?;
     assert_accepted(&config);
     Ok(())
+}
+
+#[test]
+fn a_pooled_tenant_pool_past_the_direct_one_is_refused_an_equal_one_accepted_and_no_pooler_checks_nothing() {
+    let mut config = BrokerConfig::default();
+    config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(3);
+    assert_accepted(&config);
+    config.database.pooler = Some(PoolerConfig {
+        url: url!("postgres://postgres:postgres@localhost:6432/postgres"),
+        max_connections_per_tenant: NonZeroU32::MIN.saturating_add(4),
+    });
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::OutOfRange {
+            key: ConfigKey::DatabasePoolerMaxConnectionsPerTenant,
+            value: Quantity::Count(5),
+            relation: Relation::AtMost,
+            bound: Bound::setting(ConfigKey::TenancyDatabasesMaxConnections, Quantity::Count(4)),
+        }]
+    );
+    config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(4);
+    assert_accepted(&config);
 }
 
 #[test]
