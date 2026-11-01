@@ -7,13 +7,15 @@
 //! `sqlx` derive. Converting a record into an element is where a stored
 //! element breaking its invariants is refused, as a row's members are.
 
-use crate::stored_members::{InstanceMembers, MemberColumns, StoredInstanceError};
+use crate::{
+    stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
+    stored_number::StoredNumber,
+};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_postgresql_encoding::{
     ewkb::{EwkbError, encode},
     ewkb_binding::reach_bytes,
 };
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::{
@@ -102,7 +104,7 @@ pub struct SubAttributeRecord {
     /// `value_kind`.
     pub value_kind: i16,
     /// `value_number`.
-    pub value_number: Option<BigDecimal>,
+    pub value_number: Option<StoredNumber>,
     /// `value_string`.
     pub value_string: Option<String>,
     /// `value_boolean`.
@@ -277,13 +279,14 @@ mod tests {
     use crate::{
         stored_json::StoredJson,
         stored_members::{InstanceMembers, StoredInstanceError},
+        stored_number::StoredNumber,
         stored_value::StoredValue,
         sub_attribute::{SubAttributeElement, SubAttributeRecord},
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::NonFinite};
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
-    use bigdecimal::BigDecimal;
     use cefact_units::UnitCode;
     use chrono::{TimeZone, Utc};
     use serde_json::{json, value::to_raw_value};
@@ -296,7 +299,7 @@ mod tests {
             dataset_id: None,
             attribute_kind: AttributeKind::code(AttributeKind::Property),
             value_kind: ValueKind::code(ValueKind::Number),
-            value_number: Some(BigDecimal::from(1)),
+            value_number: Some(StoredNumber::from(JsonNumber::from(1))),
             value_string: None,
             value_boolean: None,
             value_date_time: None,
@@ -314,6 +317,21 @@ mod tests {
             created_at: None,
             modified_at: None,
             expires_at: None,
+        }
+    }
+
+    #[test]
+    fn an_element_holding_a_non_finite_number_is_an_assembly_error() {
+        for value in [NonFinite::PositiveInfinity, NonFinite::NegativeInfinity, NonFinite::NotANumber] {
+            let mut record = number_record();
+            record.value_number = Some(StoredNumber::NonFinite(value));
+            assert!(
+                matches!(
+                    SubAttributeElement::try_from(record),
+                    Err(StoredInstanceError::Number(JsonNumberError::NotFinite { .. }))
+                ),
+                "{value}"
+            );
         }
     }
 

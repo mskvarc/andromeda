@@ -175,7 +175,8 @@ pub enum StoredHistoryError {
     /// A stored datatype sits on a value no literal of which declares one.
     #[error("a stored attribute_history datatype sits on a {} value", .0.label())]
     DatatypeOnUntypedValue(ValueKind),
-    /// A Number value is outside the broker's documented numeric range.
+    /// A Number value is non-finite or outside the broker's documented
+    /// numeric range.
     #[error("a stored attribute_history value_number is not a representable number: {0}")]
     ValueNumber(#[source] JsonNumberError),
     /// A structured value is not the stored JSON of a value of its family.

@@ -159,6 +159,9 @@ pub(crate) struct InstanceReplacement<'a> {
     pub(crate) proof_seals: Option<&'a str>,
     /// The replacement's `expiresAt`, if any.
     pub(crate) expires_at: Option<DateTime<Utc>>,
+    /// The expression standing for the replacement's `value_number`, NULL
+    /// when its value is no number.
+    pub(crate) number: SimpleExpr,
 }
 
 /// The instance modification (clause 5.6.14 replacement).
@@ -187,7 +190,7 @@ pub(crate) fn update_instance_statement(
         .values(geometry_writes(replacement.geometry, replacement.reach))
         .values([
             (AttributeHistory::ValueKind, Expr::val(value.kind().code())),
-            (AttributeHistory::ValueNumber, Expr::val(value.number().cloned())), // clone: the statement owns the value it binds
+            (AttributeHistory::ValueNumber, replacement.number),
             (AttributeHistory::ValueString, Expr::val(value.string().map(Cow::into_owned))),
             (
                 AttributeHistory::ValueLanguage,
@@ -334,6 +337,7 @@ mod tests {
             object_type_keys: Vec::new(),
             proof_seals: None,
             expires_at: None,
+            number: Expr::val(Option::<i32>::None),
         };
         let (sql, values) = update_instance_statement(instance, &ContextTarget::Live, &[4, 5], replacement, Expr::val(0)).build(PostgresQueryBuilder);
         (sql, values.0.len())

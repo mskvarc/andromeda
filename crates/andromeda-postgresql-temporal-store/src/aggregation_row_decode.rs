@@ -22,6 +22,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_postgresql_attribute_instance::stored_number::StoredNumber;
 use andromeda_postgresql_codes::{
     attribute_kind::AttributeKind,
     attribute_kind_code::attribute_type_of,
@@ -29,7 +30,6 @@ use andromeda_postgresql_codes::{
     registry::UnknownCompactCode,
 };
 use andromeda_postgresql_temporal_query::aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits};
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveTime, Utc};
 use sqlx::{Decode, Postgres, Row, Type, postgres::PgRow};
 
@@ -204,8 +204,8 @@ fn decode_average(row: &PgRow, value_shape: Option<RecordedShape>) -> Result<Opt
 
 /// Read one `NUMERIC` aggregate as the exact JSON number it is.
 fn decode_exact_aggregate(row: &PgRow, column: AggregationColumn) -> Result<Option<JsonNumber>, TemporalStoreError> {
-    match projected_column::<BigDecimal>(row, column.into())? {
-        Some(decimal) => Ok(Some(exact_aggregate(&decimal, column)?)),
+    match projected_column::<StoredNumber>(row, column.into())? {
+        Some(number) => Ok(Some(exact_aggregate(number, column)?)),
         None => Ok(None),
     }
 }
@@ -215,12 +215,13 @@ fn decode_exact_aggregate(row: &PgRow, column: AggregationColumn) -> Result<Opti
 /// Every arithmetic aggregate PostgreSQL computes over `value_number` is
 /// `NUMERIC`, so it is converted directly into the JSON numeric model the value
 /// arrived in: an integer beyond 2^53
-/// comes back as that integer, and a literal the model cannot carry fails the
-/// decode instead of becoming a rounded value or a null. The failure names the
+/// comes back as that integer, and a value the model cannot carry, non-finite
+/// or past its range, fails the decode instead of becoming a rounded value or
+/// a null. The failure names the
 /// column because one row carries several decimal aggregates and the literal
 /// alone does not say which one was unreadable.
-fn exact_aggregate(decimal: &BigDecimal, column: AggregationColumn) -> Result<JsonNumber, StoredAggregationError> {
-    JsonNumber::from_decimal(decimal).map_err(|source| StoredAggregationError::Number { column, source })
+fn exact_aggregate(number: StoredNumber, column: AggregationColumn) -> Result<JsonNumber, StoredAggregationError> {
+    JsonNumber::try_from(number).map_err(|source| StoredAggregationError::Number { column, source })
 }
 
 /// Read a column the statement projects only for the methods that need it.
@@ -302,13 +303,14 @@ mod tests {
         stored_aggregation_error::{AggregationColumn, StoredAggregationError},
     };
     use andromeda_ngsi_ld_model::temporal::AggregationMinMax;
-    use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::NonFinite};
+    use andromeda_postgresql_attribute_instance::stored_number::StoredNumber;
     use andromeda_postgresql_codes::recorded_shape::RecordedShape;
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
 
-    fn decimal(literal: &str) -> BigDecimal {
-        BigDecimal::from_str(literal).expect("a decimal literal")
+    fn decimal(literal: &str) -> StoredNumber {
+        StoredNumber::Finite(BigDecimal::from_str(literal).expect("a decimal literal"))
     }
 
     /// The extremum is read from the column its value shape names, and a shape
@@ -386,7 +388,7 @@ mod tests {
     /// double: reading it through the JSON numeric model keeps it whole.
     #[test]
     fn a_sum_beyond_the_exact_double_range_keeps_its_integer_shape() {
-        let number = exact_aggregate(&decimal("9007199254740993"), AggregationColumn::AggSum).expect("an integer aggregate");
+        let number = exact_aggregate(decimal("9007199254740993"), AggregationColumn::AggSum).expect("an integer aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(9_007_199_254_740_993_i64));
         pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("a JSON number"), "9007199254740993");
     }
@@ -395,7 +397,7 @@ mod tests {
     /// double nearest to it.
     #[test]
     fn an_integer_above_the_signed_range_keeps_its_unsigned_shape() {
-        let number = exact_aggregate(&decimal("18446744073709551615"), AggregationColumn::AggSum).expect("an integer aggregate");
+        let number = exact_aggregate(decimal("18446744073709551615"), AggregationColumn::AggSum).expect("an integer aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(u64::MAX));
     }
 
@@ -403,13 +405,13 @@ mod tests {
     /// decode rather than being truncated to the integer around it.
     #[test]
     fn a_fractional_average_keeps_its_fraction() {
-        let number = exact_aggregate(&decimal("2.5"), AggregationColumn::AggAvg).expect("a fractional aggregate");
+        let number = exact_aggregate(decimal("2.5"), AggregationColumn::AggAvg).expect("a fractional aggregate");
         pretty_assertions::assert_eq!(number, "2.5".parse::<JsonNumber>().expect("an exact decimal"));
     }
 
     #[test]
     fn a_negative_aggregate_keeps_its_sign() {
-        let number = exact_aggregate(&decimal("-273.15"), AggregationColumn::AggMin).expect("a negative aggregate");
+        let number = exact_aggregate(decimal("-273.15"), AggregationColumn::AggMin).expect("a negative aggregate");
         pretty_assertions::assert_eq!(number, "-273.15".parse::<JsonNumber>().expect("an exact decimal"));
     }
 
@@ -418,7 +420,7 @@ mod tests {
     /// column reported it at.
     #[test]
     fn a_scaled_zero_is_a_number_like_any_other() {
-        let number = exact_aggregate(&decimal("0.000"), AggregationColumn::AggStddev).expect("a zero aggregate");
+        let number = exact_aggregate(decimal("0.000"), AggregationColumn::AggStddev).expect("a zero aggregate");
         pretty_assertions::assert_eq!(number, JsonNumber::from(0));
         pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("a JSON number"), "0");
     }
@@ -428,7 +430,7 @@ mod tests {
     /// was unreadable.
     #[test]
     fn a_decode_failure_names_the_column_it_came_from() {
-        let error = exact_aggregate(&decimal("1e131072"), AggregationColumn::AggSumsq).expect_err("an unrepresentable magnitude is refused");
+        let error = exact_aggregate(decimal("1e131072"), AggregationColumn::AggSumsq).expect_err("an unrepresentable magnitude is refused");
         assert!(
             matches!(
                 error,
@@ -440,5 +442,24 @@ mod tests {
             "got {error}"
         );
         assert!(error.to_string().contains("agg_sumsq"), "got {error}");
+    }
+
+    /// PostgreSQL's arithmetic aggregates over an infinity or a not-a-number
+    /// are themselves non-finite, which no JSON number carries.
+    #[test]
+    fn a_non_finite_aggregate_is_refused_against_its_column() {
+        for value in [NonFinite::PositiveInfinity, NonFinite::NegativeInfinity, NonFinite::NotANumber] {
+            let error = exact_aggregate(StoredNumber::NonFinite(value), AggregationColumn::AggAvg).expect_err("a non-finite aggregate is refused");
+            assert!(
+                matches!(
+                    error,
+                    StoredAggregationError::Number {
+                        column: AggregationColumn::AggAvg,
+                        source: JsonNumberError::NotFinite { .. },
+                    }
+                ),
+                "got {error}"
+            );
+        }
     }
 }

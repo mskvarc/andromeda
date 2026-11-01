@@ -8,12 +8,12 @@
 use crate::current_attribute::row::{CurrentAttributeRow, row_column};
 use andromeda_postgresql_attribute_instance::{
     stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
+    stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeElement, SubAttributeRecord},
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::types::Json;
@@ -52,7 +52,7 @@ pub struct AttributeInstanceRecord {
     /// `dataset_id`.
     pub dataset_id: Option<String>,
     /// `value_number`.
-    pub value_number: Option<BigDecimal>,
+    pub value_number: Option<StoredNumber>,
     /// `value_string`, a String within the B-tree bound.
     pub value_string: Option<String>,
     /// `value_language`.

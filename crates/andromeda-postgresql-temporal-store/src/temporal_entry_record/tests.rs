@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
     name_resolution::distinct,
+    stored_number::StoredNumber,
 };
 use andromeda_postgresql_codes::{
     attribute_kind::AttributeKind,
@@ -133,7 +134,7 @@ fn an_observation_entry_holds_the_history_columns_it_will_be_written_as() {
     assert_eq!(entry.entry_kind, TemporalEntryKind::Observation.code());
     assert_eq!(entry.value_kind, ValueKind::Number.code());
     assert_eq!(entry.attribute_kind, Some(AttributeKind::Property.code()));
-    assert_eq!(entry.value_number, Some(BigDecimal::from(42)));
+    assert_eq!(entry.value_number, Some(StoredNumber::Finite(BigDecimal::from(42))));
     assert_eq!(entry.observed_at, Some(observed_at()));
     assert_eq!(entry.created_at, Some(recorded_at()));
     assert!(entry.unit_code_id.is_some());

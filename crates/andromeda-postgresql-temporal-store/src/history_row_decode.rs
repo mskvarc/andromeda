@@ -43,6 +43,7 @@ use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames},
     name_resolution::names_of,
     stored_json::StoredJson,
+    stored_number::StoredNumber,
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
 use andromeda_postgresql_codes::{
@@ -55,7 +56,6 @@ use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
-use bigdecimal::BigDecimal;
 use cefact_units::UnitCode;
 use langtag::LangTagBuf;
 use serde_json::value::RawValue;
@@ -350,10 +350,10 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
     }
 }
 
-/// The stored column is `NUMERIC`, so its decimal is carried directly into the exact neutral observation domain without a text or binary64 round trip: a literal the JSON numeric model cannot carry fails the decode instead of becoming a rounded value or a null.
+/// The stored column is `NUMERIC`, so its decimal is carried directly into the exact neutral observation domain without a text or binary64 round trip: a value the JSON numeric model cannot carry, non-finite or past its range, fails the decode instead of becoming a rounded value or a null.
 fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
-    let stored: BigDecimal = required_column(row, TABLE, HistoryColumn::ValueNumber)?;
-    Ok(JsonNumber::from_decimal(&stored).map_err(StoredHistoryError::ValueNumber)?)
+    let stored: StoredNumber = required_column(row, TABLE, HistoryColumn::ValueNumber)?;
+    Ok(JsonNumber::try_from(stored).map_err(StoredHistoryError::ValueNumber)?)
 }
 
 /// Read the geometry column, which the query layer selects as EWKB, and the `bbox` and foreign members kept beside it (IETF RFC 7946 sections 5 and 6.1).

@@ -46,7 +46,6 @@ andromeda-subscription-forwarding.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
-bigdecimal = "0.4.11"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["add", "add_assign", "display", "is_variant"] }
 futures = "0.3.34"
@@ -55,11 +54,11 @@ indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
-sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-uuid"] }
+sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 sha2 = "0.11.1"
-sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["sync", "time"] }

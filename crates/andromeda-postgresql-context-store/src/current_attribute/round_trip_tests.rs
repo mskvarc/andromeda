@@ -32,7 +32,6 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
-use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
 use sea_query::Iden;
@@ -343,7 +342,7 @@ fn a_number_round_trips_exactly() {
     let StoredValue::Number { number, .. } = only_value(&hundred_rows) else {
         panic!("a number value")
     };
-    pretty_assertions::assert_eq!(number.decimal(), &BigDecimal::from(100));
+    pretty_assertions::assert_eq!(number, &JsonNumber::from(100));
 }
 
 #[test]

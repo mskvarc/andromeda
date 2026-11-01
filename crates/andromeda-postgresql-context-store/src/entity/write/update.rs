@@ -477,11 +477,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($44::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($43::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$40::text[], $41::integer[], $42::text[], $43::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$39::text[], $40::integer[], $41::text[], $42::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
             "{sql}"
         );
     }

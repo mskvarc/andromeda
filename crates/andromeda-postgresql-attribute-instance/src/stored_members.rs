@@ -8,6 +8,7 @@
 
 use crate::{
     stored_json::StoredJson,
+    stored_number::StoredNumber,
     stored_value::{LiteralAnnotation, StoredValue},
     sub_attribute::EwkbGeometry,
 };
@@ -26,7 +27,6 @@ use andromeda_postgresql_codes::{
 };
 use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
-use bigdecimal::BigDecimal;
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use langtag::{InvalidLangTag, LangTagBuf};
@@ -75,7 +75,7 @@ pub struct MemberColumns {
     /// `value_kind`.
     pub value_kind: i16,
     /// `value_number`.
-    pub value_number: Option<BigDecimal>,
+    pub value_number: Option<StoredNumber>,
     /// `value_string`, or a row's `value_long_text`.
     pub value_string: Option<String>,
     /// `value_boolean`.
@@ -133,7 +133,8 @@ pub enum StoredInstanceError {
     /// The language tag is not a BCP 47 tag.
     #[error("the instance's language tag is not a BCP 47 tag: {0}")]
     Language(#[source] InvalidLangTag<String>),
-    /// The number is not one the JSON number model carries.
+    /// The number is not one the JSON number model carries: a non-finite
+    /// value, or one past the range it holds.
     #[error(transparent)]
     Number(#[from] JsonNumberError),
     /// The geometry is not canonical EWKB.
@@ -233,8 +234,7 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             expires_at: members.expires_at,
         };
         match members.value {
-            // clone: the columns own the decimal they bind, and the number gives up none.
-            StoredValue::Number { number, .. } => columns.value_number = Some(number.decimal().clone()),
+            StoredValue::Number { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
             StoredValue::String { text, .. } => columns.value_string = Some(text),
             StoredValue::Boolean { flag, .. } => columns.value_boolean = Some(flag),
             StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
@@ -254,7 +254,7 @@ impl TryFrom<InstanceMembers> for MemberColumns {
 /// The value fields of one instance.
 struct ValueFields {
     /// `value_number`.
-    number: Option<BigDecimal>,
+    number: Option<StoredNumber>,
     /// `value_string`.
     string: Option<String>,
     /// `value_boolean`.
@@ -292,7 +292,7 @@ impl ValueFields {
         }
         let value = match kind {
             ValueKind::Number => StoredValue::Number {
-                number: JsonNumber::from_decimal(&self.number.ok_or(misplaced)?)?,
+                number: JsonNumber::try_from(self.number.ok_or(misplaced)?)?,
                 datatype,
             },
             ValueKind::String => StoredValue::String {

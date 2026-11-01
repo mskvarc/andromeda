@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{
     stored_json::StoredJson,
     stored_members::InstanceMembers,
+    stored_number::StoredNumber,
     stored_value::StoredValue,
     sub_attribute::{SubAttributeRecord, SubAttributeTree},
     sub_attribute_keys::{SubAttributeKeyError, sub_attribute_keys},
@@ -28,7 +29,6 @@ use andromeda_postgresql_seaquery::{
     external_arguments::ExternalArguments,
     pg_array::{nullable_array, text_array},
 };
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, SimpleExpr};
 use serde_json::value::RawValue;
@@ -50,7 +50,7 @@ pub enum StagedRowError {
 #[derive(Default)]
 struct ValueColumns {
     /// `value_number`.
-    number: Option<BigDecimal>,
+    number: Option<StoredNumber>,
     /// `value_string`.
     string: Option<String>,
     /// `value_long_text`.
@@ -80,8 +80,7 @@ impl ValueColumns {
         let column = row_column(&value);
         let mut columns = ValueColumns::default();
         match value {
-            // clone: the bind owns the decimal it encodes, and the number gives up none.
-            StoredValue::Number { number, .. } => columns.number = Some(number.decimal().clone()),
+            StoredValue::Number { number, .. } => columns.number = Some(StoredNumber::from(number)),
             StoredValue::String { text, .. } if column == CurrentAttributes::ValueLongText => columns.long_text = Some(text),
             StoredValue::String { text, .. } => columns.string = Some(text),
             StoredValue::Boolean { flag, .. } => columns.boolean = Some(flag),
@@ -117,7 +116,7 @@ pub struct StagedRows<'a> {
     /// `value_kind`.
     value_kinds: Vec<i16>,
     /// `value_number`.
-    value_numbers: Vec<Option<BigDecimal>>,
+    value_numbers: Vec<Option<StoredNumber>>,
     /// `value_string`.
     value_strings: Vec<Option<String>>,
     /// `value_long_text`.
@@ -254,9 +253,9 @@ impl<'a> StagedRows<'a> {
     /// [`instances_cte`](crate::current_attribute::staging::instances_cte)
     /// reads them.
     ///
-    /// The JSON columns and the sub-attribute trees travel as external
-    /// arguments pushed onto `external`: sea-query has no value for an array
-    /// of `jsonb` or of a composite.
+    /// The numbers, the JSON columns and the sub-attribute trees travel as
+    /// external arguments pushed onto `external`: sea-query has no value for a
+    /// non-finite `numeric` or for an array of `jsonb` or of a composite.
     pub(crate) fn into_arrays(self, external: &mut ExternalArguments<'_>) -> Vec<SimpleExpr> {
         let object_type_keys = literal_texts(&self.object_type_keys);
         let sub_eq_keys = literal_texts(&self.sub_eq_keys);
@@ -267,7 +266,7 @@ impl<'a> StagedRows<'a> {
             Expr::val(self.ordinals),
             Expr::val(self.attribute_kinds),
             Expr::val(self.value_kinds),
-            nullable_array(self.value_numbers),
+            external.push(self.value_numbers),
             nullable_array(self.value_strings),
             nullable_array(self.value_long_texts),
             nullable_array(self.value_booleans),

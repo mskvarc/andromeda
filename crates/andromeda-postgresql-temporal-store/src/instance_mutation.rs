@@ -151,6 +151,7 @@ impl TemporalRepository {
         let reach = reach_bytes(value.geometry());
         let mut external = ExternalArguments::default();
         let sub_attributes = external.push((!elements.is_empty()).then_some(elements));
+        let number = external.push(value.number());
         let replacement = InstanceReplacement {
             value: &value,
             geometry: geometry.as_deref(),
@@ -162,6 +163,7 @@ impl TemporalRepository {
             object_type_keys,
             proof_seals: proof_seals.as_ref().map(StoredJson::get),
             expires_at,
+            number,
         };
         let update = update_instance_statement(instance, target, &stream_keys, replacement, sub_attributes);
         let modified: Vec<i64> = ExternallyBound::new(update, external).into_query_scalar().fetch_all(&mut *tx).await?;

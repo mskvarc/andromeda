@@ -32,6 +32,8 @@ mod stored_family;
 pub mod stored_json;
 /// The members of one stored instance and their reading back.
 pub mod stored_members;
+/// The value of the number column.
+pub mod stored_number;
 /// The value of one instance, by the column that holds it.
 pub mod stored_value;
 /// One sub-attribute element and the composite it travels as.

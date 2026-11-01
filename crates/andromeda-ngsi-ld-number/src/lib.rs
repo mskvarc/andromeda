@@ -14,6 +14,7 @@ use serde_json::Number;
 use std::str::FromStr;
 use thiserror::Error;
 
+pub mod declared_number;
 pub mod float_spelling;
 pub mod held_text;
 pub mod json_value;
@@ -87,6 +88,12 @@ impl JsonNumber {
     #[must_use]
     pub const fn decimal(&self) -> &BigDecimal {
         &self.0
+    }
+
+    /// Gives up the exact decimal, for a database binding that owns it.
+    #[must_use]
+    pub fn into_decimal(self) -> BigDecimal {
+        self.0
     }
 
     /// Constructs the native `serde_json` number token for this exact value.

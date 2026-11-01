@@ -7,11 +7,11 @@ use andromeda_ngsi_ld_model::temporal::{TemporalValue, text_annotation::TextAnno
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
     stored_json::StoredJson,
+    stored_number::StoredNumber,
     stored_value::{LiteralAnnotation, StoredValue},
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::value::{RawValue, to_raw_value};
@@ -165,11 +165,12 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// Exact numeric value for a `NUMERIC` bind.
+    /// `value_number` content: the exact number, for a `NUMERIC` bind.
     #[must_use]
-    pub fn number(&self) -> Option<&BigDecimal> {
+    pub fn number(&self) -> Option<StoredNumber> {
         match self.recorded()? {
-            StoredValue::Number { number, .. } => Some(number.decimal()),
+            // clone: the bind owns the decimal it encodes, and the value gives up none.
+            StoredValue::Number { number, .. } => Some(StoredNumber::from(number.clone())),
             StoredValue::String { .. }
             | StoredValue::Boolean { .. }
             | StoredValue::DateTime { .. }

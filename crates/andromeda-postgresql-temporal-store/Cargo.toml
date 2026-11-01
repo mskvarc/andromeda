@@ -35,15 +35,14 @@ andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 async-trait = "0.1.92"
-bigdecimal = "0.4.11"
 cefact-units = "1.0.0"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 langtag = "1.1.0"
-sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-bigdecimal", "with-chrono", "with-uuid"] }
+sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
-sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 uuid = { version = "1.29.0", features = ["v4"] }
@@ -51,5 +50,6 @@ uuid = { version = "1.29.0", features = ["v4"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-postgresql-pool = { workspace = true, features = ["test-support"] }
+bigdecimal = "0.4.11"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["full"] }

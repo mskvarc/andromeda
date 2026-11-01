@@ -1720,7 +1720,6 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-tenancy",
  "async-trait",
- "bigdecimal",
  "cefact-units",
  "chrono",
  "derive_more",

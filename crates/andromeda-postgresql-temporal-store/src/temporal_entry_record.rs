@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_postgresql_attribute_instance::{
     name_keys::{MentionedNames, NameKeys},
+    stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
 use andromeda_postgresql_codes::{
@@ -36,7 +37,6 @@ use andromeda_temporal::{
     scope_observation::ScopeObservation,
     write_purpose::TemporalWritePurpose,
 };
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::types::Json;
@@ -81,7 +81,7 @@ pub struct TemporalEntryRecord {
     /// `verbatim_instance_id`.
     pub verbatim_instance_id: Option<String>,
     /// `value_number`.
-    pub value_number: Option<BigDecimal>,
+    pub value_number: Option<StoredNumber>,
     /// `value_string`.
     pub value_string: Option<String>,
     /// `value_language`, the `@language` of a language-tagged string.

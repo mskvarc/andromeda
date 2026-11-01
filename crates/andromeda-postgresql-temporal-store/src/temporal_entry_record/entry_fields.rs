@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
     stored_json::StoredJson,
+    stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
 use andromeda_postgresql_codes::{
@@ -25,7 +26,6 @@ use andromeda_postgresql_codes::{
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_temporal::scope_entry_kind::ScopeEntryKind;
-use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::types::Json;
@@ -93,7 +93,7 @@ pub(super) struct ValueColumns {
     /// `value_boolean`.
     value_boolean: Option<bool>,
     /// `value_number`.
-    value_number: Option<BigDecimal>,
+    value_number: Option<StoredNumber>,
     /// `value_string`.
     value_string: Option<String>,
     /// `value_language`.
@@ -120,8 +120,7 @@ impl ValueColumns {
             deleted_at: value.deleted_at(),
             value_date_time: value.date_time(),
             value_boolean: value.boolean(),
-            // clone: the field owns the decimal it binds, and the value gives up none.
-            value_number: value.number().cloned(),
+            value_number: value.number(),
             value_string: value.string().map(Cow::into_owned),
             value_language: value.language().map(|language| language.as_str().to_owned()),
             value_datatype_key: value.datatype_key(),
