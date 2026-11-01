@@ -12,7 +12,7 @@ permissions:
 jobs:
   advisories:
     name: cargo deny check advisories
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04-arm' }}
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

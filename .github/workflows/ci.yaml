@@ -33,8 +33,7 @@ jobs:
   fmt:
     name: fmt
     if: &ready ${{ !github.event.pull_request.draft }}
-    # Dependabot's updates build third-party code, so they never run on the self-hosted runner.
-    runs-on: &runner ${{ github.actor == 'dependabot[bot]' && 'ubuntu-24.04-arm' || vars.CI_RUNNER || 'ubuntu-24.04-arm' }}
+    runs-on: &runner ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -201,7 +200,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
-        if: runner.environment == 'github-hosted'
       - uses: ./.github/actions/suite-tree
         with:
           tree: ${{ matrix.tree }}
