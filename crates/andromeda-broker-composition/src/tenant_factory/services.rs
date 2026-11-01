@@ -37,7 +37,6 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
-use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
@@ -99,7 +98,7 @@ pub(super) fn construct_services(
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
     // 4.3.6.4 considers each Tenant of a registered Context Source separately).
-    let aliases = ContextSourceAliases::new(ContextSourcePseudonym::try_from(&config.federation.identity.source_alias).map_err(AssemblyInvariant::from)?);
+    let aliases = ContextSourceAliases::new(config.source_alias.clone()); // clone: the tenant's forwarding owns the alias family it writes
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.

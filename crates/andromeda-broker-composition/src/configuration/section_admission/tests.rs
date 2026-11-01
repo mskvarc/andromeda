@@ -4,6 +4,7 @@ use crate::configuration::{
     commands::load_admitted,
     error::ConfigurationError,
     section_admission::{SectionAdmissionError, admit_sections},
+    source_identity::{AliasOrigin, SourceIdentityError},
 };
 use andromeda_configuration::{
     broker_config::BrokerConfig,
@@ -64,7 +65,12 @@ fn disabled_cursor_pagination_loads_and_serves_offset_paging_only() {
 fn a_source_id_past_the_identifier_bound_is_refused_at_load() {
     let result = admitted(&format!("[federation.identity]\nsource_id = \"urn:ngsi-ld:Node:{}\"\n", "a".repeat(1024)));
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::SourceIdentifier(_)))),
+        matches!(
+            result,
+            Err(ConfigurationError::Admission(SectionAdmissionError::SourceIdentity(
+                SourceIdentityError::Identifier(_)
+            )))
+        ),
         "{result:?}"
     );
 }
@@ -148,7 +154,12 @@ fn a_zero_federation_cooldown_window_is_refused_at_load() {
 fn source_extras_holding_a_date_time_are_refused_at_load() {
     let result = admitted("[federation.identity.extras]\nsince = 1979-05-27\n");
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::SourceExtras(_)))),
+        matches!(
+            result,
+            Err(ConfigurationError::Admission(SectionAdmissionError::SourceIdentity(
+                SourceIdentityError::Extras(_)
+            )))
+        ),
         "{result:?}"
     );
 }
@@ -182,7 +193,15 @@ fn a_content_security_policy_with_a_line_break_is_refused_at_load() {
 fn a_source_alias_that_is_not_a_token_is_refused_at_load() {
     let result = admitted("[federation.identity]\nsource_alias = \"broker a\"\n");
     assert!(
-        matches!(result, Err(ConfigurationError::Admission(SectionAdmissionError::SourceAlias(_)))),
+        matches!(
+            result,
+            Err(ConfigurationError::Admission(SectionAdmissionError::SourceIdentity(
+                SourceIdentityError::Alias {
+                    origin: AliasOrigin::Configured,
+                    ..
+                }
+            )))
+        ),
         "{result:?}"
     );
 }

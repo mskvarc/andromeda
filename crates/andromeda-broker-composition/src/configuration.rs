@@ -6,3 +6,4 @@ pub mod commands;
 mod error;
 /// Admitting loaded sections into their domain values.
 pub(crate) mod section_admission;
+pub(crate) mod source_identity;

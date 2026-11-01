@@ -8,7 +8,6 @@ use andromeda_configuration::schema::temporal::storage::StorageDaysError;
 use andromeda_delivery::error::TransportError;
 use andromeda_entity::error::EntityError;
 use andromeda_federation::error::FederationError;
-use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonymError;
 use andromeda_notification::error::NotificationError;
 use andromeda_postgresql_temporal_store::retention_sweep::TemporalRetentionHorizonInvalid;
 use andromeda_retry::schedule_error::BackoffScheduleError;
@@ -36,10 +35,6 @@ pub(super) enum RetentionSetting {
 /// A part of a tenant runtime that refused to be constructed.
 #[derive(Debug, Error)]
 pub(super) enum AssemblyInvariant {
-    /// The configured `federation.identity.source_alias` is not a pseudonym;
-    /// loading refuses it first.
-    #[error("federation.identity.source_alias is not valid: {0}")]
-    SourceAlias(#[from] ContextSourcePseudonymError),
     /// A background task's name is not a task name.
     #[error("a background task name is not valid: {0}")]
     TaskName(#[from] TaskNameError),

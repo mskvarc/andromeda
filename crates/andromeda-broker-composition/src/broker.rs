@@ -2,7 +2,10 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    configuration::section_admission::{database_defaults, expected_deployment},
+    configuration::{
+        section_admission::{database_defaults, expected_deployment, machine_host_name},
+        source_identity::{SourceIdentity, SourceIdentityError},
+    },
     extension_routing::{accept_language_reading, tenant_management_mode},
     listeners,
     logging,
@@ -129,6 +132,9 @@ enum BrokerStartupError {
     /// The dormant-tenant wake probe could not be assembled.
     #[error(transparent)]
     PendingWorkProbe(#[from] PendingWorkProbeError),
+    /// The identity in effect is not one the broker can report.
+    #[error(transparent)]
+    Identity(#[from] SourceIdentityError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -232,12 +238,36 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dy
     ))
 }
 
+/// Open the platform pool over the tenant registry.
+///
+/// The platform database -- the tenant registry every cold load reads, the
+/// wake schedule, the forwarded-subscription routes -- is one database, so a
+/// pooler has nothing to multiplex for it: routed through one, every replica
+/// shares the pooler's handful of server connections for that one database,
+/// and provisioning holds one of them across `CREATE DATABASE`, which queues
+/// every cold load's registry read behind it. It is served directly, bounded
+/// by `database.platform_max_connections`.
+async fn connect_registry(config: &BrokerConfig, direct_url: &DatabaseUrl) -> Result<Arc<PostgresTenantRegistry>, BrokerStartupError> {
+    Ok(Arc::new(
+        PostgresTenantRegistry::connect(
+            configure_pool_options(config.database.platform_max_connections.get(), config.database.acquire_timeout()),
+            direct_url.clone(),               // clone: the registry provisions and migrates over the direct base
+            config.tenancy.databases.clone(), // clone: the registry owns where tenant data lives
+            &database_defaults(config),
+            config.database.acquire_timeout(),
+        )
+        .await?,
+    ))
+}
+
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
 async fn construct(
     config: Arc<BrokerConfig>,
     telemetry: Option<Arc<TelemetryRecorder>>,
     started_at: DateTime<Utc>,
 ) -> Result<BrokerExecution, BrokerStartupError> {
+    let source_identity = SourceIdentity::resolve(&config.federation.identity, config.server.public_url.as_ref(), machine_host_name)?;
+    source_identity.report();
     // Two bases. A tenant's request path connects through the pooler when one
     // is configured; provisioning, migration and maintenance always reach
     // PostgreSQL directly, because each keeps session state (a `CREATE DATABASE`
@@ -245,23 +275,7 @@ async fn construct(
     // maintenance sweep's session lock) that a transaction-pooling proxy breaks.
     let request_url = DatabaseUrl::new(config.database.request_url().clone()); // clone: the tenant factory retains the request base URL
     let direct_url = DatabaseUrl::new(config.database.direct_url().clone()); // clone: registry, maintenance and the tenant factory retain the direct base URL
-    // The platform database -- the tenant registry every cold load reads, the
-    // wake schedule, the forwarded-subscription routes -- is one database, so a
-    // pooler has nothing to multiplex for it: routed through one, every replica
-    // shares the pooler's handful of server connections for that one database,
-    // and provisioning holds one of them across `CREATE DATABASE`, which queues
-    // every cold load's registry read behind it. It is served directly, bounded
-    // by `database.platform_max_connections`.
-    let registry = Arc::new(
-        PostgresTenantRegistry::connect(
-            configure_pool_options(config.database.platform_max_connections.get(), config.database.acquire_timeout()),
-            direct_url.clone(),               // clone: the registry provisions and migrates over the direct base
-            config.tenancy.databases.clone(), // clone: the registry owns where tenant data lives
-            &database_defaults(&config),
-            config.database.acquire_timeout(),
-        )
-        .await?,
-    );
+    let registry = connect_registry(&config, &direct_url).await?;
     let process_tasks = TaskSupervisor::process(Handle::current());
     // Maintenance holds a session advisory lock across a whole sweep, so it gets
     // its own direct platform pool rather than sharing the request-path pool.
@@ -290,6 +304,7 @@ async fn construct(
     let extension_versions = Arc::new(PostgresTenantExtensionVersions::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
+        source_identity.alias.clone(), // clone: every tenant derives its own alias from the default tenant's
         request_url,
         direct_url,
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
@@ -347,7 +362,7 @@ async fn construct(
         .subscription(subscription_routes)
         .entity_map(entity_map_routes)
         .snapshot(snapshot_routes)
-        .source_identity(source_identity_routes(&config.federation.identity, started_at, enabled_extensions, &tenants)?)
+        .source_identity(source_identity_routes(source_identity, started_at, enabled_extensions, &tenants)?)
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),
             forwarded_subscription_router,

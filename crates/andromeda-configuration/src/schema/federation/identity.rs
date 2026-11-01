@@ -2,24 +2,29 @@
 //! Context Source.
 
 use crate::schema::{source_alias::SourceAlias, source_extras::SourceExtras, source_identifier::SourceIdentifier};
-use iri_rs::iri;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The identity returned by `/info/sourceIdentity` and used for distributed
 /// loop detection (Table 5.2.40-1).
-#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[schemars(description = "The identity the broker reports at `/ngsi-ld/v1/info/sourceIdentity` and uses to detect distributed forwarding loops.")]
 pub struct IdentityConfig {
-    /// The URI identifying this Context Source.
-    #[schemars(description = "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI.")]
-    pub source_id: SourceIdentifier,
-    /// The pseudonym appended to forwarded requests' `Via` fields.
+    /// The URI identifying this Context Source. Left out, it is
+    /// `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "The name the broker adds to the `Via` header of every request it forwards. A request whose `Via` already holds this name is treated as a forwarding loop, so every broker in a federation needs its own. Must be an HTTP token, as a `Via` entry requires."
+        description = "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect, as `federation.identity.source_alias` describes."
     )]
-    pub source_alias: SourceAlias,
+    pub source_id: Option<SourceIdentifier>,
+    /// The pseudonym appended to forwarded requests' `Via` fields. Left out,
+    /// the host of `server.public_url`, or the machine's host name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The name the broker adds to the `Via` header of every request it forwards. A request whose `Via` already holds this name is treated as a forwarding loop, so every broker in a federation needs its own. Must be an HTTP token, as a `Via` entry requires. Left out, it is the host of `server.public_url` without its port, such as `broker.example.org`, and without a `server.public_url`, or with an IPv6 one, the machine's host name. The broker refuses to start when neither gives a token. Set it when two brokers share a host name."
+    )]
+    pub source_alias: Option<SourceAlias>,
     /// Instance-specific information reported verbatim as
     /// `contextSourceExtras`, written as a table whose keys are reported as
     /// written. Raw JSON, never JSON-LD, never interpreted. Set in the file
@@ -31,17 +36,6 @@ pub struct IdentityConfig {
     pub extras: Option<SourceExtras>,
 }
 
-impl Default for IdentityConfig {
-    fn default() -> IdentityConfig {
-        IdentityConfig {
-            // Compile-time validated, so the built-in default needs no runtime parse or panic.
-            source_id: SourceIdentifier::from_static(iri!("urn:ngsi-ld:ContextSourceIdentity:andromeda")),
-            source_alias: SourceAlias::from_static("andromeda"),
-            extras: None,
-        }
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -51,10 +45,10 @@ mod tests {
     use crate::schema::federation::identity::IdentityConfig;
 
     #[test]
-    fn the_built_in_default_names_the_andromeda_identity() {
+    fn the_built_in_default_names_no_identity() {
         let config = IdentityConfig::default();
-        pretty_assertions::assert_eq!(config.source_id.as_str(), "urn:ngsi-ld:ContextSourceIdentity:andromeda");
-        pretty_assertions::assert_eq!(config.source_alias.as_str(), "andromeda");
+        pretty_assertions::assert_eq!(config.source_id, None);
+        pretty_assertions::assert_eq!(config.source_alias, None);
     }
 
     /// Table 5.2.40-1: the extras are the operator's raw JSON, read from the

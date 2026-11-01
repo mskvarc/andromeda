@@ -10,16 +10,12 @@
 //! cap to its own. The derivations that read more than one table live here
 //! too.
 
+use crate::configuration::source_identity::{SourceIdentity, SourceIdentityError};
 use andromeda_configuration::broker_config::BrokerConfig;
 use andromeda_entity::configured_policy::side_effect_retry_schedule;
 use andromeda_http_stack::{
     cors_tokens::{CorsTokenError, check_cors_tokens},
     stack::helmet_layer::{SecurityHeadersError, check_security_headers},
-};
-use andromeda_json_literal::{JsonLiteral, configured_extras::ConfiguredExtrasError};
-use andromeda_ngsi_ld_lexicon::{
-    context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
-    identifier::{Identifier, IdentifierParseError},
 };
 use andromeda_postgresql_context_store::database_defaults::{DatabaseDefaults, StatementTimeout};
 use andromeda_postgresql_maintenance::expected_deployment::{ColumnstoreConversion, ExpectedDeployment, HistoryRetention};
@@ -43,17 +39,11 @@ pub enum SectionAdmissionError {
     /// The side-effect queue's retry delays do not bound a retry schedule.
     #[error("invalid configuration: entity.side_effects.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     EntitySideEffectRetry(#[source] BackoffScheduleError),
-    /// `federation.identity.source_id` is an IRI, but not one a stored
-    /// resource can be identified by.
-    #[error("invalid configuration: federation.identity.source_id: {0}")]
-    SourceIdentifier(#[from] IdentifierParseError),
-    /// `federation.identity.source_alias` is not a single `received-by` token.
-    #[error("invalid configuration: federation.identity.source_alias: {0}")]
-    SourceAlias(#[from] ContextSourcePseudonymError),
-    /// `federation.identity.extras` holds a value JSON cannot spell, or is no
-    /// admissible JSON.
+    /// The identity in effect is not one the broker can report: no alias can
+    /// be found, the alias is no `Via` token, the identifier is no
+    /// identifier, or the extras are no admissible JSON.
     #[error("invalid configuration: {0}")]
-    SourceExtras(#[from] ConfiguredExtrasError),
+    SourceIdentity(#[from] SourceIdentityError),
 }
 
 /// Convert every table value whose rules belong to a domain type.
@@ -66,11 +56,13 @@ pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError
     check_security_headers(&config.http.security_headers)?;
     intent_retry_schedule(&config.temporal.history).map_err(SectionAdmissionError::TemporalIntentRetry)?;
     side_effect_retry_schedule(&config.entity.side_effects).map_err(SectionAdmissionError::EntitySideEffectRetry)?;
-    let identity = &config.federation.identity;
-    Identifier::try_from(&identity.source_id)?;
-    ContextSourcePseudonym::try_from(&identity.source_alias)?;
-    identity.extras.as_ref().map(JsonLiteral::try_from).transpose()?;
+    SourceIdentity::resolve(&config.federation.identity, config.server.public_url.as_ref(), machine_host_name)?;
     Ok(())
+}
+
+/// The machine's host name, the last place a left-out alias is taken from.
+pub(crate) fn machine_host_name() -> Option<String> {
+    whoami::hostname().ok()
 }
 
 /// The session defaults installed on every database the broker serves from:

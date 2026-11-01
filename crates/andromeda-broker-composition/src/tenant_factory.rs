@@ -40,7 +40,7 @@ use andromeda_configuration::{
 };
 use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePublisher, committer::ContextCommitter};
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
-use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
 use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_extension_versions::PostgresTenantExtensionVersions};
 use andromeda_postgresql_pool::database_url::DatabaseUrl;
@@ -129,11 +129,15 @@ struct TenantFactoryConfig {
     /// The `apiRoot` clients and peers reach the broker at (clause 6.2),
     /// when `server.public_url` configures one.
     public_url: Option<Url>,
+    /// The default tenant's alias in effect, from which each tenant's alias
+    /// in the `Via` chain follows (Table 5.2.40-1).
+    source_alias: ContextSourcePseudonym,
 }
 
-impl From<&BrokerConfig> for TenantFactoryConfig {
-    fn from(config: &BrokerConfig) -> Self {
-        Self {
+impl TenantFactoryConfig {
+    /// The sections a tenant is built from, beside the alias in effect.
+    fn new(config: &BrokerConfig, source_alias: ContextSourcePseudonym) -> TenantFactoryConfig {
+        TenantFactoryConfig {
             database: config.database.clone(),
             database_defaults: database_defaults(config),
             request_limits: config.request_limits,
@@ -148,6 +152,7 @@ impl From<&BrokerConfig> for TenantFactoryConfig {
             extensions: config.extensions,
             link_field: config.http.link_field,
             public_url: config.server.public_url.clone(), // clone: each tenant built reads the configured apiRoot
+            source_alias,
         }
     }
 }
@@ -156,6 +161,7 @@ impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
     pub(super) fn new(
         config: &BrokerConfig,
+        source_alias: ContextSourcePseudonym,
         request_url: DatabaseUrl,
         direct_url: DatabaseUrl,
         process_tasks: TaskSupervisor,
@@ -163,7 +169,7 @@ impl BrokerTenantFactory {
         extension_versions: Arc<PostgresTenantExtensionVersions>,
     ) -> BrokerTenantFactory {
         BrokerTenantFactory {
-            config: Arc::new(TenantFactoryConfig::from(config)),
+            config: Arc::new(TenantFactoryConfig::new(config, source_alias)),
             request_url,
             direct_url,
             default_mqtt_pool: OnceLock::new(),
