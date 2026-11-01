@@ -1,0 +1,26 @@
+name: Suite tree
+description: Runs one tree of andromeda-test-suite against its stack, built from the working tree, and uploads the tree's JUnit report.
+
+inputs:
+  tree:
+    description: The tree to run, as run-suite.sh names it.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run the tree
+      shell: bash
+      env:
+        TREE: ${{ inputs.tree }}
+        REPORT_DIR: ${{ runner.temp }}/suite-reports
+      run: tools/andromeda-test-suite/run-suite.sh "$TREE"
+    - name: Upload the report
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: suite-${{ inputs.tree }}
+        path: ${{ runner.temp }}/suite-reports/
+        if-no-files-found: warn
+        overwrite: true
+        retention-days: 3

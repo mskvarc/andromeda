@@ -12,18 +12,45 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  # The build record docker/build-push-action uploads is an artifact, and artifacts count against storage.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
-  # A stable tag needs its own ledger section, last, over a tree where every
-  # migration is sealed; a pre-release needs only an unbroken seal. Nothing is
-  # built before this passes.
+  # The tagged commit must have passed ci, its suite trees included. Nothing runs before this does.
+  checks:
+    name: checks
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - name: Require a passing ci-ok check on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?check_name=ci-ok&filter=latest" \
+            --jq '[.check_runs[] | select(.conclusion == "success")] | length')"
+          if [ "$passed" -eq 0 ]; then
+            echo "${GITHUB_SHA} has no passing ci-ok check: let ci pass on the commit before tagging it" >&2
+            exit 1
+          fi
+
+  # A stable tag needs its own ledger section, last, over a tree where every migration is sealed; a pre-release needs
+  # only an unbroken seal. Nothing is built before this passes.
   seal:
     name: seal
-    runs-on: ubuntu-latest
+    needs: checks
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     steps:
       # The whole history and its tags, so the ledger can be read at the previous release.
       - uses: actions/checkout@v7
@@ -31,10 +58,8 @@ jobs:
           fetch-depth: 0
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
-      - uses: Swatinem/rust-cache@v2
       # Via env: never parsed as shell.
       - name: Verify the seal for the tag
-        shell: bash
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -45,84 +70,11 @@ jobs:
           fi
           cargo run --package andromeda-sql --locked -- verify --release "$TAG" "${against[@]}"
 
-  binaries:
-    name: binary (${{ matrix.target }})
-    needs: seal
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-latest, os: linux }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, os: linux }
-          - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest, os: linux, musl: true }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, os: linux, musl: true }
-          - { target: aarch64-apple-darwin, runner: macos-15, os: macos }
-          - { target: x86_64-apple-darwin, runner: macos-15-intel, os: macos }
-          - { target: x86_64-pc-windows-msvc, runner: windows-latest, os: windows }
-          - { target: aarch64-pc-windows-msvc, runner: windows-latest, os: windows }
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install pinned toolchain
-        shell: bash
-        run: |
-          rustup toolchain install --profile minimal
-          rustup target add ${{ matrix.target }}
-
-      - name: Install musl tools
-        if: ${{ matrix.musl }}
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-
-      # aws-lc-rs needs NASM on Windows.
-      - name: Install NASM
-        if: ${{ matrix.os == 'windows' }}
-        uses: ilammy/setup-nasm@v1
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
-      - name: Build broker
-        shell: bash
-        run: cargo build --release --locked --bin andromeda --target ${{ matrix.target }}
-
-      - name: Package
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist stage
-          name="andromeda-${{ github.ref_name }}-${{ matrix.target }}"
-          if [ "${{ matrix.os }}" = windows ]; then
-            bin="andromeda.exe"
-            cp "target/${{ matrix.target }}/release/${bin}" "stage/${bin}"
-            archive="${name}.zip"
-            (cd stage && 7z a "../dist/${archive}" "${bin}" >/dev/null)
-          else
-            bin="andromeda"
-            cp "target/${{ matrix.target }}/release/${bin}" "stage/${bin}"
-            archive="${name}.tar.xz"
-            tar -C stage -cJf "dist/${archive}" "${bin}"
-          fi
-          cd dist
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${archive}" > "${archive}.sha256"
-          else
-            shasum -a 256 "${archive}" > "${archive}.sha256"
-          fi
-          cat "${archive}.sha256"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: binaries-${{ matrix.target }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 1
-
   image:
     name: image (${{ matrix.platform }})
     needs: seal
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -134,9 +86,9 @@ jobs:
           - { platform: linux/arm64, runner: ubuntu-24.04-arm }
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
+      BUILDCACHE: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache
     steps:
       - name: Prepare platform slug
-        shell: bash
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_SLUG=${platform//\//-}" >> "$GITHUB_ENV"
@@ -144,8 +96,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
       - uses: docker/setup-buildx-action@v4
-      # Exposes GHA cache creds to buildx and sccache.
-      - uses: crazy-max/ghaction-github-runtime@v4
 
       - uses: docker/login-action@v4
         with:
@@ -153,6 +103,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The layer cache lives in the registry, which keeps it out of the Actions cache.
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -160,15 +111,11 @@ jobs:
           context: .
           file: docker/images/andromeda/Dockerfile
           platforms: ${{ matrix.platform }}
-          cache-from: type=gha,scope=release-${{ env.PLATFORM_SLUG }}
-          cache-to: type=gha,mode=max,scope=release-${{ env.PLATFORM_SLUG }}
-          secret-envs: |
-            ACTIONS_RESULTS_URL=ACTIONS_RESULTS_URL
-            ACTIONS_RUNTIME_TOKEN=ACTIONS_RUNTIME_TOKEN
+          cache-from: type=registry,ref=${{ env.BUILDCACHE }}:${{ env.PLATFORM_SLUG }}
+          cache-to: type=registry,ref=${{ env.BUILDCACHE }}:${{ env.PLATFORM_SLUG }},mode=max,image-manifest=true,oci-mediatypes=true
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
-        shell: bash
         run: |
           mkdir -p "${{ runner.temp }}/digests"
           digest="${{ steps.build.outputs.digest }}"
@@ -183,7 +130,8 @@ jobs:
 
   image-merge:
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     permissions:
       attestations: write
       contents: read
@@ -191,6 +139,8 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8
@@ -209,7 +159,6 @@ jobs:
 
       - name: Resolve version and minor line
         id: version
-        shell: bash
         run: |
           set -euo pipefail
           ref="${{ github.ref_name }}"
@@ -233,7 +182,6 @@ jobs:
 
       # Via env: never parsed as shell.
       - name: Create manifest list and push
-        shell: bash
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -250,7 +198,6 @@ jobs:
 
       - name: Resolve manifest list digest
         id: digest
-        shell: bash
         run: |
           set -euo pipefail
           digest="$(
@@ -292,47 +239,24 @@ jobs:
           push-to-registry: true
 
   release:
-    needs: [binaries, image-merge]
-    runs-on: ubuntu-latest
+    needs: image-merge
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
     permissions:
-      attestations: write
       contents: write
-      id-token: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Download binary artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: dist
-          pattern: binaries-*
-          merge-multiple: true
-
-      - name: Verify checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          for f in *.sha256; do
-            sha256sum -c "$f"
-          done
-
-      - name: Attest binary provenance
-        if: ${{ github.event.repository.visibility == 'public' }}
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            dist/andromeda-*.tar.xz
-            dist/andromeda-*.zip
-
-      # The checked-in copies equal what the tagged code generates; the
-      # architecture checks refuse a commit where they differ.
+      # The checked-in copies equal what the tagged code generates; the architecture checks refuse a commit where they
+      # differ.
       - name: Stage configuration schema and descriptor
-        shell: bash
         run: |
           set -euo pipefail
+          mkdir -p dist
           cp docs/configuration/andromeda.schema.json "dist/andromeda-${{ github.ref_name }}.schema.json"
           cp docs/configuration/andromeda.descriptor.json "dist/andromeda-${{ github.ref_name }}.descriptor.json"
 
@@ -342,17 +266,14 @@ jobs:
           args: --current --strip all -o RELEASE_NOTES.md
 
       - name: Compose release body
-        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          DIGEST: ${{ needs.image-merge.outputs.digest }}
         run: |
           set -euo pipefail
           {
             cat RELEASE_NOTES.md
-            printf '\n## Checksums (SHA-256)\n\n| Artifact | SHA-256 |\n|---|---|\n'
-            for f in dist/*.sha256; do
-              sum="$(cut -d' ' -f1 "$f")"
-              base="$(basename "${f%.sha256}")"
-              printf '| %s | %s |\n' "$base" "$sum"
-            done
+            printf '\n## Image\n\n```\ndocker pull %s:%s\n```\n\nManifest list digest: `%s`\n' "$IMAGE" "${VERSION#v}" "$DIGEST"
           } > body.md
 
       - name: Publish release

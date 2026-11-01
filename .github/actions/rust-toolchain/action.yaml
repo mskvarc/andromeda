@@ -1,0 +1,17 @@
+name: Rust toolchain
+description: Installs the pinned toolchain and, on a GitHub-hosted runner, frees disk space and restores the job's dependency cache. A self-hosted runner keeps its target directory between jobs instead.
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/free-disk-space
+      if: runner.environment == 'github-hosted'
+    - name: Install pinned toolchain
+      shell: bash
+      run: rustup toolchain install --profile minimal
+    # Only master saves: a pull request restores what master saved and writes nothing, so the cache holds one entry per
+    # job rather than one per branch.
+    - uses: Swatinem/rust-cache@v2
+      if: runner.environment == 'github-hosted'
+      with:
+        save-if: ${{ github.ref == 'refs/heads/master' }}

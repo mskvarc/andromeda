@@ -1,22 +1,30 @@
 name: postgresql
 
+# Weekly, so the published image picks up the base image's and the apt packages' fixes. ci shellchecks the scripts.
 on:
+  push:
+    branches: [master]
+    paths:
+      - docker/images/postgresql/**
+      - .github/workflows/postgresql.yaml
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
+
+concurrency:
+  group: postgresql-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  # The build record docker/build-push-action uploads is an artifact, and artifacts count against storage.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Shellcheck the entrypoint and its checks
-        run: shellcheck docker/images/postgresql/docker-entrypoint.sh docker/images/postgresql/tests/settings-check.sh docker/images/postgresql/tests/extension-update-check.sh docker/images/postgresql/tests/schema-storage-check.sh docker/images/postgresql/tests/columnstore-conversion-check.sh docker/images/postgresql/tests/recompression-check.sh
-
   build:
-    needs: lint
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +42,7 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql
+      BUILDCACHE: ghcr.io/${{ github.repository_owner }}/postgresql-buildcache
     steps:
       - name: Prepare platform slug
         run: |
@@ -86,6 +95,14 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
+      # Before the first build: the layer cache lives in the registry, which keeps it out of the Actions cache.
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build for the settings check
         uses: docker/build-push-action@v7
         with:
@@ -93,19 +110,12 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             TIMESCALEDB_EDITION=${{ matrix.edition }}
-          cache-from: type=gha,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          cache-from: type=registry,ref=${{ env.BUILDCACHE }}:${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
           load: true
           tags: postgresql-settings-check:${{ matrix.edition }}
 
       - name: Check the tuned settings under container limits
         run: bash docker/images/postgresql/tests/settings-check.sh postgresql-settings-check:${{ matrix.edition }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push by digest
         id: build
@@ -116,8 +126,8 @@ jobs:
           build-args: |
             TIMESCALEDB_EDITION=${{ matrix.edition }}
           labels: ${{ steps.labels.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          cache-from: type=registry,ref=${{ env.BUILDCACHE }}:${{ matrix.edition }}-${{ env.PLATFORM_SLUG }}
+          cache-to: type=registry,ref=${{ env.BUILDCACHE }}:${{ matrix.edition }}-${{ env.PLATFORM_SLUG }},mode=max,image-manifest=true,oci-mediatypes=true
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -141,6 +151,7 @@ jobs:
       matrix:
         edition: [tsl, apache]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       attestations: write
       contents: read

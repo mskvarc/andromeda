@@ -1,0 +1,228 @@
+name: ci
+
+# One run per commit: a pull request is checked through its pull_request events, and a commit reaches push only when it
+# lands on master. Every check is a job of its own, so a pull request shows each one passing or failing; ci-ok is the
+# one required status check, and the check the release workflow requires of a tag.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  PGFORMATTER_VERSION: "5.11"
+  # The release andromeda-sql pins; it refuses any other.
+  SQUAWK_VERSION: "2.70.0"
+
+jobs:
+  fmt:
+    name: fmt
+    if: &ready ${{ !github.event.pull_request.draft }}
+    # Dependabot's updates build third-party code, so they never run on the self-hosted runner.
+    runs-on: &runner ${{ github.actor == 'dependabot[bot]' && 'ubuntu-24.04-arm' || vars.CI_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - run: cargo fmt --all --check
+
+  taplo:
+    name: taplo
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: taplo@0.10.0
+      - run: taplo fmt --check --diff
+
+  machete:
+    name: machete
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete@0.9.2
+      - run: cargo machete --with-metadata
+
+  deny:
+    name: deny
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned toolchain
+        run: rustup toolchain install --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --all-features --locked check
+
+  shellcheck:
+    name: shellcheck
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: shellcheck@0.11.0
+      - run: git ls-files -z '*.sh' | xargs -0 shellcheck
+
+  clippy:
+    name: clippy
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-toolchain
+      - run: cargo clippy --workspace --exclude andromeda-test-suite --all-targets --all-features --locked -- -D warnings
+
+  architecture:
+    name: architecture
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-toolchain
+      # --lib: the broker's root tests/ also has an architecture module.
+      - run: cargo test --workspace --exclude andromeda --exclude andromeda-test-suite --lib --all-features --locked architecture
+
+  unit:
+    name: unit
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-toolchain
+      # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
+      - name: Workspace unit tests
+        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked -- --skip architecture
+      # The broker's root tests/ need a live stack.
+      - name: Broker unit tests
+        if: ${{ !cancelled() }}
+        run: cargo test --package andromeda --bins --all-features --locked
+
+  sql:
+    name: sql
+    if: *ready
+    runs-on: *runner
+    timeout-minutes: 60
+    steps:
+      # The whole history, so the seal can be verified against the base.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/rust-toolchain
+      # The canonical migration layout is the one this pgFormatter release produces. Both tools go under the job's
+      # temporary directory, so a runner without sudo installs them the same way. pg_format loads its modules from the
+      # directory it sits in, so it runs from the extracted release; its Makefile.PL accepts no install prefix.
+      - name: Install pgFormatter and Squawk
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/sql-tools"
+          mkdir -p "${tools}/bin"
+          curl -fsSL "https://github.com/darold/pgFormatter/archive/refs/tags/v${PGFORMATTER_VERSION}.tar.gz" | tar -xz -C "$tools"
+          ln -s "${tools}/pgFormatter-${PGFORMATTER_VERSION}/pg_format" "${tools}/bin/pg_format"
+          case "$(uname -m)" in
+            x86_64) squawk=squawk-linux-x64 ;;
+            aarch64) squawk=squawk-linux-arm64 ;;
+            *) echo "no Squawk build for $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL -o "${tools}/bin/squawk" "https://github.com/sbdchd/squawk/releases/download/v${SQUAWK_VERSION}/${squawk}"
+          chmod 0755 "${tools}/bin/squawk"
+          echo "${tools}/bin" >> "$GITHUB_PATH"
+          "${tools}/bin/pg_format" --version
+          "${tools}/bin/squawk" --version
+      # Each check below runs whatever an earlier one reported, so one run lists every failure.
+      - name: Migration layout
+        run: cargo run --package andromeda-sql --locked -- format --check
+      - name: Migration lint
+        if: ${{ !cancelled() }}
+        run: cargo run --package andromeda-sql --locked -- lint
+      - name: Migration seal
+        if: ${{ !cancelled() }}
+        run: cargo run --package andromeda-sql --locked -- verify
+      # A sealed section must be unchanged from the branch a pull request merges into, or from the commit a push builds on.
+      - name: Migration seal against the base
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: cargo run --package andromeda-sql --locked -- verify --against "origin/${BASE_REF}"
+      - name: Migration seal against the parent commit
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet HEAD^ > /dev/null; then
+            cargo run --package andromeda-sql --locked -- verify --against HEAD^
+          fi
+      - name: andromeda-sql tests
+        if: ${{ !cancelled() }}
+        run: cargo test --package andromeda-sql --all-features --locked
+
+  # Broker tests against code whose own unit tests fail tell nothing more, so the trees wait for unit.
+  suite:
+    name: suite (${{ matrix.tree }})
+    needs: unit
+    runs-on: *runner
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [ngsi_ld, andromeda]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+        if: runner.environment == 'github-hosted'
+      - uses: ./.github/actions/suite-tree
+        with:
+          tree: ${{ matrix.tree }}
+
+  ci-ok:
+    name: ci-ok
+    # Runs when a job it needs failed or was skipped, so a failure upstream still fails ci-ok; a cancelled run, which a
+    # newer commit superseded, reports nothing.
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
+    needs: [fmt, taplo, machete, deny, shellcheck, clippy, architecture, unit, sql, suite]
+    runs-on: *runner
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "a required job ended ${result}" >&2
+              exit 1
+            fi
+          done

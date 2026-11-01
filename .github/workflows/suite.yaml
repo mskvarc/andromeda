@@ -1,0 +1,45 @@
+name: suite
+
+# The trees ci does not run on every commit, weekly, and any single tree on demand.
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      tree:
+        description: The tree to run; weekly runs the trees the schedule runs.
+        type: choice
+        default: weekly
+        options:
+          - weekly
+          - ngsi_ld
+          - andromeda
+          - etsi
+          - annex_c
+          - distributed
+          - pgbouncer
+          - interoperability
+
+concurrency:
+  group: suite-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: suite (${{ matrix.tree }})
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: ${{ fromJSON((github.event_name == 'schedule' || inputs.tree == 'weekly') && '["etsi","annex_c","distributed","pgbouncer","interoperability"]' || format('["{0}"]', inputs.tree)) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+        if: runner.environment == 'github-hosted'
+      - uses: ./.github/actions/suite-tree
+        with:
+          tree: ${{ matrix.tree }}
