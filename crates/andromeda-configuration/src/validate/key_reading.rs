@@ -24,6 +24,7 @@ impl ConfigKey {
             ConfigKey::ServerPort => Some(count(config.server.port)),
             ConfigKey::ServerGracefulDrainTimeout => Some(span(config.server.graceful_drain_timeout)),
             ConfigKey::ServerAnnouncedCloseTimeout => Some(span(config.server.announced_close_timeout)),
+            ConfigKey::TlsHandshakeTimeout => Some(span(config.tls.handshake_timeout)),
             ConfigKey::ManagementPort => match config.management.mode {
                 ManagementMode::SeparatePort => Some(count(config.management.port)),
                 ManagementMode::SharedPort | ManagementMode::Disabled => None,

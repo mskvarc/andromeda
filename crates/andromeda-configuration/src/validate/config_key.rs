@@ -60,6 +60,9 @@ pub enum ConfigKey {
     /// `tls.private_key`.
     #[display("tls.private_key")]
     TlsPrivateKey,
+    /// `tls.handshake_timeout`.
+    #[display("tls.handshake_timeout")]
+    TlsHandshakeTimeout,
     /// `tls.client_authentication.ca`.
     #[display("tls.client_authentication.ca")]
     TlsClientAuthenticationCa,

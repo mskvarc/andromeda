@@ -32,6 +32,7 @@ mod server;
 mod snapshot;
 mod temporal;
 mod tenancy;
+mod tls;
 pub mod violation;
 mod violation_log;
 
@@ -90,6 +91,7 @@ impl Display for ViolationLines<'_> {
 /// spanning tables last.
 pub fn declared_rules() -> impl Iterator<Item = Rule> {
     server::rules()
+        .chain(tls::rules())
         .chain(management::rules())
         .chain(request_limits::rules())
         .chain(database::rules())
