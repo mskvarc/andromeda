@@ -38,6 +38,7 @@ pub mod runtime_build_failure;
 pub mod saturated_wait;
 pub mod state_factory;
 pub mod status;
+pub mod tenant_existence;
 pub mod tenant_listing;
 pub mod tenant_page_start;
 pub mod tenant_record;

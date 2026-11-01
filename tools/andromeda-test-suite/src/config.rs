@@ -6,7 +6,12 @@
 //! the tests reads the environment. A value a test needs that the stack does not name fails the test with the key it
 //! should have been given.
 
-use crate::config_error::{ConfigError, ConfigKey};
+use crate::{
+    config_error::{ConfigError, ConfigKey},
+    host_name::HostName,
+    mqtt_settings::MqttSettings,
+    pooling_settings::PoolingSettings,
+};
 use figment2::{Figment, providers::Env};
 use serde::Deserialize;
 use std::{
@@ -107,6 +112,9 @@ pub enum BrokerRole {
     BurstPooled,
     /// The un-pooled pgbouncer stack broker of the burst-footprint scale test.
     BurstDirect,
+    /// The pgbouncer stack broker behind a pooler with two server connections per database, only the test of first
+    /// writes into new tenants while the wake reconciliation pass probes them uses.
+    FirstWrite,
 }
 
 /// A broker as another broker of the stack reaches it: what a registration `endpoint` names.
@@ -143,141 +151,6 @@ pub enum Budget {
     LargePosition,
     /// The bytes of the largest request body a broker reads.
     MaxRequestBody,
-}
-
-/// A host name or address, written as a URL host is.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(try_from = "String")]
-pub struct HostName(Host<String>);
-
-// `url::Host` deserializes from its enum form; the environment holds the host as text.
-impl TryFrom<String> for HostName {
-    type Error = url::ParseError;
-
-    fn try_from(text: String) -> Result<HostName, url::ParseError> {
-        Host::parse(&text).map(HostName)
-    }
-}
-
-impl HostName {
-    /// The host.
-    #[must_use]
-    pub const fn host(&self) -> &Host<String> {
-        &self.0
-    }
-}
-
-/// The MQTT brokers notifications are published to.
-#[derive(Debug, Clone, Deserialize)]
-pub struct MqttSettings {
-    /// The anonymous Mosquitto broker, as the brokers and the test process reach it.
-    host: HostName,
-    /// The Mosquitto broker refusing anonymous clients on the ports endpoints name.
-    auth_host: HostName,
-    /// The anonymous Mosquitto broker whose packet limit admits a notification of several MiB, on a stack that runs it.
-    #[serde(default)]
-    large_host: Option<HostName>,
-    /// The listener port other than 1883 both Mosquitto brokers serve.
-    non_default_port: u16,
-    /// The listener without a mount point an observer subscribes on, so that every topic carries the port it was
-    /// published through.
-    observer_port: u16,
-}
-
-impl MqttSettings {
-    /// The anonymous Mosquitto broker.
-    #[must_use]
-    pub const fn host(&self) -> &Host<String> {
-        self.host.host()
-    }
-
-    /// The Mosquitto broker that requires credentials.
-    #[must_use]
-    pub const fn auth_host(&self) -> &Host<String> {
-        self.auth_host.host()
-    }
-
-    /// The Mosquitto broker that admits a notification of several MiB.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when the stack runs no such broker.
-    pub fn large_host(&self) -> Result<&Host<String>, ConfigError> {
-        self.large_host.as_ref().map(HostName::host).ok_or(missing("MQTT", "LARGE_HOST"))
-    }
-
-    /// The listener port other than 1883.
-    #[must_use]
-    pub const fn non_default_port(&self) -> u16 {
-        self.non_default_port
-    }
-
-    /// The listener an observer subscribes on.
-    #[must_use]
-    pub const fn observer_port(&self) -> u16 {
-        self.observer_port
-    }
-}
-
-/// The infrastructure behind the brokers of the pgbouncer stack, by broker role: the PostgreSQL server each broker
-/// owns, the admin console of the pooler in front of it, the metrics each broker serves, and the size of the scale
-/// tests' workloads.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PoolingSettings {
-    /// The PostgreSQL server each broker owns, reached directly with the server's administrative login.
-    #[serde(default)]
-    servers: BTreeMap<BrokerRole, Url>,
-    /// The admin console (database `pgbouncer`) of the pooler in front of each pooled broker's server.
-    #[serde(default)]
-    poolers: BTreeMap<BrokerRole, Url>,
-    /// The Prometheus exposition each broker serves on its management listener.
-    #[serde(default)]
-    metrics: BTreeMap<BrokerRole, Url>,
-    /// How many tenants a scale test provisions.
-    scale_tenants: usize,
-    /// How long one load run of a scale test lasts, in seconds.
-    load_seconds: u64,
-}
-
-impl PoolingSettings {
-    /// The PostgreSQL server the broker of `role` owns.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when the stack names no such server.
-    pub fn server(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
-        self.servers.get(&role).ok_or_else(|| missing("POOLING__SERVERS", role.into()))
-    }
-
-    /// The admin console of the pooler in front of the server of the broker of `role`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when the stack names no such pooler.
-    pub fn pooler(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
-        self.poolers.get(&role).ok_or_else(|| missing("POOLING__POOLERS", role.into()))
-    }
-
-    /// The Prometheus exposition of the broker of `role`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when the stack names no such exposition.
-    pub fn metrics(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
-        self.metrics.get(&role).ok_or_else(|| missing("POOLING__METRICS", role.into()))
-    }
-
-    /// How many tenants a scale test provisions.
-    #[must_use]
-    pub const fn scale_tenants(&self) -> usize {
-        self.scale_tenants
-    }
-
-    /// How long one load run of a scale test lasts.
-    #[must_use]
-    pub const fn load_duration(&self) -> Duration {
-        Duration::from_secs(self.load_seconds)
-    }
 }
 
 /// The configuration of the stack the tests run against.
@@ -355,7 +228,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] when the stack runs no such broker.
     pub fn broker(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
-        self.brokers.get(&role).ok_or_else(|| missing("BROKERS", role.into()))
+        self.brokers.get(&role).ok_or_else(|| ConfigError::missing("BROKERS", role.into()))
     }
 
     /// Every broker the stack runs, by role, as the test process reaches it.
@@ -374,7 +247,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] when the stack names no such peer.
     pub fn peer(&self, role: PeerRole) -> Result<&Url, ConfigError> {
-        self.peers.get(&role).ok_or_else(|| missing("PEERS", role.into()))
+        self.peers.get(&role).ok_or_else(|| ConfigError::missing("PEERS", role.into()))
     }
 
     /// The limit `budget` the brokers are configured with.
@@ -383,7 +256,7 @@ impl SuiteConfig {
     ///
     /// Returns [`ConfigError::Missing`] when the stack names no such limit.
     pub fn budget(&self, budget: Budget) -> Result<u64, ConfigError> {
-        self.budgets.get(&budget).copied().ok_or_else(|| missing("BUDGETS", budget.into()))
+        self.budgets.get(&budget).copied().ok_or_else(|| ConfigError::missing("BUDGETS", budget.into()))
     }
 
     /// The MQTT brokers.
@@ -439,7 +312,7 @@ impl SuiteConfig {
         self.identity_dirs
             .get(&role)
             .map(PathBuf::as_path)
-            .ok_or_else(|| missing("IDENTITY_DIRS", role.into()))
+            .ok_or_else(|| ConfigError::missing("IDENTITY_DIRS", role.into()))
     }
 
     /// The directory of the stack's files.
@@ -485,11 +358,6 @@ impl SuiteConfig {
             IpAddr::V6(address) => Host::Ipv6(address),
         })
     }
-}
-
-/// The error for the key `name` of the section `section`.
-const fn missing(section: &'static str, name: &'static str) -> ConfigError {
-    ConfigError::Missing(ConfigKey::Entry { section, name })
 }
 
 #[cfg(test)]

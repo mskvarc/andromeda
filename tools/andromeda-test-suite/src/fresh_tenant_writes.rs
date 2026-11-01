@@ -18,7 +18,7 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{Entity, Input, NgsiLdMediaType, Tenant},
+    model::{Entity, Input, NgsiLdMediaType},
 };
 use std::time::Instant;
 use tokio::time::sleep;
@@ -51,7 +51,7 @@ pub async fn expect_first_writes_create_their_tenants(broker: &BrokerClient, nam
         .property("reading", 1)
         .build()?;
     let clients = (0..tenants)
-        .map(|index| Ok(broker.with_tenant(format!("{namespace}-{index}").parse::<Tenant>()?)))
+        .map(|index| Ok(broker.with_tenant(namespace.numbered_tenant(index)?)))
         .collect::<Result<Vec<_>>>()?;
     let answers = join_all(clients.iter().map(|client| create_until_admitted(client, &device))).await;
     expect_that!(

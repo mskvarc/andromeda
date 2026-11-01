@@ -13,7 +13,10 @@
 //! Only when no source has work due does a backpressure or fault answer reach
 //! the wake loop, which retries it.
 
-use crate::pending_work::{PendingWork, PendingWorkError, PendingWorkProbe};
+use crate::{
+    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
+    tenant_existence::TenantExistence,
+};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
 use std::{sync::Arc, time::SystemTime};
@@ -68,10 +71,10 @@ impl Folded {
 
 #[async_trait]
 impl PendingWorkProbe for PendingWorkSources {
-    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
         let mut folded = Folded::Nothing;
         for source in &self.0 {
-            folded = folded.with(source.earliest_pending_work(database).await)?;
+            folded = folded.with(source.earliest_pending_work(database, existence).await)?;
         }
         folded.answer()
     }
@@ -82,6 +85,7 @@ mod tests {
     use crate::{
         pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
         pending_work_sources::PendingWorkSources,
+        tenant_existence::TenantExistence,
     };
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -118,12 +122,17 @@ mod tests {
         answer: Answer,
         /// How often it was asked.
         asked: AtomicUsize,
+        /// How often it was asked about a provisional tenant.
+        asked_provisional: AtomicUsize,
     }
 
     #[async_trait]
     impl PendingWorkProbe for Source {
-        async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+        async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
             self.asked.fetch_add(1, Ordering::SeqCst);
+            if existence == TenantExistence::Provisional {
+                self.asked_provisional.fetch_add(1, Ordering::SeqCst);
+            }
             let database = database.clone(); // clone: the error outlives this borrow
             match self.answer {
                 Answer::Nothing => Ok(PendingWork::None),
@@ -147,13 +156,27 @@ mod tests {
         Arc::new(Source {
             answer,
             asked: AtomicUsize::new(0),
+            asked_provisional: AtomicUsize::new(0),
         })
     }
 
-    async fn probe(sources: &[Arc<Source>]) -> Result<PendingWork, PendingWorkError> {
+    async fn probe_as(sources: &[Arc<Source>], existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
         PendingWorkSources::new(sources.iter().map(|source| Arc::clone(source) as Arc<dyn PendingWorkProbe>).collect())
-            .earliest_pending_work(&TenantDatabaseName::from("andromeda_tenant_t1".to_owned()))
+            .earliest_pending_work(&TenantDatabaseName::from("andromeda_tenant_t1".to_owned()), existence)
             .await
+    }
+
+    async fn probe(sources: &[Arc<Source>]) -> Result<PendingWork, PendingWorkError> {
+        probe_as(sources, TenantExistence::Established).await
+    }
+
+    #[tokio::test]
+    async fn every_source_is_told_the_tenant_is_provisional() {
+        let sources = [source(Answer::Nothing), source(Answer::Nothing)];
+        assert_eq!(probe_as(&sources, TenantExistence::Provisional).await.ok(), Some(PendingWork::None));
+        assert!(sources.iter().all(|source| source.asked_provisional.load(Ordering::SeqCst) == 1));
+        assert_eq!(probe(&sources).await.ok(), Some(PendingWork::None));
+        assert!(sources.iter().all(|source| source.asked_provisional.load(Ordering::SeqCst) == 1));
     }
 
     #[tokio::test]

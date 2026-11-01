@@ -89,12 +89,12 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         for (tenant, chosen_at) in self.idle_runtimes(ttl) {
             // Take the database to probe while the shard guard is briefly held,
             // then drop the guard before awaiting; a leased runtime is skipped.
-            let database = match self.runtimes.get(&tenant) {
-                Some(cached) if !cached.is_leased() => cached.database().clone(), // clone: the probe outlives the guard
+            let (database, existence) = match self.runtimes.get(&tenant) {
+                Some(cached) if !cached.is_leased() => (cached.database().clone(), cached.existence()), // clone: the probe outlives the guard
                 Some(_) | None => continue,
             };
 
-            let probe = self.probe.earliest_pending_work(&database).await;
+            let probe = self.probe.earliest_pending_work(&database, existence).await;
             if matches!(&probe, Ok(PendingWork::DueAt(due)) if *due <= now + ttl) {
                 if let Some(cached) = self.runtimes.get(&tenant) {
                     cached.touch();

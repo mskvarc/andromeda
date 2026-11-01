@@ -7,6 +7,7 @@ use crate::{
         lease::LeaseOrigin,
     },
     state_factory::TenantRuntime,
+    tenant_existence::TenantExistence,
 };
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use std::{
@@ -32,16 +33,6 @@ pub(super) fn now_millis() -> u64 {
     // assembled from them rather than narrowed from a wider integer.
     let elapsed = EPOCH.elapsed();
     elapsed.as_secs() * 1_000 + u64::from(elapsed.subsec_millis())
-}
-
-/// Whether the tenant a runtime serves exists yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RuntimeExistence {
-    /// Provisional: a request that requires the tenant to exist must first see
-    /// its database hold information (clause 5.5.10).
-    Provisional,
-    /// Established: the tenant exists and every request is served.
-    Established,
 }
 
 /// One tenant's live runtime, and when it was last reached for.
@@ -87,7 +78,7 @@ impl<S, R> CachedRuntime<S, R> {
         state: Arc<S>,
         runtime: R,
         database: TenantDatabaseName,
-        existence: RuntimeExistence,
+        existence: TenantExistence,
         origin: Arc<LeaseOrigin>,
     ) -> (CachedRuntime<S, R>, Arc<LeaseOrigin>) {
         // clone: the lease is a second owner of the origin by construction; the
@@ -101,7 +92,7 @@ impl<S, R> CachedRuntime<S, R> {
                 database,
                 last_used: AtomicU64::new(now_millis()),
                 origin,
-                established: AtomicBool::new(existence == RuntimeExistence::Established),
+                established: AtomicBool::new(existence == TenantExistence::Established),
                 wake_residency_end: None,
             },
             leased,
@@ -120,7 +111,7 @@ impl<S, R> CachedRuntime<S, R> {
         state: Arc<S>,
         runtime: R,
         database: TenantDatabaseName,
-        existence: RuntimeExistence,
+        existence: TenantExistence,
         origin: Arc<LeaseOrigin>,
         residency: Duration,
     ) -> CachedRuntime<S, R> {
@@ -130,7 +121,7 @@ impl<S, R> CachedRuntime<S, R> {
             database,
             last_used: AtomicU64::new(now_millis()),
             origin,
-            established: AtomicBool::new(existence == RuntimeExistence::Established),
+            established: AtomicBool::new(existence == TenantExistence::Established),
             wake_residency_end: Instant::now().checked_add(residency),
         }
     }
@@ -142,11 +133,11 @@ impl<S, R> CachedRuntime<S, R> {
     }
 
     /// Whether the tenant this runtime serves was seen to exist.
-    pub(super) fn existence(&self) -> RuntimeExistence {
+    pub(super) fn existence(&self) -> TenantExistence {
         if self.established.load(Ordering::Acquire) {
-            RuntimeExistence::Established
+            TenantExistence::Established
         } else {
-            RuntimeExistence::Provisional
+            TenantExistence::Provisional
         }
     }
 
@@ -206,10 +197,11 @@ impl<S, R: TenantRuntime> CachedRuntime<S, R> {
 mod tests {
     use crate::{
         runtime::{
-            cached_runtime::{CachedRuntime, RuntimeExistence},
+            cached_runtime::CachedRuntime,
             lease::{LeaseOrigin, RuntimeLease},
         },
         state_factory::RuntimeActivity,
+        tenant_existence::TenantExistence,
     };
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use std::{
@@ -231,11 +223,11 @@ mod tests {
         }
     }
 
-    fn cached_reporting_to(activity: &Arc<ActivityCount>, existence: RuntimeExistence) -> CachedRuntime<(), ()> {
+    fn cached_reporting_to(activity: &Arc<ActivityCount>, existence: TenantExistence) -> CachedRuntime<(), ()> {
         woken_for(activity, existence, Duration::from_secs(60))
     }
 
-    fn woken_for(activity: &Arc<ActivityCount>, existence: RuntimeExistence, residency: Duration) -> CachedRuntime<(), ()> {
+    fn woken_for(activity: &Arc<ActivityCount>, existence: TenantExistence, residency: Duration) -> CachedRuntime<(), ()> {
         CachedRuntime::woken(
             Arc::new(()),
             (),
@@ -248,7 +240,7 @@ mod tests {
 
     #[test]
     fn a_woken_runtime_is_within_its_wake_residency_until_the_residency_ends() {
-        let cached = woken_for(&Arc::new(ActivityCount::default()), RuntimeExistence::Established, Duration::from_secs(60));
+        let cached = woken_for(&Arc::new(ActivityCount::default()), TenantExistence::Established, Duration::from_secs(60));
         let now = Instant::now();
         assert!(cached.is_within_wake_residency(now));
         assert!(cached.is_within_wake_residency(now + Duration::from_secs(59)));
@@ -261,7 +253,7 @@ mod tests {
             Arc::new(()),
             (),
             TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
-            RuntimeExistence::Established,
+            TenantExistence::Established,
             LeaseOrigin::new(Arc::new(Notify::new()), Arc::new(ActivityCount::default()) as Arc<dyn RuntimeActivity>),
         );
         assert!(!cached.is_within_wake_residency(Instant::now()));
@@ -272,7 +264,7 @@ mod tests {
     #[test]
     fn every_touch_tells_the_runtime_it_was_reached_for() {
         let activity = Arc::new(ActivityCount::default());
-        let cached = cached_reporting_to(&activity, RuntimeExistence::Established);
+        let cached = cached_reporting_to(&activity, TenantExistence::Established);
         cached.touch();
         cached.touch();
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
@@ -284,7 +276,7 @@ mod tests {
     #[test]
     fn letting_a_lease_go_tells_the_runtime_it_was_used() {
         let activity = Arc::new(ActivityCount::default());
-        let cached = cached_reporting_to(&activity, RuntimeExistence::Established);
+        let cached = cached_reporting_to(&activity, TenantExistence::Established);
         cached.touch();
         let lease = RuntimeLease::clone_from(&cached.origin);
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 1);
@@ -294,17 +286,17 @@ mod tests {
 
     #[test]
     fn a_provisional_runtime_is_established_once_and_stays_so() {
-        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), RuntimeExistence::Provisional);
-        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Provisional);
+        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), TenantExistence::Provisional);
+        pretty_assertions::assert_eq!(cached.existence(), TenantExistence::Provisional);
         cached.establish();
-        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
+        pretty_assertions::assert_eq!(cached.existence(), TenantExistence::Established);
         cached.establish();
-        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
+        pretty_assertions::assert_eq!(cached.existence(), TenantExistence::Established);
     }
 
     #[test]
     fn a_runtime_built_for_an_established_tenant_starts_established() {
-        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), RuntimeExistence::Established);
-        pretty_assertions::assert_eq!(cached.existence(), RuntimeExistence::Established);
+        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), TenantExistence::Established);
+        pretty_assertions::assert_eq!(cached.existence(), TenantExistence::Established);
     }
 }

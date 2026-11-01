@@ -83,7 +83,7 @@ impl IdentityFiles {
     /// Writes `contents` beside the file `name` and renames it into place.
     fn replace(&self, name: &str, contents: &[u8]) -> Result<(), IdentityError> {
         let target = self.directory.join(name);
-        let staging = self.directory.join(format!(".{name}.staging"));
+        let staging = target.with_added_extension("staging");
         // clone: the staging path is renamed after the write
         fs::write(&staging, contents).map_err(|error| IdentityError::Write(staging.clone(), error))?;
         fs::rename(&staging, &target).map_err(|error| IdentityError::Write(target, error))

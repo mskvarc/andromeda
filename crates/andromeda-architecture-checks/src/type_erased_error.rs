@@ -25,15 +25,18 @@ use syn::{
 /// The production sites that named a `dyn …Error` trait object when the gate was
 /// introduced.
 ///
-/// Both are forced by an external contract the workspace does not own: the
+/// Each is forced by an external contract the workspace does not own: the
 /// `reqwest` DNS `Resolve` trait hands connection errors back as
-/// `Box<dyn Error + Send + Sync>`, and classifying a TLS failure walks a
-/// `std::error::Error` source chain, which is expressed over `&dyn Error`.
-/// Neither can be a typed enum without abandoning the upstream trait, so both
-/// are tolerated here rather than papered over with an `#[allow]`.
+/// `Box<dyn Error + Send + Sync>`, and classifying a TLS failure, in a
+/// notification transport or in the test suite's reading of a refused
+/// connection, walks a `std::error::Error` source chain, which is expressed
+/// over `&dyn Error`. None can be a typed enum without abandoning the upstream
+/// trait, so each is tolerated here rather than papered over with an
+/// `#[allow]`.
 pub const TYPE_ERASED_ERROR_BASELINE: &[&str] = &[
     "crates/andromeda-delivery/src/http/transport.rs",
     "crates/andromeda-outbound-http/src/resolver.rs",
+    "tools/andromeda-test-suite/src/connection_outcome.rs",
 ];
 
 /// Every production source that names a `dyn …Error` trait object, sorted.

@@ -14,8 +14,16 @@ use andromeda_postgresql_seaquery::{
     command::Command,
     pooler_console::{PoolerCommand, PoolerDatabase, UnacceptedPoolerDatabase},
 };
-use sqlx::{Column, Connection, PgConnection, Row, TypeInfo, postgres::PgRow};
+use sqlx::{
+    Column,
+    Connection,
+    PgConnection,
+    Row,
+    TypeInfo,
+    postgres::{PgRow, PgTypeInfo},
+};
 use std::num::ParseIntError;
+use strum::{Display, IntoStaticStr};
 use url::Url;
 
 /// Why a console command failed.
@@ -35,21 +43,35 @@ pub enum PoolerConsoleError {
     #[error("the pooler console column {column} is declared {declared}, which holds no integer")]
     NotAnIntegerColumn {
         /// The column read.
-        column: &'static str,
+        column: PoolCount,
         /// The type the console declared for it.
-        declared: String,
+        declared: PgTypeInfo,
     },
     /// A count column sent as text does not hold an integer.
-    #[error("the pooler console column {column} holds {text:?}, which is not an integer")]
+    #[error("the pooler console column {column} holds text that is not an integer")]
     NotAnInteger {
         /// The column read.
-        column: &'static str,
-        /// The text the console sent.
-        text: String,
+        column: PoolCount,
         /// Why the text does not parse.
         #[source]
         source: ParseIntError,
     },
+}
+
+/// A count column of `SHOW POOLS`, named as the console names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum PoolCount {
+    /// Client connections linked to a server connection.
+    ClActive,
+    /// Client connections waiting for a server connection.
+    ClWaiting,
+    /// Server connections running a client's transaction.
+    SvActive,
+    /// Server connections idle and ready for a client.
+    SvIdle,
+    /// Server connections released by a client and not yet reset.
+    SvUsed,
 }
 
 /// One row of `SHOW POOLS`: the client and server connections of one (database, user) pool.
@@ -189,11 +211,11 @@ impl PoolerConsole {
 fn pool_row(row: &PgRow) -> Result<PoolRow, PoolerConsoleError> {
     Ok(PoolRow {
         database: DatabaseName::from(row.try_get::<String, _>("database")?),
-        clients_active: integer_column(row, "cl_active")?,
-        clients_waiting: integer_column(row, "cl_waiting")?,
-        servers_active: integer_column(row, "sv_active")?,
-        servers_idle: integer_column(row, "sv_idle")?,
-        servers_used: integer_column(row, "sv_used")?,
+        clients_active: integer_column(row, PoolCount::ClActive)?,
+        clients_waiting: integer_column(row, PoolCount::ClWaiting)?,
+        servers_active: integer_column(row, PoolCount::SvActive)?,
+        servers_idle: integer_column(row, PoolCount::SvIdle)?,
+        servers_used: integer_column(row, PoolCount::SvUsed)?,
     })
 }
 
@@ -201,46 +223,66 @@ fn pool_row(row: &PgRow) -> Result<PoolRow, PoolerConsoleError> {
 ///
 /// `PgBouncer` releases declare a count `int8`, `int4` or text, so the declared type picks the decoding; any other type,
 /// or text holding no integer, fails the read rather than counting as zero.
-fn integer_column(row: &PgRow, column: &'static str) -> Result<i64, PoolerConsoleError> {
-    match row.try_column(column)?.type_info().name() {
-        "INT8" => Ok(row.try_get::<i64, _>(column)?),
-        "INT4" => Ok(i64::from(row.try_get::<i32, _>(column)?)),
-        "INT2" => Ok(i64::from(row.try_get::<i16, _>(column)?)),
-        "TEXT" | "VARCHAR" | "NAME" => console_integer(column, row.try_get(column)?),
-        declared => Err(PoolerConsoleError::NotAnIntegerColumn {
+fn integer_column(row: &PgRow, column: PoolCount) -> Result<i64, PoolerConsoleError> {
+    let name: &'static str = column.into();
+    let declared = row.try_column(name)?.type_info();
+    match declared.name() {
+        "INT8" => Ok(row.try_get::<i64, _>(name)?),
+        "INT4" => Ok(i64::from(row.try_get::<i32, _>(name)?)),
+        "INT2" => Ok(i64::from(row.try_get::<i16, _>(name)?)),
+        "TEXT" | "VARCHAR" | "NAME" => console_integer(column, &row.try_get::<String, _>(name)?),
+        _other => Err(PoolerConsoleError::NotAnIntegerColumn {
             column,
-            declared: declared.to_owned(),
+            declared: declared.clone(), // clone: the error outlives the row the type is borrowed from
         }),
     }
 }
 
 /// The integer a count column sent as text holds.
-fn console_integer(column: &'static str, text: String) -> Result<i64, PoolerConsoleError> {
-    text.trim().parse().map_err(|source| PoolerConsoleError::NotAnInteger { column, text, source })
+fn console_integer(column: PoolCount, text: &str) -> Result<i64, PoolerConsoleError> {
+    text.trim().parse().map_err(|source| PoolerConsoleError::NotAnInteger { column, source })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         database_name::DatabaseName,
-        pooler_console::{PoolRow, PoolerConsole, PoolerConsoleError, console_integer},
+        pooler_console::{PoolCount, PoolRow, PoolerConsole, PoolerConsoleError, console_integer},
     };
     use googletest::prelude::*;
     use url::Url;
 
     #[gtest]
     fn a_count_sent_as_text_reads_as_its_integer() {
-        expect_that!(console_integer("sv_idle", " 12 ".to_owned()).ok(), some(eq(12)));
+        expect_that!(console_integer(PoolCount::SvIdle, " 12 ").ok(), some(eq(12)));
     }
 
     #[gtest]
     fn a_count_sent_as_text_that_holds_no_integer_fails_the_read() {
         expect_that!(
-            console_integer("sv_idle", "many".to_owned()),
+            console_integer(PoolCount::SvIdle, "many"),
             err(predicate(|error: &PoolerConsoleError| matches!(
                 error,
-                PoolerConsoleError::NotAnInteger { column: "sv_idle", .. }
+                PoolerConsoleError::NotAnInteger { column: PoolCount::SvIdle, .. }
             )))
+        );
+    }
+
+    #[gtest]
+    fn a_count_column_is_named_as_the_console_names_it() {
+        let names: Vec<&'static str> = [
+            PoolCount::ClActive,
+            PoolCount::ClWaiting,
+            PoolCount::SvActive,
+            PoolCount::SvIdle,
+            PoolCount::SvUsed,
+        ]
+        .into_iter()
+        .map(<&'static str>::from)
+        .collect();
+        expect_that!(
+            names,
+            elements_are![eq(&"cl_active"), eq(&"cl_waiting"), eq(&"sv_active"), eq(&"sv_idle"), eq(&"sv_used")]
         );
     }
 

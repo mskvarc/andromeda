@@ -5,12 +5,10 @@ use crate::{
     database::TenantDatabase,
     pending_work::{PendingWork, PendingWorkError},
     registered_tenant::RegisteredTenant,
-    runtime::{
-        TenantRuntimeManager,
-        cached_runtime::{CachedRuntime, RuntimeExistence},
-    },
+    runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
@@ -59,9 +57,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                     self.settle_schedule(tenant, now, None).await;
                     return WakeOutcome::NothingDue;
                 }
-                TenantStatus::Active => (record.database, RuntimeExistence::Established),
+                TenantStatus::Active => (record.database, TenantExistence::Established),
             },
-            Ok(Some(RegisteredTenant::Provisional { database })) => (database, RuntimeExistence::Provisional),
+            Ok(Some(RegisteredTenant::Provisional { database })) => (database, TenantExistence::Provisional),
             Ok(None) => return WakeOutcome::Unregistered,
             // A registry read failure is transient; leave the leased claim to
             // re-fire and report nothing loaded.
@@ -71,7 +69,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // A source due at once reports the database's clock at the probe's
         // statement, which is later than `now`, so the deadline is compared
         // with the instant the answer arrived.
-        match self.probe.earliest_pending_work(&database).await {
+        match self.probe.earliest_pending_work(&database, existence).await {
             Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, existence, tenant).await,
             Ok(PendingWork::DueAt(due)) => {
                 self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
@@ -90,13 +88,13 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // interrupted, which the janitor retires. A creating operation
                 // writes only once the migration completes, and the runtime it
                 // runs on records the tenant's next wake when evicted.
-                RuntimeExistence::Provisional => {
+                TenantExistence::Provisional => {
                     self.settle_schedule(tenant, now, None).await;
                     WakeOutcome::NothingDue
                 }
                 // Building the runtime migrates the database, and the runtime
                 // then runs whatever its obligations hold due.
-                RuntimeExistence::Established => self.load_woken(&tenant_ref, database, existence, tenant).await,
+                TenantExistence::Established => self.load_woken(&tenant_ref, database, existence, tenant).await,
             },
             // Transient: the probe could not read this pass. Re-arm a retry
             // rather than treating the tenant as having nothing due.
@@ -117,7 +115,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// is rescheduled as it goes) so the connection budget stays flat while the
     /// due work is admitted. Only genuine backpressure, every cached runtime held
     /// by an in-flight request so no slot can be freed, defers the wake.
-    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: RuntimeExistence, tenant: &TenantName) -> WakeOutcome {
+    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: TenantExistence, tenant: &TenantName) -> WakeOutcome {
         let now = SystemTime::now();
         if self.runtimes.len() >= self.config.residency.max_resident.get() && !self.evict_one_for_wake(tenant_ref).await {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
@@ -135,7 +133,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         &self,
         tenant_ref: &TenantRef,
         database: TenantDatabaseName,
-        existence: RuntimeExistence,
+        existence: TenantExistence,
         tenant: &TenantName,
     ) -> WakeOutcome {
         let now = SystemTime::now();

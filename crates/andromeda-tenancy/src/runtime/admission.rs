@@ -9,13 +9,14 @@ use crate::{
     registered_tenant::RegisteredTenant,
     runtime::{
         TenantRuntimeManager,
-        cached_runtime::{CachedRuntime, RuntimeExistence},
+        cached_runtime::CachedRuntime,
         lease::{LeasedState, RuntimeLease},
         shed_report::report_shed,
     },
     saturated_wait::SaturatedWait,
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
@@ -135,7 +136,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         policy: TenantCreationPolicy,
         CachedLease { leased, existence }: CachedLease<F::State>,
     ) -> Result<LeasedState<F::State>, TenancyError> {
-        if let (RuntimeExistence::Provisional, TenantCreationPolicy::MustExist, TenantRef::Named(name)) = (existence, policy, tenant) {
+        if let (TenantExistence::Provisional, TenantCreationPolicy::MustExist, TenantRef::Named(name)) = (existence, policy, tenant) {
             self.require_established(name).await?;
         }
         Ok(leased)
@@ -208,7 +209,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         match self.runtimes.entry(tenant.clone()) {
             Entry::Occupied(entry) => {
                 entry.get().touch();
-                if existence == RuntimeExistence::Established {
+                if existence == TenantExistence::Established {
                     entry.get().establish();
                 }
                 let state = Arc::clone(&entry.get().state);
@@ -246,21 +247,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// database holds information. A request that may create the tenant
     /// provisions it, which also prepares the database of a provisional tenant
     /// whose provisioning was interrupted.
-    async fn admitted_database(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<(TenantDatabaseName, RuntimeExistence), TenancyError> {
+    async fn admitted_database(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<(TenantDatabaseName, TenantExistence), TenancyError> {
         let TenantRef::Named(name) = tenant else {
-            return Ok((self.database.default_database(), RuntimeExistence::Established));
+            return Ok((self.database.default_database(), TenantExistence::Established));
         };
         match (self.database.registered_tenant(name).await?, policy) {
             (Some(RegisteredTenant::Established(record)), TenantCreationPolicy::MustExist | TenantCreationPolicy::CreateOnDemand) => match record.status {
                 TenantStatus::Suspended => Err(unknown(name)),
-                TenantStatus::Active => Ok((record.database, RuntimeExistence::Established)),
+                TenantStatus::Active => Ok((record.database, TenantExistence::Established)),
             },
             (Some(RegisteredTenant::Provisional { database }), TenantCreationPolicy::MustExist) => {
                 self.require_established(name).await?;
-                Ok((database, RuntimeExistence::Established))
+                Ok((database, TenantExistence::Established))
             }
             (Some(RegisteredTenant::Provisional { .. }) | None, TenantCreationPolicy::CreateOnDemand) => {
-                Ok((self.database.provision(name).await?, RuntimeExistence::Provisional))
+                Ok((self.database.provision(name).await?, TenantExistence::Provisional))
             }
             (None, TenantCreationPolicy::MustExist) => Err(unknown(name)),
         }
@@ -296,7 +297,7 @@ struct CachedLease<S> {
     /// The runtime's state and the hold against its eviction.
     leased: LeasedState<S>,
     /// Whether the tenant the runtime serves was seen to exist.
-    existence: RuntimeExistence,
+    existence: TenantExistence,
 }
 
 /// The refusal for a named tenant the data path must answer as nonexistent:

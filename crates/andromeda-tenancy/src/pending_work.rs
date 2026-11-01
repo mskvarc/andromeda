@@ -10,6 +10,7 @@
 //! obligations is outstanding is each store's concern, every store answers for
 //! its own, and the cache needs only the instant.
 
+use crate::tenant_existence::TenantExistence;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
@@ -95,6 +96,11 @@ pub enum PendingWorkError {
 pub trait PendingWorkProbe: Send + Sync + 'static {
     /// The earliest instant `database` has background work due.
     ///
+    /// `existence` is the standing of the tenant `database` serves. A
+    /// provisional tenant's database may not exist yet, or may not carry the
+    /// session defaults its provisioning installs, so the probe must reach it
+    /// without leaving behind a session that later serves the tenant.
+    ///
     /// # Errors
     ///
     /// Returns [`PendingWorkError::Saturated`] when the probe's connection
@@ -103,5 +109,5 @@ pub trait PendingWorkProbe: Send + Sync + 'static {
     /// [`PendingWorkError::Unmigrated`] when its schema is not migrated, and
     /// [`PendingWorkError::ProbeFailed`] when the read itself fails.
     #[must_use = "a pending-work probe must be awaited"]
-    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError>;
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError>;
 }

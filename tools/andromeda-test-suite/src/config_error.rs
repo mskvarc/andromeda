@@ -30,6 +30,13 @@ pub enum ConfigError {
     },
 }
 
+impl ConfigError {
+    /// The error for the absent entry `name` of the section `section`.
+    pub(crate) const fn missing(section: &'static str, name: &'static str) -> ConfigError {
+        ConfigError::Missing(ConfigKey::Entry { section, name })
+    }
+}
+
 /// A key of the suite configuration, named as its environment variable spells it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigKey {

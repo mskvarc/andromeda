@@ -21,6 +21,7 @@ use crate::{
     runtime::{TenantRuntimeManager, lease::LeasedState},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    tenant_existence::TenantExistence,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
@@ -171,7 +172,7 @@ struct NothingDue;
 
 #[async_trait]
 impl PendingWorkProbe for NothingDue {
-    async fn earliest_pending_work(&self, _database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+    async fn earliest_pending_work(&self, _database: &TenantDatabaseName, _existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
         Ok(PendingWork::None)
     }
 }

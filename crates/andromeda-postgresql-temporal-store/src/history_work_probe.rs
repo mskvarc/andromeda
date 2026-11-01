@@ -5,20 +5,24 @@
 //! expired history in storage. This probe reports when the tenant's history
 //! next falls due ([`crate::history_due`]), and the wake loop loads the tenant
 //! then, as it does for any other obligation. It reads over a transient
-//! one-connection pool on the tenant's request URL, so it adds no permanent
-//! backend and is safe through a transaction pooler.
+//! one-connection pool, so it adds no permanent backend and is safe through a
+//! transaction pooler. The pool reaches an established tenant over its request
+//! URL and a provisional one directly ([`TenantProbeUrls`]).
 
 use crate::history_due::{HistorySchedule, earliest_history_due};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
-use andromeda_postgresql_pool::{database_url::DatabaseUrl, pending_work_failure::pending_work_failure, pool_options::configure_pool_options};
-use andromeda_tenancy::pending_work::{PendingWork, PendingWorkError, PendingWorkProbe};
+use andromeda_postgresql_pool::{pending_work_failure::pending_work_failure, pool_options::configure_pool_options, tenant_probe_urls::TenantProbeUrls};
+use andromeda_tenancy::{
+    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
+    tenant_existence::TenantExistence,
+};
 use async_trait::async_trait;
 use std::time::{Duration, SystemTime};
 
 /// Reads a tenant's database for the instant its history next owes a sweep.
 pub struct PostgresHistoryWorkProbe {
-    /// The request base URL every per-tenant probe connection is derived from.
-    request_url: DatabaseUrl,
+    /// The bases every per-tenant probe connection is derived from.
+    urls: TenantProbeUrls,
     /// How long the transient probe pool waits for a connection before it
     /// treats the backend as saturated.
     acquire_timeout: Duration,
@@ -27,12 +31,11 @@ pub struct PostgresHistoryWorkProbe {
 }
 
 impl PostgresHistoryWorkProbe {
-    /// A probe over the given request base URL, acquire deadline and sweep
-    /// horizons.
+    /// A probe over the given bases, acquire deadline and sweep horizons.
     #[must_use]
-    pub const fn new(request_url: DatabaseUrl, acquire_timeout: Duration, schedule: HistorySchedule) -> PostgresHistoryWorkProbe {
+    pub const fn new(urls: TenantProbeUrls, acquire_timeout: Duration, schedule: HistorySchedule) -> PostgresHistoryWorkProbe {
         PostgresHistoryWorkProbe {
-            request_url,
+            urls,
             acquire_timeout,
             schedule,
         }
@@ -41,8 +44,8 @@ impl PostgresHistoryWorkProbe {
 
 #[async_trait]
 impl PendingWorkProbe for PostgresHistoryWorkProbe {
-    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        let url = self.request_url.with_database_name(database);
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
+        let url = self.urls.tenant_url(database, existence);
         let pool = configure_pool_options(1, self.acquire_timeout)
             .connect(url.as_str())
             .await

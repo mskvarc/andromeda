@@ -23,7 +23,7 @@ x-pgbouncer: &pgbouncer
     timeout: 3s
     retries: 30
 
-# Thirteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
+# Fourteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
 # without a limit each sizes itself for the whole host, so together they outgrow it and the host kills processes of
 # whichever service is running; with 2 GB each, every server fits beside the others.
 x-postgres-memory: &postgres-memory
@@ -404,6 +404,37 @@ services:
       ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-burst-direct:5432/postgres"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
+  postgres-first-write:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  pgbouncer-first-write:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/first-write.ini"]
+    depends_on:
+      postgres-first-write:
+        condition: service_healthy
+
+  # Behind the tight pooler, which keeps an idle server five seconds: a server the wake reconciliation pass opened on
+  # a new tenant's database is still held when the tenant's runtime build borrows one.
+  broker-first-write:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-first-write:
+        condition: service_healthy
+      pgbouncer-first-write:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-first-write:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-first-write:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
+
   runner:
     extends:
       <<: *template
@@ -434,6 +465,8 @@ services:
       broker-burst-pooled:
         condition: service_healthy
       broker-burst-direct:
+        condition: service_healthy
+      broker-first-write:
         condition: service_healthy
     env_file: runner.env
 

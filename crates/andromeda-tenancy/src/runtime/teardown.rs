@@ -177,6 +177,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     async fn detach_shutdown_then_schedule(&self, permit: Option<OwnedSemaphorePermit>, cached: CachedRuntime<F::State, F::Runtime>, tenant: &TenantName) {
         let tenant = tenant.clone(); // clone: the detached task outlives this call
         let database: TenantDatabaseName = cached.database().clone(); // clone: the detached task outlives the cache entry
+        let existence = cached.existence();
         let runtime = cached.runtime;
         let probe = Arc::clone(&self.probe);
         let schedule = Arc::clone(&self.schedule);
@@ -186,7 +187,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             Self::shutdown_holding(permit, runtime).await;
             let probe_permit = probe_permits.acquire_owned().await.ok();
             let now = SystemTime::now();
-            let wake_at = next_wake_at(&waker, &probe.earliest_pending_work(&database).await, now);
+            let wake_at = next_wake_at(&waker, &probe.earliest_pending_work(&database, existence).await, now);
             if let Err(error) = schedule.record(&tenant, now, wake_at).await {
                 debug!(%error, %tenant, "recording an excess-evicted tenant's wake failed");
             }

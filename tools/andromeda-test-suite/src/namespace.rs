@@ -219,6 +219,17 @@ impl Namespace {
     pub fn tenant(&self) -> Result<Tenant, NamespaceError> {
         self.token.parse().map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error names the namespace the test keeps
     }
+
+    /// The tenant numbered `index` among the namespace's tenants, for a test that needs several of its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NamespaceError::Tenant`] when the name is not a tenant name, which it always is.
+    pub fn numbered_tenant(&self, index: usize) -> Result<Tenant, NamespaceError> {
+        format!("{}-{index}", self.token)
+            .parse()
+            .map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error names the namespace the test keeps
+    }
 }
 
 impl Display for Namespace {

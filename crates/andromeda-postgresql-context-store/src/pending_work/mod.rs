@@ -8,8 +8,9 @@
 //! periodic notifications, and the clause-5.13.1 invalidation of every
 //! `"Cached"` `@context` whose expiration time has passed. The probe answers
 //! the single earliest instant any of those falls due, over a transient
-//! one-connection pool on the tenant's request URL so it adds no permanent
-//! backend and is safe through a transaction pooler.
+//! one-connection pool so it adds no permanent backend and is safe through a
+//! transaction pooler. The pool reaches an established tenant over its request
+//! URL and a provisional one directly ([`TenantProbeUrls`]).
 //!
 //! The queue and expiry sources are one `SELECT LEAST(...)` of index-backed
 //! scalar subqueries, each served by the same partial or expression index the
@@ -31,11 +32,14 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_postgresql_pool::{database_url::DatabaseUrl, pending_work_failure::pending_work_failure, pool_options::configure_pool_options};
+use andromeda_postgresql_pool::{pending_work_failure::pending_work_failure, pool_options::configure_pool_options, tenant_probe_urls::TenantProbeUrls};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
-use andromeda_tenancy::pending_work::{PendingWork, PendingWorkError, PendingWorkProbe};
+use andromeda_tenancy::{
+    pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
+    tenant_existence::TenantExistence,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, SelectStatement};
@@ -46,29 +50,28 @@ mod due_sources;
 
 /// Reads a tenant's own database for the earliest instant it has work due.
 ///
-/// Holds the request base URL -- the pooler when one is configured -- from which
-/// each tenant's connection string is derived, and the acquire deadline the
-/// transient probe pool gives up after.
+/// Holds the bases each tenant's connection string is derived from, and the
+/// acquire deadline the transient probe pool gives up after.
 pub struct PostgresPendingWorkProbe {
-    /// The request base URL every per-tenant probe connection is derived from.
-    request_url: DatabaseUrl,
+    /// The bases every per-tenant probe connection is derived from.
+    urls: TenantProbeUrls,
     /// How long the transient probe pool waits for a connection before it treats
     /// the backend as saturated.
     acquire_timeout: Duration,
 }
 
 impl PostgresPendingWorkProbe {
-    /// A probe over the given request base URL and acquire deadline.
+    /// A probe over the given bases and acquire deadline.
     #[must_use]
-    pub const fn new(request_url: DatabaseUrl, acquire_timeout: Duration) -> PostgresPendingWorkProbe {
-        PostgresPendingWorkProbe { request_url, acquire_timeout }
+    pub const fn new(urls: TenantProbeUrls, acquire_timeout: Duration) -> PostgresPendingWorkProbe {
+        PostgresPendingWorkProbe { urls, acquire_timeout }
     }
 }
 
 #[async_trait]
 impl PendingWorkProbe for PostgresPendingWorkProbe {
-    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
-        let url = self.request_url.with_database_name(database);
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
+        let url = self.urls.tenant_url(database, existence);
         let pool = configure_pool_options(1, self.acquire_timeout)
             .connect(url.as_str())
             .await

@@ -10,7 +10,7 @@ interoperability = { max-threads = 1 }
 # the database server for longer than the broker's admission deadline, so the tests that provision tenants run four at
 # a time, whatever the parallelism of the rest.
 private-tenants = { max-threads = 4 }
-# The pgbouncer stack runs thirteen brokers over thirteen PostgreSQL servers beside the runner. One of its tests at a
+# The pgbouncer stack runs fourteen brokers over fourteen PostgreSQL servers beside the runner. One of its tests at a
 # time fits a host that holds the whole stack; more than one and the servers of the scale tests, each carrying a
 # hundred tenant databases, drive the host past its memory and the brokers die under it.
 pgbouncer = { max-threads = 1 }

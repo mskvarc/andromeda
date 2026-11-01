@@ -10,11 +10,12 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
-    runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence, provisional_sweep::ProvisionalSettlement},
+    runtime::{TenantRuntimeManager, provisional_sweep::ProvisionalSettlement},
     runtime_build_failure::RuntimeBuildFailure,
     saturated_wait::SaturatedWait,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    tenant_existence::TenantExistence,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
@@ -66,6 +67,8 @@ enum FakeProbeOutcome {
 struct FakeProbe {
     /// The outcome returned for every database.
     outcome: FakeProbeOutcome,
+    /// The standing of the tenant each probe was asked about, in order.
+    asked: StdMutex<Vec<TenantExistence>>,
 }
 
 impl FakeProbe {
@@ -73,6 +76,7 @@ impl FakeProbe {
     fn none() -> FakeProbe {
         FakeProbe {
             outcome: FakeProbeOutcome::Work(PendingWork::None),
+            asked: StdMutex::new(Vec::new()),
         }
     }
 
@@ -80,6 +84,7 @@ impl FakeProbe {
     fn due_at(due: SystemTime) -> FakeProbe {
         FakeProbe {
             outcome: FakeProbeOutcome::Work(PendingWork::DueAt(due)),
+            asked: StdMutex::new(Vec::new()),
         }
     }
 
@@ -87,6 +92,7 @@ impl FakeProbe {
     fn due_as_answered() -> FakeProbe {
         FakeProbe {
             outcome: FakeProbeOutcome::DueAsAnswered,
+            asked: StdMutex::new(Vec::new()),
         }
     }
 
@@ -94,6 +100,7 @@ impl FakeProbe {
     fn database_gone() -> FakeProbe {
         FakeProbe {
             outcome: FakeProbeOutcome::DatabaseGone,
+            asked: StdMutex::new(Vec::new()),
         }
     }
 
@@ -101,13 +108,22 @@ impl FakeProbe {
     fn unmigrated() -> FakeProbe {
         FakeProbe {
             outcome: FakeProbeOutcome::Unmigrated,
+            asked: StdMutex::new(Vec::new()),
         }
+    }
+
+    /// The standing of the tenant each probe was asked about, in order.
+    fn asked(&self) -> Vec<TenantExistence> {
+        self.asked.lock().map(|asked| asked.clone()).unwrap_or_default()
     }
 }
 
 #[async_trait]
 impl PendingWorkProbe for FakeProbe {
-    async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+    async fn earliest_pending_work(&self, database: &TenantDatabaseName, existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
+        if let Ok(mut asked) = self.asked.lock() {
+            asked.push(existence);
+        }
         match &self.outcome {
             FakeProbeOutcome::Work(work) => Ok(*work),
             FakeProbeOutcome::DueAsAnswered => {
@@ -1484,17 +1500,14 @@ fn wake_manager(
 async fn an_idle_tenant_with_work_due_inside_the_ttl_is_retained() {
     // A dormant-eligible tenant whose probe reports work already due is kept
     // resident, not evicted: background work counts as use.
-    let (manager, _factory, shutdowns) = wake_manager(
-        &["acme"],
-        64,
-        Arc::new(FakeProbe::due_at(SystemTime::UNIX_EPOCH)),
-        Arc::new(FakeSchedule::inert()),
-    );
+    let probe = Arc::new(FakeProbe::due_at(SystemTime::UNIX_EPOCH));
+    let (manager, _factory, shutdowns) = wake_manager(&["acme"], 64, Arc::clone(&probe), Arc::new(FakeSchedule::inert()));
     let acme = TenantRef::Named(named("acme"));
     // Resolve then drop the lease so acme is unleased and idle at zero TTL.
     drop(manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves"));
 
     let evicted = manager.sweep_idle_dormant(Duration::ZERO).await;
+    pretty_assertions::assert_eq!(probe.asked(), vec![TenantExistence::Established]);
     pretty_assertions::assert_eq!(evicted, 0, "a tenant with imminent work is retained, not evicted");
     assert!(manager.runtimes.contains_key(&acme), "the tenant stays resident to do its work");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
@@ -1753,10 +1766,12 @@ async fn a_database_gone_probe_clears_the_schedule_rather_than_retrying() {
 #[tokio::test]
 async fn an_unmigrated_provisional_tenant_is_not_loaded_and_its_schedule_is_cleared() {
     let schedule = Arc::new(FakeSchedule::inert());
-    let (manager, factory, _shutdowns) = wake_manager(&[], 64, Arc::new(FakeProbe::unmigrated()), Arc::clone(&schedule));
+    let probe = Arc::new(FakeProbe::unmigrated());
+    let (manager, factory, _shutdowns) = wake_manager(&[], 64, Arc::clone(&probe), Arc::clone(&schedule));
     manager.database.register_provisional("acme");
 
     pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::NothingDue);
+    pretty_assertions::assert_eq!(probe.asked(), vec![TenantExistence::Provisional]);
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0, "a tenant still being provisioned is not loaded");
     let settled = schedule.settled.lock().expect("settled lock").clone();
     pretty_assertions::assert_eq!(settled.len(), 1);
@@ -1768,9 +1783,11 @@ async fn an_unmigrated_provisional_tenant_is_not_loaded_and_its_schedule_is_clea
 
 #[tokio::test]
 async fn an_unmigrated_established_tenant_is_loaded_so_its_build_migrates_it() {
-    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::unmigrated()), Arc::new(FakeSchedule::inert()));
+    let probe = Arc::new(FakeProbe::unmigrated());
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::clone(&probe), Arc::new(FakeSchedule::inert()));
 
     pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(probe.asked(), vec![TenantExistence::Established]);
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
     assert!(manager.runtimes.contains_key(&TenantRef::Named(named("acme"))));
 }
@@ -1897,7 +1914,7 @@ struct CommitGatedProbe {
 
 #[async_trait]
 impl PendingWorkProbe for CommitGatedProbe {
-    async fn earliest_pending_work(&self, _database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+    async fn earliest_pending_work(&self, _database: &TenantDatabaseName, _existence: TenantExistence) -> Result<PendingWork, PendingWorkError> {
         if self.committed.load(Ordering::SeqCst) {
             Ok(PendingWork::DueAt(self.due))
         } else {
@@ -2278,7 +2295,7 @@ async fn suspending_an_unleased_tenant_releases_its_runtime_before_answering() {
 }
 
 /// Whether the cached runtime of `tenant` serves an established tenant.
-fn cached_existence(manager: &TenantRuntimeManager<FakeRegistry, FakeFactory>, tenant: &TenantRef) -> Option<RuntimeExistence> {
+fn cached_existence(manager: &TenantRuntimeManager<FakeRegistry, FakeFactory>, tenant: &TenantRef) -> Option<TenantExistence> {
     manager.runtimes.get(tenant).map(|cached| cached.existence())
 }
 
@@ -2291,7 +2308,7 @@ async fn a_tenant_created_on_demand_is_answered_as_nonexistent_until_its_databas
     let tenant = TenantRef::Named(named("acme"));
 
     drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Provisional));
 
     let refused = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
     assert!(
@@ -2302,7 +2319,7 @@ async fn a_tenant_created_on_demand_is_answered_as_nonexistent_until_its_databas
     registry.occupy("acme");
     let served = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("established");
     pretty_assertions::assert_eq!(served.state.as_str(), "db_acme");
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Established));
     assert!(registry.all().contains(&"acme".to_string()), "the registry records the tenant as established");
 }
 
@@ -2357,7 +2374,7 @@ async fn a_provisional_tenant_holding_information_is_established_by_a_cold_admis
     let tenant = TenantRef::Named(named("acme"));
 
     drop(manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("established"));
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Established));
     pretty_assertions::assert_eq!(
         registry.provisioned.load(Ordering::Relaxed),
         0,
@@ -2375,7 +2392,7 @@ async fn a_creating_request_on_an_uncached_provisional_tenant_provisions_it_agai
 
     drop(manager.resolve_state(&tenant, TenantCreationPolicy::CreateOnDemand).await.expect("provisions"));
     pretty_assertions::assert_eq!(registry.provisioned.load(Ordering::Relaxed), 1);
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Provisional));
 }
 
 #[tokio::test]
@@ -2407,7 +2424,7 @@ async fn the_sweep_establishes_a_cached_provisional_tenant_whose_database_holds_
     pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement { established: 1, retired: 0 });
     pretty_assertions::assert_eq!(registry.offered(), Vec::<String>::new(), "a cached tenant is never offered for retirement");
     pretty_assertions::assert_eq!(registry.provisional(), Vec::<String>::new());
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Established));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Established));
 }
 
 #[tokio::test]
@@ -2418,7 +2435,7 @@ async fn the_sweep_keeps_a_cached_provisional_tenant_whose_database_is_empty() {
 
     pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement::default());
     pretty_assertions::assert_eq!(registry.provisional(), vec!["refused".to_string()]);
-    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(RuntimeExistence::Provisional));
+    pretty_assertions::assert_eq!(cached_existence(&manager, &tenant), Some(TenantExistence::Provisional));
 }
 
 #[tokio::test]
@@ -2524,17 +2541,16 @@ async fn a_provisional_tenant_with_work_due_is_woken_and_stays_provisional() {
     let registry = Arc::new(FakeRegistry::new(&[]));
     registry.register_provisional("acme");
     let factory = Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0))));
+    let probe = Arc::new(FakeProbe::due_as_answered());
     let manager = TenantRuntimeManager::new(
         config(true, 64),
         Arc::clone(&registry),
         factory,
-        Arc::new(FakeProbe::due_as_answered()),
+        Arc::clone(&probe) as Arc<dyn PendingWorkProbe>,
         Arc::new(FakeSchedule::inert()),
     );
 
     pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::Loaded);
-    pretty_assertions::assert_eq!(
-        cached_existence(&manager, &TenantRef::Named(named("acme"))),
-        Some(RuntimeExistence::Provisional)
-    );
+    pretty_assertions::assert_eq!(probe.asked(), vec![TenantExistence::Provisional]);
+    pretty_assertions::assert_eq!(cached_existence(&manager, &TenantRef::Named(named("acme"))), Some(TenantExistence::Provisional));
 }

@@ -58,7 +58,7 @@ use andromeda_postgresql_context_store::{
     tenant_usage::PostgresTenantUsageProbe,
     tenant_wake_schedule::PostgresTenantWakeSchedule,
 };
-use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options};
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options, tenant_probe_urls::TenantProbeUrls};
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
@@ -295,9 +295,15 @@ async fn construct(
     // shared by every tenant's forwarding service and by the receiver.
     let forwarded_subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
     // The dormant-tenant wake ports: the probe reads a tenant's own database
-    // over a transient request-path connection, and the schedule lives in the
-    // platform database beside the registry.
-    let pending_work_probe = pending_work_probe(&request_url, &config)?;
+    // over a transient connection, and the schedule lives in the platform
+    // database beside the registry.
+    let pending_work_probe = pending_work_probe(
+        &TenantProbeUrls::new(
+            request_url.clone(), // clone: the factory retains the request base URL
+            direct_url.clone(),  // clone: the factory retains the direct base URL
+        ),
+        &config,
+    )?;
     let tenant_usage_probe = tenant_usage_probe(request_url.clone(), &config); // clone: the factory retains the request base URL
     let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
     // Every open records the extension versions it left, and the waker reads

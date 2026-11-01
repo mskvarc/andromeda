@@ -103,7 +103,7 @@ impl TenantSet {
             .build()?;
         let members = (0..count)
             .map(|index| {
-                let tenant = format!("{namespace}-{index}").parse::<Tenant>()?;
+                let tenant = namespace.numbered_tenant(index)?;
                 Ok(TenantMember {
                     client: broker.with_tenant(tenant.clone()), // clone: the member keeps the name its client is in
                     tenant,

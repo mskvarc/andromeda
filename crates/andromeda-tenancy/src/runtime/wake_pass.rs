@@ -12,9 +12,10 @@ use crate::{
     catch_up::{CatchUpCandidates, CatchUpError},
     database::TenantDatabase,
     registered_tenant::RegisteredTenant,
-    runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence},
+    runtime::TenantRuntimeManager,
     state_factory::TenantStateFactory,
     status::TenantStatus,
+    tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
     wake_schedule::WakeScheduleError,
 };
@@ -116,7 +117,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             },
             Ok(Some(RegisteredTenant::Provisional { .. }) | None) | Err(_) => return CatchUpAttempt::Skipped,
         };
-        record_wake(self.build_woken(&tenant_ref, database, RuntimeExistence::Established, tenant).await);
+        record_wake(self.build_woken(&tenant_ref, database, TenantExistence::Established, tenant).await);
         CatchUpAttempt::Attempted
     }
 }

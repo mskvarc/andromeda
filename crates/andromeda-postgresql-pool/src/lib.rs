@@ -8,10 +8,13 @@
 //! a tenant pool read requests may hold beside its writes and how a read runs a
 //! statement as its planning asks. The crate also decides which driver errors
 //! are retryable store conditions (saturation, a rolled back transaction, an
-//! unreachable store) rather than faults. It is a leaf below the context and
-//! temporal stores: it knows `sqlx`, `tokio` and the statement trees both stores
-//! build, and no store, so both stores can share it without either depending on
-//! the other.
+//! unreachable store) rather than faults, how a tenant database's URL is
+//! derived from a base URL, which base a pending-work probe of a tenant
+//! connects over, and how a probe's driver error reaches the wake loop. It is a
+//! leaf below the context and temporal stores: it knows `sqlx`, `tokio`, the
+//! statement trees both stores build and the tenancy port both stores answer,
+//! and no store, so both stores can share it without either depending on the
+//! other.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -41,6 +44,8 @@ pub mod schema_change_lock;
 pub mod sql_state;
 /// Whether a driver error says the store cannot be reached right now.
 pub mod store_unavailability;
+/// Which base a transient probe of a tenant's database connects over.
+pub mod tenant_probe_urls;
 /// Whether a driver error is a transaction rolled back under contention.
 pub mod transaction_rollback;
 
@@ -48,6 +53,7 @@ pub mod transaction_rollback;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration",
+        "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure", "andromeda-postgresql-seaquery",
         "andromeda-retry",
         "andromeda-tenancy",
