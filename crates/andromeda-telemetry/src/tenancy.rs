@@ -1,8 +1,8 @@
 //! Metrics describing the tenant-runtime cache.
 //!
 //! How many runtimes are held, how cold builds fare and how long they wait for
-//! admission, why runtimes are evicted, and how dormant-tenant wake attempts
-//! resolve. None of these series carries a tenant label: a broker holding
+//! admission, which waits shed requests as saturated, why runtimes are
+//! evicted, and how dormant-tenant wake attempts resolve. None of these series carries a tenant label: a broker holding
 //! thousands of tenants would otherwise grow one series per tenant per metric.
 //! The per-tenant pool and storage gauges that do carry a tenant label
 //! ([`crate::pool`], [`crate::storage`]) are bounded instead by the recorder's
@@ -13,10 +13,12 @@ use crate::{
     names::{
         LABEL_OUTCOME,
         LABEL_REASON,
+        LABEL_WAIT,
         TENANT_BUILD_ADMISSION_WAIT_SECONDS,
         TENANT_COLD_BUILD_SECONDS,
         TENANT_COLD_BUILDS_TOTAL,
         TENANT_EVICTIONS_TOTAL,
+        TENANT_REQUESTS_SHED_TOTAL,
         TENANT_RUNTIMES_CACHED,
         TENANT_WAKES_TOTAL,
     },
@@ -92,6 +94,14 @@ pub fn record_build_admission_wait(seconds: f64) {
     histogram!(TENANT_BUILD_ADMISSION_WAIT_SECONDS).record(seconds);
 }
 
+/// Count one request shed as saturated, under the wait that shed it.
+///
+/// The label is rendered by the caller from its own wait type, so this crate
+/// stays a leaf that names no tenancy type.
+pub fn record_shed_request(wait: &'static str) {
+    counter!(TENANT_REQUESTS_SHED_TOTAL, LABEL_WAIT => wait).increment(1);
+}
+
 /// Count one tenant-runtime eviction with its reason.
 pub fn record_eviction(reason: EvictionReason) {
     let reason: &'static str = reason.into();
@@ -108,9 +118,9 @@ pub fn record_wake(outcome: WakeOutcome) {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{TENANT_COLD_BUILDS_TOTAL, TENANT_EVICTIONS_TOTAL, TENANT_RUNTIMES_CACHED, TENANT_WAKES_TOTAL},
+        names::{TENANT_COLD_BUILDS_TOTAL, TENANT_EVICTIONS_TOTAL, TENANT_REQUESTS_SHED_TOTAL, TENANT_RUNTIMES_CACHED, TENANT_WAKES_TOTAL},
         recorder::TelemetryRecorder,
-        tenancy::{ColdBuildOutcome, EvictionReason, WakeOutcome, record_cold_build, record_eviction, record_wake, set_runtimes_cached},
+        tenancy::{ColdBuildOutcome, EvictionReason, WakeOutcome, record_cold_build, record_eviction, record_shed_request, record_wake, set_runtimes_cached},
     };
 
     #[test]
@@ -157,6 +167,8 @@ mod tests {
             record_cold_build(ColdBuildOutcome::Succeeded, 0.5);
             record_eviction(EvictionReason::Excess);
             record_wake(WakeOutcome::Loaded);
+            record_shed_request("migration-pool");
+            record_shed_request("migration-pool");
         });
         let rendered = recorder.render();
         assert!(rendered.contains(&format!("{TENANT_RUNTIMES_CACHED} 12")), "{rendered}");
@@ -166,6 +178,10 @@ mod tests {
         );
         assert!(rendered.contains(&format!("{TENANT_EVICTIONS_TOTAL}{{reason=\"excess\"}} 1")), "{rendered}");
         assert!(rendered.contains(&format!("{TENANT_WAKES_TOTAL}{{outcome=\"loaded\"}} 1")), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{TENANT_REQUESTS_SHED_TOTAL}{{wait=\"migration-pool\"}} 2")),
+            "{rendered}"
+        );
         Ok(())
     }
 }

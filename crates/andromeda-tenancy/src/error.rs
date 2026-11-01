@@ -1,6 +1,6 @@
 //! Why a tenant could not be served.
 
-use crate::{runtime_build_failure::RuntimeBuildFailure, tenant_ref::TenantRef};
+use crate::{runtime_build_failure::RuntimeBuildFailure, saturated_wait::SaturatedWait, tenant_ref::TenantRef};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 
@@ -55,10 +55,13 @@ pub enum TenancyError {
     /// cap left no connection to spare for a cold lookup, provision, or build
     /// within the acquire deadline. The caller's only
     /// response is to retry with backoff, so it maps to a 503 with `Retry-After`
-    /// rather than a 500.
+    /// rather than a 500. The wait that shed the request is recorded for
+    /// operators and left out of the message the client reads.
     #[error("tenant {tenant} is temporarily saturated; retry with backoff")]
     Saturated {
         /// The tenant whose backend pool was saturated.
         tenant: TenantRef,
+        /// Where the request was waiting when it was shed.
+        wait: SaturatedWait,
     },
 }

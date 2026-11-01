@@ -94,6 +94,8 @@ pub const TENANT_COLD_BUILDS_TOTAL: &str = "andromeda_tenant_cold_builds_total";
 pub const TENANT_COLD_BUILD_SECONDS: &str = "andromeda_tenant_cold_build_seconds";
 /// Histogram of seconds a cold build waited for a build-admission permit.
 pub const TENANT_BUILD_ADMISSION_WAIT_SECONDS: &str = "andromeda_tenant_build_admission_wait_seconds";
+/// Counter of requests shed as saturated while their tenant was reached or built, labelled by the wait that shed them.
+pub const TENANT_REQUESTS_SHED_TOTAL: &str = "andromeda_tenant_requests_shed_total";
 /// Counter of tenant-runtime evictions, labelled by reason.
 pub const TENANT_EVICTIONS_TOTAL: &str = "andromeda_tenant_evictions_total";
 /// Counter of dormant-tenant wake attempts, labelled by outcome.
@@ -139,3 +141,5 @@ pub const LABEL_LEVEL: &str = "level";
 pub const LABEL_DICTIONARY: &str = "dictionary";
 /// The `cause` label naming why a cached name was evicted.
 pub const LABEL_CAUSE: &str = "cause";
+/// The `wait` label naming the wait a saturated tenant request was shed at.
+pub const LABEL_WAIT: &str = "wait";

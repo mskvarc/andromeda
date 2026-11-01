@@ -188,21 +188,7 @@ impl TenantStateFactory for BrokerTenantFactory {
             &self.subscription_router,
         )
         .await
-        .map_err(|error| {
-            // A saturated backend pool is backpressure, shed as a 503; only a
-            // genuine construction fault is the internal RuntimeUnavailable.
-            if error.is_saturation() {
-                TenancyError::Saturated { tenant: tenant.clone() } // clone: the error outlives this borrow
-            } else {
-                {
-                    tracing::error!(%tenant, %error, "the tenant runtime could not be built");
-                    TenancyError::RuntimeUnavailable {
-                        tenant: tenant.clone(), // clone: the error outlives this borrow
-                        cause: error.build_failure(),
-                    }
-                }
-            }
-        })?;
+        .map_err(|error| error.into_tenancy_error(tenant))?;
 
         if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(runtime.mqtt_pool())).is_err() {
             debug!("the default tenant's MQTT pool was already recorded; /health keeps reporting on the first");

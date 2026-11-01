@@ -13,6 +13,7 @@ use crate::{
     registered_tenant::RegisteredTenant,
     runtime::{TenantRuntimeManager, cached_runtime::RuntimeExistence, provisional_sweep::ProvisionalSettlement},
     runtime_build_failure::RuntimeBuildFailure,
+    saturated_wait::SaturatedWait,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
@@ -2015,7 +2016,13 @@ async fn live_runtimes_never_exceed_the_cache_plus_the_teardown_slots_while_tear
 
     let refused = manager.resolve_state(&TenantRef::Named(named("t4")), TenantCreationPolicy::MustExist).await;
     assert!(
-        matches!(refused, Err(TenancyError::Saturated { .. })),
+        matches!(
+            refused,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::TeardownSlot,
+                ..
+            })
+        ),
         "a cold build that cannot free a slot in time is refused as saturated"
     );
     pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 4, "the refused build never ran");
@@ -2065,7 +2072,13 @@ async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission
 
     let waiting = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
     assert!(
-        matches!(waiting, Err(TenancyError::Saturated { .. })),
+        matches!(
+            waiting,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::BuildLock,
+                ..
+            })
+        ),
         "a request still waiting on another's build at the deadline is refused as saturated"
     );
 
@@ -2109,7 +2122,13 @@ async fn a_cold_build_waiting_for_a_build_permit_is_refused_at_the_admission_dea
 
     let queued = manager.resolve_state(&TenantRef::Named(named("queued")), TenantCreationPolicy::MustExist).await;
     assert!(
-        matches!(queued, Err(TenancyError::Saturated { .. })),
+        matches!(
+            queued,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::BuildPermit,
+                ..
+            })
+        ),
         "a cold build still waiting for a permit at the deadline is refused as saturated"
     );
     pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused cold build never ran");

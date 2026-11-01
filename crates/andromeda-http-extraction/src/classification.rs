@@ -82,13 +82,27 @@ mod tests {
         use crate::classification::classify_tenancy_error;
         use andromeda_ngsi_ld_lexicon::tenant::TenantName;
         use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
-        use andromeda_tenancy::{error::TenancyError, tenant_ref::TenantRef};
+        use andromeda_tenancy::{error::TenancyError, saturated_wait::SaturatedWait, tenant_ref::TenantRef};
         use std::time::Duration;
 
         let tenant = TenantRef::Named(TenantName::try_from("acme".to_owned()).expect("valid tenant name"));
-        let saturated = classify_tenancy_error(&TenancyError::Saturated { tenant: tenant.clone() });
-        pretty_assertions::assert_eq!(saturated.classification(), ProblemClassification::ServiceUnavailable);
-        pretty_assertions::assert_eq!(saturated.retry_after(), Some(Duration::from_secs(1)));
+        // The detail is the error's Display, which leaves out the wait that
+        // shed the request: the answer reads the same whatever the wait.
+        let details: Vec<String> = [SaturatedWait::BuildPermit, SaturatedWait::MigrationPool]
+            .into_iter()
+            .map(|wait| {
+                let error = TenancyError::Saturated {
+                    tenant: tenant.clone(), // clone: each case owns its tenant reference
+                    wait,
+                };
+                let saturated = classify_tenancy_error(&error);
+                pretty_assertions::assert_eq!(saturated.classification(), ProblemClassification::ServiceUnavailable);
+                pretty_assertions::assert_eq!(saturated.retry_after(), Some(Duration::from_secs(1)));
+                pretty_assertions::assert_eq!(saturated.detail(), error.to_string());
+                saturated.detail().to_owned()
+            })
+            .collect();
+        pretty_assertions::assert_eq!(details[0], details[1]);
 
         // A genuine construction fault stays an internal 500, not backpressure.
         let fault = classify_tenancy_error(&TenancyError::RuntimeUnavailable {

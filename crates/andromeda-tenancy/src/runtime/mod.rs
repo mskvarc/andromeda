@@ -6,6 +6,7 @@ mod admission;
 mod cached_runtime;
 mod eviction;
 mod provisional_sweep;
+mod shed_report;
 mod teardown;
 #[cfg(test)]
 #[expect(
@@ -24,7 +25,7 @@ use crate::{
     provisional::Establishment,
     registered_tenant::RegisteredTenant,
     residency::TenantResidency,
-    runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
+    runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin, shed_report::report_shed},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_listing::TenantListing,
@@ -239,6 +240,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 #[async_trait]
 impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministration for TenantRuntimeManager<D, F> {
     async fn tenant(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError> {
+        report_shed(self.tenant_view(name)).await
+    }
+
+    async fn list_tenants(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError> {
+        report_shed(self.tenant_listing(start, limit)).await
+    }
+
+    async fn set_admin_status(&self, name: &TenantName, status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
+        report_shed(self.apply_admin_status(name, status)).await
+    }
+}
+
+impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantRuntimeManager<D, F> {
+    /// One tenant's view, or `None` when no such tenant is registered.
+    async fn tenant_view(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError> {
         let Some(record) = self.established_record(name).await? else {
             return Ok(None);
         };
@@ -246,7 +262,8 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
         Ok(Some(TenantView::new(record, residency)))
     }
 
-    async fn list_tenants(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError> {
+    /// The page of the tenant collection `start` and `limit` select.
+    async fn tenant_listing(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError> {
         // Every provisional tenant is settled before the page is read, so a
         // tenant whose creating operation has answered is listed and counted,
         // and one whose creating operation was refused is not.
@@ -264,7 +281,8 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
         Ok(TenantListing::new(views, total))
     }
 
-    async fn set_admin_status(&self, name: &TenantName, status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
+    /// Apply an administrative state to a tenant and return its resulting view.
+    async fn apply_admin_status(&self, name: &TenantName, status: TenantStatus) -> Result<Option<TenantView>, TenancyError> {
         // A status change on a tenant that does not exist is a 404 for the
         // caller, so nothing is written for an unregistered name or for a
         // provisional tenant that holds no information.
@@ -281,6 +299,6 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
             TenantStatus::Suspended => self.release_suspended(&tenant).await,
             TenantStatus::Active => self.reinstate(&tenant),
         }
-        self.tenant(name).await
+        self.tenant_view(name).await
     }
 }

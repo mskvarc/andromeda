@@ -1,6 +1,7 @@
 //! The `tenants` table, as the tenancy crate's registry and lifecycle ports.
 
 mod occupancy;
+mod provisioning;
 mod settlement;
 mod statements;
 /// The number the `tenants.status` column stores a tenant's status as.
@@ -11,20 +12,16 @@ use crate::{
     error::ContextStoreError,
     extension_update::update_extensions,
     store_fault::{persistence_failure, undecodable},
-    tenant_database::{DatabaseUrl, create_database_if_missing, generate_database_name},
-    tenant_migration::{migrate_platform_db, migrate_single_tenant_db, open_schema_change_pool},
+    tenant_database::DatabaseUrl,
+    tenant_migration::{migrate_platform_db, open_schema_change_pool},
     tenant_registry::{
         statements::{
-            advisory_lock_query,
             default_tenant_upsert,
-            named_tenant_standing_query,
             provisional_tenants_query,
-            provisional_touch,
             registered_tenant_query,
             registered_tenants_query,
             set_status_update,
             tenant_count_query,
-            tenant_insert,
             tenant_records_page_query,
         },
         status_code::{StoredStanding, standing_of, stored_status},
@@ -43,6 +40,7 @@ use andromeda_tenancy::{
     lifecycle::TenantLifecycle,
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
+    saturated_wait::SaturatedWait,
     status::TenantStatus,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
@@ -157,13 +155,20 @@ fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
     TenancyError::RegistryUnavailable(persistence_failure(error))
 }
 
+/// The backpressure refusal for a named tenant whose registry step found the
+/// platform pool saturated.
+fn saturated(name: &TenantName, wait: SaturatedWait) -> TenancyError {
+    TenancyError::Saturated {
+        tenant: TenantRef::Named(name.clone()), // clone: the error outlives this borrow
+        wait,
+    }
+}
+
 /// The failure a per-tenant registry read becomes, telling a saturated backend
 /// pool (backpressure, shed as a 503) apart from a genuine registry fault (500).
 fn registry_read_failure(error: &sqlx::Error, name: &TenantName) -> TenancyError {
     if is_pool_saturated(error) {
-        TenancyError::Saturated {
-            tenant: TenantRef::Named(name.clone()),
-        } // clone: the error outlives this borrow
+        saturated(name, SaturatedWait::RegistryRead)
     } else {
         registry_unavailable(error)
     }
@@ -173,9 +178,7 @@ fn registry_read_failure(error: &sqlx::Error, name: &TenantName) -> TenancyError
 /// pool (backpressure, shed as a 503) apart from a genuine registry fault (500).
 fn registry_write_failure(error: &ContextStoreError, name: &TenantName) -> TenancyError {
     if matches!(error, ContextStoreError::Saturated) {
-        TenancyError::Saturated {
-            tenant: TenantRef::Named(name.clone()),
-        } // clone: the error outlives this borrow
+        saturated(name, SaturatedWait::RegistryWrite)
     } else {
         TenancyError::RegistryUnavailable(persistence_failure(error))
     }
@@ -275,20 +278,7 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
-        self.provision_inner(name).await.map_err(|error| {
-            // A saturated backend pool while provisioning is backpressure, shed
-            // as a 503; every other failure is a genuine provisioning fault.
-            if matches!(error, ContextStoreError::Saturated) {
-                TenancyError::Saturated {
-                    tenant: TenantRef::Named(name.clone()),
-                } // clone: the error outlives this borrow
-            } else {
-                TenancyError::ProvisioningFailed {
-                    name: name.clone(), // clone: the error outlives this borrow
-                    cause: persistence_failure(&error),
-                }
-            }
-        })
+        self.provision_tenant(name).await
     }
 
     async fn establish(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
@@ -316,54 +306,68 @@ impl TenantLifecycle for PostgresTenantRegistry {
             .to_query()
             .execute(&self.main_pool)
             .await
-            .map_err(|error| registry_read_failure(&error, name))?;
+            .map_err(|error| registry_write_failure(&ContextStoreError::from(error), name))?;
         Ok(())
     }
 }
 
-impl PostgresTenantRegistry {
-    /// Register the tenant as provisional, then create and migrate its
-    /// database; for a tenant already registered, make sure its database is
-    /// created and migrated.
-    ///
-    /// The advisory lock serialises the registry decision: of two requests
-    /// naming the same unknown tenant, the first inserts the row, the second
-    /// finds it. The row commits before the database is created, so a crash
-    /// can leave a provisional row with no database, which the next
-    /// provisioning or the retirement of the tenant settles, but never a
-    /// database with no row. Creating and migrating are idempotent, so the
-    /// second request preparing the same database is harmless.
-    async fn provision_inner(&self, name: &TenantName) -> Result<TenantDatabaseName, ContextStoreError> {
-        let mut tx = self.main_pool.begin().await?;
-        advisory_lock_query(name.as_str()).to_query().execute(&mut *tx).await?;
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::ContextStoreError,
+        tenant_registry::{registry_read_failure, registry_write_failure},
+    };
+    use andromeda_ngsi_ld_lexicon::tenant::{InvalidTenantName, TenantName};
+    use andromeda_tenancy::{error::TenancyError, saturated_wait::SaturatedWait};
 
-        let existing = named_tenant_standing_query(name.as_str())
-            .to_query_as::<(String, i16)>()
-            .fetch_optional(&mut *tx)
-            .await?;
-        let database_name = if let Some((database_name, status)) = existing {
-            match standing_of(TenantStatusCode::try_from(status).map_err(ContextStoreError::StoredTenantStatus)?) {
-                StoredStanding::Established(_) => {
-                    tx.commit().await?;
-                    return Ok(TenantDatabaseName::from(database_name));
+    fn acme() -> Result<TenantName, InvalidTenantName> {
+        TenantName::try_from("acme".to_owned())
+    }
+
+    #[test]
+    fn a_saturated_registry_read_names_the_registry_read() -> Result<(), InvalidTenantName> {
+        let refused = registry_read_failure(&sqlx::Error::PoolTimedOut, &acme()?);
+        assert!(
+            matches!(
+                refused,
+                TenancyError::Saturated {
+                    wait: SaturatedWait::RegistryRead,
+                    ..
                 }
-                StoredStanding::Provisional => {
-                    provisional_touch(name.as_str()).to_query().execute(&mut *tx).await?;
-                    TenantDatabaseName::from(database_name)
+            ),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            registry_read_failure(&sqlx::Error::RowNotFound, &acme()?),
+            TenancyError::RegistryUnavailable(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_saturated_registry_write_names_the_registry_write() -> Result<(), InvalidTenantName> {
+        let refused = registry_write_failure(&ContextStoreError::Saturated, &acme()?);
+        assert!(
+            matches!(
+                refused,
+                TenancyError::Saturated {
+                    wait: SaturatedWait::RegistryWrite,
+                    ..
                 }
-            }
-        } else {
-            let database_name = generate_database_name(&self.databases.name_prefix, name);
-            let statement = tenant_insert(name.as_str(), database_name.as_str(), TenantStatusCode::Provisional)?;
-            statement.to_query().execute(&mut *tx).await?;
-            database_name
-        };
-        tx.commit().await?;
-
-        create_database_if_missing(&self.direct_url, &database_name).await?;
-        let tenant_url = self.direct_url.with_database_name(&database_name);
-        migrate_single_tenant_db(&tenant_url, &self.defaults, self.acquire_timeout).await?;
-
-        Ok(database_name)
+            ),
+            "{refused:?}"
+        );
+        let timed_out = registry_write_failure(&ContextStoreError::from(sqlx::Error::PoolTimedOut), &acme()?);
+        assert!(
+            matches!(
+                timed_out,
+                TenancyError::Saturated {
+                    wait: SaturatedWait::RegistryWrite,
+                    ..
+                }
+            ),
+            "{timed_out:?}"
+        );
+        Ok(())
     }
 }

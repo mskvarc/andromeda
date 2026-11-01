@@ -12,7 +12,9 @@ use crate::{
         TenantRuntimeManager,
         cached_runtime::{CachedRuntime, RuntimeExistence},
         lease::{LeasedState, RuntimeLease},
+        shed_report::report_shed,
     },
+    saturated_wait::SaturatedWait,
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_ref::TenantRef,
@@ -47,8 +49,16 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Returns [`TenancyError::Saturated`] when the request cannot be admitted
     /// to a cold build within `build_admission_timeout`. Reading the registry,
     /// provisioning the tenant and building its runtime each surface the
-    /// failure the store or the factory reported.
+    /// failure the store or the factory reported, a saturated pool among them
+    /// as [`TenancyError::Saturated`] naming the step that waited. Every
+    /// request shed as saturated is logged with its wait and counted.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<LeasedState<F::State>, TenancyError> {
+        report_shed(self.admit(tenant, policy)).await
+    }
+
+    /// Admit a request to the tenant's runtime, serving a cached one or
+    /// building it under the single-flight lock.
+    async fn admit(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<LeasedState<F::State>, TenancyError> {
         if !self.config.is_enabled() && !tenant.is_unnamed_default() {
             return Err(TenancyError::MultiTenancyDisabled);
         }
@@ -71,7 +81,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // still building, so a later request cannot start a second build.
         let build_lock = self.build_lock_for(tenant);
         let Ok(guard) = timeout_at(deadline, build_lock.lock()).await else {
-            return Err(saturated(tenant));
+            return Err(saturated(tenant, SaturatedWait::BuildLock));
         };
         let result = self.resolve_state_locked(tenant, policy, deadline).await;
 
@@ -153,7 +163,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let admission_started = StdInstant::now();
         let permit = timeout_at(deadline, self.build_permits.acquire()).await;
         record_build_admission_wait(admission_started.elapsed().as_secs_f64());
-        let permit = permit.map_err(|_| saturated(tenant))?.ok();
+        let permit = permit.map_err(|_| saturated(tenant, SaturatedWait::BuildPermit))?.ok();
 
         let build_started = StdInstant::now();
         let result = self.resolve_state_cold(tenant, policy, deadline).await;
@@ -274,7 +284,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             };
             let permit = timeout_at(deadline, Arc::clone(&self.eviction_permits).acquire_owned())
                 .await
-                .map_err(|_| saturated(tenant))?
+                .map_err(|_| saturated(tenant, SaturatedWait::TeardownSlot))?
                 .ok();
             self.evict_holding(permit, victim, chosen_at).await;
         }
@@ -297,7 +307,11 @@ fn unknown(name: &TenantName) -> TenancyError {
     TenancyError::UnknownTenant { name: name.clone() } // clone: the error outlives this borrow
 }
 
-/// The backpressure refusal for a request that could not be admitted in time.
-fn saturated(tenant: &TenantRef) -> TenancyError {
-    TenancyError::Saturated { tenant: tenant.clone() } // clone: the error outlives this borrow
+/// The backpressure refusal for a request that could not be admitted in time,
+/// naming the wait it gave up on.
+fn saturated(tenant: &TenantRef, wait: SaturatedWait) -> TenancyError {
+    TenancyError::Saturated {
+        tenant: tenant.clone(), // clone: the error outlives this borrow
+        wait,
+    }
 }

@@ -34,6 +34,7 @@ pub mod residency;
 pub mod resident_tenancy;
 pub mod runtime;
 pub mod runtime_build_failure;
+pub mod saturated_wait;
 pub mod state_factory;
 pub mod status;
 pub mod tenant_listing;
