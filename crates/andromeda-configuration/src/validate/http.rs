@@ -1,7 +1,10 @@
 //! The `[http]` rules.
 
 use crate::{
-    schema::http::{HttpStackConfig, forwarded::ForwardedTrust},
+    schema::{
+        feature_mode::FeatureMode,
+        http::{HttpStackConfig, forwarded::ForwardedTrust},
+    },
     validate::{
         config_key::ConfigKey,
         rule::CompoundRule,
@@ -11,7 +14,7 @@ use crate::{
 };
 
 /// What [`check_http`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 3] = [
+pub(crate) const COMPOUND_RULES: [CompoundRule; 5] = [
     CompoundRule {
         keys: &[ConfigKey::HttpBodyDecodingBlockingThreshold],
         statement: "It must fit the platform's address width.",
@@ -30,13 +33,23 @@ pub(crate) const COMPOUND_RULES: [CompoundRule; 3] = [
         keys: &[ConfigKey::HttpForwardedTrust, ConfigKey::HttpForwardedProxies],
         statement: "`http.forwarded.proxies` must list at least one proxy with `http.forwarded.trust` at `\"proxies\"`, and must be empty with any other trust.",
     },
+    CompoundRule {
+        keys: &[ConfigKey::HttpCompressionAlgorithms, ConfigKey::HttpCompressionMode],
+        statement: "`http.compression.algorithms` must list at least one coding while `http.compression.mode` is `\"enabled\"`.",
+    },
+    CompoundRule {
+        keys: &[ConfigKey::HttpDecompressionAlgorithms, ConfigKey::HttpDecompressionMode],
+        statement: "`http.decompression.algorithms` must list at least one coding while `http.decompression.mode` is `\"enabled\"`.",
+    },
 ];
 
 /// A decode threshold past the address width would never send a payload to
 /// the blocking pool, and the Fetch standard forbids credentials beside a
 /// CORS wildcard, a combination the CORS layer cannot build. A `proxies` trust
 /// with no proxy would believe no one, and proxies beside any other trust
-/// would be read by nothing, so either is an operator's mistake.
+/// would be read by nothing, so either is an operator's mistake. Compression
+/// and decompression are turned off by their `mode`, so an empty coding list
+/// beside a mode that is on is a list that says nothing.
 pub(crate) fn check_http(http: &HttpStackConfig, log: &mut ViolationLog) {
     if http.body_decoding.blocking_threshold_bytes().is_err() {
         log.record(ConfigurationViolation::ExceedsAddressWidth {
@@ -55,6 +68,18 @@ pub(crate) fn check_http(http: &HttpStackConfig, log: &mut ViolationLog) {
         (trust @ (ForwardedTrust::None | ForwardedTrust::Any), false) => log.record(ConfigurationViolation::ProxiesWithoutProxyTrust { trust }),
         (ForwardedTrust::Proxies, false) | (ForwardedTrust::None | ForwardedTrust::Any, true) => {}
     }
+    if matches!(http.compression.mode, FeatureMode::Enabled) && http.compression.algorithms.is_empty() {
+        log.record(ConfigurationViolation::Unset {
+            key: ConfigKey::HttpCompressionAlgorithms,
+            required_by: Requirement::ResponseCompression,
+        });
+    }
+    if matches!(http.decompression.mode, FeatureMode::Enabled) && http.decompression.algorithms.is_empty() {
+        log.record(ConfigurationViolation::Unset {
+            key: ConfigKey::HttpDecompressionAlgorithms,
+            required_by: Requirement::RequestDecompression,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -62,9 +87,12 @@ mod tests {
     use crate::{
         broker_config::BrokerConfig,
         human_byte_size::HumanByteSize,
-        schema::http::{
-            cors::{CorsMode, CorsPermission, ExposeRule, HeaderRule, MethodRule, OriginRule},
-            forwarded::ForwardedTrust,
+        schema::{
+            feature_mode::FeatureMode,
+            http::{
+                cors::{CorsMode, CorsPermission, ExposeRule, HeaderRule, MethodRule, OriginRule},
+                forwarded::ForwardedTrust,
+            },
         },
         validate::{
             config_key::ConfigKey,
@@ -72,6 +100,7 @@ mod tests {
             violation::{ConfigurationViolation, Requirement},
         },
     };
+    use enumset::EnumSet;
     use pretty_assertions::assert_eq;
     use std::error::Error;
     use url_macro::url;
@@ -152,5 +181,28 @@ mod tests {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn an_empty_coding_list_is_refused_while_its_table_is_on_and_accepted_while_off() {
+        let mut config = BrokerConfig::default();
+        config.http.compression.algorithms = EnumSet::empty();
+        config.http.decompression.algorithms = EnumSet::empty();
+        assert_eq!(
+            refusals(&config),
+            [
+                ConfigurationViolation::Unset {
+                    key: ConfigKey::HttpCompressionAlgorithms,
+                    required_by: Requirement::ResponseCompression,
+                },
+                ConfigurationViolation::Unset {
+                    key: ConfigKey::HttpDecompressionAlgorithms,
+                    required_by: Requirement::RequestDecompression,
+                },
+            ]
+        );
+        config.http.compression.mode = FeatureMode::Disabled;
+        config.http.decompression.mode = FeatureMode::Disabled;
+        assert_accepted(&config);
     }
 }

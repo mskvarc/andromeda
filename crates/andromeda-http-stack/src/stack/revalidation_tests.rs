@@ -4,6 +4,7 @@
 use crate::stack::HttpStack;
 use andromeda_configuration::schema::{
     content_coding::ContentCoding,
+    feature_mode::FeatureMode,
     http::{
         HttpStackConfig,
         compression::{CompressionConfig, CompressionQuality},
@@ -51,6 +52,7 @@ async fn tagged(headers: HeaderMap) -> Response {
 fn stack() -> Result<HttpStack, Box<dyn Error>> {
     let config = HttpStackConfig {
         compression: CompressionConfig {
+            mode: FeatureMode::Enabled,
             algorithms: EnumSet::only(ContentCoding::Gzip),
             quality: CompressionQuality::Fastest,
         },

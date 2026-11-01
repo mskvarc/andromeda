@@ -99,6 +99,18 @@ pub enum ConfigKey {
     /// `http.cors.credentials`.
     #[display("http.cors.credentials")]
     HttpCorsCredentials,
+    /// `http.compression.mode`.
+    #[display("http.compression.mode")]
+    HttpCompressionMode,
+    /// `http.compression.algorithms`.
+    #[display("http.compression.algorithms")]
+    HttpCompressionAlgorithms,
+    /// `http.decompression.mode`.
+    #[display("http.decompression.mode")]
+    HttpDecompressionMode,
+    /// `http.decompression.algorithms`.
+    #[display("http.decompression.algorithms")]
+    HttpDecompressionAlgorithms,
     /// `http.forwarded.trust`.
     #[display("http.forwarded.trust")]
     HttpForwardedTrust,

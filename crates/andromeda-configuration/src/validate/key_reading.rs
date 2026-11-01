@@ -40,6 +40,10 @@ impl ConfigKey {
             | ConfigKey::HttpCorsCredentials
             | ConfigKey::HttpForwardedTrust
             | ConfigKey::HttpForwardedProxies
+            | ConfigKey::HttpCompressionMode
+            | ConfigKey::HttpCompressionAlgorithms
+            | ConfigKey::HttpDecompressionMode
+            | ConfigKey::HttpDecompressionAlgorithms
             | ConfigKey::JsonLdPreloadedContextUrl
             | ConfigKey::TemporalStorageRetentionMode
             | ConfigKey::FederationCooldownMode

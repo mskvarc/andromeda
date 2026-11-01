@@ -144,7 +144,7 @@ impl HttpStack {
             strict_transport_security: strict_transport_security(&config.security_headers),
             cors: build_cors_layer(&config.cors)?,
             compression: build_compression_layer(&config.compression),
-            encoded_entity_tags: EncodedEntityTags::new(config.compression.algorithms),
+            encoded_entity_tags: EncodedEntityTags::new(config.compression.active_algorithms()),
             decompression: build_decompression_layer(&config.decompression),
             csrf: build_csrf_layer(&config.csrf)?,
             server_timing: config.server_timing,
@@ -360,11 +360,13 @@ mod tests {
                 ..CorsConfig::default()
             },
             compression: CompressionConfig {
-                algorithms: EnumSet::empty(),
+                mode: FeatureMode::Disabled,
+                algorithms: EnumSet::all(),
                 quality: CompressionQuality::Default,
             },
             decompression: DecompressionConfig {
-                algorithms: EnumSet::empty(),
+                mode: FeatureMode::Disabled,
+                algorithms: EnumSet::all(),
                 unaccepted_encoding: UnacceptedEncoding::Refused,
             },
             forwarded: ForwardedConfig::default(),

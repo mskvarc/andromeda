@@ -6,26 +6,26 @@ use andromeda_configuration::schema::{
 };
 use tower_http::compression::{CompressionLayer, CompressionLevel};
 
-/// Build the response-compression layer, or `None` when no coding is enabled.
+/// Build the response-compression layer, or `None` while compression is off.
 ///
 /// The layer starts with every coding on and each absent coding is switched off,
-/// so the enabled set is exactly `config.algorithms`. An empty set means no
-/// compression at all, and no layer is installed.
+/// so the enabled set is exactly the configuration's active codings.
 pub(crate) fn build_compression_layer(config: &CompressionConfig) -> Option<CompressionLayer> {
-    if config.algorithms.is_empty() {
+    let algorithms = config.active_algorithms();
+    if algorithms.is_empty() {
         return None;
     }
     let mut layer = CompressionLayer::new();
-    if !config.algorithms.contains(ContentCoding::Gzip) {
+    if !algorithms.contains(ContentCoding::Gzip) {
         layer = layer.no_gzip();
     }
-    if !config.algorithms.contains(ContentCoding::Brotli) {
+    if !algorithms.contains(ContentCoding::Brotli) {
         layer = layer.no_br();
     }
-    if !config.algorithms.contains(ContentCoding::Deflate) {
+    if !algorithms.contains(ContentCoding::Deflate) {
         layer = layer.no_deflate();
     }
-    if !config.algorithms.contains(ContentCoding::Zstd) {
+    if !algorithms.contains(ContentCoding::Zstd) {
         layer = layer.no_zstd();
     }
     Some(layer.quality(compression_level(config.quality)))
@@ -45,15 +45,17 @@ mod tests {
     use crate::stack::compression_layer::{build_compression_layer, compression_level};
     use andromeda_configuration::schema::{
         content_coding::ContentCoding,
+        feature_mode::FeatureMode,
         http::compression::{CompressionConfig, CompressionQuality},
     };
     use enumset::EnumSet;
     use tower_http::compression::CompressionLevel;
 
     #[test]
-    fn empty_algorithms_builds_no_layer() {
+    fn compression_turned_off_builds_no_layer() {
         let config = CompressionConfig {
-            algorithms: EnumSet::empty(),
+            mode: FeatureMode::Disabled,
+            algorithms: EnumSet::all(),
             quality: CompressionQuality::Default,
         };
         assert!(build_compression_layer(&config).is_none());
@@ -62,6 +64,7 @@ mod tests {
     #[test]
     fn a_non_empty_selection_builds_a_layer() {
         let config = CompressionConfig {
+            mode: FeatureMode::Enabled,
             algorithms: ContentCoding::Gzip | ContentCoding::Zstd,
             quality: CompressionQuality::Best,
         };

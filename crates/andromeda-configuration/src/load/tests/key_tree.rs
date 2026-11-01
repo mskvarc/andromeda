@@ -719,6 +719,8 @@ fn every_mode_refuses_a_value_it_does_not_define() {
         "tls.client_authentication",
         "management",
         "http.cors",
+        "http.compression",
+        "http.decompression",
         "http.server_timing",
         "http.security_headers",
         "http.csrf",

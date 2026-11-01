@@ -119,6 +119,12 @@ pub enum Requirement {
     /// Forwarded fields are believed only from listed proxies.
     #[display("http.forwarded.trust is \"proxies\"")]
     ProxyTrust,
+    /// Responses are compressed.
+    #[display("http.compression.mode is \"enabled\"")]
+    ResponseCompression,
+    /// Request bodies are decoded.
+    #[display("http.decompression.mode is \"enabled\"")]
+    RequestDecompression,
 }
 
 #[cfg(test)]
