@@ -3,6 +3,7 @@
 use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
+    cleanup::Cleanup,
     identity_matcher::has_id,
     namespace::Namespace,
     notification_sink::NotificationSink,
@@ -30,13 +31,15 @@ async fn o_ntf_trg_9022_an_entity_created_subscription_hears_the_temporal_create
     let subscription_twn_created_only_id = namespace.subscription_id("TwnCreatedOnly")?;
     let twn_created_only_type = namespace.entity_type("TwnCreatedOnly")?;
     let twn_created_only_id = namespace.urn("TwnCreatedOnly", 1)?;
-    let twn_created_only_fence_id = namespace.urn("TwnCreatedOnly", "fence")?;
     let subscription_twn_created_only = Subscription::builder()
         .id(subscription_twn_created_only_id.clone())
         .entities([twn_created_only_type.as_str()])
         .notification_triggers([NotificationTrigger::EntityCreated])
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint("TwnCreatedOnly")?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
+    let _cleanup = Cleanup::of(&broker)
+        .subscription(&subscription_twn_created_only_id)
+        .entity(&twn_created_only_id);
     broker.subscriptions().create(&subscription_twn_created_only).send().await?;
     let twn_created_only_evolution = TemporalEntity::builder()
         .id(twn_created_only_id.clone())
@@ -51,17 +54,20 @@ async fn o_ntf_trg_9022_an_entity_created_subscription_hears_the_temporal_create
         .build()?
         .attributes;
     broker.temporal().add_attributes(&twn_created_only_id, &instances).send().await?;
+    let unfenced = [BodyPattern::DoesNotContain(format!("fence-{namespace}"))];
+    sink.wait_for_at_least_where("TwnCreatedOnly", &unfenced, 1).await?;
+    broker.entities().delete(&twn_created_only_id).send().await?.done()?;
+    // Notifications keep commit order per Entity only, so the fence is a write to the same Entity: its change is
+    // evaluated after the append's, and once its notification has arrived the append's would have arrived too.
     let twn_created_only_fence = Entity::builder()
-        .id(twn_created_only_fence_id)
+        .id(twn_created_only_id.clone())
         .entity_type(twn_created_only_type.clone())
         .property("fence", format!("fence-{namespace}"))
         .build()?;
     broker.entities().create(&twn_created_only_fence).send().await?.done()?;
-    // A notification owed before the fence write is delivered before the fence's, so once the fence's has arrived the journal holds every notification the earlier writes owed.
-    let selected = [BodyPattern::Contains(format!("fence-{namespace}"))];
-    sink.wait_for_at_least_where("TwnCreatedOnly", &selected, 1).await?;
-    let selected_2 = [BodyPattern::DoesNotContain(format!("fence-{namespace}"))];
-    let notifications = sink.received_where("TwnCreatedOnly", &selected_2).await?;
+    let fenced = [BodyPattern::Contains(format!("fence-{namespace}"))];
+    sink.wait_for_at_least_where("TwnCreatedOnly", &fenced, 1).await?;
+    let notifications = sink.received_where("TwnCreatedOnly", &unfenced).await?;
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.data().as_slice(), nth(0, has_id(&twn_created_only_id)));
