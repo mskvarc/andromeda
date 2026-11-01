@@ -48,7 +48,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
                 limit: Limit::Fixed(Quantity::Duration(MAX_DELIVERY_LEASE)),
             },
             at_most(
-                ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts),
+                ConfigKey::NotificationsDeliveryMaxAttempts,
                 Quantity::Count(u64::from(MAX_DELIVERY_ATTEMPTS_CEILING)),
             ),
             at_most(
@@ -105,10 +105,10 @@ mod tests {
 
     #[test]
     fn a_delivery_value_past_its_ceiling_is_refused_and_one_at_it_accepted() {
-        let attempts = ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts);
+        let attempts = ConfigKey::NotificationsDeliveryMaxAttempts;
         let mut config = BrokerConfig::default();
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_401);
-        config.notifications.delivery.queue.max_attempts = NonZeroU32::MAX;
+        config.notifications.delivery.max_attempts = NonZeroU32::MAX;
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_024);
         config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_048);
         assert_eq!(
@@ -125,7 +125,7 @@ mod tests {
             ]
         );
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_400);
-        config.notifications.delivery.queue.max_attempts = NonZeroU32::MIN.saturating_add(2_147_483_646);
+        config.notifications.delivery.max_attempts = NonZeroU32::MIN.saturating_add(2_147_483_646);
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_023);
         config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_047);
         assert_accepted(&config);

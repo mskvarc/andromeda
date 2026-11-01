@@ -36,7 +36,7 @@ pub const fn delivery_concurrency(config: &DeliveryConfig) -> Result<DeliveryCon
 /// Returns [`DeliveryAttemptCeilingError::AboveStoredRange`] when the
 /// configured attempt ceiling exceeds what the store counts.
 pub fn attempt_ceiling(config: &DeliveryConfig) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
-    DeliveryAttemptCeiling::from_attempts(config.queue.max_attempts)
+    DeliveryAttemptCeiling::from_attempts(config.max_attempts)
 }
 
 /// The schedule a failed delivery is retried on: doubling from

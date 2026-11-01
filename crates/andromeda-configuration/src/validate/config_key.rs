@@ -28,8 +28,6 @@ pub enum QueueKey {
     PollInterval,
     /// `max_poll_interval`.
     MaxPollInterval,
-    /// `max_attempts`.
-    MaxAttempts,
     /// `lease_timeout`.
     LeaseTimeout,
     /// `retry_interval`.
@@ -209,6 +207,9 @@ pub enum ConfigKey {
     /// `notifications.delivery.max_http_body`.
     #[display("notifications.delivery.max_http_body")]
     NotificationsDeliveryMaxHttpBody,
+    /// `notifications.delivery.max_attempts`.
+    #[display("notifications.delivery.max_attempts")]
+    NotificationsDeliveryMaxAttempts,
     /// `notifications.delivery.max_mqtt_packet`.
     #[display("notifications.delivery.max_mqtt_packet")]
     NotificationsDeliveryMaxMqttPacket,

@@ -56,13 +56,27 @@ mod tests {
         );
     }
 
-    /// The history queue's lease is bound by nothing else, unlike the
-    /// side-effect and delivery leases.
+    /// A zero lease is also short of the margin over the acquire deadline.
     #[test]
-    fn a_zero_lease_is_refused() {
-        assert_positive_duration(
-            |config, value| config.temporal.history.queue.lease_timeout = value,
-            ConfigKey::Queue(HISTORY, QueueKey::LeaseTimeout),
+    fn a_zero_lease_is_refused_with_the_margin_it_lacks() {
+        let lease = ConfigKey::Queue(HISTORY, QueueKey::LeaseTimeout);
+        let mut config = BrokerConfig::default();
+        config.temporal.history.queue.lease_timeout = HumanDuration::from_secs(0);
+        assert_eq!(
+            refusals(&config),
+            [
+                ConfigurationViolation::Zero { key: lease },
+                ConfigurationViolation::OutOfRange {
+                    key: lease,
+                    value: Quantity::Duration(Duration::ZERO),
+                    relation: Relation::AtLeast,
+                    bound: Bound::SettingPlusMargin {
+                        key: ConfigKey::DatabaseAcquireTimeout,
+                        value: Duration::from_secs(5),
+                        margin: Duration::from_secs(5),
+                    },
+                },
+            ]
         );
     }
 

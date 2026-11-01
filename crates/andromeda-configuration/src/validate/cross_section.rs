@@ -19,26 +19,27 @@ use crate::{
 };
 use std::time::Duration;
 
-/// How much longer than the connection acquire deadline a side-effect lease
-/// must run.
+/// How much longer than the connection acquire deadline a side-effect or a
+/// history lease must run.
 ///
-/// A job's lease has to last from its claim to the first statement of its
-/// replay, which removes the job and locks it for the rest of the replay. That
-/// wait is chiefly acquiring the replay transaction's connection, which the
-/// acquire deadline bounds; the margin covers the rest of it, decoding the
-/// claimed job, matching the notifications it still owes, and the settling
-/// statement itself, before another worker could reclaim the job.
-const SIDE_EFFECT_LEASE_MARGIN: Duration = Duration::from_secs(5);
+/// A side-effect job's lease has to last from its claim to the first
+/// statement of its replay, which removes the job and locks it for the rest of
+/// the replay; a history batch's lease has to last from its claim to the
+/// statement that removes the applied intents under it. Either wait is chiefly
+/// acquiring the transaction's connection, which the acquire deadline bounds;
+/// the margin covers the rest of it, decoding the claimed work and the
+/// statements before the removal, before another worker could reclaim it.
+const REPLAY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
 /// A saturated pool, a tenant cold build and a Snapshot still being prepared
 /// each answer 503 with `Retry-After`, and a `@context` that cannot be
 /// downloaded answers 504 `LdContextNotAvailable`, only if their waits end
 /// before the request deadline answers 500 in their place. An HTTP
 /// notification carries in full the entities a change wrote, so its body limit
-/// exceeds the largest body a request may send. A side-effect lease
-/// outlasts the wait for its replay's connection. A provisional tenant
-/// outlives the longest creating request, or a request still running could
-/// find its database gone.
+/// exceeds the largest body a request may send. A side-effect or history
+/// lease outlasts the wait for its transaction's connection. A provisional
+/// tenant outlives the longest creating request, or a request still running
+/// could find its database gone.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Ordered {
@@ -49,7 +50,12 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         Rule::Ordered {
             key: ConfigKey::Queue(QueueName::EntitySideEffects, QueueKey::LeaseTimeout),
             relation: Relation::AtLeast,
-            limit: Limit::KeyPlusMargin(ConfigKey::DatabaseAcquireTimeout, SIDE_EFFECT_LEASE_MARGIN),
+            limit: Limit::KeyPlusMargin(ConfigKey::DatabaseAcquireTimeout, REPLAY_LEASE_MARGIN),
+        },
+        Rule::Ordered {
+            key: ConfigKey::Queue(QueueName::TemporalHistory, QueueKey::LeaseTimeout),
+            relation: Relation::AtLeast,
+            limit: Limit::KeyPlusMargin(ConfigKey::DatabaseAcquireTimeout, REPLAY_LEASE_MARGIN),
         },
         Rule::Ordered {
             key: ConfigKey::TenancyBuildAdmissionTimeout,

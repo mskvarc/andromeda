@@ -47,6 +47,13 @@ pub struct SideEffectsConfig {
     /// Jobs one pass claims at most; the pass replays them one after another.
     #[schemars(description = "The most jobs one pass claims. The pass replays them one after another before the worker claims again.")]
     pub batch_size: NonZeroU32,
+    /// Failed attempts from which a job is reported stuck on every further
+    /// failure. It is never dropped: it holds the notifications of a write the
+    /// broker already accepted.
+    #[schemars(
+        description = "Failed attempts from which a job that keeps failing is reported stuck, logged and counted on each further failure. It is never dropped, since it holds the notifications of a write the broker already accepted, and it keeps being retried, never waiting longer than `entity.side_effects.queue.max_retry_interval`."
+    )]
+    pub stuck_after_attempts: NonZeroU32,
     /// How the queue is polled, claimed and retried. A job is retried on a
     /// delay that doubles from `retry_interval` up to `max_retry_interval`,
     /// however often it fails.
@@ -63,6 +70,7 @@ impl Default for SideEffectsConfig {
     fn default() -> SideEffectsConfig {
         SideEffectsConfig {
             batch_size: NonZeroU32::MIN.saturating_add(31),
+            stuck_after_attempts: NonZeroU32::MIN.saturating_add(4),
             queue: DurableQueue::default(),
             retention: SideEffectRetentionConfig::default(),
         }

@@ -22,7 +22,7 @@ pub const MAX_CONCURRENT_DELIVERIES_CEILING: u32 = 1_024;
 /// may keep: the longest failure summary the store holds.
 pub const MAX_ERROR_LENGTH_CEILING: u32 = 2_048;
 
-/// The most attempts `notifications.delivery.queue.max_attempts` may allow: the
+/// The most attempts `notifications.delivery.max_attempts` may allow: the
 /// largest count the store's signed 32-bit attempt counter holds.
 pub const MAX_DELIVERY_ATTEMPTS_CEILING: u32 = 2_147_483_647;
 
@@ -165,12 +165,15 @@ pub struct DeliveryConfig {
         description = "The largest MQTT packet a notification is published in, envelope and topic included. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry."
     )]
     pub max_mqtt_packet: MqttPacketLimit,
-    /// How the queue is polled, claimed and retried. A delivery is retried on
-    /// a delay that doubles from `retry_interval`, and dead-lettered after
-    /// `max_attempts`. `lease_timeout` must exceed `request_timeout` by five
-    /// seconds.
+    /// The attempts a queued delivery gets before it is dead-lettered.
     #[schemars(
-        description = "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval`, and dead-lettered after `notifications.delivery.queue.max_attempts`. The lease may be at most one day."
+        description = "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived."
+    )]
+    pub max_attempts: NonZeroU32,
+    /// How the queue is polled, claimed and retried. A delivery is retried on
+    /// a delay that doubles from `retry_interval` up to `max_retry_interval`.
+    #[schemars(
+        description = "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`."
     )]
     pub queue: DurableQueue,
     /// How long a finished delivery is kept.
@@ -190,6 +193,7 @@ impl Default for DeliveryConfig {
             denied_addresses: Vec::new(),
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
+            max_attempts: NonZeroU32::MIN.saturating_add(4),
             queue: DurableQueue {
                 retry_interval: HumanDuration::from_secs(5),
                 ..DurableQueue::default()

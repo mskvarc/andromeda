@@ -424,11 +424,11 @@ fn snapshot_target() -> ContextTarget {
     ))
 }
 
-/// The retry schedule the drains under test use: two seconds a step, capped
-/// at five, stuck from the third completed attempt.
+/// The retry schedule the drains under test use: doubling from two seconds,
+/// capped at five, stuck from the third completed attempt.
 fn retry_policy() -> TemporalIntentRetryPolicy {
     TemporalIntentRetryPolicy::new(
-        BackoffSchedule::new(Duration::from_secs(2), Duration::from_secs(5), Growth::Linear),
+        BackoffSchedule::new(Duration::from_secs(2), Duration::from_secs(5), Growth::Doubling),
         NonZeroU32::new(3).expect("non-zero threshold"),
     )
 }
@@ -545,11 +545,11 @@ async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
     assert_eq!(outcome.lease_lost, 1, "a retry that lost its lease is lost too");
 }
 
-/// The retry delay grows a base step per completed attempt and stops at the
-/// policy ceiling, so an intent that keeps failing is retried at a bounded
-/// cadence instead of backing off without limit.
+/// The retry delay doubles per completed attempt and stops at the policy
+/// ceiling, so an intent that keeps failing is retried at a bounded cadence
+/// instead of backing off without limit.
 #[tokio::test]
-async fn repeated_application_failures_back_off_linearly_up_to_the_configured_ceiling() {
+async fn repeated_application_failures_back_off_up_to_the_configured_ceiling() {
     let queue = Arc::new(RecordingQueue::default());
     queue.insert(claimed(1, &vehicle(1))).await;
     let application = Arc::new(RecordingApplication::over(&queue));
@@ -562,7 +562,7 @@ async fn repeated_application_failures_back_off_linearly_up_to_the_configured_ce
     assert_eq!(
         delays,
         vec![TimeDelta::seconds(2), TimeDelta::seconds(4), TimeDelta::seconds(5), TimeDelta::seconds(5)],
-        "two seconds a step, clamped at the five-second ceiling"
+        "doubling from two seconds, clamped at the five-second ceiling"
     );
 }
 

@@ -8,9 +8,10 @@ use andromeda_configuration::schema::temporal::{
 };
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 
-/// The schedule a rejected temporal history intent is retried on: linear from
-/// `retry_interval`, clamped at `max_retry_interval`, so an intent that keeps
-/// failing is retried at a bounded cadence.
+/// The schedule a rejected temporal history intent is retried on: doubling
+/// from `retry_interval`, as every durable queue's is, clamped at
+/// `max_retry_interval`, so an intent that keeps failing is retried at a
+/// bounded cadence.
 ///
 /// # Errors
 ///
@@ -21,7 +22,7 @@ pub const fn intent_retry_schedule(config: &TemporalHistoryConfig) -> Result<Bac
     BackoffSchedule::validated(
         config.queue.retry_interval.duration(),
         config.queue.max_retry_interval.duration(),
-        Growth::Linear,
+        Growth::Doubling,
     )
 }
 
@@ -66,9 +67,12 @@ mod tests {
             },
         },
     };
-    use andromeda_retry::schedule_error::BackoffScheduleError;
+    use andromeda_retry::{retry_number::RetryNumber, schedule_error::BackoffScheduleError};
     use pretty_assertions::assert_eq;
-    use std::num::{NonZeroU32, NonZeroU64};
+    use std::{
+        num::{NonZeroU32, NonZeroU64},
+        time::Duration,
+    };
 
     fn bound(n: u64) -> NonZeroU64 {
         NonZeroU64::new(n).expect("a positive bound")
@@ -100,6 +104,19 @@ mod tests {
         let limits = TemporalInstanceLimits::from(&config);
         assert_eq!(limits.edge_group, 250_000);
         assert_eq!(limits.aggregation_instances, bound(50_000));
+    }
+
+    /// Every durable queue doubles its retry delay; a linear history schedule
+    /// would wait 6s, not 8s, before the third retry.
+    #[test]
+    fn the_shipped_history_retries_double_from_two_seconds() -> Result<(), BackoffScheduleError> {
+        let schedule = intent_retry_schedule(&TemporalHistoryConfig::default())?;
+        let delays: Vec<Duration> = (1..=4)
+            .filter_map(NonZeroU32::new)
+            .map(|retry| schedule.delay(RetryNumber::new(retry)))
+            .collect();
+        assert_eq!(delays, [2, 4, 8, 16].map(Duration::from_secs));
+        Ok(())
     }
 
     #[test]

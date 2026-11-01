@@ -278,7 +278,12 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[entity]\npending_side_effects_max_attempts = 3\n",
         "pending_side_effects_max_attempts",
+        "[entity.side_effects]\nstuck_after_attempts = 3\n",
+    ),
+    (
         "[entity.side_effects.queue]\nmax_attempts = 3\n",
+        "max_attempts",
+        "[entity.side_effects]\nstuck_after_attempts = 3\n",
     ),
     (
         "[entity]\npending_side_effects_base_backoff = \"2s\"\n",
@@ -350,7 +355,12 @@ const MOVED: &[(&str, &str, &str)] = &[
     (
         "[temporal]\nintent_stuck_after_attempts = 3\n",
         "intent_stuck_after_attempts",
+        "[temporal.history]\nstuck_after_attempts = 3\n",
+    ),
+    (
         "[temporal.history.queue]\nmax_attempts = 3\n",
+        "max_attempts",
+        "[temporal.history]\nstuck_after_attempts = 3\n",
     ),
     (
         "[temporal]\nchunk_interval = \"7days\"\n",
@@ -393,9 +403,9 @@ const MOVED: &[(&str, &str, &str)] = &[
         "[notifications.evaluation]\nmax_concurrent_changes = 4\n",
     ),
     (
-        "[notifications.delivery]\nmax_attempts = 3\n",
-        "max_attempts",
         "[notifications.delivery.queue]\nmax_attempts = 3\n",
+        "max_attempts",
+        "[notifications.delivery]\nmax_attempts = 3\n",
     ),
     (
         "[notifications.delivery]\nbase_backoff = \"5s\"\n",

@@ -75,7 +75,7 @@ impl SnapshotStatusDeliveryDrain {
             transport,
             worker: LeaseHolder::mint(),
             lease: Duration::seconds(i64::try_from(config.queue.lease_timeout.duration().as_secs()).unwrap_or(i64::MAX)),
-            max_attempts: i32::try_from(config.queue.max_attempts.get()).unwrap_or(i32::MAX),
+            max_attempts: i32::try_from(config.max_attempts.get()).unwrap_or(i32::MAX),
             retry_schedule: retry_schedule(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule

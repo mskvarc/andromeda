@@ -4,13 +4,7 @@
 use crate::{
     broker_config::BrokerConfig,
     human_duration::HumanDuration,
-    validate::{
-        InvalidConfiguration,
-        config_key::{ConfigKey, QueueKey, QueueName},
-        declared_rules,
-        validate,
-        violation::ConfigurationViolation,
-    },
+    validate::{InvalidConfiguration, config_key::ConfigKey, declared_rules, validate, violation::ConfigurationViolation},
 };
 use pretty_assertions::assert_eq;
 
@@ -103,8 +97,5 @@ fn every_cap_a_domain_type_holds_is_declared() {
     assert_eq!(declared_statements(ConfigKey::RequestLimitsMaxQNesting), ["at most 64"]);
     assert_eq!(declared_statements(ConfigKey::NotificationsDeliveryMaxConcurrent), ["at most 1024"]);
     assert_eq!(declared_statements(ConfigKey::NotificationsDeliveryMaxErrorLength), ["at most 2048"]);
-    assert_eq!(
-        declared_statements(ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxAttempts)),
-        ["at most 2147483647"]
-    );
+    assert_eq!(declared_statements(ConfigKey::NotificationsDeliveryMaxAttempts), ["at most 2147483647"]);
 }

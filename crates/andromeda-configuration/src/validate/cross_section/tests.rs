@@ -45,12 +45,13 @@ fn missing_key_pair(listener: Requirement) -> [ConfigurationViolation; 2] {
     ]
 }
 
-/// The side-effect lease is lengthened so only the acquire rule is at its
-/// boundary.
+/// The side-effect and history leases are lengthened so only the acquire rule
+/// is at its boundary.
 #[test]
 fn an_acquire_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
     let mut config = BrokerConfig::default();
     config.entity.side_effects.queue.lease_timeout = HumanDuration::from_secs(35);
+    config.temporal.history.queue.lease_timeout = HumanDuration::from_secs(35);
     config.database.acquire_timeout = HumanDuration::from_secs(30);
     assert_eq!(
         refusals(&config),
@@ -84,6 +85,28 @@ fn a_side_effect_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_a
         }]
     );
     config.entity.side_effects.queue.lease_timeout = HumanDuration::from_secs(10);
+    assert_accepted(&config);
+}
+
+#[test]
+fn a_history_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_and_the_margin_exactly_accepted() {
+    let mut config = BrokerConfig::default();
+    config.database.acquire_timeout = HumanDuration::from_secs(5);
+    config.temporal.history.queue.lease_timeout = HumanDuration::from_millis(9_999);
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::OutOfRange {
+            key: ConfigKey::Queue(QueueName::TemporalHistory, QueueKey::LeaseTimeout),
+            value: Quantity::Duration(Duration::from_millis(9_999)),
+            relation: Relation::AtLeast,
+            bound: Bound::SettingPlusMargin {
+                key: ConfigKey::DatabaseAcquireTimeout,
+                value: Duration::from_secs(5),
+                margin: Duration::from_secs(5),
+            },
+        }]
+    );
+    config.temporal.history.queue.lease_timeout = HumanDuration::from_secs(10);
     assert_accepted(&config);
 }
 

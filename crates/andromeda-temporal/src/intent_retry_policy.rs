@@ -70,7 +70,7 @@ mod tests {
 
     fn policy() -> TemporalIntentRetryPolicy {
         TemporalIntentRetryPolicy::new(
-            BackoffSchedule::new(Duration::from_secs(2), Duration::from_secs(5), Growth::Linear),
+            BackoffSchedule::new(Duration::from_secs(2), Duration::from_secs(5), Growth::Doubling),
             NonZeroU32::new(3).expect("non-zero"),
         )
     }

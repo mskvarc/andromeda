@@ -84,7 +84,7 @@ pub(super) fn register_temporal_intent_drain(
     let batch_size = TemporalIntentBatchSize::new(config.batch_size);
     let retry_policy = TemporalIntentRetryPolicy::new(
         intent_retry_schedule(config).map_err(AssemblyInvariant::IntentRetry)?,
-        queue_config.max_attempts,
+        config.stuck_after_attempts,
     );
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,

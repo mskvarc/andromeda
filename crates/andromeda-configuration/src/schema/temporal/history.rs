@@ -1,10 +1,7 @@
 //! The `[temporal.history]` tables: what is recorded in a Temporal Evolution
 //! and how the queue that records it is drained.
 
-use crate::{
-    human_duration::HumanDuration,
-    schema::{durable_queue::DurableQueue, temporal::core_write_history::CoreWriteHistory},
-};
+use crate::schema::{durable_queue::DurableQueue, temporal::core_write_history::CoreWriteHistory};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -34,11 +31,17 @@ pub struct TemporalHistoryConfig {
         description = "The most history writes one pass claims. The pass applies them in one transaction, so a larger batch spreads each statement's cost over more writes."
     )]
     pub batch_size: NonZeroU32,
-    /// The queue of committed history intents. A failed intent is retried on
-    /// a delay that grows linearly from `retry_interval`, and one that keeps
-    /// failing is reported stuck after `max_attempts`, never discarded.
+    /// Failed attempts from which a history intent is reported stuck on
+    /// every further failure. It is never discarded: it is history the broker
+    /// already accepted.
     #[schemars(
-        description = "The queue of committed history writes, including those of `respond-async` batches. A write that keeps failing is reported stuck, never discarded, since it is history the broker has already accepted."
+        description = "Failed attempts from which a history write that keeps failing is reported stuck, logged and counted on each further failure. It is never discarded, since it is history the broker has already accepted, and it keeps being retried, never waiting longer than `temporal.history.queue.max_retry_interval`."
+    )]
+    pub stuck_after_attempts: NonZeroU32,
+    /// The queue of committed history intents. A failed intent is retried on
+    /// a delay that doubles from `retry_interval` up to `max_retry_interval`.
+    #[schemars(
+        description = "The queue of committed history writes, including those of `respond-async` batches. A failed write is retried on a delay that doubles from `temporal.history.queue.retry_interval` up to `temporal.history.queue.max_retry_interval`."
     )]
     pub queue: DurableQueue,
 }
@@ -48,11 +51,8 @@ impl Default for TemporalHistoryConfig {
         TemporalHistoryConfig {
             core_writes: CoreWriteHistory::Recorded,
             batch_size: NonZeroU32::MIN.saturating_add(255),
-            queue: DurableQueue {
-                max_attempts: NonZeroU32::MIN.saturating_add(9),
-                retry_interval: HumanDuration::from_secs(2),
-                ..DurableQueue::default()
-            },
+            stuck_after_attempts: NonZeroU32::MIN.saturating_add(9),
+            queue: DurableQueue::default(),
         }
     }
 }
@@ -68,6 +68,6 @@ mod tests {
         let config = TemporalHistoryConfig::default();
         assert_eq!(config.core_writes, CoreWriteHistory::Recorded);
         assert_eq!(config.batch_size.get(), 256);
-        assert_eq!(config.queue.max_attempts.get(), 10);
+        assert_eq!(config.stuck_after_attempts.get(), 10);
     }
 }

@@ -4,14 +4,14 @@
 //! notification delivery queue are drained the same way: a worker polls,
 //! claims jobs under a lease, and retries a failed job on a growing delay.
 //! They therefore share one table, so an operator tunes every queue with the
-//! same keys. How many jobs a pass claims, how a queue's delay grows, and what
-//! happens to a job that runs out of attempts belong to the queue's own
-//! domain.
+//! same keys, each meaning the same in every queue: the retry delay doubles
+//! from `retry_interval` up to `max_retry_interval` in all three. How many
+//! jobs a pass claims, and what happens to a job that keeps failing, differ
+//! by queue, so those keys live in the table that owns the queue.
 
 use crate::human_duration::HumanDuration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
 
 /// How a durable queue is polled, claimed and retried.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,20 +39,11 @@ pub struct DurableQueue {
         description = "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. `notifications.delivery.queue` reads it in whole seconds, rounded down."
     )]
     pub lease_timeout: HumanDuration,
-    /// Attempts after which a job that keeps failing is given up or reported:
-    /// a notification delivery is dead-lettered, while a side-effect job or a
-    /// temporal history intent is reported stuck on every further failure and
-    /// stays claimable, since it is the only record of notifications or
-    /// history the broker accepted.
-    #[schemars(
-        description = "Attempts after which a job that keeps failing is given up or reported. A notification delivery is dead-lettered. A side-effect job or a temporal history intent is reported stuck on each further failure and keeps being retried, never waiting longer than the longest retry delay, since it holds the notifications or the history of a write the broker already accepted."
-    )]
-    pub max_attempts: NonZeroU32,
     /// The delay before the first retry of a failed job, in human-readable
-    /// form (`"2s"`). Later retries wait longer, as the queue's domain grows
-    /// the delay.
+    /// form (`"2s"`). Each later retry waits twice as long as the one before,
+    /// up to `max_retry_interval`.
     #[schemars(
-        description = "The delay before a failed job's first retry. Later retries wait longer: the delay doubles for side effects and notification deliveries, and grows linearly for temporal history intents."
+        description = "The delay before a failed job's first retry. Each later retry waits twice as long as the one before, up to the longest retry delay."
     )]
     pub retry_interval: HumanDuration,
     /// The longest a retry delay grows to, in human-readable form (`"5m"`).
@@ -66,7 +57,6 @@ impl Default for DurableQueue {
             poll_interval: HumanDuration::from_secs(1),
             max_poll_interval: HumanDuration::from_secs(30),
             lease_timeout: HumanDuration::from_secs(30),
-            max_attempts: NonZeroU32::MIN.saturating_add(4),
             retry_interval: HumanDuration::from_secs(2),
             max_retry_interval: HumanDuration::from_secs(300),
         }

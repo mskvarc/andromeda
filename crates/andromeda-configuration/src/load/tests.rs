@@ -87,10 +87,10 @@ fn env_overrides_database_url() {
 #[test]
 #[serial]
 fn env_reaches_a_key_three_tables_deep() {
-    unsafe { env::set_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__MAX_ATTEMPTS", "64") };
+    unsafe { env::set_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__STUCK_AFTER_ATTEMPTS", "64") };
     let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__QUEUE__MAX_ATTEMPTS") };
-    pretty_assertions::assert_eq!(config.entity.side_effects.queue.max_attempts.get(), 64);
+    unsafe { env::remove_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__STUCK_AFTER_ATTEMPTS") };
+    pretty_assertions::assert_eq!(config.entity.side_effects.stuck_after_attempts.get(), 64);
 }
 
 #[test]

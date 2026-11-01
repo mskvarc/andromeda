@@ -85,6 +85,7 @@ impl ConfigKey {
             ConfigKey::TemporalStorageRetentionSweepInterval => Some(span(config.temporal.storage.retention.sweep_interval)),
             ConfigKey::NotificationsDeliveryRequestTimeout => Some(span(config.notifications.delivery.request_timeout)),
             ConfigKey::NotificationsDeliveryMaxHttpBody => Some(size(config.notifications.delivery.max_http_body.byte_size())),
+            ConfigKey::NotificationsDeliveryMaxAttempts => Some(count(config.notifications.delivery.max_attempts.get())),
             ConfigKey::NotificationsDeliveryMaxMqttPacket => Some(Quantity::Bytes(u64::from(config.notifications.delivery.max_mqtt_packet.octets()))),
             ConfigKey::NotificationsDeliveryMaxConcurrent => Some(count(config.notifications.delivery.max_concurrent.get())),
             ConfigKey::NotificationsDeliveryMaxErrorLength => Some(count(config.notifications.delivery.max_error_length.get())),
@@ -119,15 +120,14 @@ const fn queue(config: &BrokerConfig, name: QueueName) -> &DurableQueue {
 }
 
 /// The value one key of a queue table holds.
-fn queue_reading(queue: &DurableQueue, key: QueueKey) -> Quantity {
-    match key {
-        QueueKey::PollInterval => span(queue.poll_interval),
-        QueueKey::MaxPollInterval => span(queue.max_poll_interval),
-        QueueKey::LeaseTimeout => span(queue.lease_timeout),
-        QueueKey::RetryInterval => span(queue.retry_interval),
-        QueueKey::MaxRetryInterval => span(queue.max_retry_interval),
-        QueueKey::MaxAttempts => count(queue.max_attempts.get()),
-    }
+const fn queue_reading(queue: &DurableQueue, key: QueueKey) -> Quantity {
+    span(match key {
+        QueueKey::PollInterval => queue.poll_interval,
+        QueueKey::MaxPollInterval => queue.max_poll_interval,
+        QueueKey::LeaseTimeout => queue.lease_timeout,
+        QueueKey::RetryInterval => queue.retry_interval,
+        QueueKey::MaxRetryInterval => queue.max_retry_interval,
+    })
 }
 
 /// A duration as a quantity.
