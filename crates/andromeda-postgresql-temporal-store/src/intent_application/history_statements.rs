@@ -43,6 +43,7 @@ use sea_query::{
     Iden,
     InsertStatement,
     IntoIden,
+    JoinType,
     OnConflict,
     Query,
     SelectStatement,
@@ -94,18 +95,30 @@ fn recorded_attribute_entries(source: &StagedSource<'_>, schema: Option<&DynIden
     select
 }
 
-/// The attribute entries the application records beside the stream each
-/// extends, under `s`.
+/// The attribute entries the application records beside the key of the
+/// stream each extends, under `s`.
+///
+/// Each entry's stream is looked up on its own by its whole grain, behind
+/// `OFFSET 0`. The planner estimates the entries of an intent at a handful
+/// whatever their number, and the streams of one Entity from statistics that
+/// can count a few per Entity. Merged into the statement, the lookup lets it
+/// read every stream of the Entity by its key alone and test each against
+/// every entry, so 50,000 instances of one attribute cost 2.5 billion
+/// comparisons. Fenced, the lookup is one index probe per entry.
 fn entries_with_stream(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
-    let mut select = recorded_attribute_entries(source, schema);
-    select
+    let mut stream = Query::select();
+    stream
+        .column((S, TemporalAttributeStreams::StreamKey))
         .from_as(qualified(schema, TemporalAttributeStreams::Table), S)
-        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).eq(intent_entity_key(schema)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::EntityKey)).equals((Te, Entities::EntityKey)))
         .and_where(Expr::col((S, TemporalAttributeStreams::AttributeNameKey)).equals((E, TemporalEntry::AttributeNameKey)))
         .and_where(same_nullable_text_key(
             Expr::col((S, TemporalAttributeStreams::DatasetId)),
             entry(TemporalEntry::DatasetId),
-        ));
+        ))
+        .offset(0);
+    let mut select = recorded_attribute_entries(source, schema);
+    select.join_lateral(JoinType::Join, stream, S, SimpleExpr::from(true));
     select
 }
 

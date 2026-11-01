@@ -917,10 +917,10 @@ fn a_deletion_of_an_entity_without_evolution_records_nothing() {
     }
 }
 
-/// A stream or claim is probed by the key of the intent's own Entity, so no
-/// plan can read every row of an attribute for each entry.
+/// A sibling stream or claim is probed by the key of the intent's own Entity,
+/// so no plan can read every row of an attribute for each entry.
 #[test]
-fn every_stream_and_claim_probe_is_keyed_by_the_entity_of_the_intent() {
+fn every_sibling_stream_and_claim_probe_is_keyed_by_the_entity_of_the_intent() {
     let key = r#"(SELECT "ie"."entity_key" FROM "entities" AS "ie" WHERE "ie"."id" = "i"."entity_id")"#;
     let released = rendered_steps()
         .into_iter()
@@ -928,14 +928,27 @@ fn every_stream_and_claim_probe_is_keyed_by_the_entity_of_the_intent() {
         .find(|sql| sql.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#))
         .expect("a claim release");
     for (probe, sql) in [
-        (r#""s"."entity_key" = "#, writing("attribute_history")),
-        (r#""s"."entity_key" = "#, shape_growth()),
-        (r#""s"."entity_key" = "#, growth()),
         (r#""s2"."entity_key" = "#, in_role(StepRole::Replace)),
         (r#""attribute_history_instance_claims"."entity_key" = "#, released),
     ] {
         assert!(sql.contains(&format!("{probe}{key}")), "{sql}");
         assert!(!sql.contains(&format!(r#"{probe}"te"."entity_key""#)), "{sql}");
+    }
+}
+
+/// The stream an entry extends is looked up behind `OFFSET 0` by its whole
+/// grain, so no plan can read every stream of the Entity and test it against
+/// every entry.
+#[test]
+fn every_entry_looks_up_its_stream_on_its_own_by_its_whole_grain() {
+    let lookup = concat!(
+        r#"JOIN LATERAL (SELECT "s"."stream_key" FROM "temporal_attribute_streams" AS "s" WHERE "s"."entity_key" = "te"."entity_key""#,
+        r#" AND "s"."attribute_name_key" = "e"."attribute_name_key" AND COALESCE("s"."dataset_id", '') = COALESCE("e"."dataset_id", '')"#,
+        r#" OFFSET 0) AS "s" ON TRUE"#,
+    );
+    for sql in [writing("attribute_history"), shape_growth(), growth()] {
+        assert!(sql.contains(lookup), "{sql}");
+        assert!(!sql.contains(r#""temporal_attribute_streams" AS "s" WHERE "te"."id""#), "{sql}");
     }
 }
 

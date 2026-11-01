@@ -8,8 +8,9 @@
 //! entries are read carries the key of the first intent of the source
 //! stating types for its Entity, computed once for the whole source. A statement adds the
 //! catalogue relations it needs as further `FROM` items joined in its
-//! `WHERE`, because the position comes from an `UNNEST` of the intent row,
-//! and a `JOIN ... ON` after it could not name the intent. The two sources
+//! `WHERE`, or as a `JOIN LATERAL` whose body names them, because the
+//! position comes from an `UNNEST` of the intent row, and a `JOIN ... ON`
+//! after it could not name the intent. The two sources
 //! differ in that one relation alone, so the drain and the commit record
 //! history through the same statements.
 
