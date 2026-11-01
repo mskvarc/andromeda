@@ -216,7 +216,10 @@ mod tests {
         assert!(!count.contains("candidates"), "{count}");
         assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM"#), "{count}");
         assert!(
-            count.contains(r#""ah"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key""#),
+            count.contains(concat!(
+                r#""ah"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' "#,
+                r#"AND COALESCE("ah"."modified_at", "ah"."deleted_at") >= '2026-10-18 03:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key""#
+            )),
             "{count}"
         );
     }

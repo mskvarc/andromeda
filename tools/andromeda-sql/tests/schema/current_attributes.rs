@@ -5,7 +5,7 @@
 //! what every reader and writer of the relation relies on, so their declared
 //! text is pinned here.
 
-use crate::repository::{PinError, constraint_definition, function_definition, index, index_definition, schema, trigger, written};
+use crate::repository::{PinError, constraint, constraint_definition, function_definition, index_definition, schema, trigger, written};
 use andromeda_sql::{
     declared_schema::{DeclaredSchema, ResolvedType, column::ColumnSource, constraint::ConstraintKind, declared_type::BuiltinType},
     migration_set::MigrationSet,
@@ -93,9 +93,9 @@ fn an_instance_record_declares_the_current_attributes_columns_in_order() -> Resu
 #[test]
 fn every_value_kind_pins_exactly_one_column() -> Result<(), PinError> {
     let schema = schema()?;
-    let presence = constraint_definition(&schema, "chk_current_attributes_value_presence")?;
+    let presence = constraint_definition(&schema, "chk_ca_value_presence")?;
     assert_eq!(presence, format!("check (num_nonnulls({}) = 1)", VALUE_COLUMNS.join(", ")));
-    let placement = constraint_definition(&schema, "chk_current_attributes_value_kind_column")?;
+    let placement = constraint_definition(&schema, "chk_ca_value_kind_column")?;
     for (code, columns) in VALUE_KIND_COLUMNS {
         let arm = match columns {
             [column] => format!("(value_kind = {code} and {column} is not null)"),
@@ -112,20 +112,29 @@ fn every_value_kind_pins_exactly_one_column() -> Result<(), PinError> {
     Ok(())
 }
 
-/// The grain keys the default instance as the empty string, which no
-/// `datasetId` may be, so it compares with plain equality.
+/// The grain is the primary key. Its `datasetId` member is never NULL, the
+/// empty string standing for the default instance, so it compares with plain
+/// equality.
 #[test]
 fn the_grain_is_entity_attribute_and_dataset() -> Result<(), PinError> {
     let schema = schema()?;
-    let grain = index(&schema, "uq_current_attributes_grain")?;
-    assert!(grain.is_unique(), "the grain is unique");
+    assert_eq!(constraint(&schema, "pk_ca_grain")?.kind(), ConstraintKind::PrimaryKey);
     assert_eq!(
-        index_definition(&schema, "uq_current_attributes_grain")?,
-        format!("on {TABLE} (entity_key, attribute_name_key, (coalesce(dataset_id, '')))")
+        constraint_definition(&schema, "pk_ca_grain")?,
+        "primary key (entity_key, attribute_name_key, dataset_key)"
     );
-    assert_eq!(
-        constraint_definition(&schema, "chk_current_attributes_dataset_id_not_empty")?,
-        "check (dataset_id <> '')"
+    let dataset_key = schema
+        .columns()
+        .iter()
+        .find(|column| column.relation() == TABLE && column.name() == "dataset_key")
+        .ok_or_else(|| PinError::Missing("current_attributes.dataset_key".to_owned()))?;
+    assert!(dataset_key.is_not_null(), "the grain key is never NULL");
+    assert!(
+        schema
+            .columns()
+            .iter()
+            .all(|column| column.relation() != TABLE || column.name() != "dataset_id"),
+        "no nullable dataset column stands beside the key"
     );
     Ok(())
 }
@@ -159,7 +168,7 @@ fn the_dataset_geometry_index_holds_only_instances_with_a_dataset() -> Result<()
     assert_eq!(
         index_definition(&schema, "idx_ca_dataset_value_geometry")?,
         format!(
-            "on {TABLE} using gist (attribute_name_key, coalesce(value_geometry_reach, value_geometry_valid, value_geometry)) where value_geometry is not null and dataset_id is not null"
+            "on {TABLE} using gist (attribute_name_key, coalesce(value_geometry_reach, value_geometry_valid, value_geometry)) where value_geometry is not null and dataset_key <> ''"
         )
     );
     Ok(())
@@ -198,7 +207,7 @@ fn the_attribute_value_kind_statistics_keep_the_most_common_pairs() -> Result<()
 fn the_sub_attribute_keys_are_null_or_non_empty() -> Result<(), PinError> {
     let schema = schema()?;
     assert_eq!(
-        constraint_definition(&schema, "chk_current_attributes_sub_eq_keys_not_empty")?,
+        constraint_definition(&schema, "chk_ca_sub_eq_keys_not_empty")?,
         "check (cardinality(sub_eq_keys) > 0)"
     );
     Ok(())
@@ -256,7 +265,7 @@ fn instance_references_are_checked_per_statement() -> Result<(), PinError> {
         ("name_keys", "check_current_attribute_name_keys"),
     ] {
         for event in ["insert", "update"] {
-            let declared = trigger(&schema, &format!("trg_{TABLE}_{what}_{event}"))?;
+            let declared = trigger(&schema, &format!("trg_ca_{what}_{event}"))?;
             assert_eq!(declared.table(), TABLE);
             assert_eq!(
                 written(&schema, declared.origin(), declared.definition()),
@@ -283,10 +292,7 @@ fn instance_references_are_checked_per_statement() -> Result<(), PinError> {
 #[test]
 fn current_attributes_unit_code_id_is_checked_positive() -> Result<(), PinError> {
     let schema = schema()?;
-    assert_eq!(
-        constraint_definition(&schema, "chk_current_attributes_unit_code_id_positive")?,
-        "check (unit_code_id > 0)"
-    );
+    assert_eq!(constraint_definition(&schema, "chk_ca_unit_code_id_positive")?, "check (unit_code_id > 0)");
     Ok(())
 }
 
@@ -312,10 +318,10 @@ fn no_tenant_relation_is_named_unit_codes() -> Result<(), PinError> {
 #[test]
 fn the_entity_check_is_a_branch_relation_and_the_name_check_is_live_only() -> Result<(), PinError> {
     let schema = schema()?;
-    for name in ["trg_current_attributes_entities_insert", "trg_current_attributes_entities_update"] {
+    for name in ["trg_ca_entities_insert", "trg_ca_entities_update"] {
         assert_eq!(schema.set_of(trigger(&schema, name)?.origin()), Some(MigrationSet::Branch), "{name}");
     }
-    for name in ["trg_current_attributes_name_keys_insert", "trg_current_attributes_name_keys_update"] {
+    for name in ["trg_ca_name_keys_insert", "trg_ca_name_keys_update"] {
         assert_eq!(schema.set_of(trigger(&schema, name)?.origin()), Some(MigrationSet::Tenant), "{name}");
     }
     Ok(())

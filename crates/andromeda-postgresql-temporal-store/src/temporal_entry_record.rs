@@ -50,8 +50,9 @@ pub struct TemporalEntryRecord {
     pub entry_kind: i16,
     /// `attribute_name_key`, NULL for a Scope entry.
     pub attribute_name_key: Option<i32>,
-    /// `dataset_id`.
-    pub dataset_id: Option<String>,
+    /// `dataset_key`, the grain key of the attribute's `datasetId`, NULL for a
+    /// Scope entry.
+    pub dataset_key: Option<String>,
     /// `attribute_kind`, NULL for a Scope entry.
     pub attribute_kind: Option<i16>,
     /// `value_kind`, the `scope_history` code for a Scope entry.
@@ -301,7 +302,7 @@ impl TemporalEntryRecord {
             entry_kind: self.entry_kind,
             attribute_name_key: self.attribute_name_key,
             // clone: the identity owns what it binds; a `datasetId` and a client `instanceId` are rare and short.
-            dataset_id: self.dataset_id.clone(),
+            dataset_key: self.dataset_key.clone(),
             attribute_kind: self.attribute_kind,
             value_kind: self.value_kind,
             observed_at: None,

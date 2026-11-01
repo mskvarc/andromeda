@@ -211,7 +211,7 @@ fn candidates(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, combinat
         )
         .cond_where(carried)
         .cond_where(dataset_condition(
-            &Expr::col((Rs, TemporalAttributeStreams::DatasetId)),
+            &Expr::col((Rs, TemporalAttributeStreams::DatasetKey)),
             &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
         ))
         .with_cte(held_masks(branch, &attributes, None));
@@ -399,14 +399,8 @@ mod tests {
             &compiled,
             &[string_load()],
         );
-        assert!(
-            sql.contains(r#"COALESCE("rs"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"COALESCE("ah"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#""rs"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
+        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
     }
 
     /// No catalogue row holds a queued entry yet, so every Entity a queued

@@ -32,7 +32,7 @@ pub mod entity_state_record;
 /// Error types for the context store crate.
 pub mod error;
 /// Updating a tenant database's versioned extensions to the versions the
-/// server ships.
+/// server ships, and installing the optional extensions it ships.
 pub mod extension_update;
 /// The platform route from minted subscription identifiers to tenants (clause 5.8.1.4).
 pub mod forwarded_subscription_routes;
@@ -48,6 +48,9 @@ pub mod jsonld_context;
 pub mod migration_set;
 /// Persistence layer for the notification delivery queue.
 pub mod notification_delivery;
+/// The extensions installed when the server ships them, though the schema
+/// does not depend on them.
+pub mod optional_extension;
 /// Durable side-effect queue for opt-in async batch processing.
 pub mod pending_side_effects;
 /// Reading a tenant's database for the earliest instant it has work due.

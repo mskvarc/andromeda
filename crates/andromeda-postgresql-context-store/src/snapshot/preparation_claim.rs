@@ -19,7 +19,7 @@ use andromeda_postgresql_schema::{
     branch_schema_version::BranchSchemaVersion,
     snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
 };
-use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
+use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_snapshot::{error::SnapshotError, store::SnapshotPreparationJob};
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
@@ -103,7 +103,6 @@ fn claim_statement(snapshot_key: SnapshotKey, claimed_by: LeaseHolder, lease_unt
     Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::ClaimedBy, claimed_by.as_uuid())
-        .value(SnapshotPreparation::ClaimedAt, now())
         .value(SnapshotPreparation::LeaseUntil, lease_until)
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(snapshot_key.as_i64()))
         .to_owned()
@@ -314,7 +313,6 @@ fn release_statement(id: &Identifier, claimed_by: LeaseHolder) -> UpdateStatemen
     Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
-        .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).in_subquery(key_of(id)))
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
@@ -406,7 +404,6 @@ mod tests {
         let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("valid lease instant");
         let sql = claim_statement(key, worker, lease_until).to_string(PostgresQueryBuilder);
         assert!(sql.starts_with("UPDATE \"snapshot_preparation\" SET \"claimed_by\" ="), "{sql}");
-        assert!(sql.contains("\"claimed_at\" = NOW()"), "{sql}");
         assert!(sql.contains("WHERE \"snapshot_key\" = 7"), "{sql}");
     }
 
@@ -456,7 +453,7 @@ mod tests {
         let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
         let sql = release_statement(&id, worker).to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with("UPDATE \"snapshot_preparation\" SET \"claimed_by\" = NULL, \"claimed_at\" = NULL, \"lease_until\" = NULL"),
+            sql.starts_with("UPDATE \"snapshot_preparation\" SET \"claimed_by\" = NULL, \"lease_until\" = NULL"),
             "{sql}"
         );
         assert!(

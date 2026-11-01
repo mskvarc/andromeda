@@ -32,7 +32,7 @@ fn recorded_stream_rows(schema: Option<&DynIden>, stream: &HistoryStream, pendin
     select
         .expr_as(stream.column(stream.evolution()), stream.evolution())
         .expr_as(stream.column(HistoryGrain::AttributeNameKey), HistoryGrain::AttributeNameKey)
-        .expr_as(stream.column(HistoryGrain::DatasetId), HistoryGrain::DatasetId)
+        .expr_as(stream.column(HistoryGrain::DatasetKey), HistoryGrain::DatasetKey)
         .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedRow, column))));
     for column in attribute_value_columns() {
         select.expr_as(Expr::col((RecordedRow, column)), column);
@@ -143,10 +143,7 @@ mod tests {
         );
         assert!(pending.contains(r#""pe"."entity_id" = "st"."entity_id""#), "{pending}");
         assert!(pending.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{pending}");
-        assert!(
-            pending.contains(r#"COALESCE("pe"."dataset_id", '') = COALESCE("st"."dataset_id", '')"#),
-            "{pending}"
-        );
+        assert!(pending.contains(r#""pe"."dataset_key" = "st"."dataset_key""#), "{pending}");
     }
 
     /// Every recorded row is one part, each system time projected from its

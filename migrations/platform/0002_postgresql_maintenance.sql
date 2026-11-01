@@ -48,11 +48,17 @@
 -- time.
 --
 -- A target row belongs to one context branch of its tenant: `snapshot_key`
--- is the Snapshot whose published branch schema holds the relation, NULL for
--- the live branch. The grain therefore contains a nullable column and the
--- table has no primary key. A Snapshot key lives in the tenant database, so
--- no foreign key can hold it; a visit deletes the rows of a branch whose
--- schema no longer exists.
+-- is the Snapshot whose published branch schema holds the relation, 0 for the
+-- live branch, which no Snapshot key is. The grain is the primary key, so its
+-- branch member is never NULL and compares with plain `=`. A Snapshot key
+-- lives in the tenant database, so no foreign key can hold it; a visit
+-- deletes the rows of a branch whose schema no longer exists.
+--
+-- The values behind a target's latest decision (`last_relation_bytes`,
+-- `last_reclaimable_bytes`, `last_degraded_percent`,
+-- `last_threshold_percent`, `last_decision`) let an operator see why a pass
+-- acted, queued or deferred work without reconstructing it from logs. Each
+-- stays NULL until the target's first sample.
 --
 -- `postgresql_maintenance_fleet` holds the one row of state that belongs to
 -- the cluster rather than to a tenant. `autovacuum_saturated_passes` counts
@@ -67,7 +73,7 @@
 --     11 schema-behind, 12 capability-unavailable, 13 idle, 14 probed,
 --     15 queued, 16 would-act, 17 deferred, 18 acted, 19 action-failed,
 --     20 cancelled
---   target: 1 uq_current_attributes_grain, 2 idx_ca_value_number,
+--   target: 1 pk_ca_grain, 2 idx_ca_value_number,
 --     3 idx_ca_value_string, 4 idx_ca_value_string_trgm,
 --     5 idx_ca_value_boolean, 6 idx_ca_value_date_time, 7 idx_ca_value_uri,
 --     8 idx_ca_value_geometry, 9 idx_ca_entity_geometry,
@@ -96,6 +102,11 @@
 --     43 idx_temporal_attribute_streams_attribute_name_key_shape_mask,
 --     44 attribute_history_rowstore
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
+--   last_decision: 1 act, 2 queued, 3 would-act, 4 relation-too-small,
+--     5 reclaim-too-small, 6 below-threshold, 7 consecutive-samples,
+--     8 cooldown, 9 active-backend-ratio, 10 long-transaction,
+--     11 active-maintenance, 12 waiting-relation-lock, 13 paired-queued,
+--     14 horizon-held
 -- ============================================================================
 create table postgresql_maintenance_tenants (
     tenant_key bigint not null,
@@ -113,7 +124,7 @@ create table postgresql_maintenance_tenants (
 
 create table postgresql_maintenance_targets (
     tenant_key bigint not null,
-    snapshot_key bigint,
+    snapshot_key bigint not null,
     last_sampled_at timestamptz,
     cooldown_until timestamptz,
     last_action_at timestamptz,
@@ -122,22 +133,30 @@ create table postgresql_maintenance_targets (
     last_dead_tuples_before bigint,
     last_dead_tuples_after bigint,
     baseline_density bigint,
+    last_relation_bytes bigint,
+    last_reclaimable_bytes bigint,
     first_breach_at timestamptz,
     breach_samples integer not null default 0,
     consecutive_failures integer not null default 0,
     target smallint not null,
     last_action_result smallint,
+    last_degraded_percent smallint,
+    last_threshold_percent smallint,
+    last_decision smallint,
     is_action_pending boolean not null default false,
-    constraint uq_postgresql_maintenance_targets_grain unique nulls not distinct (tenant_key, snapshot_key, target),
+    constraint pk_postgresql_maintenance_targets primary key (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
-    constraint chk_postgresql_maintenance_targets_snapshot_key_positive check (snapshot_key is null or snapshot_key > 0),
+    constraint chk_postgresql_maintenance_targets_snapshot_key_non_negative check (snapshot_key >= 0),
     constraint chk_postgresql_maintenance_targets_target check (target between 1 and 44),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0)),
-    constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0)
+    constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0),
+    constraint chk_postgresql_maintenance_targets_sample_non_negative check ((last_relation_bytes is null or last_relation_bytes >= 0) and (last_reclaimable_bytes is null or last_reclaimable_bytes >= 0)),
+    constraint chk_postgresql_maintenance_targets_percentages check ((last_degraded_percent is null or last_degraded_percent between 0 and 100) and (last_threshold_percent is null or last_threshold_percent between 0 and 100)),
+    constraint chk_postgresql_maintenance_targets_last_decision check (last_decision is null or last_decision between 1 and 14)
 );
 
 create table postgresql_maintenance_fleet (

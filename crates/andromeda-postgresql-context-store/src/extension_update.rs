@@ -11,6 +11,13 @@
 //! read that decides whether an update is due keeps `TimescaleDB` unloaded, so
 //! no connection that outlives the update ever carried the old library.
 //!
+//! The same reconciliation installs every [`OptionalExtension`] the server ships
+//! and the database lacks, when the connecting role may create it. It runs
+//! before a database is migrated and whenever a tenant's probe finds one due, so
+//! a fresh database receives it before its first migration and a database
+//! created before the server shipped it receives it the next time the broker
+//! opens it.
+//!
 //! Brokers starting together serialize on a transaction advisory lock keyed on
 //! the database and read the versions again under it, so one of them updates
 //! and the others find nothing left to do. Every connection here waits a
@@ -18,6 +25,7 @@
 
 use crate::{
     error::ContextStoreError,
+    optional_extension::OptionalExtension,
     schema_contract::{
         error::SchemaContractError,
         server_requirements::{ExtensionPresence, ExtensionVersion},
@@ -31,13 +39,14 @@ use andromeda_postgresql_pool::{
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     command::Command,
+    extension_creation::ExtensionCreation,
     extension_update::ExtensionUpdate,
-    introspection::{extension_shipped_version, extension_version},
+    introspection::{current_role_is_superuser, extension_shipped_version, extension_trusted, extension_version},
     setting::{Setting, SettingAssignment, SettingScope},
     statement::Statement,
 };
 use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
-use sea_query::{Alias, Expr, Query, SelectStatement};
+use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
 use sqlx::{
     Acquire,
     Connection,
@@ -116,23 +125,48 @@ pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<
         .collect()
 }
 
+/// The optional extensions the server ships, this database lacks, and the
+/// session's role may create: as a superuser, or because the shipped version is
+/// trusted.
+///
+/// An extension the role may not create is not due, so a database whose role
+/// cannot install it does not read as needing reconciliation on every open.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the read fails or a column
+/// does not decode.
+pub async fn installable_optional_extensions(connection: &mut PgConnection) -> Result<Vec<OptionalExtension>, ContextStoreError> {
+    let row = installable_extensions_statement().to_query().fetch_one(connection).await?;
+    OptionalExtension::iter()
+        .map(|extension| -> Result<Option<OptionalExtension>, ContextStoreError> {
+            Ok(row.try_get::<bool, _>(extension.installable_column())?.then_some(extension))
+        })
+        .filter_map(Result::transpose)
+        .collect()
+}
+
 /// Update every versioned extension of the database `database_url` names to
-/// the version the server ships.
+/// the version the server ships, and install every optional extension
+/// [`installable_optional_extensions`] finds due.
 ///
 /// Run before anything else touches the database on this start, so no
 /// connection the broker keeps has loaded the old `TimescaleDB` library: the
 /// lock and the version read run without loading it, and each update runs on a
 /// connection opened for it alone. An update the connecting role may not make
 /// is logged and skipped, leaving the schema contract's floor to decide whether
-/// the installed version still serves.
+/// the installed version still serves; an installation refused the same way is
+/// logged and skipped, leaving the feature that uses the extension to report
+/// its absence.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the URL names no
 /// database, [`ContextStoreError::Database`] when a connection cannot be
 /// opened, the lock or the read fails, or an update fails for a reason other
-/// than privilege, and [`ContextStoreError::SchemaContract`] when a reported
-/// version cannot be read.
+/// than privilege or an installation fails the same way, and
+/// [`ContextStoreError::SchemaContract`] when a reported version cannot be
+/// read.
 pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreError> {
     let options = schema_change_connect_options(database_url.as_str())?;
     let mut lock_holder = PgConnection::connect_with(&options).await?;
@@ -141,8 +175,9 @@ pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreErr
     outcome
 }
 
-/// Take the database's update lock, read what is pending, and apply it, all
-/// in one transaction that keeps `TimescaleDB` unloaded on the lock holder.
+/// Take the database's update lock, read what is pending and what is due to be
+/// installed, and apply both, all in one transaction that keeps `TimescaleDB`
+/// unloaded on the lock holder.
 async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOptions) -> Result<(), ContextStoreError> {
     let database = options.get_database().ok_or(ContextStoreError::DatabaseUrlUnnamed)?;
     let mut transaction = begin_without_timescaledb(&mut *lock_holder).await?;
@@ -150,28 +185,54 @@ async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOp
     for pending in pending_extension_updates(&mut transaction).await? {
         apply_update(options, pending).await?;
     }
+    for extension in installable_optional_extensions(&mut transaction).await? {
+        apply_installation(options, extension).await?;
+    }
     transaction.commit().await?;
     Ok(())
 }
 
-/// Run one update as the first statement of a connection opened for it,
-/// opening another and running it again while it is refused a lock.
-async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdate) -> Result<(), ContextStoreError> {
-    let extension = pending.extension;
-    let outcome = SCHEMA_CHANGE_LOCK_RETRY
+/// Run `command` as the first statement of a connection opened for it, opening
+/// another and running it again while it is refused a lock.
+async fn run_on_own_connection(options: &PgConnectOptions, command: &impl Command) -> Result<(), sqlx::Error> {
+    SCHEMA_CHANGE_LOCK_RETRY
         .run(
             &TokioRetryDelay,
             |error, _| is_lock_not_available(error),
             |_| async move {
                 let mut connection = PgConnection::connect_with(options).await?;
-                let outcome = ExtensionUpdate::new(extension).to_query().execute(&mut connection).await;
+                let outcome = command.to_query().execute(&mut connection).await;
                 connection.close().await?;
-                outcome
+                outcome.map(drop)
             },
         )
-        .await;
-    match outcome {
-        Ok(_) => {
+        .await
+}
+
+/// Install one optional extension on a connection opened for it.
+async fn apply_installation(options: &PgConnectOptions, extension: OptionalExtension) -> Result<(), ContextStoreError> {
+    match run_on_own_connection(options, &ExtensionCreation::new(extension)).await {
+        Ok(()) => {
+            tracing::info!(extension = %extension, event = "extension_installed", "optional extension installed");
+            Ok(())
+        }
+        Err(error) if is_insufficient_privilege(&error) => {
+            tracing::warn!(
+                extension = %extension,
+                error = %error,
+                event = "extension_install_refused",
+                "optional extension installation needs a role that may create it; the extension stays absent"
+            );
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Run one update as the first statement of a connection opened for it.
+async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdate) -> Result<(), ContextStoreError> {
+    match run_on_own_connection(options, &ExtensionUpdate::new(pending.extension)).await {
+        Ok(()) => {
             tracing::info!(
                 extension = %pending.extension,
                 from = %pending.installed,
@@ -238,6 +299,26 @@ fn extension_versions_statement() -> SelectStatement {
     })
 }
 
+/// Read, for every optional extension, whether it is due to be installed:
+/// shipped, absent, and creatable by the session's role.
+fn installable_extensions_statement() -> SelectStatement {
+    OptionalExtension::iter().fold(Query::select(), |mut select, extension| {
+        select.expr_as(installable(extension.catalog_name()), Alias::new(extension.installable_column()));
+        select
+    })
+}
+
+/// Whether the extension `name` is shipped, absent, and creatable by the
+/// session's role; never `NULL`, since an unshipped extension has no trusted
+/// flag to read.
+fn installable(name: &str) -> SimpleExpr {
+    let creatable = current_role_is_superuser().or(Func::coalesce([extension_trusted(name), Expr::val(false)]));
+    extension_shipped_version(name)
+        .is_not_null()
+        .and(extension_version(name).is_null())
+        .and(creatable)
+}
+
 /// The transaction advisory lock that serializes updating one database's
 /// extensions.
 fn extension_update_lock(database: &str) -> SelectStatement {
@@ -249,7 +330,14 @@ fn extension_update_lock(database: &str) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::{
-        extension_update::{PendingExtensionUpdate, extension_update_lock, extension_versions_statement, is_insufficient_privilege, pending_update},
+        extension_update::{
+            PendingExtensionUpdate,
+            extension_update_lock,
+            extension_versions_statement,
+            installable_extensions_statement,
+            is_insufficient_privilege,
+            pending_update,
+        },
         schema_contract::{
             server_requirements::{ExtensionPresence, ExtensionVersion},
             versioned_extension::VersionedExtension,
@@ -271,6 +359,20 @@ mod tests {
         }
         assert!(sql.contains(r#"FROM "pg_extension" WHERE "extname" = 'timescaledb'"#), "{sql}");
         assert!(sql.contains(r#"FROM "pg_available_extensions" WHERE "name" = 'postgis'"#), "{sql}");
+    }
+
+    #[test]
+    fn an_optional_extension_is_due_only_when_shipped_absent_and_creatable_by_the_role() {
+        let sql = installable_extensions_statement().to_string(PostgresQueryBuilder);
+        for clause in [
+            r#"(SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'pgstattuple') IS NOT NULL"#,
+            r#"(SELECT "extversion" FROM "pg_extension" WHERE "extname" = 'pgstattuple') IS NULL"#,
+            r#"(SELECT "rolsuper" FROM "pg_roles" WHERE "rolname" = (current_user))"#,
+            r#"COALESCE((SELECT "trusted" FROM "pg_available_extension_versions" WHERE "name" = 'pgstattuple'"#,
+            r#"AS "pgstattuple_installable""#,
+        ] {
+            assert!(sql.contains(clause), "{clause} missing: {sql}");
+        }
     }
 
     #[test]

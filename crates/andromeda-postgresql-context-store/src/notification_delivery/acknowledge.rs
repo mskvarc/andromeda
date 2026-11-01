@@ -58,9 +58,9 @@ const DELIVERY_HOLD: StatementName = StatementName("notification-delivery-hold")
 /// Record that `worker_id` delivered the notification, and release the hold of
 /// its Subscription.
 ///
-/// The claim triple stays in place: `delivered_at` already makes the delivery
+/// The claim pair stays in place: `delivered_at` already makes the delivery
 /// unclaimable, and the recorded owner is the only trace of which worker sent
-/// it. Clearing the lease alone would leave two of the three columns populated,
+/// it. Clearing the lease alone would leave `claimed_by` populated without it,
 /// which the schema's claim coherence constraint rejects.
 ///
 /// # Errors
@@ -197,7 +197,7 @@ fn acknowledged_with(update: UpdateStatement, hold: CommonTableExpression, selec
         .query(select)
 }
 
-/// Mark the delivery sent without disturbing the claim triple, and delete the
+/// Mark the delivery sent without disturbing the claim pair, and delete the
 /// hold of its Subscription.
 fn mark_delivered_statement(delivery_key: i64, worker_id: LeaseHolder, target: &ContextTarget) -> WithQuery {
     let mut update = acknowledgement(delivery_key, worker_id, target);
@@ -223,7 +223,6 @@ fn mark_failed_statement(
         .value(NotificationDeliveries::AttemptCount, Expr::col(NotificationDeliveries::AttemptCount).add(1))
         .value(NotificationDeliveries::LastError, failure)
         .value(NotificationDeliveries::NextAttemptAt, next_attempt_at)
-        .value(NotificationDeliveries::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::LeaseUntil, SimpleExpr::Keyword(Keyword::Null));
     Ok(acknowledged_with(
@@ -240,7 +239,7 @@ fn mark_failed_statement(
 /// Count the final attempt, stamp the exhaustion instant, release the lease
 /// for good, and lock the hold the delivery was the probe of.
 ///
-/// The claim triple is cleared in the same statement because
+/// The claim pair is cleared in the same statement because
 /// `chk_notification_deliveries_exhausted_state` forbids an exhausted row that
 /// still holds a claim.
 fn mark_exhausted_statement(delivery_key: i64, worker_id: LeaseHolder, failure: &str, target: &ContextTarget) -> WithQuery {
@@ -249,7 +248,6 @@ fn mark_exhausted_statement(delivery_key: i64, worker_id: LeaseHolder, failure: 
         .value(NotificationDeliveries::AttemptCount, Expr::col(NotificationDeliveries::AttemptCount).add(1))
         .value(NotificationDeliveries::ExhaustedAt, Expr::current_timestamp())
         .value(NotificationDeliveries::LastError, failure)
-        .value(NotificationDeliveries::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::LeaseUntil, SimpleExpr::Keyword(Keyword::Null));
     acknowledged_with(
@@ -347,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivered_row_keeps_its_claim_triple() {
+    fn a_delivered_row_keeps_its_claim_pair() {
         let sql = delivered(&ContextTarget::Live);
         let guard = acknowledgement_of(&sql);
         assert!(guard.contains(r#""delivered_at" = CURRENT_TIMESTAMP"#), "{sql}");
@@ -378,7 +376,6 @@ mod tests {
         let sql = failed(&ContextTarget::Live);
         let guard = acknowledgement_of(&sql);
         assert!(guard.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
-        assert!(guard.contains(r#""claimed_at" = NULL"#), "{sql}");
         assert!(guard.contains(r#""claimed_by" = NULL"#), "{sql}");
         assert!(guard.contains(r#""lease_until" = NULL"#), "{sql}");
     }
@@ -407,7 +404,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"UPDATE "notification_deliveries" SET "held_at" = CURRENT_TIMESTAMP, "claimed_at" = NULL, "claimed_by" = NULL, "#,
+                r#"UPDATE "notification_deliveries" SET "held_at" = CURRENT_TIMESTAMP, "claimed_by" = NULL, "#,
                 r#""lease_until" = NULL WHERE "subscription_key" = 7 AND "held_at" IS NULL AND "delivery_key" <> 3 "#,
                 r#"AND "delivered_at" IS NULL AND "exhausted_at" IS NULL "#,
                 r#"AND ("lease_until" IS NULL OR "lease_until" <= CURRENT_TIMESTAMP)"#
@@ -421,7 +418,6 @@ mod tests {
         let guard = acknowledgement_of(&sql);
         assert!(guard.contains(r#""exhausted_at" = CURRENT_TIMESTAMP"#), "{sql}");
         assert!(guard.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
-        assert!(guard.contains(r#""claimed_at" = NULL"#), "{sql}");
         assert!(guard.contains(r#""claimed_by" = NULL"#), "{sql}");
         assert!(guard.contains(r#""lease_until" = NULL"#), "{sql}");
         assert!(!sql.contains(&i32::MAX.to_string()), "no sentinel attempt count: {sql}");

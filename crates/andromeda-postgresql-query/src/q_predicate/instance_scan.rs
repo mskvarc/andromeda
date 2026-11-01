@@ -103,15 +103,15 @@ mod tests {
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
         window_reach::WindowReach,
     };
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
     use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
 
     fn history() -> HistoryWindow {
         HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ModifiedAt)
+            .timeproperty(TimeProp::Modified)
             .interval(TimeInterval::Unbounded)
             .reach(WindowReach::InsideAndInEffect)
             .build()

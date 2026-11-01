@@ -17,7 +17,6 @@
 
 use crate::{
     alias::Ah,
-    axis::axis_column,
     history::{join_attribute_names, project_base_columns},
     scope_history::{order_scope_events, project_scope_event},
     stream_page::project_whole_streams,
@@ -27,9 +26,16 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, entity_rows::entity_rows, grain::HistoryGrain, scope_rows::scope_rows},
+    history_source::{
+        HistoryBranch,
+        HistoryOf,
+        attribute_rows::attribute_rows,
+        axis::{axis_present, axis_window},
+        entity_rows::entity_rows,
+        grain::HistoryGrain,
+        scope_rows::scope_rows,
+    },
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
-    time_interval_predicate::within_interval,
     window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
@@ -112,8 +118,7 @@ pub fn build_window_relationship_instances(
     relationships: &[AttributeNameKey],
 ) -> SelectStatement {
     let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
-    let axis = SeaExpr::col((WindowRow, axis_column(compiled.window.timeproperty)));
-    let inside = within_interval(&axis, &compiled.window.interval);
+    let timeproperty = compiled.window.timeproperty;
     let mut rows = Query::select();
     rows.column((WindowRow, Asterisk))
         .from(attribute_rows(branch, &of, WindowRow))
@@ -121,8 +126,8 @@ pub fn build_window_relationship_instances(
             SeaExpr::col((WindowRow, HistoryGrain::AttributeNameKey)),
             relationships.iter().map(|key| key.get()),
         ))
-        .and_where(axis.is_not_null())
-        .cond_where(inside);
+        .cond_where(axis_present(WindowRow, timeproperty))
+        .cond_where(axis_window(WindowRow, timeproperty, &compiled.window.interval));
     let mut select = Query::select();
     project_base_columns(&mut select);
     project_whole_streams(&mut select);

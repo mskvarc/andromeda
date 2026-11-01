@@ -216,7 +216,7 @@ mod tests {
             HistoryTable::AttributeHistory,
             chunk(),
             "_timescaledb_internal".to_owned(),
-            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_at_ccnew",
+            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_placement_ccnew",
         ) else {
             panic!("a ccnew index on a chunk is an artifact");
         };
@@ -226,7 +226,7 @@ mod tests {
             artifact.name.drop_statement(),
             drop_index_concurrently(
                 Alias::new("_timescaledb_internal"),
-                Alias::new("_hyper_1_2_chunk_idx_attribute_history_stream_observed_at_ccnew")
+                Alias::new("_hyper_1_2_chunk_idx_attribute_history_stream_observed_placement_ccnew")
             )
         );
     }
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn an_invalid_chunk_index_without_an_artifact_suffix_is_not_recovered() {
         for name in [
-            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_at",
+            "_hyper_1_2_chunk_idx_attribute_history_stream_observed_placement",
             "_ccnew",
             "_hyper_1_2_chunk_x_ccold_y",
         ] {

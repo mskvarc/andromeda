@@ -281,7 +281,7 @@ async fn execute_statement(connection: &mut PgConnection, statement: &Maintenanc
 const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
     match target {
         MaintenanceTarget::Index(
-            IndexTarget::UqCurrentAttributesGrain
+            IndexTarget::PkCaGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
             | IndexTarget::IdxCaValueStringTrgm

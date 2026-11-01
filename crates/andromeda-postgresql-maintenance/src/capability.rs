@@ -1,7 +1,9 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 
 use crate::{branch::Branch, error::MaintenanceError};
+use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
 use andromeda_postgresql_seaquery::{
+    introspection::server_version_num,
     maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, to_regprocedure},
     statement::Statement,
 };
@@ -26,7 +28,7 @@ pub(crate) enum CapabilityStatus {
 pub(crate) enum MutationPrivilege {
     /// Inspection privileges only.
     NotRequired,
-    /// PostgreSQL 18 `MAINTAIN` is required on all allowlisted heaps.
+    /// PostgreSQL 17 `MAINTAIN` is required on all allowlisted heaps.
     Required,
 }
 
@@ -44,9 +46,31 @@ pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutatio
     Ok(CapabilityStatus::Ready)
 }
 
+/// The first PostgreSQL release with the `MAINTAIN` privilege.
+const MAINTAIN_PRIVILEGE_VERSION: PostgresVersion = PostgresVersion::new(170_000);
+
 /// Whether the role holds `MAINTAIN` on every allowlisted heap `branch` holds.
+///
+/// On a server before PostgreSQL 17 the answer is `false`, the same missing
+/// privilege a later server without the grant reports.
 pub(crate) async fn branch_maintainable(connection: &mut PgConnection, branch: Branch) -> Result<bool, MaintenanceError> {
-    Ok(maintain_privilege_statement(branch).to_query_scalar::<bool>().fetch_one(connection).await?)
+    let server = PostgresVersion::new(server_version_statement().to_query_scalar::<i32>().fetch_one(&mut *connection).await?);
+    match maintain_probe(server, branch) {
+        None => Ok(false),
+        Some(statement) => Ok(statement.to_query_scalar::<bool>().fetch_one(connection).await?),
+    }
+}
+
+/// The running server's `server_version_num`.
+fn server_version_statement() -> SelectStatement {
+    Query::select().expr(server_version_num()).to_owned()
+}
+
+/// The `MAINTAIN` query for `branch` on a server at version `server`, or
+/// `None` when the server predates the privilege: the role cannot hold it
+/// there, and an earlier server rejects the privilege name.
+fn maintain_probe(server: PostgresVersion, branch: Branch) -> Option<SelectStatement> {
+    (server >= MAINTAIN_PRIVILEGE_VERSION).then(|| maintain_privilege_statement(branch))
 }
 
 /// `pg_extension` presence query.
@@ -66,7 +90,7 @@ fn inspection_privilege_statement() -> SelectStatement {
     Query::select().expr(exact.and(approximate)).to_owned()
 }
 
-/// Required PostgreSQL 18 `MAINTAIN` privileges on every allowlisted heap
+/// Required PostgreSQL 17 `MAINTAIN` privileges on every allowlisted heap
 /// `branch` holds; an index is rebuilt under its heap's privilege.
 fn maintain_privilege_statement(branch: Branch) -> SelectStatement {
     let granted = branch
@@ -82,8 +106,13 @@ fn maintain_privilege_statement(branch: Branch) -> SelectStatement {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{branch::Branch, candidate::heap_target::HeapTarget, capability::maintain_privilege_statement};
+    use crate::{
+        branch::Branch,
+        candidate::heap_target::HeapTarget,
+        capability::{maintain_privilege_statement, maintain_probe, server_version_statement},
+    };
     use andromeda_context_space::snapshot_key::SnapshotKey;
+    use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -104,5 +133,36 @@ mod tests {
             assert_eq!(sql.contains(&privilege), branch.heaps().any(|held| held == heap), "{heap}: {sql}");
         }
         assert!(!sql.contains("'public."), "{sql}");
+    }
+
+    /// The privilege arrived in PostgreSQL 17; an earlier server rejects its
+    /// name, so no query is built and the role reads as lacking it.
+    #[test]
+    fn a_server_before_postgresql_17_lacks_maintain_without_a_privilege_query() {
+        for version in [150_000, 160_000, 169_999] {
+            assert!(maintain_probe(PostgresVersion::new(version), Branch::Live).is_none(), "{version}");
+        }
+    }
+
+    #[test]
+    fn a_server_from_postgresql_17_on_builds_the_privilege_query() {
+        let expected = maintain_privilege_statement(Branch::Live).to_string(PostgresQueryBuilder);
+        for version in [170_000, 180_001] {
+            assert_eq!(
+                maintain_probe(PostgresVersion::new(version), Branch::Live)
+                    .map(|statement| statement.to_string(PostgresQueryBuilder))
+                    .as_deref(),
+                Some(expected.as_str()),
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_server_version_is_read_as_an_integer() {
+        assert_eq!(
+            server_version_statement().to_string(PostgresQueryBuilder),
+            "SELECT current_setting('server_version_num')::integer"
+        );
     }
 }

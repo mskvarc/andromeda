@@ -34,7 +34,7 @@ pub enum Subscriptions {
     /// The `attribute_names` keys of the `watchedAttributes` IRIs
     WatchedAttributes,
     /// The `notificationTrigger` change types
-    NotificationTrigger,
+    NotificationTriggers,
     /// The `timeInterval` period in seconds, when periodic
     TimeInterval,
     /// The `q` query filter
@@ -52,7 +52,7 @@ pub enum Subscriptions {
     /// The `attribute_names` keys of the `jsonKeys` names whose `q` object keys were expanded (clause 5.2.12)
     JsonKeys,
     /// The `datasetId` selectors an entity subscription narrows to
-    DatasetId,
+    DatasetIds,
     /// The `notification` parameters, as JSON
     Notification,
     /// The `expiresAt` instant
@@ -154,7 +154,8 @@ mod tests {
         assert_eq!(Subscriptions::ExpandValues.to_string(), "expand_values");
         assert_eq!(Subscriptions::JsonKeys.to_string(), "json_keys");
         assert_eq!(Subscriptions::QWrittenMembers.to_string(), "q_written_members");
-        assert_eq!(Subscriptions::NotificationTrigger.to_string(), "notification_trigger");
+        assert_eq!(Subscriptions::NotificationTriggers.to_string(), "notification_triggers");
+        assert_eq!(Subscriptions::DatasetIds.to_string(), "dataset_ids");
         assert_eq!(Subscriptions::TimeInterval.to_string(), "time_interval");
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Subscriptions::LocalOnly.to_string(), "local_only");

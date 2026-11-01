@@ -51,14 +51,7 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
     temporal_intent::TemporalEntry,
 };
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    cast::typed_null,
-    literal::int_literal,
-    nullable_text_key::same_nullable_text_key,
-    pg_array::has_elements,
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::{branch::qualified, cast::typed_null, literal::int_literal, pg_array::has_elements, pg_type::PostgresType};
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `pe`: the queued entry a source row is projected from.
@@ -205,7 +198,7 @@ pub(crate) fn attribute_rows(schema: Option<&DynIden>, of: &HistoryOf) -> Select
     select
         .expr_as(entry(TemporalAppendEntries::EntityId), HistoryGrain::EntityId)
         .expr_as(entry(TemporalEntry::AttributeNameKey), HistoryGrain::AttributeNameKey)
-        .expr_as(entry(TemporalEntry::DatasetId), HistoryGrain::DatasetId)
+        .expr_as(entry(TemporalEntry::DatasetKey), HistoryGrain::DatasetKey)
         .expr_as(entry(TemporalAppendEntries::RecordedAt), AttributeHistory::RecordedAt)
         .expr_as(entry(TemporalAppendEntries::WriteId), AttributeHistory::WriteId)
         .expr_as(entry(TemporalAppendEntries::WriteOrdinal), AttributeHistory::WriteOrdinal);
@@ -227,7 +220,7 @@ pub(crate) fn stream_attribute_rows(schema: Option<&DynIden>, stream: &HistorySt
     let mut select = attribute_rows(schema, &HistoryOf::Entity(stream.column(HistoryGrain::EntityId)));
     select
         .and_where(entry(TemporalEntry::AttributeNameKey).eq(stream.column(HistoryGrain::AttributeNameKey)))
-        .and_where(same_nullable_text_key(entry(TemporalEntry::DatasetId), stream.column(HistoryGrain::DatasetId)));
+        .and_where(entry(TemporalEntry::DatasetKey).eq(stream.column(HistoryGrain::DatasetKey)));
     select
 }
 
@@ -246,16 +239,13 @@ pub(crate) fn stream_rows(schema: Option<&DynIden>, of: &HistoryOf) -> SelectSta
         )
         .and_where(Expr::col((RecordedEvolution, Entities::Id)).equals((PendingEntry, TemporalAppendEntries::EntityId)))
         .and_where(Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)).equals((PendingEntry, TemporalEntry::AttributeNameKey)))
-        .and_where(same_nullable_text_key(
-            Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)),
-            entry(TemporalEntry::DatasetId),
-        ));
+        .and_where(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetKey)).eq(entry(TemporalEntry::DatasetKey)));
     let mut select = Query::select();
     select
         .distinct()
         .expr_as(entry(TemporalAppendEntries::EntityId), HistoryGrain::EntityId)
         .expr_as(entry(TemporalEntry::AttributeNameKey), HistoryGrain::AttributeNameKey)
-        .expr_as(entry(TemporalEntry::DatasetId), HistoryGrain::DatasetId)
+        .expr_as(entry(TemporalEntry::DatasetKey), HistoryGrain::DatasetKey)
         .expr_as(typed_null(PostgresType::Bigint), HistoryGrain::StreamKey)
         .from_as(TemporalAppendEntries::Table, PendingEntry)
         .and_where(entry_kind_in(PendingEntry, &ATTRIBUTE_KINDS))
@@ -378,7 +368,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     /// The view the entries are read from.
-    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0025_temporal_append_intents.sql");
+    const MIGRATION: &str = include_str!("../../../../migrations/tenant/0024_temporal_append_intents.sql");
 
     fn rendered() -> String {
         attribute_rows(None, &HistoryOf::EveryEntity).to_string(PostgresQueryBuilder)

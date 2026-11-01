@@ -13,7 +13,6 @@ pub mod architecture;
 pub mod configuration_description;
 pub mod configuration_layering;
 pub mod configuration_ownership;
-pub mod dataset_grain_comparison;
 pub mod dependencies;
 pub mod detail_message;
 pub mod detail_message_baseline;

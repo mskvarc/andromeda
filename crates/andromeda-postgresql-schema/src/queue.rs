@@ -31,8 +31,6 @@ pub enum PendingSideEffects {
     LastError,
     /// Earliest instant the job may next be attempted
     NextAttemptAt,
-    /// Instant the current lease was acquired
-    ClaimedAt,
     /// Instant the current lease expires
     LeaseUntil,
     /// Worker that holds the current lease
@@ -63,8 +61,6 @@ pub enum TemporalAppendIntents {
     EntryNeeds,
     /// Earliest instant the intent may next be claimed (shared claimable-queue contract)
     NextAttemptAt,
-    /// Instant the current lease was acquired
-    ClaimedAt,
     /// Instant the current lease expires
     LeaseUntil,
     /// Worker that holds the current lease
@@ -114,7 +110,6 @@ mod tests {
         assert_eq!(TemporalAppendIntents::EntityTypeNameKeys.to_string(), "entity_type_name_keys");
         assert_eq!(TemporalAppendIntents::Entries.to_string(), "entries");
         assert_eq!(TemporalAppendIntents::NextAttemptAt.to_string(), "next_attempt_at");
-        assert_eq!(TemporalAppendIntents::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(TemporalAppendIntents::LeaseUntil.to_string(), "lease_until");
         assert_eq!(TemporalAppendIntents::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(TemporalAppendIntents::AttemptCount.to_string(), "attempt_count");
@@ -145,7 +140,6 @@ mod tests {
         assert_eq!(PendingSideEffects::ExhaustedAt.to_string(), "exhausted_at");
         assert_eq!(PendingSideEffects::LastError.to_string(), "last_error");
         assert_eq!(PendingSideEffects::NextAttemptAt.to_string(), "next_attempt_at");
-        assert_eq!(PendingSideEffects::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(PendingSideEffects::LeaseUntil.to_string(), "lease_until");
         assert_eq!(PendingSideEffects::ClaimedBy.to_string(), "claimed_by");
     }

@@ -23,7 +23,6 @@ use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntent
 use andromeda_postgresql_seaquery::{
     bit_string::bit_union_of_rows,
     branch::qualified,
-    nullable_text_key::nullable_text_key,
     pg_array::{any, array_of_subquery, has_elements},
     postgis::{st_collect_rows, st_envelope},
     unnest::unnest_of,
@@ -104,17 +103,13 @@ struct ExtentGeometry;
 const GRAIN_COLUMNS: [TemporalAttributeStreams; 3] = [
     TemporalAttributeStreams::EntityKey,
     TemporalAttributeStreams::AttributeNameKey,
-    TemporalAttributeStreams::DatasetId,
+    TemporalAttributeStreams::DatasetKey,
 ];
 
-/// The arbiter of a stream insert: the grain as its unique index keys it, the
-/// default instance as the empty string, and an insert of a stream already
-/// held writes nothing.
+/// The arbiter of a stream insert: the grain as its unique constraint keys
+/// it, and an insert of a stream already held writes nothing.
 fn existing_grain_kept() -> OnConflict {
-    OnConflict::columns([TemporalAttributeStreams::EntityKey, TemporalAttributeStreams::AttributeNameKey])
-        .expr(nullable_text_key(Expr::col(TemporalAttributeStreams::DatasetId)))
-        .do_nothing()
-        .to_owned()
+    OnConflict::columns(GRAIN_COLUMNS).do_nothing().to_owned()
 }
 
 /// The catalogue columns a stream is inserted with beside its grain.
@@ -174,13 +169,13 @@ pub(crate) fn evolutions_and_streams_statement(source: &StagedSource<'_>, schema
     let stream_columns = [
         TemporalAttributeStreams::EntityKey,
         TemporalAttributeStreams::AttributeNameKey,
-        TemporalAttributeStreams::DatasetId,
+        TemporalAttributeStreams::DatasetKey,
     ];
     let mut entries = Query::select();
     entries
         .expr_as(Expr::col((Evolved, Entities::EntityKey)), TemporalAttributeStreams::EntityKey)
         .expr_as(entry(TemporalEntry::AttributeNameKey), TemporalAttributeStreams::AttributeNameKey)
-        .expr_as(entry(TemporalEntry::DatasetId), TemporalAttributeStreams::DatasetId)
+        .expr_as(entry(TemporalEntry::DatasetKey), TemporalAttributeStreams::DatasetKey)
         .expr_as(Expr::col((Evolved, Created)), Created)
         .expr_as(intent(TemporalAppendIntents::IntentKey), FirstIntent)
         .expr_as(write_ordinal(), FirstOrdinal);
@@ -354,7 +349,7 @@ pub(crate) fn untyped_streams_statement(source: &StagedSource<'_>, schema: Optio
     entries
         .expr_as(Expr::col((Te, Entities::EntityKey)), TemporalAttributeStreams::EntityKey)
         .expr_as(entry(TemporalEntry::AttributeNameKey), TemporalAttributeStreams::AttributeNameKey)
-        .expr_as(entry(TemporalEntry::DatasetId), TemporalAttributeStreams::DatasetId);
+        .expr_as(entry(TemporalEntry::DatasetKey), TemporalAttributeStreams::DatasetKey);
     with_recorded_values(&mut entries);
     source_entries(&mut entries, source);
     entries

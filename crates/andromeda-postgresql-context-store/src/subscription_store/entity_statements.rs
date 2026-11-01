@@ -5,7 +5,7 @@
 //! row that completes the subscription is inserted under it in the same
 //! transaction.
 //!
-//! `notification_trigger` is stored as the clause-5.3.3 registry codes the
+//! `notification_triggers` is stored as the clause-5.3.3 registry codes the
 //! notification queue is numbered from, not as their camel-case labels, so a
 //! subscription's trigger set and a queued notification's trigger share one
 //! numbering. `kind` and `status` are registry codes too, and the three
@@ -51,7 +51,7 @@ fn written_columns(
         (Subscriptions::Description, Expr::val(fields.description)),
         (Subscriptions::Entities, json_document(fields.entities)?),
         (Subscriptions::WatchedAttributes, Expr::val(interned.watched_attributes)),
-        (Subscriptions::NotificationTrigger, Expr::val(stored_trigger_list(fields.notification_trigger))),
+        (Subscriptions::NotificationTriggers, Expr::val(stored_trigger_list(fields.notification_trigger))),
         (Subscriptions::TimeInterval, Expr::val(fields.time_interval)),
         (Subscriptions::Q, Expr::val(fields.q.map(ToString::to_string))),
         (Subscriptions::GeoQ, json_document(fields.geo_q)?),
@@ -60,7 +60,7 @@ fn written_columns(
         (Subscriptions::ExpandValues, Expr::val(interned.expand_values)),
         (Subscriptions::JsonKeys, Expr::val(interned.json_keys)),
         (
-            Subscriptions::DatasetId,
+            Subscriptions::DatasetIds,
             Expr::val(fields.dataset_id.map(|selectors| selectors.iter().map(ToString::to_string).collect::<Vec<_>>())),
         ),
         (Subscriptions::Notification, json_document(fields.notification)?),

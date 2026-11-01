@@ -37,10 +37,15 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::temporal::{
     history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
-    window::{TemporalWindow, TimeInterval},
+    window::TemporalWindow,
 };
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_predicate::dataset_condition, dictionary::resolved_names::ResolvedNames};
+use andromeda_postgresql_query::{
+    attribute_name_key::AttributeNameKey,
+    dataset_predicate::dataset_condition,
+    dictionary::resolved_names::ResolvedNames,
+    history_source::axis::axis_window,
+};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, TemporalAttributeStreams},
@@ -51,10 +56,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::{any, is_any_of, is_none_of},
     statement::Statement,
 };
-use andromeda_postgresql_temporal_query::{
-    alias::{Ah, S, Te},
-    axis::axis_column,
-};
+use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use iri_rs::IriBuf;
 use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
@@ -222,38 +224,25 @@ fn matching_streams_query(
         }
     }
 
-    streams.cond_where(dataset_condition(&Expr::col((S, TemporalAttributeStreams::DatasetId)), &scope.dataset));
+    streams.cond_where(dataset_condition(&Expr::col((S, TemporalAttributeStreams::DatasetKey)), &scope.dataset));
 
     streams.take()
 }
 
-/// The window predicate on the history row's axis column, half-open and
-/// lower-inclusive to match the temporal query's stage-1 semantics exactly.
-fn window_condition(window: &TemporalWindow) -> Condition {
-    let axis = axis_column(window.timeproperty);
-    let mut condition = Condition::all();
-    match &window.interval {
-        TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(Expr::col(axis).lt(*instant)),
-        TimeInterval::After(instant) => condition = condition.add(Expr::col(axis).gte(*instant)),
-        TimeInterval::Between { from, to } => condition = condition.add(Expr::col(axis).gte(*from)).add(Expr::col(axis).lt(*to)),
-    }
-    condition
-}
-
-/// `stream_key = ANY(keys)` and the window: the history rows the request
-/// removes.
+/// `stream_key = ANY(keys)` and the window on the history row under `ah`, as
+/// the temporal query bounds it: the history rows the request removes. An
+/// unbounded window removes every row of the streams.
 fn windowed_rows(stream_keys: &[i64], window: &TemporalWindow) -> Condition {
     Condition::all()
-        .add(Expr::col(AttributeHistory::StreamKey).eq(any(stream_key_array(stream_keys))))
-        .add(window_condition(window))
+        .add(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .add(axis_window(Ah, window.timeproperty, &window.interval))
 }
 
 /// Count the history instances the streams and window select.
 fn windowed_count_statement(schema: Option<&DynIden>, stream_keys: &[i64], window: &TemporalWindow) -> SelectStatement {
     Query::select()
         .expr_as(count_all(), Matched)
-        .from(qualified(schema, AttributeHistory::Table))
+        .from(qualified(schema, AttributeHistory::Table).alias(Ah))
         .cond_where(windowed_rows(stream_keys, window))
         .to_owned()
 }
@@ -261,7 +250,7 @@ fn windowed_count_statement(schema: Option<&DynIden>, stream_keys: &[i64], windo
 /// Delete the history instances the streams and window select.
 fn windowed_delete_statement(schema: Option<&DynIden>, stream_keys: &[i64], window: &TemporalWindow) -> DeleteStatement {
     Query::delete()
-        .from_table(qualified(schema, AttributeHistory::Table))
+        .from_table(qualified(schema, AttributeHistory::Table).alias(Ah))
         .cond_where(windowed_rows(stream_keys, window))
         .to_owned()
 }
@@ -340,16 +329,17 @@ mod tests {
     }
 
     /// Clause 4.11 defaults the axis to `observedAt`; each time property filters
-    /// its own column with no `COALESCE`, matching stage 1.
+    /// its own column, and on every axis but `deletedAt` its placement beside
+    /// it, matching stage 1.
     #[test]
     fn each_time_property_filters_its_own_column() {
         let expected = [
-            (TimeProp::Observed, "\"observed_at\""),
-            (TimeProp::Created, "\"created_at\""),
-            (TimeProp::Modified, "\"modified_at\""),
-            (TimeProp::Deleted, "\"deleted_at\""),
+            (TimeProp::Observed, r#""ah"."observed_at" >="#, true),
+            (TimeProp::Created, r#""ah"."created_at" >="#, true),
+            (TimeProp::Modified, r#""ah"."modified_at" >="#, true),
+            (TimeProp::Deleted, r#""ah"."deleted_at" >="#, false),
         ];
-        for (prop, column) in expected {
+        for (prop, column, placed) in expected {
             let mut scope = scope(
                 AttributeDeleteScope::All,
                 DatasetFilter::Unfiltered,
@@ -359,7 +349,7 @@ mod tests {
             scope.window = TemporalWindow::builder().interval(scope.window.interval).timeproperty(prop).build();
             let sql = delete_sql(&scope);
             assert!(sql.contains(column), "{prop}: {sql}");
-            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
+            assert_eq!(sql.contains("COALESCE"), placed, "{prop}: {sql}");
         }
     }
 
@@ -421,27 +411,21 @@ mod tests {
     #[test]
     fn the_dataset_filter_renders_its_predicate() {
         let default_only = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::DefaultOnly, TimeInterval::Unbounded, false));
-        assert!(default_only.contains(r#"COALESCE("s"."dataset_id", '') = ('')"#), "{default_only}");
+        assert!(default_only.contains(r#""s"."dataset_key" = ('')"#), "{default_only}");
         let named = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::NamedOnly(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(
-            named.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:1'])"#),
-            "{named}"
-        );
+        assert!(named.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:1'])"#), "{named}");
         let both = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::DefaultOrNamed(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(
-            both.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:1',''])"#),
-            "{both}"
-        );
+        assert!(both.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:1',''])"#), "{both}");
         let unfiltered = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::Unfiltered, TimeInterval::Unbounded, false));
         assert!(!unfiltered.contains("\"dataset_id\""), "{unfiltered}");
     }
@@ -456,7 +440,11 @@ mod tests {
         ));
         assert_eq!(
             sql,
-            r#"DELETE FROM "attribute_history" WHERE "stream_key" = ANY(ARRAY [1,2]) AND "observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#
+            concat!(
+                r#"DELETE FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [1,2]) "#,
+                r#"AND ("ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' "#,
+                r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00')"#
+            )
         );
     }
 
@@ -469,11 +457,14 @@ mod tests {
             false,
         )
         .window;
-        let predicate = r#"WHERE "stream_key" = ANY(ARRAY [3]) AND "observed_at" < '2024-01-01 00:00:00.000000 +00:00'"#;
+        let predicate = concat!(
+            r#"WHERE "ah"."stream_key" = ANY(ARRAY [3]) AND ("ah"."observed_at" < '2024-01-01 00:00:00.000000 +00:00' "#,
+            r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") < '2024-01-01 00:00:00.000000 +00:00')"#
+        );
         let count = windowed_count_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
         let delete = windowed_delete_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
-        assert_eq!(count, format!(r#"SELECT COUNT(*) AS "matched" FROM "attribute_history" {predicate}"#));
-        assert_eq!(delete, format!(r#"DELETE FROM "attribute_history" {predicate}"#));
+        assert_eq!(count, format!(r#"SELECT COUNT(*) AS "matched" FROM "attribute_history" AS "ah" {predicate}"#));
+        assert_eq!(delete, format!(r#"DELETE FROM "attribute_history" AS "ah" {predicate}"#));
     }
 
     #[test]

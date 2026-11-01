@@ -37,7 +37,7 @@ mod tests {
     /// Each placement index keys the expression over its own axis.
     #[test]
     fn the_migration_indexes_each_axis_by_the_same_expression() {
-        let migration = include_str!("../../../../migrations/branch/0019_attribute_history.sql");
+        let migration = include_str!("../../../../migrations/branch/0018_attribute_history.sql");
         for column in ["observed_at", "created_at", "modified_at"] {
             let key = format!("(stream_key, (coalesce({column}, deleted_at)) desc)");
             assert!(migration.contains(&key), "the migration keys {key}");

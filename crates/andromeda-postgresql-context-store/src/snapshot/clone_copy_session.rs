@@ -21,10 +21,8 @@ use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotCloneCopies, Snapshots};
 use andromeda_postgresql_seaquery::{
-    cast::cast,
     catalog_function::{backend_pid, terminate_backend},
     clock::now,
-    pg_type::PostgresType,
     statement::Statement,
     system_catalog::PgStatActivity,
 };
@@ -37,16 +35,17 @@ use sqlx::{PgPool, Postgres, Transaction};
 /// start of the copy's transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CopySession {
-    /// The process id of the session's backend.
-    backend_pid: i64,
+    /// The process id of the session's backend, an `integer` as
+    /// `pg_backend_pid()` and `pg_stat_activity.pid` give it.
+    backend_pid: i32,
     /// The instant the copy's transaction began.
     transaction_started_at: DateTime<Utc>,
 }
 
-/// `SELECT pg_backend_pid()::bigint, NOW()`: the session running the
+/// `SELECT pg_backend_pid(), NOW()`: the session running the
 /// statement, and the start of its transaction.
 fn own_session_statement() -> SelectStatement {
-    Query::select().expr(cast(backend_pid(), PostgresType::Bigint)).expr(now()).to_owned()
+    Query::select().expr(backend_pid()).expr(now()).to_owned()
 }
 
 /// Read the session `transaction` runs in.
@@ -56,7 +55,7 @@ fn own_session_statement() -> SelectStatement {
 /// Returns [`SnapshotError`] when the session cannot be read.
 pub(crate) async fn own_copy_session(transaction: &mut Transaction<'_, Postgres>) -> Result<CopySession, SnapshotError> {
     let (backend_pid, transaction_started_at) = own_session_statement()
-        .to_query_as::<(i64, DateTime<Utc>)>()
+        .to_query_as::<(i32, DateTime<Utc>)>()
         .fetch_one(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -197,10 +196,7 @@ mod tests {
 
     #[test]
     fn the_copy_reads_its_own_backend_and_the_start_of_its_transaction() {
-        assert_eq!(
-            own_session_statement().to_string(PostgresQueryBuilder),
-            "SELECT pg_backend_pid()::bigint, NOW()"
-        );
+        assert_eq!(own_session_statement().to_string(PostgresQueryBuilder), "SELECT pg_backend_pid(), NOW()");
     }
 
     #[test]

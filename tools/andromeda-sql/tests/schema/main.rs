@@ -3,13 +3,17 @@
 //! byte bounds the migrations share with the broker's own constants.
 
 mod attribute_history_index;
+mod claim_columns;
 mod context_source_properties;
 mod current_attributes;
 mod dictionary_append_only;
 mod entity_search_scope;
 mod evolution_horizon_index;
 mod geometry_reach_statistics;
+mod jsonld_contexts_index;
+mod notification_events_index;
 mod registration_information;
+mod replica_identity;
 mod repository;
 mod scope_history_index;
 mod snapshot_branch;

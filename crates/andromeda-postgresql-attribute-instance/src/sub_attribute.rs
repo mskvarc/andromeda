@@ -160,9 +160,9 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             created_at,
             modified_at,
         } = element;
+        let (dataset_id, columns) = members.into_columns()?;
         let MemberColumns {
             attribute_name_key,
-            dataset_id,
             attribute_kind,
             value_kind,
             value_number,
@@ -181,11 +181,11 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             unit_code_id,
             observed_at,
             expires_at,
-        } = MemberColumns::try_from(members)?;
+        } = columns;
         Ok(SubAttributeRecord {
             parent,
             attribute_name_key,
-            dataset_id,
+            dataset_id: dataset_id.as_ref().map(|dataset_id| dataset_id.as_str().to_owned()),
             attribute_kind,
             value_kind,
             value_number,
@@ -241,7 +241,6 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
         } = record;
         let columns = MemberColumns {
             attribute_name_key,
-            dataset_id,
             attribute_kind,
             value_kind,
             value_number,
@@ -263,7 +262,7 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
         };
         Ok(SubAttributeElement {
             parent,
-            members: InstanceMembers::try_from(columns)?,
+            members: InstanceMembers::read(dataset_id.map(|dataset_id| dataset_id.parse()).transpose()?, columns)?,
             created_at,
             modified_at,
         })

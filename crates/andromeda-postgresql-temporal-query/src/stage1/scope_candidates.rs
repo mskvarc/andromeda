@@ -8,7 +8,7 @@
 //! Scope rows matches any path of the query matches no alternative, whatever
 //! its intervals, so the rows matching any path are a superset the per-Entity
 //! probe rechecks with the window and the overlap. The read states
-//! `value_kind = 1`, the predicate of `idx_scope_history_live_scope_path`,
+//! `value_kind = 1`, the predicate of `idx_scope_history_scope_path`,
 //! which the probe never states, so the index serves this read alone.
 //!
 //! Clause 5.7.4.4 applies the Scope query of a split query only once the

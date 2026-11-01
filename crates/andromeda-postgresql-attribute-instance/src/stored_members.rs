@@ -60,16 +60,16 @@ pub struct InstanceMembers {
 }
 
 /// The member columns of one stored instance, as an element's fields hold
-/// them.
+/// them, but its `datasetId`.
 ///
 /// A row's string and URI each read as one column whichever side of the
-/// length split holds it; a writer of a row places them on their side.
+/// length split holds it; a writer of a row places them on their side. The
+/// `datasetId` is held apart: a row keys its grain by it, while an element
+/// holds it as a nullable field.
 #[derive(Debug, FromRow)]
 pub struct MemberColumns {
     /// `attribute_name_key`.
     pub attribute_name_key: i32,
-    /// `dataset_id`.
-    pub dataset_id: Option<String>,
     /// `attribute_kind`.
     pub attribute_kind: i16,
     /// `value_kind`.
@@ -151,13 +151,16 @@ pub enum StoredInstanceError {
     Time(#[from] NgsiLdTimeError),
 }
 
-impl TryFrom<MemberColumns> for InstanceMembers {
-    type Error = StoredInstanceError;
-
-    fn try_from(columns: MemberColumns) -> Result<InstanceMembers, StoredInstanceError> {
+impl InstanceMembers {
+    /// The members `columns` hold, of the instance `dataset_id` names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoredInstanceError`] when the columns break an invariant of
+    /// a stored instance.
+    pub fn read(dataset_id: Option<Identifier>, columns: MemberColumns) -> Result<InstanceMembers, StoredInstanceError> {
         let MemberColumns {
             attribute_name_key,
-            dataset_id,
             attribute_kind,
             value_kind,
             value_number,
@@ -193,7 +196,7 @@ impl TryFrom<MemberColumns> for InstanceMembers {
         );
         Ok(InstanceMembers {
             attribute_name_key: AttributeNameKey::from(attribute_name_key),
-            dataset_id: dataset_id.map(|dataset_id| dataset_id.parse()).transpose()?,
+            dataset_id,
             attribute_kind: AttributeKind::try_from(attribute_kind)?,
             value: fields.into_value(ValueKind::try_from(value_kind)?, annotation)?,
             value_type_key: value_type_key.map(EntityTypeNameKey::from),
@@ -204,18 +207,18 @@ impl TryFrom<MemberColumns> for InstanceMembers {
             proof_seals: proof_seals.map(StoredJson::from),
         })
     }
-}
 
-impl TryFrom<InstanceMembers> for MemberColumns {
-    type Error = EwkbError;
-
-    /// The fields `members` occupy, the value in the one field its kind names.
-    fn try_from(members: InstanceMembers) -> Result<MemberColumns, EwkbError> {
+    /// The `datasetId` of the instance and the fields its other members
+    /// occupy, the value in the one field its kind names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EwkbError`] when the geometry has no EWKB encoding.
+    pub fn into_columns(self) -> Result<(Option<Identifier>, MemberColumns), EwkbError> {
         let mut columns = MemberColumns {
-            attribute_name_key: members.attribute_name_key.get(),
-            dataset_id: members.dataset_id.as_ref().map(|dataset_id| dataset_id.as_str().to_owned()),
-            attribute_kind: AttributeKind::code(members.attribute_kind),
-            value_kind: ValueKind::code(members.value.kind()),
+            attribute_name_key: self.attribute_name_key.get(),
+            attribute_kind: AttributeKind::code(self.attribute_kind),
+            value_kind: ValueKind::code(self.value.kind()),
             value_number: None,
             value_string: None,
             value_boolean: None,
@@ -224,16 +227,16 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             value_geometry_members: None,
             value_object: None,
             value_uri: None,
-            value_datatype_key: members.value.datatype_key().map(EntityTypeNameKey::get),
-            value_language: members.value.language().map(|language| language.as_str().to_owned()),
-            value_type_key: members.value_type_key.map(EntityTypeNameKey::get),
-            object_type_keys: (!members.object_type_keys.is_empty()).then(|| members.object_type_keys.iter().map(|key| key.get()).collect()),
-            proof_seals: members.proof_seals.map(StoredJson::into_json),
-            unit_code_id: members.unit_code.map(stored_unit_code),
-            observed_at: members.observed_at,
-            expires_at: members.expires_at,
+            value_datatype_key: self.value.datatype_key().map(EntityTypeNameKey::get),
+            value_language: self.value.language().map(|language| language.as_str().to_owned()),
+            value_type_key: self.value_type_key.map(EntityTypeNameKey::get),
+            object_type_keys: (!self.object_type_keys.is_empty()).then(|| self.object_type_keys.iter().map(|key| key.get()).collect()),
+            proof_seals: self.proof_seals.map(StoredJson::into_json),
+            unit_code_id: self.unit_code.map(stored_unit_code),
+            observed_at: self.observed_at,
+            expires_at: self.expires_at,
         };
-        match members.value {
+        match self.value {
             StoredValue::Number { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
             StoredValue::String { text, .. } => columns.value_string = Some(text),
             StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => columns.value_boolean = Some(flag),
@@ -248,7 +251,7 @@ impl TryFrom<InstanceMembers> for MemberColumns {
             StoredValue::Object(object) => columns.value_object = Some(object.into_json()),
             StoredValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
         }
-        Ok(columns)
+        Ok((self.dataset_id, columns))
     }
 }
 

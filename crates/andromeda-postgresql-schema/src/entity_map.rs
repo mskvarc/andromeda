@@ -15,8 +15,6 @@ pub enum EntityMaps {
     Table,
     /// The database-issued surrogate the child tables reference.
     EntityMapKey,
-    /// Creation instant.
-    CreatedAt,
     /// Expiry instant, after which the map is gone.
     ExpiresAt,
     /// The map's URI identifier.

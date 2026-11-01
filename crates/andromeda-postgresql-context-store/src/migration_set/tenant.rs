@@ -94,6 +94,22 @@ mod tests {
         assert_eq!(unique.len(), all.len(), "a version is reused: {all:?}");
     }
 
+    /// One version space numbered without gaps, so a file's version is its
+    /// position in the order every set applies.
+    #[test]
+    fn the_versions_of_all_three_directories_run_contiguously_from_one() {
+        let mut all: Vec<i64> = platform_migrations()
+            .iter()
+            .chain(TENANT_ONLY_MIGRATIONS.iter())
+            .chain(branch_migrations())
+            .map(|migration| migration.version)
+            .collect();
+        all.sort_unstable();
+        let all = all;
+        let expected: Vec<i64> = (1..).take(all.len()).collect();
+        assert_eq!(all, expected);
+    }
+
     /// The platform set runs first on the platform database, so it holds the
     /// lowest versions of the shared space.
     #[test]

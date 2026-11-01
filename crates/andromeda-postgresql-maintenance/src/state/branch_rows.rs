@@ -1,7 +1,9 @@
 //! The context branch dimension of the platform target rows.
 //!
-//! A target row of the live branch holds no Snapshot key; a row of a Snapshot
-//! branch holds that Snapshot's key. A Snapshot key lives in the tenant
+//! A target row's `snapshot_key` is a member of its primary key, so it is
+//! never NULL: 0 for the live branch, which no Snapshot key is, and the
+//! Snapshot's key for a row of a Snapshot branch. Every writer and reader of
+//! the column converts through here. A Snapshot key lives in the tenant
 //! database, so nothing deletes a branch's rows when its Snapshot is reaped:
 //! each visit deletes the rows of every branch whose schema it no longer finds.
 
@@ -13,18 +15,31 @@ use sea_query::{DeleteStatement, Expr, ExprTrait, Query, SimpleExpr};
 use sqlx::PgConnection;
 use tracing::info;
 
+/// The stored key of the live branch.
+const LIVE_BRANCH_KEY: i64 = 0;
+
 /// The condition selecting the target rows of `branch`.
 pub(crate) fn branch_rows(branch: Branch) -> SimpleExpr {
-    let column = Expr::col(PostgresqlMaintenanceTargets::SnapshotKey);
-    match branch.snapshot_key() {
-        None => column.is_null(),
-        Some(key) => column.eq(key.as_i64()),
-    }
+    Expr::col(PostgresqlMaintenanceTargets::SnapshotKey).eq(stored_snapshot_key(branch))
 }
 
-/// The stored Snapshot key of `branch`, NULL for the live branch.
-pub(crate) fn stored_snapshot_key(branch: Branch) -> Option<i64> {
-    branch.snapshot_key().map(SnapshotKey::as_i64)
+/// The stored key of `branch`: 0 for the live branch, the Snapshot's key
+/// otherwise.
+pub(crate) fn stored_snapshot_key(branch: Branch) -> i64 {
+    branch.snapshot_key().map_or(LIVE_BRANCH_KEY, SnapshotKey::as_i64)
+}
+
+/// The branch a stored key names.
+///
+/// # Errors
+///
+/// Returns [`MaintenanceError::InvalidSnapshotKey`] when the key is neither 0
+/// nor a Snapshot key.
+pub(crate) fn branch_of_stored_key(stored: i64) -> Result<Branch, MaintenanceError> {
+    match stored {
+        LIVE_BRANCH_KEY => Ok(Branch::Live),
+        key => Ok(Branch::Snapshot(SnapshotKey::try_from(key)?)),
+    }
 }
 
 /// Delete the tenant's target rows of every Snapshot branch not in
@@ -51,7 +66,7 @@ fn vanished_branch_rows_delete(tenant: &RegisteredTenant, published: &[SnapshotK
     statement
         .from_table(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::SnapshotKey).is_not_null());
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::SnapshotKey).ne(LIVE_BRANCH_KEY));
     if !published.is_empty() {
         statement.and_where(Expr::col(PostgresqlMaintenanceTargets::SnapshotKey).is_not_in(published.iter().map(|key| key.as_i64())));
     }
@@ -66,10 +81,11 @@ fn vanished_branch_rows_delete(tenant: &RegisteredTenant, published: &[SnapshotK
 mod tests {
     use crate::{
         branch::Branch,
+        error::MaintenanceError,
         state::{
             RegisteredTenant,
             TenantKey,
-            branch_rows::{branch_rows, vanished_branch_rows_delete},
+            branch_rows::{branch_of_stored_key, branch_rows, stored_snapshot_key, vanished_branch_rows_delete},
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
@@ -98,9 +114,26 @@ mod tests {
     }
 
     #[test]
-    fn live_rows_hold_no_snapshot_key_and_branch_rows_hold_theirs() {
-        assert_eq!(condition(Branch::Live), r#"SELECT * WHERE "snapshot_key" IS NULL"#);
+    fn live_rows_hold_key_zero_and_branch_rows_hold_their_snapshot_key() {
+        assert_eq!(condition(Branch::Live), r#"SELECT * WHERE "snapshot_key" = 0"#);
         assert_eq!(condition(Branch::Snapshot(key(42))), r#"SELECT * WHERE "snapshot_key" = 42"#);
+    }
+
+    #[test]
+    fn the_live_branch_is_stored_as_zero_and_reads_back_as_live() {
+        assert_eq!(stored_snapshot_key(Branch::Live), 0);
+        assert_eq!(branch_of_stored_key(0).expect("the live key"), Branch::Live);
+    }
+
+    #[test]
+    fn a_snapshot_branch_is_stored_as_its_key_and_reads_back_as_it() {
+        assert_eq!(stored_snapshot_key(Branch::Snapshot(key(42))), 42);
+        assert_eq!(branch_of_stored_key(42).expect("a Snapshot key"), Branch::Snapshot(key(42)));
+    }
+
+    #[test]
+    fn a_stored_negative_key_is_refused() {
+        assert!(matches!(branch_of_stored_key(-1), Err(MaintenanceError::InvalidSnapshotKey(_))));
     }
 
     #[test]
@@ -108,7 +141,7 @@ mod tests {
         let sql = vanished_branch_rows_delete(&tenant(), &[key(3), key(9)]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"DELETE FROM "postgresql_maintenance_targets" WHERE "tenant_key" = 7 AND "snapshot_key" IS NOT NULL AND "snapshot_key" NOT IN (3, 9)"#
+            r#"DELETE FROM "postgresql_maintenance_targets" WHERE "tenant_key" = 7 AND "snapshot_key" <> 0 AND "snapshot_key" NOT IN (3, 9)"#
         );
     }
 
@@ -117,7 +150,7 @@ mod tests {
         let sql = vanished_branch_rows_delete(&tenant(), &[]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"DELETE FROM "postgresql_maintenance_targets" WHERE "tenant_key" = 7 AND "snapshot_key" IS NOT NULL"#
+            r#"DELETE FROM "postgresql_maintenance_targets" WHERE "tenant_key" = 7 AND "snapshot_key" <> 0"#
         );
     }
 }

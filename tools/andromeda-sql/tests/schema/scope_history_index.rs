@@ -12,7 +12,7 @@ use andromeda_sql::declared_schema::index::DeclaredIndex;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn scope_history_is_indexed_by_its_entity_and_its_live_scope_paths() -> Result<(), PinError> {
+fn scope_history_is_indexed_by_its_entity_and_its_scope_paths_outside_tombstones() -> Result<(), PinError> {
     let schema = schema()?;
     let mut indexes: Vec<&str> = schema
         .indexes()
@@ -27,7 +27,7 @@ fn scope_history_is_indexed_by_its_entity_and_its_live_scope_paths() -> Result<(
         [
             "idx_scope_history_entity_observed_at",
             "idx_scope_history_entity_recorded_at",
-            "idx_scope_history_live_scope_path"
+            "idx_scope_history_scope_path"
         ]
     );
     Ok(())
@@ -36,7 +36,7 @@ fn scope_history_is_indexed_by_its_entity_and_its_live_scope_paths() -> Result<(
 #[test]
 fn the_scope_candidates_state_the_partial_predicate_the_index_holds() -> Result<(), PinError> {
     let schema = schema()?;
-    let definition = index_definition(&schema, "idx_scope_history_live_scope_path")?;
+    let definition = index_definition(&schema, "idx_scope_history_scope_path")?;
     assert!(definition.ends_with("using gist (scope_path) where value_kind = 1"), "{definition}");
     Ok(())
 }

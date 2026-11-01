@@ -22,7 +22,7 @@ pub enum StoredSubscriptionError {
     /// The `subscription_key` column is not a surrogate key.
     #[error("a stored subscription key is not a surrogate key: {0}")]
     Key(#[source] SubscriptionKeyOutOfRange),
-    /// One `dataset_id` element is neither a URI nor `@none`.
+    /// One `dataset_ids` element is neither a URI nor `@none`.
     #[error("a stored subscription datasetId is neither a URI nor @none: {0}")]
     DatasetId(#[source] Box<QueryError>),
     /// The `entities` column does not deserialize.
@@ -37,7 +37,7 @@ pub enum StoredSubscriptionError {
     /// One `json_keys` element is not an attribute name.
     #[error("a stored subscription jsonKeys element is not an attribute name: {0}")]
     JsonKey(#[source] NgsiLdReferenceError),
-    /// One `notification_trigger` element holds a code the trigger registry
+    /// One `notification_triggers` element holds a code the trigger registry
     /// never assigned.
     #[error("a stored subscription notificationTrigger is not a known code: {0}")]
     NotificationTrigger(#[source] UnknownCompactCode),

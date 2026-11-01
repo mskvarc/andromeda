@@ -8,26 +8,29 @@
 //! index's predicate. Eligibility walks the distinct shape masks of an
 //! attribute. The declared text of all three is pinned here.
 
-use crate::repository::{PinError, constraint_definition, index, index_definition, schema, written};
+use crate::repository::{PinError, constraint, constraint_definition, index_definition, schema, written};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+use andromeda_sql::declared_schema::constraint::ConstraintKind;
 use pretty_assertions::assert_eq;
 
-/// The grain keys the default instance as the empty string, which no
-/// `datasetId` may be, so it compares with plain equality, and it carries the
-/// stream key and the `datasetId`, so resolving a grain and listing an
-/// Entity's streams read the index alone.
+/// The grain's `datasetId` member is never NULL, the empty string standing
+/// for the default instance, so it compares with plain equality, and the
+/// grain carries the stream key, so resolving a grain and listing an Entity's
+/// streams read the index alone.
 #[test]
 fn the_stream_grain_keys_the_default_instance_as_the_empty_string() -> Result<(), PinError> {
     let schema = schema()?;
-    assert!(index(&schema, "uq_temporal_attribute_streams_grain")?.is_unique(), "the grain is unique");
+    assert_eq!(constraint(&schema, "uq_temporal_attribute_streams_grain")?.kind(), ConstraintKind::Unique);
     assert_eq!(
-        index_definition(&schema, "uq_temporal_attribute_streams_grain")?,
-        "on temporal_attribute_streams (entity_key, attribute_name_key, (coalesce(dataset_id, ''))) include (stream_key, dataset_id)"
+        constraint_definition(&schema, "uq_temporal_attribute_streams_grain")?,
+        "unique (entity_key, attribute_name_key, dataset_key) include (stream_key)"
     );
-    assert_eq!(
-        constraint_definition(&schema, "chk_temporal_attribute_streams_dataset_id_not_empty")?,
-        "check (dataset_id <> '')"
-    );
+    let dataset_key = schema
+        .columns()
+        .iter()
+        .find(|column| column.relation() == "temporal_attribute_streams" && column.name() == "dataset_key")
+        .ok_or_else(|| PinError::Missing("temporal_attribute_streams.dataset_key".to_owned()))?;
+    assert!(dataset_key.is_not_null(), "the grain key is never NULL");
     Ok(())
 }
 
@@ -36,7 +39,7 @@ fn the_attribute_walk_index_orders_the_holders_by_their_evolution_key() -> Resul
     let schema = schema()?;
     assert_eq!(
         index_definition(&schema, "idx_temporal_attribute_streams_attribute_name_key_entity_key")?,
-        "on temporal_attribute_streams (attribute_name_key, entity_key, (coalesce(dataset_id, '')))"
+        "on temporal_attribute_streams (attribute_name_key, entity_key, dataset_key)"
     );
     Ok(())
 }

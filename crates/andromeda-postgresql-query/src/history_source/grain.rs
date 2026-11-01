@@ -11,9 +11,9 @@ pub enum HistoryGrain {
     EntityId,
     /// `attribute_names` key of the attribute.
     AttributeNameKey,
-    /// Dataset identifier of the attribute (clause 4.5.5), NULL for the
-    /// default instance.
-    DatasetId,
+    /// Grain key of the attribute's `datasetId` (clause 4.5.5), the empty
+    /// string for the default instance.
+    DatasetKey,
     /// Recorded stream key of the grain, NULL for a grain only queued entries
     /// extend.
     StreamKey,
@@ -32,11 +32,11 @@ mod tests {
         let names = [
             HistoryGrain::EntityId,
             HistoryGrain::AttributeNameKey,
-            HistoryGrain::DatasetId,
+            HistoryGrain::DatasetKey,
             HistoryGrain::StreamKey,
             HistoryGrain::EntityKey,
         ]
         .map(|column| column.to_string());
-        pretty_assertions::assert_eq!(names, ["entity_id", "attribute_name_key", "dataset_id", "stream_key", "entity_key"]);
+        pretty_assertions::assert_eq!(names, ["entity_id", "attribute_name_key", "dataset_key", "stream_key", "entity_key"]);
     }
 }

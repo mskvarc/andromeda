@@ -14,14 +14,9 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
 use andromeda_postgresql_schema::{current::Entities, temporal::TemporalAttributeStreams};
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    nullable_text_key::{is_null_text_key, nullable_text_key},
-    pg_array::any,
-    statement::Statement,
-};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
 
@@ -57,8 +52,7 @@ impl TemporalRepository {
     ) -> Result<u64, TemporalStoreError> {
         let dataset_selector = match (scope, dataset_id) {
             (AttributeStreamScope::All, _) => DatasetSelector::AllStreams,
-            (AttributeStreamScope::Single, Some(dataset_id)) => DatasetSelector::Named(dataset_id.as_str()),
-            (AttributeStreamScope::Single, None) => DatasetSelector::Default,
+            (AttributeStreamScope::Single, dataset_id) => DatasetSelector::One(DatasetKey::of(dataset_id)),
         };
         let Some(attribute) = self.attribute_key(attribute_name).await? else {
             return Ok(0);
@@ -88,17 +82,15 @@ impl TemporalRepository {
 enum DatasetSelector<'a> {
     /// Every stream of the attribute.
     AllStreams,
-    /// The one named dataset instance.
-    Named(&'a str),
-    /// The default instance, whose `datasetId` is absent.
-    Default,
+    /// The one dataset instance whose grain key this is.
+    One(DatasetKey<'a>),
 }
 
 /// The identifiers of the streams a deletion addresses, locked for update.
 ///
-/// The `datasetId` is compared as the grain index keys it, so one stream of
-/// an attribute with many is found by an index probe rather than by reading
-/// every stream of the attribute.
+/// The `datasetId` is compared as the grain key, so one stream of an attribute
+/// with many is found by an index probe rather than by reading every stream of
+/// the attribute.
 fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey, dataset: DatasetSelector<'_>) -> SelectStatement {
     let mut statement = Query::select();
     statement.column((S, TemporalAttributeStreams::StreamKey));
@@ -108,11 +100,8 @@ fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, att
         .and_where(of_attribute(attribute));
     match dataset {
         DatasetSelector::AllStreams => {}
-        DatasetSelector::Named(dataset_id) => {
-            statement.and_where(nullable_text_key(Expr::col((S, TemporalAttributeStreams::DatasetId))).eq(dataset_id));
-        }
-        DatasetSelector::Default => {
-            statement.and_where(is_null_text_key(Expr::col((S, TemporalAttributeStreams::DatasetId))));
+        DatasetSelector::One(key) => {
+            statement.and_where(Expr::col((S, TemporalAttributeStreams::DatasetKey)).eq(key.as_str()));
         }
     }
     statement.lock_with_tables(LockType::Update, [S]);
@@ -128,9 +117,14 @@ fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> Delete
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::attribute_stream_deletion::{DatasetSelector, delete_streams_query, select_attribute_streams_query};
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
@@ -149,11 +143,14 @@ mod tests {
         }
     }
     #[test]
-    fn one_stream_is_addressed_by_the_grain_index_key() {
-        let default = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Default).to_string(PostgresQueryBuilder);
-        let named = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::Named("urn:d")).to_string(PostgresQueryBuilder);
-        assert!(default.contains(r#"COALESCE("s"."dataset_id", '') = ('')"#), "{default}");
-        assert!(named.contains(r#"COALESCE("s"."dataset_id", '') = 'urn:d'"#), "{named}");
+    fn one_stream_is_addressed_by_its_grain_key() {
+        let dataset: Identifier = "urn:d".parse().expect("a valid identifier");
+        let default = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::One(DatasetKey::of(None)))
+            .to_string(PostgresQueryBuilder);
+        let named = select_attribute_streams_query(None, "urn:x", AttributeNameKey::from(7), DatasetSelector::One(DatasetKey::of(Some(&dataset))))
+            .to_string(PostgresQueryBuilder);
+        assert!(default.contains(r#""s"."dataset_key" = ''"#), "{default}");
+        assert!(named.contains(r#""s"."dataset_key" = 'urn:d'"#), "{named}");
     }
 
     #[test]

@@ -183,7 +183,7 @@ mod tests {
         let mut query = compiled(&Projection::builder().pick(vec![speed()]).build());
         query.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
         let sql = rendered(&query).expect("a condition");
-        assert!(sql.contains("dataset_id"), "{sql}");
+        assert!(sql.contains("dataset_key"), "{sql}");
     }
 
     /// An `omit` of `id` and `type` keeps an entity through any other

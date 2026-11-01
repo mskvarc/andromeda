@@ -21,12 +21,15 @@
 
 use crate::{
     alias::Ah,
-    axis::{axis_bound, axis_column, axis_order},
     history::project_base_columns,
     stream_parts::{admitted, entity_streams, in_any_part, over_parts},
 };
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
-use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf};
+use andromeda_postgresql_query::history_source::{
+    HistoryBranch,
+    HistoryOf,
+    axis::{axis_bound, axis_column, axis_order},
+};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
@@ -108,11 +111,11 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
         candidate.expr_as(Expr::col((Ah, axis_column(timeproperty))), Edge);
         match (walk, compiled.window.interval) {
             (Walk::Forward, TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. }) => {
-                candidate.and_where(axis_bound(timeproperty, |instant| instant.gt(lower)));
+                candidate.and_where(axis_bound(Ah, timeproperty, |instant| instant.gt(lower)));
             }
             (Walk::Forward, TimeInterval::Unbounded | TimeInterval::Before(_)) | (Walk::Backward, _) => {}
         }
-        candidate.order_by_expr(axis_order(timeproperty), walk.order()).limit(u64::from(size));
+        candidate.order_by_expr(axis_order(Ah, timeproperty), walk.order()).limit(u64::from(size));
         candidate
     });
     let mut edge_row = Query::select();
@@ -126,7 +129,7 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
     let edge = Expr::col((EdgeRow, Edge));
     let beyond = in_any_part(branch, |part| {
         let mut beyond = admitted(part, condition);
-        beyond.expr(int_literal(1)).and_where(axis_bound(timeproperty, |instant| match walk {
+        beyond.expr(int_literal(1)).and_where(axis_bound(Ah, timeproperty, |instant| match walk {
             // clone: the edge bounds every part's instances and is projected.
             Walk::Forward => instant.gt(edge.clone()),
             Walk::Backward => instant.lt(edge.clone()),
@@ -153,7 +156,7 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
     let mut kept = over_parts(branch, |part| {
         let mut rows = admitted(part, condition);
         project_base_columns(&mut rows);
-        rows.and_where(axis_bound(compiled.window.timeproperty, |instant| match walk {
+        rows.and_where(axis_bound(Ah, compiled.window.timeproperty, |instant| match walk {
             // clone: the edge bounds every part's instances.
             Walk::Forward => instant.lte(or_end_of_time(edge.clone())),
             Walk::Backward => instant.gte(or_start_of_time(edge.clone())),
@@ -237,7 +240,7 @@ pub(crate) fn latest_instances(
     let candidates = over_parts(branch, |part| {
         let mut latest = admitted(part, condition);
         project(&mut latest);
-        most_recent_first(&mut latest, Ah, axis_order(timeproperty));
+        most_recent_first(&mut latest, Ah, axis_order(Ah, timeproperty));
         latest.limit(limit);
         latest
     });

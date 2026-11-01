@@ -10,6 +10,7 @@
 use crate::current_attribute::row_edit::{EditReach, InstanceGrain, RowEdit};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
+use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     pg_array::{nullable_array, text_array},
@@ -32,12 +33,12 @@ struct Staged;
 #[iden = "grains"]
 pub(crate) struct Grains;
 
-/// The grain staging columns, `AS g(id, attribute_name_key, dataset_id, ordinal)`.
+/// The grain staging columns, `AS g(id, attribute_name_key, dataset_key, ordinal)`.
 fn staged_columns() -> [UnnestColumn; 4] {
     [
         UnnestColumn::new(Entities::Id, PostgresType::TextArray),
         UnnestColumn::new(CurrentAttributes::AttributeNameKey, PostgresType::IntegerArray),
-        UnnestColumn::new(CurrentAttributes::DatasetId, PostgresType::TextArray),
+        UnnestColumn::new(CurrentAttributes::DatasetKey, PostgresType::TextArray),
         UnnestColumn::new(CurrentAttributes::Ordinal, PostgresType::IntegerArray),
     ]
 }
@@ -52,7 +53,7 @@ pub(crate) struct GrainArrays {
 }
 
 /// The `grains` CTE over the four grain `arrays`:
-/// `grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST(…) AS g(…))`.
+/// `grains AS (SELECT g.id, g.attribute_name_key, g.dataset_key, g.ordinal FROM UNNEST(…) AS g(…))`.
 ///
 /// The statement it joins must be passed through [`with_grains_alias`] to name
 /// the source's columns.
@@ -62,7 +63,7 @@ pub(crate) fn grains_cte(arrays: [SimpleExpr; 4]) -> CommonTableExpression {
     let select = Query::select()
         .expr_as(Expr::col((Staged, Entities::Id)), Entities::Id)
         .expr_as(Expr::col((Staged, CurrentAttributes::AttributeNameKey)), CurrentAttributes::AttributeNameKey)
-        .expr_as(Expr::col((Staged, CurrentAttributes::DatasetId)), CurrentAttributes::DatasetId)
+        .expr_as(Expr::col((Staged, CurrentAttributes::DatasetKey)), CurrentAttributes::DatasetKey)
         .expr_as(Expr::col((Staged, CurrentAttributes::Ordinal)), CurrentAttributes::Ordinal)
         .from_function(source, Staged)
         .take();
@@ -82,8 +83,8 @@ pub struct StagedGrains<'a> {
     entity_ids: Vec<&'a str>,
     /// `attribute_name_key`.
     attribute_name_keys: Vec<i32>,
-    /// `dataset_id`.
-    dataset_ids: Vec<Option<&'a str>>,
+    /// `dataset_key`.
+    dataset_keys: Vec<&'a str>,
     /// The ordinal a moved grain takes, null for a removed one.
     ordinals: Vec<Option<i32>>,
     /// The Entities whose staged rows are every row they keep.
@@ -108,7 +109,7 @@ impl<'a> StagedGrains<'a> {
             let key = keys.attribute(name).ok_or_else(|| FlattenError::UnresolvedAttribute(name.clone()))?;
             self.entity_ids.push(entity.as_str());
             self.attribute_name_keys.push(key.get());
-            self.dataset_ids.push(dataset_id.map(Identifier::as_str));
+            self.dataset_keys.push(DatasetKey::of(dataset_id).as_str());
             self.ordinals.push(ordinal);
         }
         Ok(())
@@ -133,7 +134,7 @@ impl<'a> StagedGrains<'a> {
             grains: [
                 text_array(&self.entity_ids),
                 Expr::val(self.attribute_name_keys),
-                nullable_array(self.dataset_ids.into_iter().map(|dataset| dataset.map(str::to_owned))),
+                text_array(&self.dataset_keys),
                 nullable_array(self.ordinals),
             ],
             overwritten: text_array(&self.overwritten),
@@ -197,7 +198,7 @@ mod tests {
         let mut grains = StagedGrains::default();
         grains.push(&id, &edit, &keys).expect("every grain resolves");
         pretty_assertions::assert_eq!(grains.attribute_name_keys, vec![4, 3]);
-        pretty_assertions::assert_eq!(grains.dataset_ids, vec![None, Some("urn:ds:1")]);
+        pretty_assertions::assert_eq!(grains.dataset_keys, vec!["", "urn:ds:1"]);
         pretty_assertions::assert_eq!(grains.ordinals, vec![Some(2), None]);
         pretty_assertions::assert_eq!(grains.overwritten, Vec::<&str>::new());
     }
@@ -257,7 +258,7 @@ mod tests {
         with_clause.cte(grains_cte(grains));
         let sql = text_of(&with_grains_alias(UnnestAliased::new(with_clause.query(Query::select().take()))));
         assert!(
-            sql.contains("UNNEST($1::text[], $2::integer[], $3::text[], $4::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains("UNNEST($1::text[], $2::integer[], $3::text[], $4::integer[]) AS g(id, attribute_name_key, dataset_key, ordinal)"),
             "{sql}"
         );
     }

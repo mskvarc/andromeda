@@ -2,14 +2,12 @@
 
 use crate::schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding, versioned_extension::VersionedExtension};
 use andromeda_postgresql_seaquery::{
-    cast::cast,
-    introspection::{current_setting, extension_version},
-    pg_type::PostgresType,
+    introspection::{current_setting, extension_version, server_version_num},
     setting::Setting,
     statement::Statement,
 };
 use sea_query::{Alias, Query, SelectStatement};
-use sqlx::{Executor, Postgres, Row};
+use sqlx::{Executor, Postgres, Row, postgres::PgRow};
 use std::{num::ParseIntError, str::FromStr};
 
 /// The PostgreSQL version the tenant schema requires.
@@ -187,8 +185,7 @@ where
 {
     let row = server_requirements_statement().to_query().fetch_one(executor).await?;
 
-    check_postgres(PostgresVersion::new(row.try_get("server_version_num")?))?;
-    check_server_encoding(row.try_get::<&str, _>("server_encoding")?)?;
+    check_server(&row)?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
         ExtensionPresence::try_from(row.try_get::<Option<String>, _>(VersionedExtension::PostGis.installed_column())?)?,
@@ -201,6 +198,31 @@ where
     )
 }
 
+/// Read the server's `server_version_num` and `server_encoding`, the columns
+/// [`check_server`] reads.
+///
+/// Both columns are system-function calls, so the statement names no
+/// application relation and binds the setting names it reads.
+pub(crate) fn server_settings_statement() -> SelectStatement {
+    Query::select()
+        .expr_as(server_version_num(), Alias::new(SERVER_VERSION_NUM_COLUMN))
+        .expr_as(current_setting(Setting::ServerEncoding), Alias::new(SERVER_ENCODING_COLUMN))
+        .to_owned()
+}
+
+/// The column [`server_settings_statement`] reads `server_version_num` under.
+const SERVER_VERSION_NUM_COLUMN: &str = "server_version_num";
+
+/// The column [`server_settings_statement`] reads `server_encoding` under.
+const SERVER_ENCODING_COLUMN: &str = "server_encoding";
+
+/// Refuse a server below the version floor or whose encoding is not UTF-8,
+/// from a row [`server_settings_statement`] projects.
+pub(crate) fn check_server(row: &PgRow) -> Result<(), SchemaContractError> {
+    check_postgres(PostgresVersion::new(row.try_get(SERVER_VERSION_NUM_COLUMN)?))?;
+    check_server_encoding(row.try_get::<&str, _>(SERVER_ENCODING_COLUMN)?)
+}
+
 /// Read the server's `server_version_num` and `server_encoding` and the
 /// `PostGIS` and `TimescaleDB` extension versions.
 ///
@@ -208,12 +230,7 @@ where
 /// statement names no application relation and binds the setting and extension
 /// names it reads.
 fn server_requirements_statement() -> SelectStatement {
-    Query::select()
-        .expr_as(
-            cast(current_setting(Setting::ServerVersionNum), PostgresType::Integer),
-            Alias::new("server_version_num"),
-        )
-        .expr_as(current_setting(Setting::ServerEncoding), Alias::new("server_encoding"))
+    server_settings_statement()
         .expr_as(
             extension_version(VersionedExtension::PostGis.catalog_name()),
             Alias::new(VersionedExtension::PostGis.installed_column()),

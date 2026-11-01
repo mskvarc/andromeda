@@ -53,8 +53,6 @@ pub enum SnapshotPreparation {
     ModifiedAt,
     /// Instant the snapshot was last read.
     LastUsedAt,
-    /// Instant a preparer claimed this record; `NULL` while unclaimed.
-    ClaimedAt,
     /// Instant after which another replica may reclaim preparation.
     LeaseUntil,
     /// Identity of the replica currently preparing this Snapshot.
@@ -103,12 +101,8 @@ pub enum SnapshotNotificationOutbox {
     Id,
     /// Parent Snapshot surrogate key.
     SnapshotKey,
-    /// Creation instant.
-    CreatedAt,
     /// Earliest instant at which another attempt is due.
     NextAttemptAt,
-    /// Instant the current lease was acquired.
-    ClaimedAt,
     /// Current lease deadline.
     LeaseUntil,
     /// Current worker identity.
@@ -160,7 +154,6 @@ mod tests {
         assert_eq!(SnapshotPreparation::Table.to_string(), "snapshot_preparation");
         assert_eq!(SnapshotPreparation::SnapshotKey.to_string(), "snapshot_key");
         assert_eq!(SnapshotPreparation::LastUsedAt.to_string(), "last_used_at");
-        assert_eq!(SnapshotPreparation::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(SnapshotPreparation::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(SnapshotPreparation::LeaseUntil.to_string(), "lease_until");
         assert_eq!(SnapshotPreparation::Status.to_string(), "status");

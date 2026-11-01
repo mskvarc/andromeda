@@ -19,8 +19,9 @@ pub enum TemporalAttributeStreams {
     EntityKey,
     /// Foreign key to `attribute_names`
     AttributeNameKey,
-    /// Optional dataset identifier (clause 4.5.5)
-    DatasetId,
+    /// The grain key of the `datasetId` (clause 4.5.5): the empty string for
+    /// the default instance, the identifier otherwise
+    DatasetKey,
     /// The bounding box of every geometry the stream ever recorded, `NULL`
     /// until it records one; it only grows, so it holds every geometry the
     /// stream holds now
@@ -210,7 +211,7 @@ mod tests {
             ["stream_type_census", "entity_type_name_key", "attribute_name_key", "stream_delta"]
         );
         pretty_assertions::assert_eq!(TemporalAttributeStreams::AttributeNameKey.to_string(), "attribute_name_key");
-        pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetId.to_string(), "dataset_id");
+        pretty_assertions::assert_eq!(TemporalAttributeStreams::DatasetKey.to_string(), "dataset_key");
         pretty_assertions::assert_eq!(TemporalAttributeStreams::ShapeMask.to_string(), "shape_mask");
     }
 

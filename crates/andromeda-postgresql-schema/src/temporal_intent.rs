@@ -17,8 +17,9 @@ pub enum TemporalEntry {
     EntryKind,
     /// `attribute_names` key of the attribute, NULL for a Scope entry
     AttributeNameKey,
-    /// Dataset identifier of the attribute (clause 4.5.5); NULL is the default instance
-    DatasetId,
+    /// Grain key of the attribute's `datasetId` (clause 4.5.5): the empty
+    /// string for the default instance, NULL for a Scope entry
+    DatasetKey,
     /// Attribute family code
     AttributeKind,
     /// Value shape code; 0 is the end of an instance

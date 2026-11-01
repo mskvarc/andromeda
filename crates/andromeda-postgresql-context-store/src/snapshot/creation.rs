@@ -63,7 +63,7 @@ fn control_insert(params: &InsertSnapshotParams<'_>) -> Result<InsertStatement, 
 }
 
 /// The preparation-record insert of `params` for the Snapshot `snapshot_key`;
-/// the lease triple starts null, and the branch version is the binary's own,
+/// the lease pair starts null, and the branch version is the binary's own,
 /// since the branch schemas are created by it. The two details documents are
 /// `json` columns bound as their JSON text.
 fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotKey, branch_version: i32) -> Result<InsertStatement, SnapshotError> {
@@ -150,7 +150,7 @@ mod tests {
     /// Every constraint is named by the migrations, so the duplicate-identity
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
-    fn the_duplicate_id_refusal_names_the_constraint_migration_0014_declares() {
+    fn the_duplicate_id_refusal_names_the_unique_constraint_the_snapshots_table_declares() {
         let declaration = format!("CONSTRAINT {UQ_SNAPSHOTS_ID} UNIQUE (id)").to_ascii_uppercase();
         assert!(
             tenant_migrator()

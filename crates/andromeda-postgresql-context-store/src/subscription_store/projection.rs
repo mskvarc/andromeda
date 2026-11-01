@@ -31,7 +31,7 @@ fn attribute_list(column: Subscriptions) -> SimpleExpr {
 }
 
 /// Add the stored-subscription projection to `select`, in the column set the
-/// mapper reads by name; `dataset_id` only for the family that stores it. The
+/// mapper reads by name; `dataset_ids` only for the family that stores it. The
 /// delivery counters come from the joined state row, and the three attribute
 /// lists are resolved from their dictionary keys under their own column names.
 fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: &ContextTarget) {
@@ -42,7 +42,7 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::Description))
         .column((Subscriptions::Table, Subscriptions::Entities))
         .expr_as(attribute_list(Subscriptions::WatchedAttributes), Subscriptions::WatchedAttributes)
-        .column((Subscriptions::Table, Subscriptions::NotificationTrigger))
+        .column((Subscriptions::Table, Subscriptions::NotificationTriggers))
         .column((Subscriptions::Table, Subscriptions::TimeInterval))
         .column((Subscriptions::Table, Subscriptions::Q))
         .column((Subscriptions::Table, Subscriptions::QWrittenMembers))
@@ -66,7 +66,7 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::ActiveSince))
         .column((Subscriptions::Table, Subscriptions::SelectedSince));
     if kind.has_dataset_id() {
-        select.column((Subscriptions::Table, Subscriptions::DatasetId));
+        select.column((Subscriptions::Table, Subscriptions::DatasetIds));
     }
     join_delivery_state(select, target);
 }
@@ -216,7 +216,7 @@ mod tests {
     fn every_projection_reads_the_delivery_counters_from_the_joined_state_row() {
         let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"LEFT JOIN "subscription_delivery_state""#), "{sql}");
-        assert!(sql.contains(r#""subscriptions"."dataset_id""#), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."dataset_ids""#), "{sql}");
         for counter in ["times_sent", "last_notification", "last_success", "last_failure"] {
             assert!(
                 !sql.contains(&format!(r#""subscriptions"."{counter}""#)),
@@ -224,7 +224,7 @@ mod tests {
             );
         }
         let csource = projected_select(StoredKind::Csource, &ContextTarget::Live).to_string(PostgresQueryBuilder);
-        assert!(!csource.contains("dataset_id"), "{csource}");
+        assert!(!csource.contains("dataset_ids"), "{csource}");
     }
 
     /// The three attribute lists are stored as dictionary keys and read back as

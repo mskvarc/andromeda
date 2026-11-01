@@ -180,6 +180,23 @@ fn a_tombstone_entry_holds_its_family_and_deletion_instant() {
     assert!(entry.value_uri.is_none() && entry.observed_at.is_none() && entry.created_at.is_none());
 }
 
+/// Clause 4.5.5: the default instance extends the stream keyed by the empty
+/// string, and a named instance the stream keyed by its `datasetId`.
+#[test]
+fn an_attribute_entry_names_its_stream_by_the_grain_key_of_its_dataset() {
+    let tombstone = |dataset_id: Option<&str>| TemporalAppendEntry::Tombstone {
+        attribute_name: "https://example.com/owner".parse().expect("an attribute name"),
+        dataset_id: dataset_id.map(|dataset_id| dataset_id.parse().expect("a datasetId")),
+        attribute_type: AttributeType::Relationship,
+        instance: InstanceIdentity::generate(),
+    };
+    assert_eq!(only_entry(&intent(vec![tombstone(None)])).dataset_key.as_deref(), Some(""));
+    assert_eq!(
+        only_entry(&intent(vec![tombstone(Some("urn:ngsi-ld:Dataset:one"))])).dataset_key.as_deref(),
+        Some("urn:ngsi-ld:Dataset:one")
+    );
+}
+
 /// Clause 4.5.7: a deletion a written Temporal Evolution states is an instance
 /// the write adds, so it waits as an observation holding no value, its
 /// `deletedAt` and the `observedAt` it declared, with the `instanceId` the
@@ -217,6 +234,7 @@ fn a_scope_entry_holds_its_path() {
     assert_eq!(entry.scope_path.as_deref(), Some("Madrid"));
     assert_eq!(entry.verbatim_scope_path.as_deref(), Some("/Madrid"));
     assert_eq!((entry.attribute_name_key, entry.attribute_kind), (None, None));
+    assert_eq!(entry.dataset_key, None);
     assert_eq!(entry.observed_at, Some(observed_at()));
     assert_eq!(entry.deleted_at, None);
 }
@@ -283,7 +301,7 @@ fn the_entry_fields_follow_the_history_columns() {
     let fields = [
         TemporalEntry::EntryKind,
         TemporalEntry::AttributeNameKey,
-        TemporalEntry::DatasetId,
+        TemporalEntry::DatasetKey,
         TemporalEntry::AttributeKind,
         TemporalEntry::ValueKind,
         TemporalEntry::ObservedAt,
@@ -337,7 +355,7 @@ fn the_entry_fields_follow_the_history_columns() {
         AttributeHistory::SubAttributes,
     ]
     .map(|column| column.to_string());
-    let expected: Vec<String> = ["entry_kind", "attribute_name_key", "dataset_id"]
+    let expected: Vec<String> = ["entry_kind", "attribute_name_key", "dataset_key"]
         .into_iter()
         .map(String::from)
         .chain(history_columns)

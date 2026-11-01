@@ -20,7 +20,6 @@ pub mod aggregation_grid;
 pub mod aggregation_group;
 pub mod aggregation_grouping;
 pub mod alias;
-pub mod axis;
 pub mod history;
 mod listed_period_page;
 mod period_edge;

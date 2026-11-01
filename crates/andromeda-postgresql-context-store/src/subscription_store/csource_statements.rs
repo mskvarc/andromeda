@@ -3,7 +3,7 @@
 //!
 //! A create returns the surrogate key it minted, because the delivery-state
 //! row that completes the subscription is inserted under it in the same
-//! transaction. A context-source subscription stores no `dataset_id`, no
+//! transaction. A context-source subscription stores no `dataset_ids`, no
 //! `local_only` and no `split_entities`.
 //!
 //! Both statements advance the tenant's context source change clock in a
@@ -53,7 +53,7 @@ fn written_columns(
         (Subscriptions::Description, Expr::val(fields.description)),
         (Subscriptions::Entities, json_document(fields.entities)?),
         (Subscriptions::WatchedAttributes, Expr::val(interned.watched_attributes)),
-        (Subscriptions::NotificationTrigger, Expr::val(stored_trigger_list(fields.notification_trigger))),
+        (Subscriptions::NotificationTriggers, Expr::val(stored_trigger_list(fields.notification_trigger))),
         (Subscriptions::TimeInterval, Expr::val(fields.time_interval)),
         (Subscriptions::Q, Expr::val(fields.q.map(ToString::to_string))),
         (Subscriptions::GeoQ, json_document(fields.geo_q)?),
@@ -199,7 +199,7 @@ mod tests {
         assert!(sql.contains("VALUES ($1, $2, $3"), "the identifier then the context-source kind code: {sql}");
         assert!(!sql.contains("::subscription_status"), "no enum cast remains: {sql}");
         assert_eq!(values, 23, "the create binds every column but the two timestamps and the drawn revision: {sql}");
-        assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
+        assert!(!sql.contains("dataset_ids"), "a context-source subscription stores no datasetId: {sql}");
         assert!(!sql.contains("local_only"), "a context-source subscription stores no localOnly: {sql}");
     }
 

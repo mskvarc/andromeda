@@ -209,7 +209,6 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
 
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
-        .value(NotificationDeliveries::ClaimedAt, Expr::current_timestamp())
         .value(NotificationDeliveries::ClaimedBy, worker_id.as_uuid())
         .value(
             NotificationDeliveries::LeaseUntil,
@@ -373,9 +372,8 @@ mod tests {
     }
 
     #[test]
-    fn the_claim_takes_a_lease_alongside_the_claim_triple() {
+    fn the_claim_takes_a_lease_alongside_the_claiming_worker() {
         let sql = claim_statement(&ContextTarget::Live, LeaseHolder::from(Uuid::nil()), BATCH_SIZE, 30.0).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""claimed_at" = CURRENT_TIMESTAMP"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
         assert!(sql.contains("make_interval(secs =>"), "{sql}");
     }

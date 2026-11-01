@@ -70,8 +70,6 @@ pub enum NotificationDeliveries {
     HeldAt,
     /// Diagnostic recorded by the last failed attempt (shared claimable-queue contract)
     LastError,
-    /// Instant the current lease was taken
-    ClaimedAt,
     /// Worker that holds the current lease
     ClaimedBy,
     /// Instant the current lease expires
@@ -127,7 +125,6 @@ mod tests {
         assert_eq!(NotificationDeliveries::ExhaustedAt.to_string(), "exhausted_at");
         assert_eq!(NotificationDeliveries::HeldAt.to_string(), "held_at");
         assert_eq!(NotificationDeliveries::LastError.to_string(), "last_error");
-        assert_eq!(NotificationDeliveries::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(NotificationDeliveries::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(NotificationDeliveries::LeaseUntil.to_string(), "lease_until");
     }

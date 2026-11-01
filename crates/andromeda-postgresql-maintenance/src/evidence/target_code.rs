@@ -6,7 +6,7 @@ use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 /// The registry member the platform database stores for a target.
 pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTargetCode {
     match target {
-        MaintenanceTarget::Index(IndexTarget::UqCurrentAttributesGrain) => MaintenanceTargetCode::UqCurrentAttributesGrain,
+        MaintenanceTarget::Index(IndexTarget::PkCaGrain) => MaintenanceTargetCode::PkCaGrain,
         MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber) => MaintenanceTargetCode::IdxCaValueNumber,
         MaintenanceTarget::Index(IndexTarget::IdxCaValueString) => MaintenanceTargetCode::IdxCaValueString,
         MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm) => MaintenanceTargetCode::IdxCaValueStringTrgm,
@@ -60,7 +60,7 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
 /// The target a stored registry member names.
 pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget {
     match code {
-        MaintenanceTargetCode::UqCurrentAttributesGrain => MaintenanceTarget::Index(IndexTarget::UqCurrentAttributesGrain),
+        MaintenanceTargetCode::PkCaGrain => MaintenanceTarget::Index(IndexTarget::PkCaGrain),
         MaintenanceTargetCode::IdxCaValueNumber => MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber),
         MaintenanceTargetCode::IdxCaValueString => MaintenanceTarget::Index(IndexTarget::IdxCaValueString),
         MaintenanceTargetCode::IdxCaValueStringTrgm => MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm),

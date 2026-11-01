@@ -14,10 +14,10 @@ compact_code_registry! {
     /// `_rowstore` suffix.
     MaintenanceTargetCode {
         frozen_prefix: 13,
-        frozen_digest: 0xe988_1329_b9bc_1c59,
+        frozen_digest: 0xeca3_e32a_1519_99bf,
         codes: {
-            /// The current attributes' grain constraint index.
-            UqCurrentAttributesGrain = 1, "uq_current_attributes_grain";
+            /// The current attributes' grain primary key index.
+            PkCaGrain = 1, "pk_ca_grain";
             /// The current attributes' number index.
             IdxCaValueNumber = 2, "idx_ca_value_number";
             /// The current attributes' string index.
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
         assert_eq!(MaintenanceTargetCode::ALL.len(), 44);
-        assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
+        assert_eq!(MaintenanceTargetCode::PkCaGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
         assert_eq!(MaintenanceTargetCode::IdxCaValueObject.code(), 14);

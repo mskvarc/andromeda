@@ -11,8 +11,9 @@ use crate::{
     entity::{
         dictionary_join::{AttributeNameRow, join_attribute_name},
         entity_types::{Search, entity_types_statement},
-        mapper::{stored_attribute_family, stored_attribute_name, stored_type_name, stored_uri},
+        mapper::{stored_attribute_family, stored_attribute_name, stored_type_name},
         repo::EntityRepository,
+        stored_entity_error::StoredEntityError,
     },
     error::ContextStoreError,
     subscription_store::trigger_code::stored_trigger,
@@ -25,6 +26,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{NotificationTrigger, effective_notification_triggers};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
+use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, E, Entities, EntitySearch},
     name_dictionary::AttributeNames,
@@ -72,7 +74,7 @@ fn outline_types_statement(target: &ContextTarget, id: &str) -> SelectStatement 
 /// One row per attribute instance the entity holds:
 ///
 /// ```sql
-/// SELECT an.name, ca.dataset_id, ca.attribute_kind
+/// SELECT an.name, ca.dataset_key, ca.attribute_kind
 /// FROM entities e JOIN current_attributes ca ON ca.entity_key = e.entity_key
 /// JOIN attribute_names an ON an.attribute_name_key = ca.attribute_name_key
 /// WHERE e.id = $1
@@ -81,7 +83,7 @@ fn outline_instances_statement(target: &ContextTarget, id: &str) -> SelectStatem
     let mut statement = Query::select();
     statement
         .column((AttributeNameRow, AttributeNames::Name))
-        .column((Instance, CurrentAttributes::DatasetId))
+        .column((Instance, CurrentAttributes::DatasetKey))
         .column((Instance, CurrentAttributes::AttributeKind))
         .from_as(table_of(target, Entities::Table), E)
         .join_as(
@@ -119,7 +121,7 @@ fn deletion_trigger_codes() -> Vec<i16> {
 ///
 /// ```sql
 /// SELECT EXISTS (SELECT 1 FROM subscriptions WHERE kind = 1 AND status = 1
-///   AND time_interval IS NULL AND notification_trigger && ARRAY[2, 3, 6]) AS watched
+///   AND time_interval IS NULL AND notification_triggers && ARRAY[2, 3, 6]) AS watched
 /// ```
 ///
 /// A subscription with no explicit trigger selection listens for the clause
@@ -134,7 +136,7 @@ fn deletion_watchers_statement(target: &ContextTarget) -> SelectStatement {
         .and_where(Expr::col(Subscriptions::Kind).eq(SubscriptionKindCode::Entity.code()))
         .and_where(Expr::col(Subscriptions::Status).eq(SubscriptionStatusCode::Active.code()))
         .and_where(Expr::col(Subscriptions::TimeInterval).is_null())
-        .and_where(SimpleExpr::from(Expr::col(Subscriptions::NotificationTrigger)).array_overlaps(Expr::val(deletion_trigger_codes())))
+        .and_where(SimpleExpr::from(Expr::col(Subscriptions::NotificationTriggers)).array_overlaps(Expr::val(deletion_trigger_codes())))
         .take();
     Query::select().expr_as(Expr::exists(watchers), Watched).take()
 }
@@ -171,7 +173,7 @@ impl EntityRepository {
             .map(|row| {
                 let key = AttributeInstanceKey {
                     attr: stored_attribute_name(row.try_get::<&str, _>(0)?)?,
-                    dataset_id: row.try_get::<Option<&str>, _>(1)?.map(stored_uri).transpose()?,
+                    dataset_id: DatasetKey::stored(row.try_get::<&str, _>(1)?).dataset_id().map_err(StoredEntityError::Id)?,
                 };
                 Ok((key, stored_attribute_family(row.try_get::<i16, _>(2)?)?))
             })
@@ -218,7 +220,7 @@ mod tests {
             r#""kind" = 1"#,
             r#""status" = 1"#,
             r#""time_interval" IS NULL"#,
-            r#""notification_trigger" && ARRAY [2,3,6]"#,
+            r#""notification_triggers" && ARRAY [2,3,6]"#,
         ] {
             assert!(sql.contains(clause), "{clause}: {sql}");
         }
@@ -230,7 +232,7 @@ mod tests {
     #[test]
     fn default_periodic_and_paused_subscriptions_are_no_deletion_watchers() {
         let sql = probe(&ContextTarget::Live);
-        assert!(sql.contains(r#""notification_trigger" &&"#), "{sql}");
+        assert!(sql.contains(r#""notification_triggers" &&"#), "{sql}");
         assert!(sql.contains(r#""time_interval" IS NULL"#), "{sql}");
         assert!(sql.contains(r#""status" = 1"#), "{sql}");
     }

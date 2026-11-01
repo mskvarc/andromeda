@@ -121,12 +121,6 @@ macro_rules! workspace_architecture {
                 );
             }
 
-            /// No production source compares a `dataset_id` column null-aware.
-            #[test]
-            fn dataset_columns_compare_by_their_grain_key() {
-                $crate::dataset_grain_comparison::assert_dataset_columns_compare_by_their_grain_key(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
-            }
-
             /// Every geo-query box test reads the box a stored geometry's index keys.
             #[test]
             fn geometry_box_tests_read_the_indexed_box() {

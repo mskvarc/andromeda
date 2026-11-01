@@ -10,8 +10,11 @@ use strum::{Display, EnumString, IntoStaticStr};
 /// `idx_ca_value_long_text` and `idx_ca_value_long_uri` are left out: both are
 /// keyed on the attribute key alone, so a value update leaves their key
 /// unchanged and bottom-up index deletion removes the version churn as it
-/// happens. Of the queue indexes, only those of `notification_deliveries` that
-/// every delivery attempt writes are targets: an attempt leases the row through
+/// happens. `idx_ca_dataset_value_geometry` is left out because it is partial
+/// on instances carrying a `datasetId`, which almost no geometry instance
+/// does: it holds a small fraction of the rows `idx_ca_value_geometry` holds,
+/// so a rebuild would reclaim little space. Of the queue indexes, only those of
+/// `notification_deliveries` that every delivery attempt writes are targets: an attempt leases the row through
 /// the claim expression, so it is never a heap-only update and adds an entry
 /// to each of them. An index a row enters once, and one on a table a claim
 /// does not update, frees space only as fast as the queue's retention reaps
@@ -23,7 +26,7 @@ use strum::{Display, EnumString, IntoStaticStr};
 #[strum(serialize_all = "snake_case")]
 pub enum IndexTarget {
     /// Natural entity/attribute/dataset grain.
-    UqCurrentAttributesGrain,
+    PkCaGrain,
     /// Numeric predicate index.
     IdxCaValueNumber,
     /// String B-tree and bloat canary for the paired trigram rebuild.
@@ -111,7 +114,7 @@ impl DensityColumn {
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
     pub const ALL: [IndexTarget; 22] = [
-        IndexTarget::UqCurrentAttributesGrain,
+        IndexTarget::PkCaGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
         IndexTarget::IdxCaValueStringTrgm,
@@ -137,7 +140,7 @@ impl IndexTarget {
 
     /// Indexes eligible for direct physical bloat probing.
     pub const PROBEABLE: [IndexTarget; 17] = [
-        IndexTarget::UqCurrentAttributesGrain,
+        IndexTarget::PkCaGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
         IndexTarget::IdxCaValueBoolean,
@@ -168,7 +171,7 @@ impl IndexTarget {
     pub const fn paired_gin(self) -> Option<IndexTarget> {
         match self {
             IndexTarget::IdxCaValueString => Some(IndexTarget::IdxCaValueStringTrgm),
-            IndexTarget::UqCurrentAttributesGrain
+            IndexTarget::PkCaGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueStringTrgm
             | IndexTarget::IdxCaValueBoolean
@@ -198,7 +201,7 @@ impl IndexTarget {
     pub const fn canary(self) -> Option<IndexTarget> {
         match self {
             IndexTarget::IdxCaValueStringTrgm => Some(IndexTarget::IdxCaValueString),
-            IndexTarget::UqCurrentAttributesGrain
+            IndexTarget::PkCaGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
             | IndexTarget::IdxCaValueBoolean
@@ -231,7 +234,7 @@ impl IndexTarget {
             IndexTarget::IdxCaValueObject => Some(DensityColumn::ValueObject),
             IndexTarget::IdxCaValueLongTextTrgm => Some(DensityColumn::ValueLongText),
             IndexTarget::IdxEntitiesIdTrgm => Some(DensityColumn::Id),
-            IndexTarget::UqCurrentAttributesGrain
+            IndexTarget::PkCaGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
             | IndexTarget::IdxCaValueStringTrgm
@@ -257,7 +260,7 @@ impl IndexTarget {
     #[must_use]
     pub const fn heap(self) -> HeapTarget {
         match self {
-            IndexTarget::UqCurrentAttributesGrain
+            IndexTarget::PkCaGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
             | IndexTarget::IdxCaValueStringTrgm
@@ -286,7 +289,7 @@ impl IndexTarget {
     #[must_use]
     pub const fn relation_name(self) -> &'static str {
         match self {
-            IndexTarget::UqCurrentAttributesGrain => "uq_current_attributes_grain",
+            IndexTarget::PkCaGrain => "pk_ca_grain",
             IndexTarget::IdxCaValueNumber => "idx_ca_value_number",
             IndexTarget::IdxCaValueString => "idx_ca_value_string",
             IndexTarget::IdxCaValueStringTrgm => "idx_ca_value_string_trgm",

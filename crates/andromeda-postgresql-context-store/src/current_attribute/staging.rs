@@ -41,7 +41,7 @@ pub(crate) struct Instances;
 /// Entity's identifier.
 pub(crate) const ROW_COLUMNS: [CurrentAttributes; 28] = [
     CurrentAttributes::AttributeNameKey,
-    CurrentAttributes::DatasetId,
+    CurrentAttributes::DatasetKey,
     CurrentAttributes::Ordinal,
     CurrentAttributes::AttributeKind,
     CurrentAttributes::ValueKind,
@@ -102,7 +102,7 @@ const fn staged_type(column: CurrentAttributes) -> PostgresType {
         CurrentAttributes::Table
         | CurrentAttributes::EntityKey
         | CurrentAttributes::ValueGeometryValid
-        | CurrentAttributes::DatasetId
+        | CurrentAttributes::DatasetKey
         | CurrentAttributes::ValueString
         | CurrentAttributes::ValueLongText
         | CurrentAttributes::ValueUri
@@ -144,7 +144,7 @@ fn projected(column: CurrentAttributes) -> SimpleExpr {
         | CurrentAttributes::ValueTypeKey
         | CurrentAttributes::UnitCodeId
         | CurrentAttributes::ValueBoolean
-        | CurrentAttributes::DatasetId
+        | CurrentAttributes::DatasetKey
         | CurrentAttributes::ValueNumber
         | CurrentAttributes::ValueString
         | CurrentAttributes::ValueLanguage

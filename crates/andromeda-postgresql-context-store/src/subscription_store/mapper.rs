@@ -2,7 +2,7 @@
 //!
 //! The PgRow reader lives here because the `subscriptions` table is shared
 //! between entity and context-source subscriptions, with a conditionally
-//! present `dataset_id` column.
+//! present `dataset_ids` column.
 
 use crate::{
     error::ContextStoreError,
@@ -101,9 +101,9 @@ fn stored_attribute_names(
         .transpose()
 }
 
-/// The clause 5.3.3 triggers the `notification_trigger` registry codes name.
+/// The clause 5.3.3 triggers the `notification_triggers` registry codes name.
 fn stored_notification_triggers(row: &PgRow) -> Result<Option<Vec<NotificationTrigger>>, ContextStoreError> {
-    let trigger_codes: Option<Vec<i16>> = row.try_get(Subscriptions::NotificationTrigger.unquoted())?;
+    let trigger_codes: Option<Vec<i16>> = row.try_get(Subscriptions::NotificationTriggers.unquoted())?;
     trigger_codes
         .map(|codes| {
             codes
@@ -159,7 +159,7 @@ fn stored_q(row: &PgRow) -> Result<Option<Expr>, ContextStoreError> {
 /// context URL, or the status code.
 pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
     let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
-        DatasetIdPresence::Present => row.try_get(Subscriptions::DatasetId.unquoted())?,
+        DatasetIdPresence::Present => row.try_get(Subscriptions::DatasetIds.unquoted())?,
         DatasetIdPresence::Absent => None,
     };
     let dataset_id = dataset_id_raw

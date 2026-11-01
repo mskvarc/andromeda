@@ -17,7 +17,6 @@
 //! catalogue row looked up per probe. A split query reads its leaves for a
 //! list of identifiers and names the Evolution by its identifier.
 
-use crate::axis::axis_column;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
@@ -112,7 +111,7 @@ pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemp
     HistoryWindow::builder()
         .branch(branch.clone()) // clone: the window owns the branch its probes read
         .of(of.clone()) // clone: the window owns the Evolution its probes read
-        .axis(axis_column(compiled.window.timeproperty))
+        .timeproperty(compiled.window.timeproperty)
         .interval(compiled.window.interval)
         .reach(reach)
         .build()

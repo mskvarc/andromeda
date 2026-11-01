@@ -15,6 +15,8 @@
 pub mod contract;
 /// What a schema-contract check refuses a tenant for.
 pub mod error;
+/// What a database must offer before any migrator runs against it.
+pub mod migration_prerequisites;
 /// The digest of the migration set a broker binary embeds.
 pub mod migrations_digest;
 /// The `schema_metadata` singleton: stamping it, reading it, and verifying it.

@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn every_index_target_names_the_heap_that_owns_it() {
         let expected = [
-            (IndexTarget::UqCurrentAttributesGrain, HeapTarget::CurrentAttributes),
+            (IndexTarget::PkCaGrain, HeapTarget::CurrentAttributes),
             (IndexTarget::IdxCaValueNumber, HeapTarget::CurrentAttributes),
             (IndexTarget::IdxCaValueString, HeapTarget::CurrentAttributes),
             (IndexTarget::IdxCaValueStringTrgm, HeapTarget::CurrentAttributes),

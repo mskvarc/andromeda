@@ -60,7 +60,7 @@ fn recorded_grain(select: &mut SelectStatement) {
             Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)),
             HistoryGrain::AttributeNameKey,
         )
-        .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)), HistoryGrain::DatasetId);
+        .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetKey)), HistoryGrain::DatasetKey);
 }
 
 /// The grain of a recorded stream naming its Evolution by surrogate key, under
@@ -72,7 +72,7 @@ fn keyed_grain(select: &mut SelectStatement) {
             Expr::col((RecordedStream, TemporalAttributeStreams::AttributeNameKey)),
             HistoryGrain::AttributeNameKey,
         )
-        .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetId)), HistoryGrain::DatasetId);
+        .expr_as(Expr::col((RecordedStream, TemporalAttributeStreams::DatasetKey)), HistoryGrain::DatasetKey);
 }
 
 /// The identity and value columns of the recorded rows of the branch `schema`
@@ -339,7 +339,7 @@ mod tests {
             sql,
             concat!(
                 r#"SELECT * FROM (SELECT "rs"."entity_key" AS "entity_key", "rs"."attribute_name_key" AS "attribute_name_key", "#,
-                r#""rs"."dataset_id" AS "dataset_id", "rs"."stream_key" AS "stream_key" FROM "snap_1"."temporal_attribute_streams" AS "rs") AS "s""#
+                r#""rs"."dataset_key" AS "dataset_key", "rs"."stream_key" AS "stream_key" FROM "snap_1"."temporal_attribute_streams" AS "rs") AS "s""#
             )
         );
     }

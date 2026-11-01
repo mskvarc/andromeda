@@ -18,10 +18,10 @@ use crate::{
     aggregation::PeriodOrder,
     aggregation_grid::{BucketEnd, BucketStart},
     alias::Ah,
-    axis::axis_bound,
     period_edge::{listed_ends, listed_starts, stream_bound},
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+use andromeda_postgresql_query::history_source::axis::axis_bound;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     aggregate::{count_all, row_number},
@@ -56,8 +56,8 @@ fn group_order(index: usize) -> Alias {
 /// from its start, before its end.
 pub(crate) fn within_page_period(timeproperty: TimeProp) -> Condition {
     Condition::all()
-        .add(axis_bound(timeproperty, |instant| instant.gte(Expr::col((PagePeriod, BucketStart)))))
-        .add(axis_bound(timeproperty, |instant| instant.lt(Expr::col((PagePeriod, BucketEnd)))))
+        .add(axis_bound(Ah, timeproperty, |instant| instant.gte(Expr::col((PagePeriod, BucketStart)))))
+        .add(axis_bound(Ah, timeproperty, |instant| instant.lt(Expr::col((PagePeriod, BucketEnd)))))
 }
 
 /// The periods the edge listed, one row each: its start, its end and its
@@ -250,7 +250,10 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.ends_with(r#"WHERE "ah"."observed_at" >= "page_period"."bucket_start" AND "ah"."observed_at" < "page_period"."bucket_end""#),
+            sql.ends_with(concat!(
+                r#"WHERE "ah"."observed_at" >= "page_period"."bucket_start" AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= "page_period"."bucket_start" "#,
+                r#"AND ("ah"."observed_at" < "page_period"."bucket_end" AND COALESCE("ah"."observed_at", "ah"."deleted_at") < "page_period"."bucket_end")"#
+            )),
             "{sql}"
         );
     }

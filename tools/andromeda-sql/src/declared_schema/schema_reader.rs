@@ -16,7 +16,7 @@ use crate::{
         statement_context::StatementContext,
         statistics::DeclaredStatistics,
         syntax_walk::SyntaxSites,
-        table::{DeclaredTable, Hypertable, StorageParameter},
+        table::{DeclaredTable, Hypertable, ReplicaIdentity, ReplicaIdentityKind, StorageParameter},
         trigger::DeclaredTrigger,
     },
     plpgsql_tree::PlpgsqlError,
@@ -63,6 +63,8 @@ pub struct SchemaObjects {
     pub(crate) triggers: Vec<DeclaredTrigger>,
     /// Every table converted into a hypertable.
     pub(crate) hypertables: Vec<Hypertable>,
+    /// Every replica identity a table is given.
+    pub(crate) replica_identities: Vec<ReplicaIdentity>,
     /// Every named object created.
     pub(crate) created: Vec<CreatedObject>,
     /// Every relation named without being created.
@@ -210,7 +212,8 @@ impl SchemaObjects {
     }
 
     /// Read an `alter table`: the columns it adds or retypes, the compression
-    /// it sets and the constraints it adds or validates.
+    /// and the replica identity it sets and the constraints it adds or
+    /// validates.
     fn read_alter_table(&mut self, alter: &AlterTableStmt, context: &StatementContext<'_>) {
         let table = alter.relation.as_ref().map(|relation| relation.relname.as_str()).unwrap_or_default();
         for command in alter.cmds.iter().filter_map(|node| match &node.node {
@@ -247,6 +250,11 @@ impl SchemaObjects {
                     &method.sval,
                     context.origin_of_name(&command.name),
                 ));
+            }
+            (Ok(AlterTableType::AtReplicaIdentity), Some(NodeEnum::ReplicaIdentityStmt(identity))) => {
+                if let Ok(kind) = identity.identity_type.parse::<ReplicaIdentityKind>() {
+                    self.replica_identities.push(ReplicaIdentity::new(table, kind));
+                }
             }
             (Ok(_) | Err(_), _) => {}
         }

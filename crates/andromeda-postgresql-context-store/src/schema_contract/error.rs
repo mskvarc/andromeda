@@ -5,6 +5,7 @@ use crate::schema_contract::{
     schema_version::{SchemaVersion, SchemaVersionError},
     server_encoding::ServerEncoding,
     server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
+    versioned_extension::VersionedExtension,
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::{saturation::is_pool_saturated, schema_change_classification::classify_schema_change};
@@ -87,6 +88,13 @@ pub enum SchemaContractError {
         /// What the extension catalogue reports.
         found: ExtensionPresence,
     },
+    /// The server's installation does not ship an extension the migrations
+    /// create, so no migration may run against the database.
+    #[error("tenant schema contract: the server does not ship the {extension} extension the schema requires")]
+    ExtensionUnavailable {
+        /// The extension `pg_available_extensions` does not list.
+        extension: VersionedExtension,
+    },
     /// `TimescaleDB` is absent or below the version the schema depends on.
     #[error("tenant schema contract: TimescaleDB {found} is below the required minimum {required}")]
     TimescaleDbBelowMinimum {
@@ -119,7 +127,8 @@ impl SchemaContractError {
             | SchemaContractError::ServerEncodingUnreadable(_)
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
-            | SchemaContractError::TimescaleDbBelowMinimum { .. } => false,
+            | SchemaContractError::TimescaleDbBelowMinimum { .. }
+            | SchemaContractError::ExtensionUnavailable { .. } => false,
         }
     }
 
@@ -144,7 +153,8 @@ impl SchemaContractError {
             | SchemaContractError::ServerEncodingUnreadable(_)
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
-            | SchemaContractError::TimescaleDbBelowMinimum { .. } => PersistenceFailure::SchemaMismatch,
+            | SchemaContractError::TimescaleDbBelowMinimum { .. }
+            | SchemaContractError::ExtensionUnavailable { .. } => PersistenceFailure::SchemaMismatch,
         }
     }
 }

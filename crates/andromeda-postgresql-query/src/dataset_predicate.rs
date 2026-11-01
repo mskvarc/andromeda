@@ -1,32 +1,33 @@
-//! A clause 4.5.5 `datasetId` selection as a predicate on one `dataset_id`
+//! A clause 4.5.5 `datasetId` selection as a predicate on one grain key
 //! column.
 //!
-//! The default instance carries no `datasetId` and is stored as a NULL
-//! `dataset_id`. The column is tested as the instance grain's unique index
-//! keys it, the default instance as the empty string, so the default and the
-//! named instances are one membership test and an index on the grain answers
-//! it.
+//! The column is a [`DatasetKey`], so the default and the named instances are
+//! one membership test with plain `=`, and an index on the grain answers it.
 
+use crate::dataset_key::{DatasetKey, is_default_instance};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::dataset::DatasetFilter;
-use andromeda_postgresql_seaquery::{
-    nullable_text_key::{is_null_text_key, nullable_text_key},
-    pg_array::is_any_of,
-};
+use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use sea_query::{Condition, SimpleExpr};
 
-/// Whether the instance whose `dataset_id` is `column` is one `filter` selects.
+/// Whether the instance whose grain key is `column` is one `filter` selects.
 #[must_use]
 pub fn dataset_condition(column: &SimpleExpr, filter: &DatasetFilter) -> Condition {
     // clone: sea-query owns every operand
     let dataset = || column.clone();
+    let keys = |named: &[Identifier]| {
+        named
+            .iter()
+            .map(|dataset_id| DatasetKey::of(Some(dataset_id)).as_str().to_owned())
+            .collect::<Vec<String>>()
+    };
     match filter {
         DatasetFilter::Unfiltered => Condition::all(),
-        DatasetFilter::DefaultOnly => Condition::all().add(is_null_text_key(dataset())),
-        DatasetFilter::NamedOnly(named) => Condition::all().add(is_any_of(nullable_text_key(dataset()), named.iter().map(ToString::to_string))),
-        DatasetFilter::DefaultOrNamed(named) => Condition::all().add(is_any_of(
-            nullable_text_key(dataset()),
-            named.iter().map(ToString::to_string).chain([String::new()]),
-        )),
+        DatasetFilter::DefaultOnly => Condition::all().add(is_default_instance(dataset())),
+        DatasetFilter::NamedOnly(named) => Condition::all().add(is_any_of(dataset(), keys(named))),
+        DatasetFilter::DefaultOrNamed(named) => {
+            Condition::all().add(is_any_of(dataset(), keys(named).into_iter().chain([DatasetKey::of(None).as_str().to_owned()])))
+        }
     }
 }
 
@@ -41,7 +42,7 @@ mod tests {
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(filter: &DatasetFilter) -> String {
-        let column: SimpleExpr = Expr::col((Alias::new("s"), Alias::new("dataset_id")));
+        let column: SimpleExpr = Expr::col((Alias::new("s"), Alias::new("dataset_key")));
         Query::select()
             .expr(Expr::val(1))
             .cond_where(dataset_condition(&column, filter))
@@ -49,23 +50,17 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
-    /// Clause 4.5.5: `@none` selects the default instance, whose column is
-    /// NULL and whose grain key is the empty string.
+    /// Clause 4.5.5: `@none` selects the default instance, whose grain key is
+    /// the empty string.
     #[test]
     fn each_selection_renders_its_own_test() {
         let named = vec!["urn:ngsi-ld:Dataset:one".parse().expect("a valid URI")];
-        assert!(!render(&DatasetFilter::Unfiltered).contains("dataset_id"));
-        assert!(render(&DatasetFilter::DefaultOnly).contains(r#"COALESCE("s"."dataset_id", '') = ('')"#));
+        assert!(!render(&DatasetFilter::Unfiltered).contains("dataset_key"));
+        assert!(render(&DatasetFilter::DefaultOnly).contains(r#""s"."dataset_key" = ('')"#));
         let only = render(&DatasetFilter::NamedOnly(named.clone()));
-        assert!(
-            only.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#),
-            "{only}"
-        );
+        assert!(only.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{only}");
         let both = render(&DatasetFilter::DefaultOrNamed(named));
-        assert!(
-            both.contains(r#"COALESCE("s"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#),
-            "{both}"
-        );
+        assert!(both.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#), "{both}");
         assert!(!both.contains(" OR "), "{both}");
     }
 }

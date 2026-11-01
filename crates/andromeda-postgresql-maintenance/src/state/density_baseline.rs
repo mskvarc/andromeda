@@ -138,7 +138,7 @@ mod tests {
     fn a_baseline_is_upserted_without_touching_the_rest_of_the_row() -> Result<(), MaintenanceError> {
         let density = NonZeroU64::new(2_500).map(Density::from_millibytes);
         let sql = density_baseline_upsert(&tenant(), Branch::Live, IndexTarget::IdxCaValueObject, density)?.to_string(PostgresQueryBuilder);
-        assert!(sql.contains("VALUES (7, NULL, 14, 2500)"), "{sql}");
+        assert!(sql.contains("VALUES (7, 0, 14, 2500)"), "{sql}");
         assert!(
             sql.ends_with(r#"ON CONFLICT ("tenant_key", "snapshot_key", "target") DO UPDATE SET "baseline_density" = "excluded"."baseline_density""#),
             "{sql}"
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn a_cleared_baseline_is_stored_as_null() -> Result<(), MaintenanceError> {
         let sql = density_baseline_upsert(&tenant(), Branch::Live, IndexTarget::IdxCaSubEqKeys, None)?.to_string(PostgresQueryBuilder);
-        assert!(sql.contains("VALUES (7, NULL, 10, NULL)"), "{sql}");
+        assert!(sql.contains("VALUES (7, 0, 10, NULL)"), "{sql}");
         Ok(())
     }
 }

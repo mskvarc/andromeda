@@ -46,7 +46,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryR
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::history_source::HistoryBranch;
+use andromeda_postgresql_query::{dataset_key::DatasetKey, history_source::HistoryBranch};
 use andromeda_postgresql_seaquery::{command::Command, statement::Statement};
 use andromeda_postgresql_temporal_query::history::build_temporal_history_query;
 use andromeda_temporal::{error::TemporalError, merged_parts::LocalPart};
@@ -202,10 +202,8 @@ impl TemporalRepository {
         let entity_key = self.staged_entity(tx, entity_id, entity_types).await?;
         for (position, grain) in grains.iter().enumerate() {
             let attribute_name_key: i32 = grain.try_get(0)?;
-            let dataset_id = grain
-                .try_get::<Option<String>, _>(1)?
-                .map(|raw| raw.parse::<Identifier>())
-                .transpose()
+            let dataset_id = DatasetKey::stored(grain.try_get::<&str, _>(1)?)
+                .dataset_id()
                 .map_err(StoredCatalogError::StreamDatasetId)?;
             stage_stream(staged_key(position.saturating_add(1)), entity_key, attribute_name_key, dataset_id.as_ref())?
                 .to_query()
@@ -255,10 +253,8 @@ async fn read_staged_streams(tx: &mut PgConnection) -> Result<HashSet<Grain>, Te
                 .try_get::<String, _>(0)?
                 .parse::<AttributeName>()
                 .map_err(StoredCatalogError::AttributeName)?;
-            let dataset_id = row
-                .try_get::<Option<String>, _>(1)?
-                .map(|raw| raw.parse::<Identifier>())
-                .transpose()
+            let dataset_id = DatasetKey::stored(row.try_get::<&str, _>(1)?)
+                .dataset_id()
                 .map_err(StoredCatalogError::StreamDatasetId)?;
             Ok((name, dataset_id))
         })

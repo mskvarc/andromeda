@@ -15,7 +15,7 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::pg_array::{all, any};
 use chrono::{DateTime, Utc};
@@ -86,7 +86,7 @@ pub fn select_row_columns(select: &mut SelectStatement) {
         CurrentAttributes::ModifiedAt,
         CurrentAttributes::SubAttributes,
         CurrentAttributes::AttributeNameKey,
-        CurrentAttributes::DatasetId,
+        CurrentAttributes::DatasetKey,
         CurrentAttributes::AttributeKind,
         CurrentAttributes::ValueKind,
         CurrentAttributes::ValueNumber,
@@ -146,7 +146,9 @@ pub struct CurrentAttributeRecord {
     pub modified_at: DateTime<Utc>,
     /// `sub_attributes`, null when the instance has none.
     pub sub_attributes: Option<Vec<SubAttributeRecord>>,
-    /// The members.
+    /// `dataset_key`, the grain key of the instance's `datasetId`.
+    pub dataset_key: String,
+    /// The other members.
     #[sqlx(flatten)]
     pub members: MemberColumns,
 }
@@ -157,7 +159,7 @@ impl TryFrom<CurrentAttributeRecord> for CurrentAttributeRow {
     fn try_from(record: CurrentAttributeRecord) -> Result<CurrentAttributeRow, StoredInstanceError> {
         Ok(CurrentAttributeRow {
             ordinal: record.ordinal,
-            members: InstanceMembers::try_from(record.members)?,
+            members: InstanceMembers::read(DatasetKey::stored(&record.dataset_key).dataset_id()?, record.members)?,
             created_at: record.created_at,
             modified_at: record.modified_at,
             sub_attributes: record

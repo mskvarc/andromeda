@@ -378,7 +378,7 @@ mod tests {
         assert!(sql.contains(r#""last_action_result" = 1"#), "{sql}");
         assert!(sql.contains(r#""last_dead_tuples_before" = 50000"#), "{sql}");
         assert!(sql.contains(r#""last_dead_tuples_after" = 1000"#), "{sql}");
-        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" IS NULL AND "target" = 11"#), "{sql}");
+        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" = 0 AND "target" = 11"#), "{sql}");
         assert!(sql.contains(r#""last_before_bytes" = NULL"#), "{sql}");
         assert!(sql.contains(r#""last_after_bytes" = NULL"#), "{sql}");
         Ok(())
@@ -439,18 +439,18 @@ mod tests {
         assert!(sql.contains(r#""first_breach_at" = NULL"#), "{sql}");
         assert!(sql.contains(r#""breach_samples" = 0"#), "{sql}");
         assert!(sql.contains(r#""consecutive_failures" = 0"#), "{sql}");
-        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" IS NULL"#), "{sql}");
+        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" = 0"#), "{sql}");
         for untouched in ["cooldown_until", "last_action_at", "last_action_result"] {
             assert!(!sql.contains(untouched), "{untouched} is left as it was: {sql}");
         }
     }
 
     #[test]
-    fn a_live_target_row_is_inserted_with_no_snapshot_key_on_the_branch_grain() -> Result<(), MaintenanceError> {
+    fn a_live_target_row_is_inserted_with_key_zero_on_the_branch_grain() -> Result<(), MaintenanceError> {
         let sql = target_state_insert(TenantKey(7), live(MaintenanceTarget::Heap(HeapTarget::Entities)))?.to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"INSERT INTO "postgresql_maintenance_targets" ("tenant_key", "snapshot_key", "target") VALUES (7, NULL, 12) ON CONFLICT ("tenant_key", "snapshot_key", "target") DO NOTHING"#
+            r#"INSERT INTO "postgresql_maintenance_targets" ("tenant_key", "snapshot_key", "target") VALUES (7, 0, 12) ON CONFLICT ("tenant_key", "snapshot_key", "target") DO NOTHING"#
         );
         Ok(())
     }

@@ -1,6 +1,8 @@
-//! A table, its storage parameters, and its conversion to a hypertable.
+//! A table, its storage parameters, its replica identity, and its conversion
+//! to a hypertable.
 
 use crate::declared_schema::origin::Origin;
+use strum::EnumString;
 
 /// One `create table`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,5 +112,52 @@ impl Hypertable {
     #[must_use]
     pub const fn origin(&self) -> Origin {
         self.origin
+    }
+}
+
+/// The replica identity an `alter table ... replica identity` sets, as
+/// PostgreSQL's parser codes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString)]
+pub enum ReplicaIdentityKind {
+    /// `default`: the primary key.
+    #[strum(serialize = "d")]
+    Default,
+    /// `full`: every column.
+    #[strum(serialize = "f")]
+    Full,
+    /// `nothing`.
+    #[strum(serialize = "n")]
+    Nothing,
+    /// `using index`.
+    #[strum(serialize = "i")]
+    Index,
+}
+
+/// One `alter table ... replica identity`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaIdentity {
+    /// The table.
+    table: String,
+    /// The identity it sets.
+    kind: ReplicaIdentityKind,
+}
+
+impl ReplicaIdentity {
+    /// The identity `kind` set on `table`.
+    #[must_use]
+    pub fn new(table: impl Into<String>, kind: ReplicaIdentityKind) -> ReplicaIdentity {
+        ReplicaIdentity { table: table.into(), kind }
+    }
+
+    /// The table.
+    #[must_use]
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    /// The identity it sets.
+    #[must_use]
+    pub const fn kind(&self) -> ReplicaIdentityKind {
+        self.kind
     }
 }

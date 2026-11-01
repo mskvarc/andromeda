@@ -1,11 +1,11 @@
 //! Persistence layer for the notification delivery queue.
 //!
 //! One write produces one immutable `notification_events` row per affected
-//! entity -- its lifecycle and every Attribute instance it touched -- and one
+//! entity (its lifecycle and every Attribute instance it touched) and one
 //! `notification_deliveries` row per subscription that matched it. The split
 //! is what keeps a fan-out cheap: the entity snapshots a notification carries
-//! are written once no matter how many subscribers are due them, and the queue columns a worker updates — the claim triple, the attempt
-//! counter, the next-attempt instant — live on the narrow child row that is
+//! are written once no matter how many subscribers are due them, and the queue columns a worker updates (the claim pair, the attempt
+//! counter, the next-attempt instant) live on the narrow child row that is
 //! scanned and rewritten, never on the row holding the payload.
 //!
 //! A write whose entity matched no subscription persists nothing at all: an

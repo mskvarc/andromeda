@@ -158,12 +158,11 @@ mod tests {
         sub_attribute_key::path_hash::PathHash,
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         filter::{expression::Expr, language_matching::LanguageMatching, parser::parse, path::QueryPath},
         temporal::window::TimeInterval,
     };
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query};
 
@@ -194,7 +193,7 @@ mod tests {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::Unbounded)
             .reach(WindowReach::InsideAndInEffect)
             .build();

@@ -42,6 +42,23 @@ fn the_created_and_modified_placement_indexes_cover_every_row() -> Result<(), Pi
     Ok(())
 }
 
+/// Every read on `observedAt` bounds or states the placement beside the
+/// column, so the placement index serves it and no index keys the column
+/// alone.
+#[test]
+fn no_index_keys_the_observed_at_column_alone() -> Result<(), PinError> {
+    let schema = schema()?;
+    let observed: Vec<&str> = schema
+        .indexes()
+        .iter()
+        .filter(|index| index.table() == "attribute_history" && index.method() != "brin")
+        .filter(|index| index.referenced_columns().iter().any(|column| column == "observed_at"))
+        .map(DeclaredIndex::name)
+        .collect();
+    pretty_assertions::assert_eq!(observed, ["idx_attribute_history_stream_observed_placement"]);
+    Ok(())
+}
+
 #[test]
 fn attribute_history_declares_no_spatial_index() -> Result<(), PinError> {
     let schema = schema()?;

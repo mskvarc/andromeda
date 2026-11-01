@@ -3,8 +3,9 @@
 //!
 //! An `integer` column or composite type field is a key of a name dictionary
 //! or a reference to one (dictionary keys are minted far below 2^31), an
-//! ordinal of something an instance holds, a schema version, or a counter on
-//! the bounded-counter list that a check keeps at zero or above. Every other
+//! ordinal of something an instance holds, a schema version, a server process
+//! id, which PostgreSQL itself types `integer`, or a counter on the
+//! bounded-counter list that a check keeps at zero or above. Every other
 //! integer is a `bigint`. A `smallint` table column is a code or a small
 //! count, so a check bounds it, unless it is a catalogue identifier assigned
 //! outside the database; a composite type field takes no check, so its
@@ -55,6 +56,10 @@ const ORDINAL_SUFFIX: &str = "_ordinal";
 /// The `integer` names that hold a schema version.
 const SCHEMA_VERSION_NAMES: &[&str] = &["schema_version", "branch_schema_version"];
 
+/// The `integer` names that hold a server process id, which PostgreSQL types
+/// `integer` in `pg_backend_pid()` and `pg_stat_activity.pid` alike.
+const SERVER_PROCESS_ID_NAMES: &[&str] = &["backend_pid"];
+
 /// The `integer` counters that cannot outgrow 32 bits: each counts the
 /// attempts or the samples of one bounded episode, and is reset when it ends.
 const BOUNDED_COUNTERS: &[&str] = &["attempt_count", "consecutive_failures", "breach_samples", "autovacuum_saturated_passes"];
@@ -75,7 +80,7 @@ enum WidthViolation<'schema> {
         column: &'schema str,
     },
     /// An `integer` that can outgrow 32 bits.
-    #[display("{relation}.{column} is integer but no dictionary key, ordinal, schema version or bounded counter")]
+    #[display("{relation}.{column} is integer but no dictionary key, ordinal, schema version, server process id or bounded counter")]
     Unbounded {
         /// The table or composite type.
         relation: &'schema str,
@@ -92,8 +97,8 @@ enum WidthViolation<'schema> {
     },
 }
 
-/// Every `integer` that is no key, ordinal, version or bounded counter, and
-/// every `smallint` table column no check bounds.
+/// Every `integer` that is no key, ordinal, version, process id or bounded
+/// counter, and every `smallint` table column no check bounds.
 #[must_use]
 pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
     let schema = context.schema();
@@ -121,14 +126,15 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
         .collect()
 }
 
-/// Whether an integer named `name` is a dictionary key, an ordinal or a schema
-/// version.
+/// Whether an integer named `name` is a dictionary key, an ordinal, a schema
+/// version or a server process id.
 fn is_bounded_by_meaning(name: &str) -> bool {
     DICTIONARY_KEY_NAMES.contains(&name)
         || DICTIONARY_KEY_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
         || ORDINAL_NAMES.contains(&name)
         || name.ends_with(ORDINAL_SUFFIX)
         || SCHEMA_VERSION_NAMES.contains(&name)
+        || SERVER_PROCESS_ID_NAMES.contains(&name)
 }
 
 /// Whether a check of the column's table bounds the column.
@@ -165,6 +171,13 @@ mod tests {
     #[test]
     fn keys_ordinals_versions_and_bounded_counters_are_accepted() -> Result<(), FixtureError> {
         let sql = "create table deliveries (\n    attribute_name_key integer not null,\n    write_ordinal integer not null,\n    schema_version integer not null,\n    attempt_count integer not null,\n    property_name_keys integer[],\n    kind smallint not null,\n    unit_code_id smallint,\n    constraint chk_deliveries_attempt_count_non_negative check (attempt_count >= 0),\n    constraint chk_deliveries_kind check (kind between 1 and 3)\n);\n";
+        assert_eq!(findings(Rule::IntegerWidth, &[(FILE, sql)])?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn a_server_process_id_is_accepted_as_the_integer_the_server_types_it() -> Result<(), FixtureError> {
+        let sql = "create table copies (\n    backend_pid integer not null\n);\n";
         assert_eq!(findings(Rule::IntegerWidth, &[(FILE, sql)])?, Vec::<String>::new());
         Ok(())
     }

@@ -201,7 +201,7 @@ fn an_instance_record_is_a_current_row_field_for_field() {
             && record.unit_code_id.is_none()
             && record.observed_at.is_none()
             && record.expires_at.is_none()
-            && record.dataset_id.is_none()
+            && record.dataset_key.is_empty()
             && record.sub_attributes.is_none(),
         "{record:?}"
     );

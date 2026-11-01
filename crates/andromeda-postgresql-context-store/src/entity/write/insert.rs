@@ -380,7 +380,7 @@ mod tests {
             ),
             "{sql}"
         );
-        assert!(sql.contains(" AS r(id, attribute_name_key, dataset_id, ordinal, "), "{sql}");
+        assert!(sql.contains(" AS r(id, attribute_name_key, dataset_key, ordinal, "), "{sql}");
     }
 
     /// Every attribute instance is one row whatever its nesting, so a create

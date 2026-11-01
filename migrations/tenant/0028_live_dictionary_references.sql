@@ -60,10 +60,10 @@ begin
 end
 $$;
 
-create trigger trg_current_attributes_name_keys_insert
+create trigger trg_ca_name_keys_insert
     after insert on current_attributes referencing new table as new_rows for each statement
     execute function check_current_attribute_name_keys ();
 
-create trigger trg_current_attributes_name_keys_update
+create trigger trg_ca_name_keys_update
     after update on current_attributes referencing new table as new_rows for each statement
     execute function check_current_attribute_name_keys ();

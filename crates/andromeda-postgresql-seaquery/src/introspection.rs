@@ -8,7 +8,7 @@
 //! setting name passed as a bound value or a named iden rather than
 //! interpolated into a statement string.
 
-use crate::setting::Setting;
+use crate::{cast::cast, pg_type::PostgresType, setting::Setting};
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, QueryStatementBuilder, SelectStatement, SimpleExpr};
 
 /// The `pg_extension` system catalog.
@@ -22,6 +22,12 @@ struct PgExtension;
 #[iden = "pg_available_extensions"]
 struct PgAvailableExtensions;
 
+/// The `pg_available_extension_versions` system view of every extension
+/// version the server's installation ships.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_available_extension_versions"]
+struct PgAvailableExtensionVersions;
+
 /// `current_setting(name)` - the value of a runtime configuration setting.
 ///
 /// The setting name is bound rather than interpolated. This form errors if the
@@ -30,6 +36,13 @@ struct PgAvailableExtensions;
 #[must_use]
 pub fn current_setting(setting: Setting) -> SimpleExpr {
     Func::cust(CurrentSetting).args([setting.name_value()]).into()
+}
+
+/// `current_setting('server_version_num')::integer` - the running server's
+/// version as `major * 10000 + minor`, the form a version floor compares.
+#[must_use]
+pub fn server_version_num() -> SimpleExpr {
+    cast(current_setting(Setting::ServerVersionNum), PostgresType::Integer)
 }
 
 /// `current_setting(name, true)` - the value of a runtime setting, or `NULL`
@@ -73,6 +86,25 @@ pub fn extension_shipped_version(name: &str) -> SimpleExpr {
         .expr(Expr::col(Alias::new("default_version")))
         .from(PgAvailableExtensions)
         .and_where(Expr::col(Alias::new("name")).eq(name.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
+/// `(SELECT trusted FROM pg_available_extension_versions WHERE name = name AND
+/// version = <shipped version>)` - whether the version of one extension that
+/// `CREATE EXTENSION` installs is trusted, so a role holding `CREATE` on the
+/// database may create it without being a superuser, or `NULL` when the
+/// installation does not ship the extension.
+///
+/// The extension name is bound. The scalar subquery yields a single row because
+/// the view lists one row per extension version.
+#[must_use]
+pub fn extension_trusted(name: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Expr::col(Alias::new("trusted")))
+        .from(PgAvailableExtensionVersions)
+        .and_where(Expr::col(Alias::new("name")).eq(name.to_owned()))
+        .and_where(Expr::col(Alias::new("version")).eq(extension_shipped_version(name)))
         .to_owned();
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
@@ -202,7 +234,9 @@ mod tests {
             current_setting,
             current_setting_missing_ok,
             extension_shipped_version,
+            extension_trusted,
             extension_version,
+            server_version_num,
             transaction_has_not_written,
         },
         setting::Setting,
@@ -317,5 +351,23 @@ mod tests {
             "{sql}"
         );
         assert_eq!(values.0.len(), 1, "{sql}");
+    }
+
+    #[test]
+    fn the_server_version_is_read_as_an_integer_setting() {
+        assert_eq!(
+            Query::select().expr(server_version_num()).to_string(PostgresQueryBuilder),
+            "SELECT current_setting('server_version_num')::integer"
+        );
+    }
+
+    #[test]
+    fn an_extension_is_trusted_by_the_version_the_installation_ships() {
+        let (sql, values) = Query::select().expr(extension_trusted("pgstattuple")).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT (SELECT "trusted" FROM "pg_available_extension_versions" WHERE "name" = $1 AND "version" = (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = $2))"#
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
     }
 }

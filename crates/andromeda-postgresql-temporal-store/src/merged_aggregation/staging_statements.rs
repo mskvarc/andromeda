@@ -12,15 +12,16 @@
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_postgresql_query::{
+    dataset_key::DatasetKey,
     entity_sides::holds_evolution,
     history_source::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
+        axis::axis_window,
         entry_values::attribute_value_columns,
         grain::HistoryGrain,
     },
-    time_interval_predicate::within_interval,
 };
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -29,11 +30,9 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
-    nullable_text_key::same_nullable_text_key,
     pg_operator::PgBinaryOperator,
     temporary_table::{TemporaryCopy, TemporarySchema},
 };
-use andromeda_postgresql_temporal_query::axis::axis_column;
 use chrono::{DateTime, Utc};
 use sea_query::{
     Condition,
@@ -96,7 +95,7 @@ const STREAM_COLUMNS: [TemporalAttributeStreams; 4] = [
     TemporalAttributeStreams::StreamKey,
     TemporalAttributeStreams::EntityKey,
     TemporalAttributeStreams::AttributeNameKey,
-    TemporalAttributeStreams::DatasetId,
+    TemporalAttributeStreams::DatasetKey,
 ];
 
 /// Which of the entity's local history rows the staging copies.
@@ -188,7 +187,7 @@ pub(crate) fn copy_streams(branch: &DynIden) -> Result<InsertStatement, SeaQuery
 pub(crate) fn queued_grains(entity_id: &Identifier) -> SelectStatement {
     Query::select()
         .column((QueuedGrain, HistoryGrain::AttributeNameKey))
-        .column((QueuedGrain, HistoryGrain::DatasetId))
+        .column((QueuedGrain, HistoryGrain::DatasetKey))
         .from(stream_rows(
             &HistoryBranch::live_in(LiveSchema.into_iden()),
             &HistoryOf::Entity(Expr::val(entity_id.as_str())),
@@ -227,14 +226,11 @@ pub(crate) fn copy_history(snapshot: Option<&DynIden>, entity_id: &Identifier, c
             temporary(TemporalAttributeStreams::Table).alias(StagedStream),
             Condition::all()
                 .add(Expr::col((StagedStream, TemporalAttributeStreams::AttributeNameKey)).equals((Local, HistoryGrain::AttributeNameKey)))
-                .add(same_nullable_text_key(
-                    Expr::col((StagedStream, TemporalAttributeStreams::DatasetId)),
-                    Expr::col((Local, HistoryGrain::DatasetId)),
-                )),
+                .add(Expr::col((StagedStream, TemporalAttributeStreams::DatasetKey)).equals((Local, HistoryGrain::DatasetKey))),
         );
     match copied {
         CopiedHistory::Window { timeproperty, interval } => {
-            select.cond_where(within_interval(&Expr::col((Local, axis_column(timeproperty))), &interval));
+            select.cond_where(axis_window(Local, timeproperty, &interval));
         }
         CopiedHistory::Whole => {}
     }
@@ -281,7 +277,7 @@ pub(crate) fn stage_entity(key: i64, entity_id: &Identifier, type_keys: Vec<i32>
 pub(crate) fn staged_streams() -> SelectStatement {
     Query::select()
         .column((AttributeNames::Table, AttributeNames::Name))
-        .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::DatasetId))
+        .column((TemporalAttributeStreams::Table, TemporalAttributeStreams::DatasetKey))
         .from(temporary(TemporalAttributeStreams::Table))
         .join(
             JoinType::Join,
@@ -309,7 +305,7 @@ pub(crate) fn stage_stream(
         stream_key.into(),
         entity_key.into(),
         attribute_name_key.into(),
-        dataset_id.map(|dataset| dataset.as_str().to_owned()).into(),
+        DatasetKey::of(dataset_id).as_str().into(),
     ])?;
     Ok(insert.take())
 }

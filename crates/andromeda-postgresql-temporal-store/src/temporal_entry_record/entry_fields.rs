@@ -24,7 +24,7 @@ use andromeda_postgresql_codes::{
     temporal_entry_kind::TemporalEntryKind,
     value_kind::ValueKind,
 };
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_temporal::scope_entry_kind::ScopeEntryKind;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -37,8 +37,8 @@ pub(super) struct Grain {
     entry_kind: TemporalEntryKind,
     /// `attribute_name_key`.
     attribute_name_key: Option<i32>,
-    /// `dataset_id`.
-    dataset_id: Option<String>,
+    /// `dataset_key`, NULL for a Scope.
+    dataset_key: Option<String>,
     /// `attribute_kind`.
     attribute_kind: Option<AttributeKind>,
 }
@@ -60,7 +60,7 @@ impl Grain {
         Ok(Grain {
             entry_kind: kind,
             attribute_name_key: Some(attribute_name_key.get()),
-            dataset_id: dataset_id.map(|dataset| String::from(dataset.as_str())),
+            dataset_key: Some(DatasetKey::of(dataset_id).as_str().to_owned()),
             attribute_kind: Some(attribute_kind),
         })
     }
@@ -74,7 +74,7 @@ impl Grain {
                 ScopeEntryKind::Assertion => TemporalEntryKind::ScopeAssertion,
             },
             attribute_name_key: None,
-            dataset_id: None,
+            dataset_key: None,
             attribute_kind: None,
         }
     }
@@ -204,7 +204,7 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
     let Grain {
         entry_kind,
         attribute_name_key,
-        dataset_id,
+        dataset_key,
         attribute_kind,
     } = grain;
     let ValueColumns {
@@ -233,7 +233,7 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
     TemporalEntryRecord {
         entry_kind: entry_kind.code(),
         attribute_name_key,
-        dataset_id,
+        dataset_key,
         attribute_kind: attribute_kind.map(AttributeKind::code),
         value_kind,
         observed_at: axes.observed_at,

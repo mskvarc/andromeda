@@ -45,6 +45,9 @@
 pub mod attribute_holders;
 /// The rows of attribute history and the streams they extend.
 pub mod attribute_rows;
+/// The column a Temporal Property is held in and the bounds a stream read on
+/// it carries.
+pub mod axis;
 /// The Temporal Evolutions and the types they are recorded under.
 pub mod entity_rows;
 /// The history columns an entry of a queued intent is recorded in.

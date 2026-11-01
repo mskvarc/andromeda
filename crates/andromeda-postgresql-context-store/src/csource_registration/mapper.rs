@@ -115,7 +115,7 @@ pub fn row_to_csr(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<Con
 /// Rebuild the coverage members: what context the registration claims to serve.
 fn row_to_coverage(row: &PgRow, information: Vec<RegistrationInfo>) -> Result<RegistrationCoverage, ContextStoreError> {
     let dataset_id = row
-        .try_get::<Option<Vec<String>>, _>("dataset_id")?
+        .try_get::<Option<Vec<String>>, _>("dataset_ids")?
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
         .transpose()
         .map_err(|error| StoredRegistrationError::DatasetId(Box::new(error)))?;

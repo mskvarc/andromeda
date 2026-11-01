@@ -435,7 +435,7 @@ mod tests {
             sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""),
             "an existential, not an aggregate: {sql}"
         );
-        assert!(!sql.contains("dataset_id"), "no instance is preferred over another: {sql}");
+        assert!(!sql.contains("dataset_key"), "no instance is preferred over another: {sql}");
         assert!(!sql.contains("NOT EXISTS"), "a non-matching instance does not veto a matching one: {sql}");
     }
 
@@ -463,7 +463,7 @@ mod tests {
         let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap());
         assert!(sql.contains(" AND _ST_Within(\"geo_default\".\"location\""), "{sql}");
         assert!(sql.contains("\"geo_location_instance\".\"attribute_name_key\" = 3"), "{sql}");
-        assert!(sql.contains("\"geo_location_instance\".\"dataset_id\" IS NOT NULL"), "{sql}");
+        assert!(sql.contains("\"geo_location_instance\".\"dataset_key\" <> ('')"), "{sql}");
     }
 
     /// A `location` the dictionary has never recorded has no instance rows, so

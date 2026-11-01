@@ -190,7 +190,6 @@ impl SnapshotStatusOutbox {
             .value(SnapshotNotificationOutbox::NextAttemptAt, next_attempt)
             .value(SnapshotNotificationOutbox::ExhaustedAt, exhausted_at)
             .value(SnapshotNotificationOutbox::LastError, detail)
-            .value(SnapshotNotificationOutbox::ClaimedAt, Keyword::Null)
             .value(SnapshotNotificationOutbox::ClaimedBy, Keyword::Null)
             .value(SnapshotNotificationOutbox::LeaseUntil, Keyword::Null)
             .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
@@ -255,7 +254,6 @@ fn claim_statement(worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZe
         .to_owned();
     Query::update()
         .table(SnapshotNotificationOutbox::Table)
-        .value(SnapshotNotificationOutbox::ClaimedAt, now())
         .value(SnapshotNotificationOutbox::ClaimedBy, worker.as_uuid())
         .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
         .and_where(is_claimed_from(Expr::col(SnapshotNotificationOutbox::Id), candidates))

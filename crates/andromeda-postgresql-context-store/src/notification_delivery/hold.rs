@@ -128,7 +128,7 @@ pub(crate) fn taken_on_failure(target: &ContextTarget) -> Result<CommonTableExpr
 /// those in flight under a live lease, which their own outcomes settle.
 ///
 /// ```sql
-/// UPDATE notification_deliveries SET held_at = CURRENT_TIMESTAMP, claimed_at = NULL, claimed_by = NULL, lease_until = NULL
+/// UPDATE notification_deliveries SET held_at = CURRENT_TIMESTAMP, claimed_by = NULL, lease_until = NULL
 /// WHERE subscription_key = $1 AND held_at IS NULL AND delivery_key <> $2
 ///   AND delivered_at IS NULL AND exhausted_at IS NULL AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
 /// ```
@@ -139,7 +139,6 @@ pub(crate) fn set_aside_statement(target: &ContextTarget, held: HeldSubscription
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::HeldAt, Expr::current_timestamp())
-        .value(NotificationDeliveries::ClaimedAt, null())
         .value(NotificationDeliveries::ClaimedBy, null())
         .value(NotificationDeliveries::LeaseUntil, null())
         .and_where(Expr::col(NotificationDeliveries::SubscriptionKey).eq(held.subscription_key))

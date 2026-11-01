@@ -11,14 +11,17 @@ use crate::{
     candidate::MaintenanceTarget,
     error::MaintenanceError,
     evidence::target_code::target_of,
-    state::{RegisteredTenant, TenantKey, branch_rows::branch_rows},
+    state::{
+        RegisteredTenant,
+        TenantKey,
+        branch_rows::{branch_of_stored_key, branch_rows},
+    },
 };
-use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, NullOrdering, Order, Query, SelectStatement};
+use sea_query::{Expr, ExprTrait, Iden, Order, Query, SelectStatement};
 use sqlx::{PgConnection, Row};
 
 /// One queued action of one tenant's branch.
@@ -108,7 +111,7 @@ fn pending_actions_statement() -> SelectStatement {
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
         .order_by(PostgresqlMaintenanceTargets::TenantKey, Order::Asc)
-        .order_by_with_nulls(PostgresqlMaintenanceTargets::SnapshotKey, Order::Asc, NullOrdering::First)
+        .order_by(PostgresqlMaintenanceTargets::SnapshotKey, Order::Asc)
         .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
         .to_owned()
 }
@@ -119,10 +122,10 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
     let rows = statement.to_query().fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
-            let snapshot_key = row.try_get::<Option<i64>, _>(PostgresqlMaintenanceTargets::SnapshotKey.to_string().as_str())?;
+            let snapshot_key = row.try_get::<i64, _>(PostgresqlMaintenanceTargets::SnapshotKey.to_string().as_str())?;
             Ok(PendingRow {
                 tenant: TenantKey(row.try_get(PostgresqlMaintenanceTargets::TenantKey.to_string().as_str())?),
-                branch: snapshot_key.map(SnapshotKey::try_from).transpose()?.map_or(Branch::Live, Branch::Snapshot),
+                branch: branch_of_stored_key(snapshot_key)?,
                 action: PendingAction {
                     target: target_of(MaintenanceTargetCode::try_from(
                         row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
@@ -254,11 +257,8 @@ mod tests {
     #[test]
     fn pending_actions_are_read_in_tenant_then_branch_order() {
         let sql = pending_actions_statement().to_string(PostgresQueryBuilder);
-        assert!(
-            sql.ends_with(r#"ORDER BY "tenant_key" ASC, "snapshot_key" ASC NULLS FIRST, "target" ASC"#),
-            "{sql}"
-        );
-        assert!(!sql.contains(r#""snapshot_key" IS NULL"#), "every branch is read: {sql}");
+        assert!(sql.ends_with(r#"ORDER BY "tenant_key" ASC, "snapshot_key" ASC, "target" ASC"#), "{sql}");
+        assert!(!sql.contains(r#""snapshot_key" ="#), "every branch is read: {sql}");
     }
 
     #[test]

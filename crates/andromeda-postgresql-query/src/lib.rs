@@ -28,6 +28,7 @@
 
 pub mod attribute_instance_correlation;
 pub mod attribute_name_key;
+pub mod dataset_key;
 pub mod dataset_predicate;
 pub mod declared_operand;
 pub mod dictionary;

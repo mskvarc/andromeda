@@ -5,8 +5,8 @@
 //! while no indexed column changes. The listed columns change on nearly every
 //! write of their row: an Entity's two modification instants, the delivery
 //! counters of the subscription and registration delivery state, and who
-//! claimed a queue entry and when (a queue's lease end is its claim order and
-//! is indexed on purpose). An index naming one of them in a key, an
+//! claimed a queue entry (a queue's lease end is its claim order and is
+//! indexed on purpose). An index naming one of them in a key, an
 //! expression, a predicate or an `include` list turns each of those writes
 //! into a write of every index of the table.
 
@@ -20,13 +20,9 @@ const HEAP_ONLY_COLUMNS: &[(&str, &str)] = &[
     ("subscription_delivery_state", "times_failed"),
     ("registration_delivery_state", "times_sent"),
     ("registration_delivery_state", "times_failed"),
-    ("notification_deliveries", "claimed_at"),
     ("notification_deliveries", "claimed_by"),
-    ("snapshot_preparation", "claimed_at"),
     ("snapshot_preparation", "claimed_by"),
-    ("snapshot_notification_outbox", "claimed_at"),
     ("snapshot_notification_outbox", "claimed_by"),
-    ("pending_side_effects", "claimed_at"),
     ("pending_side_effects", "claimed_by"),
 ];
 

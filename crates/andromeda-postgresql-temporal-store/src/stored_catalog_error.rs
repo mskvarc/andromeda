@@ -36,8 +36,8 @@ pub enum StoredCatalogError {
     /// A queued intent's `entry_needs` holds a code the registry never assigned.
     #[error("a stored temporal_append_intents.entry_needs code is not a known need: {0}")]
     IntentReach(#[source] UnknownCompactCode),
-    /// A `temporal_attribute_streams.dataset_id` is not a URI.
-    #[error("a stored temporal_attribute_streams.dataset_id is not a URI: {0}")]
+    /// A `temporal_attribute_streams.dataset_key` is not a URI.
+    #[error("a stored temporal_attribute_streams.dataset_key is not a URI: {0}")]
     StreamDatasetId(#[source] IdentifierParseError),
     /// A `temporal_attribute_streams.stream_key` is not a surrogate key.
     #[error("a stored stream_key is not a surrogate key: {0}")]

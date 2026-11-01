@@ -5,13 +5,15 @@
 
 use crate::{
     alias::Ah,
-    axis::{axis_bound, axis_column, axis_order},
     stream_page::Walk,
     stream_parts::{admitted, over_parts},
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
-use andromeda_postgresql_query::history_source::HistoryBranch;
+use andromeda_postgresql_query::history_source::{
+    HistoryBranch,
+    axis::{axis_bound, axis_column, axis_order, axis_present},
+};
 use andromeda_postgresql_seaquery::scalar_subquery::scalar_subquery;
 use sea_query::{Condition, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
 
@@ -51,14 +53,12 @@ impl StreamProbes<'_> {
         let column = axis_column(self.axis());
         let candidates = over_parts(self.branch, |part| {
             let mut candidate = admitted(part, self.condition);
-            candidate
-                .expr_as(Expr::col((Ah, column)), Instant)
-                .and_where(Expr::col((Ah, column)).is_not_null());
+            candidate.expr_as(Expr::col((Ah, column)), Instant).cond_where(axis_present(Ah, self.axis()));
             if let Some(bound) = bound {
                 // clone: every part is bounded by the same instant.
                 candidate.and_where(bound.clone());
             }
-            candidate.order_by_expr(axis_order(self.axis()), walk.order()).limit(offset + 1);
+            candidate.order_by_expr(axis_order(Ah, self.axis()), walk.order()).limit(offset + 1);
             candidate
         });
         let mut instant = Query::select();
@@ -74,7 +74,7 @@ impl StreamProbes<'_> {
     /// The bound a probe walking `walk` from `from` reads beyond: forwards the
     /// instants at or after it, backwards the instants before it.
     pub(crate) fn beyond(&self, walk: Walk, from: &SimpleExpr) -> SimpleExpr {
-        axis_bound(self.axis(), |instant| match walk {
+        axis_bound(Ah, self.axis(), |instant| match walk {
             // clone: the column and the placement are bounded by the same instant.
             Walk::Forward => instant.gte(from.clone()),
             Walk::Backward => instant.lt(from.clone()),
@@ -100,7 +100,7 @@ impl StreamProbes<'_> {
             Walk::Backward => from.clone().sub(width),
         };
         // clone: the near search is bounded by both instants, on the column and the placement.
-        let near = axis_bound(self.axis(), |instant| match walk {
+        let near = axis_bound(Ah, self.axis(), |instant| match walk {
             Walk::Forward => instant.clone().gte(from.clone()).and(instant.lt(step.clone())),
             Walk::Backward => instant.clone().lt(from.clone()).and(instant.gte(step.clone())),
         });
@@ -120,7 +120,7 @@ impl StreamProbes<'_> {
     /// opens it, so a compressed chunk compares it with each batch's least
     /// and most recent instant and decompresses only the batches it admits.
     pub(crate) fn kept_side(&self, walk: Walk, bound: &SimpleExpr) -> SimpleExpr {
-        axis_bound(self.axis(), |instant| match walk {
+        axis_bound(Ah, self.axis(), |instant| match walk {
             // clone: the column and the placement are compared with the same bound.
             Walk::Forward => instant.lt(bound.clone()),
             Walk::Backward => instant.gte(bound.clone()),

@@ -13,6 +13,7 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -49,8 +50,8 @@ pub struct AttributeInstanceRecord {
     pub unit_code_id: Option<i16>,
     /// `value_boolean`.
     pub value_boolean: Option<bool>,
-    /// `dataset_id`.
-    pub dataset_id: Option<String>,
+    /// `dataset_key`, the grain key of the instance's `datasetId`.
+    pub dataset_key: String,
     /// `value_number`.
     pub value_number: Option<StoredNumber>,
     /// `value_string`, a String within the B-tree bound.
@@ -89,9 +90,9 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             sub_attributes,
         } = row;
         let column = row_column(&members.value);
+        let (dataset_id, columns) = members.into_columns()?;
         let MemberColumns {
             attribute_name_key,
-            dataset_id,
             attribute_kind,
             value_kind,
             value_number,
@@ -110,7 +111,7 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             unit_code_id,
             observed_at,
             expires_at,
-        } = MemberColumns::try_from(members)?;
+        } = columns;
         let (value_string, value_long_text) = if column == CurrentAttributes::ValueLongText {
             (None, value_string)
         } else {
@@ -140,7 +141,7 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             value_type_key,
             unit_code_id,
             value_boolean,
-            dataset_id,
+            dataset_key: DatasetKey::of(dataset_id.as_ref()).as_str().to_owned(),
             value_number,
             value_string,
             value_language,
@@ -175,7 +176,7 @@ impl TryFrom<AttributeInstanceRecord> for CurrentAttributeRow {
             value_type_key,
             unit_code_id,
             value_boolean,
-            dataset_id,
+            dataset_key,
             value_number,
             value_string,
             value_language,
@@ -191,7 +192,6 @@ impl TryFrom<AttributeInstanceRecord> for CurrentAttributeRow {
         } = record;
         let columns = MemberColumns {
             attribute_name_key,
-            dataset_id,
             attribute_kind,
             value_kind,
             value_number,
@@ -213,7 +213,7 @@ impl TryFrom<AttributeInstanceRecord> for CurrentAttributeRow {
         };
         Ok(CurrentAttributeRow {
             ordinal,
-            members: InstanceMembers::try_from(columns)?,
+            members: InstanceMembers::read(DatasetKey::stored(&dataset_key).dataset_id()?, columns)?,
             created_at,
             modified_at,
             sub_attributes: sub_attributes

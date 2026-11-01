@@ -54,10 +54,11 @@ use andromeda_postgresql_codes::{
 };
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey, history_source::grain::HistoryGrain};
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
 use cefact_units::UnitCode;
 use langtag::LangTagBuf;
+use sea_query::Iden;
 use serde_json::value::RawValue;
 use sqlx::{Row, postgres::PgRow, types::Json};
 
@@ -255,12 +256,11 @@ pub(crate) fn decode_attribute_name(row: &PgRow) -> Result<AttributeName, Tempor
     Ok(raw.parse::<AttributeName>().map_err(StoredHistoryError::AttributeName)?)
 }
 
-/// Read the stream's multi-attribute discriminator.
+/// Read the `datasetId` the stream's grain key holds.
 pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Identifier>, TemporalStoreError> {
-    Ok(row
-        .try_get::<Option<String>, _>("dataset_id")?
-        .map(|raw| raw.parse::<Identifier>().map_err(StoredHistoryError::DatasetId))
-        .transpose()?)
+    Ok(DatasetKey::stored(row.try_get::<&str, _>(HistoryGrain::DatasetKey.unquoted())?)
+        .dataset_id()
+        .map_err(StoredHistoryError::DatasetId)?)
 }
 
 /// Read the unit code the row's stored identity names.

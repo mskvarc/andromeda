@@ -1,15 +1,21 @@
 //! `object-prefix`: a constraint, index or statistics name starts with the
-//! prefix of its kind followed by its own table's name or registered
-//! abbreviation, so the name alone says what it is and where it lives.
+//! prefix of its kind followed by its own table's registered abbreviation, or
+//! its full name when the table has none, so the name alone says what it is
+//! and where it lives, and a table's objects share one spelling.
 
 use crate::{
     declared_schema::{constraint::ConstraintKind, origin::Origin},
-    rule::{Rule, RuleContext, RuleFinding, naming_vocabulary::has_table_prefix},
+    rule::{
+        Rule,
+        RuleContext,
+        RuleFinding,
+        naming_vocabulary::{has_table_prefix, table_part},
+    },
 };
 
 /// An object whose name does not start with its kind and table.
 #[derive(Debug, derive_more::Display)]
-#[display("{name} does not start with {prefix}_ and the name or abbreviation of {table}")]
+#[display("{name} does not start with {prefix}_{part}, the prefix of its kind and the name part of {table}")]
 struct MisprefixedObject<'schema> {
     /// The name.
     name: &'schema str,
@@ -17,6 +23,8 @@ struct MisprefixedObject<'schema> {
     prefix: &'static str,
     /// Its table.
     table: &'schema str,
+    /// The part of the name that names its table.
+    part: &'schema str,
 }
 
 /// The prefix a constraint of `kind` is named with.
@@ -31,7 +39,7 @@ const fn constraint_prefix(kind: ConstraintKind) -> &'static str {
 }
 
 /// Every constraint, index and statistics object named without its kind's
-/// prefix and its table, an unnamed constraint included.
+/// prefix and its table's name part, an unnamed constraint included.
 #[must_use]
 pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
     let schema = context.schema();
@@ -56,7 +64,17 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
         .chain(statistics)
         .filter(|(name, prefix, table, _)| !has_table_prefix(name, prefix, table))
         .map(|(name, prefix, table, origin): (&str, &'static str, &str, Origin)| {
-            context.finding(Rule::ObjectPrefix, origin, name.len(), &MisprefixedObject { name, prefix, table })
+            context.finding(
+                Rule::ObjectPrefix,
+                origin,
+                name.len(),
+                &MisprefixedObject {
+                    name,
+                    prefix,
+                    table,
+                    part: table_part(table),
+                },
+            )
         })
         .collect()
 }
@@ -85,6 +103,28 @@ mod tests {
             findings(Rule::ObjectPrefix, &[(FILE, sql)])?,
             ["migrations/tenant/0001_tenants.sql:3:5", "migrations/tenant/0001_tenants.sql:6:14"]
         );
+        Ok(())
+    }
+
+    const ABBREVIATED_FILE: &str = "tenant/0002_context_source_registrations.sql";
+
+    #[test]
+    fn an_abbreviated_table_named_in_full_is_refused_at_its_names() -> Result<(), FixtureError> {
+        let sql = "create table context_source_registrations (\n    id text not null,\n    constraint pk_context_source_registrations primary key (id)\n);\n\ncreate table current_attributes (\n    value_number double precision,\n    constraint chk_current_attributes_x check (value_number > 0)\n);\n";
+        assert_eq!(
+            findings(Rule::ObjectPrefix, &[(ABBREVIATED_FILE, sql)])?,
+            [
+                "migrations/tenant/0002_context_source_registrations.sql:3:5",
+                "migrations/tenant/0002_context_source_registrations.sql:8:5"
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_abbreviated_table_named_by_its_abbreviation_is_accepted() -> Result<(), FixtureError> {
+        let sql = "create table context_source_registrations (\n    id text not null,\n    constraint pk_csr primary key (id)\n);\n\ncreate table current_attributes (\n    value_number double precision\n);\n\ncreate index idx_ca_value_number on current_attributes (value_number);\n";
+        assert_eq!(findings(Rule::ObjectPrefix, &[(ABBREVIATED_FILE, sql)])?, Vec::<String>::new());
         Ok(())
     }
 }

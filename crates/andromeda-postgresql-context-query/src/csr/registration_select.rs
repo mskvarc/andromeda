@@ -53,7 +53,7 @@ pub fn registration_select() -> SelectStatement {
         .column((Csr::Table, Csr::Id))
         .column((Csr::Table, Csr::RegistrationName))
         .column((Csr::Table, Csr::Description))
-        .column((Csr::Table, Csr::DatasetId))
+        .column((Csr::Table, Csr::DatasetIds))
         .column((Csr::Table, Csr::Tenant))
         .column((Csr::Table, Csr::ObservationIntervalStart))
         .column((Csr::Table, Csr::ObservationIntervalEnd))

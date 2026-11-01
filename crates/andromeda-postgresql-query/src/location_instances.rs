@@ -34,6 +34,7 @@
 
 use crate::{
     attribute_name_key::AttributeNameKey,
+    dataset_key::is_named_instance,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate::restriction,
@@ -167,7 +168,7 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
     arm.column((instance.clone(), CurrentAttributes::EntityKey))
         .from_as(rows.table(CurrentAttributes::Table), instance.clone())
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::AttributeNameKey)).eq(location_key.get()))
-        .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetId)).is_not_null())
+        .and_where(is_named_instance(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetKey))))
         .and_where(instance_stands(SeaExpr::col((instance.clone(), CurrentAttributes::ExpiresAt))))
         // With the `datasetId` test, the predicate the partial
         // `idx_ca_dataset_value_geometry` is restricted by.
@@ -244,7 +245,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
+            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_key" <> ('') AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
             "{sql}"
         );
         assert!(
@@ -282,7 +283,7 @@ mod tests {
             sql.contains(r#"SELECT "geo_candidate"."entity_key" FROM "entities" AS "geo_candidate" JOIN "entity_search" AS "geo_default" ON "geo_default"."entity_key" = "geo_candidate"."entity_key" WHERE "geo_candidate"."id" = ANY($"#),
             "{sql}"
         );
-        assert!(sql.contains(r#""geo_location_instance"."dataset_id" IS NOT NULL"#), "{sql}");
+        assert!(sql.contains(r#""geo_location_instance"."dataset_key" <> ('')"#), "{sql}");
         let arrays = values.0.iter().filter(|value| matches!(value, sea_query::Value::Array(..))).count();
         assert_eq!(arrays, 1, "the candidates bind as one array: {sql}");
     }

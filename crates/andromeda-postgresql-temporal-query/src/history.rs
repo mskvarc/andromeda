@@ -13,7 +13,6 @@
 use crate::{
     aggregation::build_aggregation_query,
     alias::{Ah, An},
-    axis::{axis_column, axis_window},
     stream_page::{Walk, last_n_history, project_whole_streams, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
@@ -25,7 +24,13 @@ use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dataset_predicate::dataset_condition,
     dictionary::query_names::QueryNames,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
+    history_source::{
+        HistoryBranch,
+        HistoryOf,
+        attribute_rows::attribute_rows,
+        axis::{axis_column, axis_present, axis_window},
+        grain::HistoryGrain,
+    },
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, postgis::st_as_ewkb};
@@ -69,8 +74,8 @@ pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifi
 pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
     let timeproperty = compiled.window.timeproperty;
     let mut condition = Condition::all()
-        .add(Expr::col((Ah, axis_column(timeproperty))).is_not_null())
-        .add(axis_window(timeproperty, &compiled.window.interval));
+        .add(axis_present(Ah, timeproperty))
+        .add(axis_window(Ah, timeproperty, &compiled.window.interval));
 
     // The `attrs` selection narrows by the dictionary keys its names resolved
     // to, on the source's own grain column.
@@ -86,7 +91,7 @@ pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &Qu
     // parameter keeps only the instances of the datasets it names. It filters
     // the instances an Entity is represented with, never which Entities are.
     condition = condition.add(dataset_condition(
-        &Expr::col((Ah, HistoryGrain::DatasetId)),
+        &Expr::col((Ah, HistoryGrain::DatasetKey)),
         &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
     ));
 
@@ -157,7 +162,7 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
     // decodes that wire form into a GeoJSON value in Rust.
     select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeometry))), Alias::new("value_geometry_ewkb"));
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
-    select.expr(Expr::col((Ah, HistoryGrain::DatasetId)));
+    select.expr(Expr::col((Ah, HistoryGrain::DatasetKey)));
 }
 
 /// Build the history query, narrowed to the page the query compiled; a page
@@ -308,15 +313,21 @@ mod tests {
     }
 
     /// All four axes of clause 5.2.21 are rendered, and the operational
-    /// `recorded_at` is projected for ordering only - never as a substitute for
-    /// an axis the row does not carry.
+    /// `recorded_at` is projected for ordering only, never as a substitute for
+    /// an axis the row does not carry. The only `COALESCE` is the placement
+    /// stated beside the axis column, which keeps a row without the axis out.
     #[test]
     fn all_four_time_axes_are_projected_without_substitution() {
         let sql = sql_of(&minimal_compiled());
         for column in ["observed_at", "created_at", "modified_at", "deleted_at", "recorded_at"] {
             assert!(sql.contains(&format!("\"ah\".\"{column}\"")), "{column} missing: {sql}");
         }
-        assert!(!sql.contains("COALESCE"), "{sql}");
+        assert_eq!(
+            sql.matches("COALESCE(").count(),
+            sql.matches(r#"COALESCE("ah"."observed_at", "ah"."deleted_at")"#).count(),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{sql}");
     }
 
     /// Clause 5.2.21: the deletion axis exists only on the rows that record a
@@ -410,24 +421,18 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains(r#"COALESCE("ah"."dataset_id", '') = ('')"#), "{sql}");
+        assert!(sql.contains(r#""ah"."dataset_key" = ('')"#), "{sql}");
         assert!(!sql.contains("= ANY(ARRAY ['urn"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(
-            sql.contains(r#"COALESCE("ah"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(
-            sql.contains(r#"COALESCE("ah"."dataset_id", '') = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#), "{sql}");
     }
 
     #[test]
@@ -517,7 +522,7 @@ mod tests {
         assert!(sql.contains("JOIN LATERAL"), "{sql}");
         assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
         assert!(
-            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
+            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
             "{sql}"
         );
         assert!(!sql.contains("OVER"), "{sql}");
@@ -531,7 +536,10 @@ mod tests {
     fn a_forward_page_reads_each_stream_with_a_limit() {
         let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
         assert!(sql.contains("LEFT JOIN LATERAL"), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#), "{sql}");
+        assert!(
+            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#),
+            "{sql}"
+        );
         assert!(sql.contains(r#"ORDER BY "edge_candidates"."edge" ASC LIMIT 1 OFFSET 99"#), "{sql}");
         assert!(!sql.contains("OVER"), "{sql}");
         assert!(!sql.contains("COUNT(*)"), "{sql}");
@@ -568,13 +576,17 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
+            sql.contains(concat!(
+                r#"AND ("ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' "#,
+                r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") > '2024-01-15 10:00:00.000000 +00:00') "#,
+                r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#
+            )),
             "{sql}"
         );
         let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
         assert!(!unbounded.contains(r#""ah"."observed_at" > '"#), "{unbounded}");
         assert!(
-            unbounded.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
+            unbounded.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#),
             "an unbounded window has no lower bound to leave uncounted: {unbounded}"
         );
     }
@@ -590,7 +602,10 @@ mod tests {
             },
             TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant")),
         );
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1000"#), "{sql}");
+        assert!(
+            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC LIMIT 1000"#),
+            "{sql}"
+        );
         assert!(sql.contains("OFFSET 999"), "{sql}");
         assert!(
             sql.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
@@ -684,7 +699,7 @@ mod tests {
         assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
         assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
         assert!(sql.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{sql}");
-        assert!(sql.contains(r#"COALESCE("pe"."dataset_id", '') = COALESCE("st"."dataset_id", '')"#), "{sql}");
+        assert!(sql.contains(r#""pe"."dataset_key" = "st"."dataset_key""#), "{sql}");
     }
 
     /// Every instance of a stream carries its attribute's name, so the name is
@@ -747,7 +762,11 @@ mod tests {
     #[test]
     fn an_observed_page_reads_each_stream_in_one_recorded_part() {
         let sql = recorded_sql_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, one_day());
-        assert_eq!(sql.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#).count(), 1, "{sql}");
+        assert_eq!(
+            sql.matches(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#).count(),
+            1,
+            "{sql}"
+        );
         assert!(!sql.contains("DISTINCT FROM"), "{sql}");
     }
 

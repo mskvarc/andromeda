@@ -18,13 +18,14 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
+    dataset_key::DatasetKey,
     dictionary::names_in_key_order::type_names_of,
     history_source::{HistoryBranch, entity_rows::entity_rows},
 };
 use andromeda_postgresql_schema::{current::Entities, name_dictionary::AttributeNames, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
-use sea_query::{Alias, DynIden, Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, DynIden, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
 use std::collections::HashMap;
 
@@ -123,10 +124,9 @@ impl TemporalRepository {
             .await?;
         rows.iter()
             .map(|row| {
-                Ok(row
-                    .try_get::<Option<String>, _>("dataset_id")?
-                    .map(|raw| raw.parse::<Identifier>().map_err(StoredCatalogError::StreamDatasetId))
-                    .transpose()?)
+                Ok(DatasetKey::stored(row.try_get::<&str, _>(TemporalAttributeStreams::DatasetKey.unquoted())?)
+                    .dataset_id()
+                    .map_err(StoredCatalogError::StreamDatasetId)?)
             })
             .collect()
     }
@@ -210,7 +210,7 @@ fn attribute_stream_exists_query(schema: Option<&DynIden>, entity_id: &str, attr
 /// The `datasetId` of every stream the entity records for one attribute.
 fn attribute_dataset_ids_query(schema: Option<&DynIden>, entity_id: &str, attribute: AttributeNameKey) -> SelectStatement {
     let mut statement = Query::select();
-    statement.column((S, TemporalAttributeStreams::DatasetId));
+    statement.column((S, TemporalAttributeStreams::DatasetKey));
     stream_catalog_join(&mut statement, schema);
     statement
         .and_where(Expr::col((Te, Entities::Id)).eq(entity_id))

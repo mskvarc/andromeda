@@ -2,10 +2,11 @@
 //! of every migration.
 //!
 //! Every rule and every test of the schema reads this one model, so they all
-//! agree on what the migrations contain: the tables, columns, composite types,
-//! domains, constraints, indexes, statistics objects, functions, triggers and
-//! `do` blocks, every relation named and every function called, and every
-//! token, the tokens of routine bodies included.
+//! agree on what the migrations contain: the tables and their replica
+//! identities, columns, composite types, domains, constraints, indexes,
+//! statistics objects, functions, triggers and `do` blocks, every relation
+//! named and every function called, and every token, the tokens of routine
+//! bodies included.
 
 /// The bounds a check expression puts on its columns.
 pub mod check_bound;
@@ -43,7 +44,8 @@ pub mod statement_context;
 pub mod statistics;
 /// Every call, relation and column a syntax tree holds.
 pub mod syntax_walk;
-/// A table, its storage parameters and its conversion to a hypertable.
+/// A table, its storage parameters, its replica identity and its conversion
+/// to a hypertable.
 pub mod table;
 /// Runs of consecutive code tokens.
 pub mod token_sequence;
@@ -65,7 +67,7 @@ use crate::{
         relation_reference::{FunctionCall, RelationReference},
         schema_reader::{SchemaObjects, SchemaReadError},
         statistics::DeclaredStatistics,
-        table::{DeclaredTable, Hypertable, StorageParameter},
+        table::{DeclaredTable, Hypertable, ReplicaIdentity, StorageParameter},
         trigger::DeclaredTrigger,
     },
     migration_file::MigrationFile,
@@ -233,6 +235,12 @@ impl DeclaredSchema {
     #[must_use]
     pub fn hypertables(&self) -> &[Hypertable] {
         &self.objects.hypertables
+    }
+
+    /// Every replica identity a table is given.
+    #[must_use]
+    pub fn replica_identities(&self) -> &[ReplicaIdentity] {
+        &self.objects.replica_identities
     }
 
     /// Every named object created.

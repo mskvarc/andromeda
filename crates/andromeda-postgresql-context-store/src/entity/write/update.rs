@@ -89,14 +89,14 @@ const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 ///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
 ///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
 ///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($15::text[], …) AS r(…)),
-///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($42::text[], …) AS g(…)),
+///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_key, g.ordinal FROM UNNEST($42::text[], …) AS g(…)),
 ///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($46::text[]))
 ///               AND (<the row's grain>) NOT IN (<every staged grain>)),
 ///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND ((<the row's grain>) IN (<the removed grains>)) IS TRUE),
 ///      moved AS (UPDATE current_attributes SET ordinal = ((<the moved grains' ordinals by grain>) ->> (<the row's grain>)::text)::integer
 ///                WHERE entity_key IN (<ents moving a grain>) AND ((<the row's grain>) IN (<the moved grains>)) IS TRUE),
 ///      attrs AS (INSERT INTO current_attributes (entity_key, …) SELECT ents.entity_key, instances.… FROM ents JOIN instances ON instances.id = ents.id
-///                ON CONFLICT (entity_key, attribute_name_key, dataset_id) DO UPDATE SET ordinal = excluded.ordinal, …
+///                ON CONFLICT (entity_key, attribute_name_key, dataset_key) DO UPDATE SET ordinal = excluded.ordinal, …
 ///                WHERE (current_attributes.ordinal, …) IS DISTINCT FROM (excluded.ordinal, …)),
 ///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
 ///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
@@ -466,7 +466,7 @@ mod tests {
         );
         assert!(sql.contains(r#"FROM "ents" JOIN "instances" ON "instances"."id" = "ents"."id""#), "{sql}");
         assert!(
-            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO UPDATE SET"#),
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_key") DO UPDATE SET"#),
             "{sql}"
         );
         assert!(
@@ -476,7 +476,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NOT NULL)) IS TRUE)"#),
+            sql.contains(r#""grains"."dataset_key" FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NOT NULL)) IS TRUE)"#),
             "{sql}"
         );
         assert!(
@@ -484,13 +484,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"IN (SELECT "ents"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NULL)) IS TRUE)"#),
+            sql.contains(r#"IN (SELECT "ents"."entity_key", "grains"."attribute_name_key", "grains"."dataset_key" FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NULL)) IS TRUE)"#),
             "{sql}"
         );
         assert!(
-            sql.contains(
-                r#"NOT IN (SELECT "ents"."entity_key", "instances"."attribute_name_key", COALESCE("instances"."dataset_id", '') FROM "instances" JOIN "ents""#
-            ),
+            sql.contains(r#"NOT IN (SELECT "ents"."entity_key", "instances"."attribute_name_key", "instances"."dataset_key" FROM "instances" JOIN "ents""#),
             "{sql}"
         );
         assert!(
@@ -498,7 +496,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r"$39::text[], $40::integer[], $41::text[], $42::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            sql.contains(r"$39::text[], $40::integer[], $41::text[], $42::integer[]) AS g(id, attribute_name_key, dataset_key, ordinal)"),
             "{sql}"
         );
     }

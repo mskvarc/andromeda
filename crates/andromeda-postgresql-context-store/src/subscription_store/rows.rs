@@ -2,7 +2,7 @@
 //!
 //! The table holds both entity and context-source subscriptions; they are
 //! discriminated via the `kind` column. Rows are produced by hand-assembled
-//! query readers rather than `sqlx::FromRow` because the `dataset_id` column
+//! query readers rather than `sqlx::FromRow` because the `dataset_ids` column
 //! is only present for entity subscriptions (see [`DatasetIdPresence`]).
 //!
 //! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence

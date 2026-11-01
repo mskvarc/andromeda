@@ -388,9 +388,8 @@ mod tests {
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
@@ -403,7 +402,7 @@ mod tests {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
             .reach(WindowReach::InsideAndInEffect)
             .build();
@@ -432,7 +431,7 @@ mod tests {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live_recorded())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
             .reach(WindowReach::Inside)
             .build();
@@ -464,7 +463,7 @@ mod tests {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
             .reach(WindowReach::InsideAndInEffect)
             .build();

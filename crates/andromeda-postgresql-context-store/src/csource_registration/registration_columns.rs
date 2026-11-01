@@ -181,7 +181,7 @@ pub(super) fn registration_columns<'a>(
     Ok(vec![
         (Csr::RegistrationName, Expr::val(members.registration_name.map(NonEmptyText::as_str))),
         (Csr::Description, Expr::val(members.description.map(NonEmptyText::as_str))),
-        (Csr::DatasetId, Expr::val(dataset_selectors(members.dataset_id))),
+        (Csr::DatasetIds, Expr::val(dataset_selectors(members.dataset_id))),
         (Csr::Tenant, Expr::val(members.tenant.map(TenantName::as_str))),
         (Csr::ObservationIntervalStart, Expr::val(observation_start)),
         (Csr::ObservationIntervalEnd, Expr::val(observation_end)),

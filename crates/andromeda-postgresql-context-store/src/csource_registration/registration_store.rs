@@ -31,7 +31,7 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
 /// The primary key constraint on `context_source_registrations.id`, the registration identifier itself.
-const PK_CONTEXT_SOURCE_REGISTRATIONS: &str = "pk_context_source_registrations";
+const PK_CSR: &str = "pk_csr";
 
 /// PostgreSQL-backed registration persistence adapter.
 ///
@@ -68,7 +68,7 @@ impl PostgresRegistrationStore {
 /// it by name keeps a constraint added later from being reported as a 409
 /// naming an identifier nobody used.
 pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> RegistrationError {
-    if violates_unique_constraint(&error, PK_CONTEXT_SOURCE_REGISTRATIONS) {
+    if violates_unique_constraint(&error, PK_CSR) {
         RegistrationError::already_exists(identifier)
     } else {
         persistence_error::<RegistrationError>(error)
@@ -142,7 +142,7 @@ impl RegistrationStore for PostgresRegistrationStore {
 )]
 mod tests {
     use crate::{
-        csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error},
+        csource_registration::registration_store::{PK_CSR, create_error},
         migration_set::tenant::tenant_migrator,
         store_fault::persistence_error,
     };
@@ -164,8 +164,8 @@ mod tests {
 
     /// Every constraint is named, so the duplicate-identifier refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
-    fn the_duplicate_id_refusal_names_the_constraint_migration_0012_declares() {
-        let declaration = format!("CONSTRAINT {PK_CONTEXT_SOURCE_REGISTRATIONS} PRIMARY KEY (id)").to_ascii_uppercase();
+    fn the_duplicate_id_refusal_names_the_primary_key_the_registrations_table_declares() {
+        let declaration = format!("CONSTRAINT {PK_CSR} PRIMARY KEY (id)").to_ascii_uppercase();
         assert!(
             tenant_migrator()
                 .iter()

@@ -27,7 +27,6 @@ use crate::{
     aggregation_grid::{AggregationGrid, BucketEnd, BucketStart},
     aggregation_grouping::apply_grouping,
     alias::{Ah, An},
-    axis::axis_column,
     listed_period_page::{each_listed_period, placed_among_listed_periods},
     period_edge::StreamEdge,
     recorded_shape::recorded_shape,
@@ -37,8 +36,9 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::{
+    dataset_key::is_default_instance,
     dictionary::query_names::QueryNames,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain},
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, axis::axis_column, grain::HistoryGrain},
     tombstone::carries_a_value,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
@@ -344,7 +344,7 @@ pub fn build_aggregation_query(
     let mut select = Query::select();
     select
         .expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"))
-        .expr_as(Expr::col((St, HistoryGrain::DatasetId)), HistoryGrain::DatasetId)
+        .expr_as(Expr::col((St, HistoryGrain::DatasetKey)), HistoryGrain::DatasetKey)
         .expr(Expr::col((Page, Asterisk)));
     if let Some(laid_from) = laid_from {
         select.expr_as(cast(laid_from, PostgresType::Timestamptz), PeriodOrigin);
@@ -366,7 +366,10 @@ pub fn build_aggregation_query(
     );
     select
         .order_by((An, AttributeNames::Name), Order::Asc)
-        .order_by((St, HistoryGrain::DatasetId), Order::Asc)
+        // The named instances of an attribute come before its default
+        // instance, whose grain key, the empty string, sorts first.
+        .order_by_expr(is_default_instance(Expr::col((St, HistoryGrain::DatasetKey))), Order::Asc)
+        .order_by((St, HistoryGrain::DatasetKey), Order::Asc)
         .order_by((Page, PeriodOrder), Order::Asc);
     if let Some(origin) = origin {
         select.with_cte(WithClause::new().cte(origin).to_owned());
@@ -526,7 +529,7 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         assert!(sql.starts_with("WITH \"bucket_origin\""), "{sql}");
         assert!(
-            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_id" AS "dataset_id", "page".*, (SELECT "bucket_origin"."origin" FROM "bucket_origin")::timestamptz AS "period_origin", FALSE AS "stream_continues" FROM"#),
+            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_key" AS "dataset_key", "page".*, (SELECT "bucket_origin"."origin" FROM "bucket_origin")::timestamptz AS "period_origin", FALSE AS "stream_continues" FROM"#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\"", "{sql}");
@@ -811,7 +814,7 @@ mod tests {
         let order_by = sql.rsplit("ORDER BY").next().expect("an ORDER BY clause").trim();
         pretty_assertions::assert_eq!(
             order_by,
-            "\"an\".\"name\" ASC, \"st\".\"dataset_id\" ASC, \"page\".\"period_order\" ASC",
+            "\"an\".\"name\" ASC, \"st\".\"dataset_key\" = ('') ASC, \"st\".\"dataset_key\" ASC, \"page\".\"period_order\" ASC",
             "{sql}"
         );
     }

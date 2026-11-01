@@ -26,7 +26,7 @@ pub enum Csr {
     /// declares no `idPattern`.
     EntityIdPatternFormsRevision,
     /// The `datasetId` list of attribute instances the source provides.
-    DatasetId,
+    DatasetIds,
     /// Owning tenant.
     Tenant,
     /// `observationInterval.startAt`; `NULL` when the member is absent.
@@ -176,7 +176,7 @@ mod tests {
     fn csr_column_names() {
         assert_eq!(Csr::Id.to_string(), "id");
         assert_eq!(Csr::RegistrationName.to_string(), "registration_name");
-        assert_eq!(Csr::DatasetId.to_string(), "dataset_id");
+        assert_eq!(Csr::DatasetIds.to_string(), "dataset_ids");
         assert_eq!(Csr::ObservationIntervalStart.to_string(), "observation_interval_start");
         assert_eq!(Csr::IsManagementDeclared.to_string(), "is_management_declared");
         assert_eq!(Csr::ContextSourceInfoKeys.to_string(), "context_source_info_keys");

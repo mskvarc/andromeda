@@ -25,7 +25,7 @@
 //!
 //! The two kinds of valid instance are read by two probes, each one an index
 //! range rather than a disjunction no index can drive: the instances inside
-//! the interval, on the stream-led index of the axis, and the instance in
+//! the interval, on the stream-led index of the axis's placement, and the instance in
 //! effect when it opens, which [`InEffectInstance`] reads down from the start
 //! on the stream-led index of its placement, one stream of a tested attribute
 //! at a time.
@@ -42,6 +42,7 @@ use crate::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
+        axis::{axis_column, axis_present, axis_window},
         entity_rows::entity_rows,
         grain::HistoryGrain,
     },
@@ -51,10 +52,10 @@ use crate::{
         instance_test::{InstanceTest, non_empty},
     },
     stored_geometry::{BoxIndexing, StoredGeometry},
-    time_interval_predicate::within_interval,
     tombstone::carries_a_value,
     window_reach::WindowReach,
 };
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{geo::query::GeoQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
@@ -73,8 +74,8 @@ pub struct HistoryWindow {
     /// The Temporal Evolution of the enclosing statement, which every source
     /// of the probes reads.
     of: HistoryOf,
-    /// The `attribute_history` column holding the requested Temporal Property.
-    axis: AttributeHistory,
+    /// The requested Temporal Property.
+    timeproperty: TimeProp,
     /// The interval the query selected on that axis.
     interval: TimeInterval,
     /// Which of the instances valid within the interval the probes read.
@@ -124,7 +125,7 @@ impl HistoryWindow {
         HistoryWindow {
             branch: self.branch.clone(), // clone: each window owns the branch its probes read
             of,
-            axis: self.axis,
+            timeproperty: self.timeproperty,
             interval: self.interval,
             reach: self.reach,
         }
@@ -237,10 +238,13 @@ impl HistoryWindow {
     /// any point of either is among them. On `deletedAt` the instance in effect
     /// at the start is a deletion, which records no value, so no probe for it
     /// could ever find a target value.
-    fn in_effect_start(&self) -> Option<DateTime<Utc>> {
+    const fn in_effect_start(&self) -> Option<DateTime<Utc>> {
         match self.interval {
             TimeInterval::Unbounded | TimeInterval::Before(_) => None,
-            TimeInterval::After(start) | TimeInterval::Between { from: start, .. } => (self.axis != AttributeHistory::DeletedAt).then_some(start),
+            TimeInterval::After(start) | TimeInterval::Between { from: start, .. } => match self.timeproperty {
+                TimeProp::Observed | TimeProp::Created | TimeProp::Modified => Some(start),
+                TimeProp::Deleted => None,
+            },
         }
     }
 
@@ -253,16 +257,14 @@ impl HistoryWindow {
     /// so no read on the axis represents it, and the filters judge the
     /// instances the read represents.
     fn inside_probe(&self, test: Condition, aliases: &HistoryAliases) -> SelectStatement {
-        let instant = aliases.instance_column(self.axis);
-        let inside = within_interval(&instant, &self.interval);
         let mut probe = Query::select();
         probe
             .expr(int_literal(1))
             .from(attribute_rows(&self.branch, &self.of, aliases.instance()))
             .cond_where(test)
             .and_where(Self::carries_a_value(aliases))
-            .and_where(SeaExpr::expr(instant).is_not_null())
-            .cond_where(inside);
+            .cond_where(axis_present(aliases.instance(), self.timeproperty))
+            .cond_where(axis_window(aliases.instance(), self.timeproperty, &self.interval));
         probe
     }
 
@@ -304,7 +306,7 @@ impl HistoryWindow {
         let instance = InEffectInstance::builder()
             .branch(&self.branch)
             .of(&self.of)
-            .axis(self.axis)
+            .axis(axis_column(self.timeproperty))
             .start(start)
             .build();
         let mut source = Query::select();
@@ -338,9 +340,8 @@ mod tests {
         },
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SelectStatement};
 
@@ -348,18 +349,18 @@ mod tests {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
-    fn window_on(branch: HistoryBranch, axis: AttributeHistory, interval: TimeInterval) -> HistoryWindow {
+    fn window_on(branch: HistoryBranch, timeproperty: TimeProp, interval: TimeInterval) -> HistoryWindow {
         HistoryWindow::builder()
             .branch(branch)
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(axis)
+            .timeproperty(timeproperty)
             .interval(interval)
             .reach(WindowReach::InsideAndInEffect)
             .build()
     }
 
     fn window(interval: TimeInterval) -> HistoryWindow {
-        window_on(HistoryBranch::live(), AttributeHistory::ObservedAt, interval)
+        window_on(HistoryBranch::live(), TimeProp::Observed, interval)
     }
 
     fn render(condition: Condition) -> String {
@@ -410,11 +411,7 @@ mod tests {
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
-        let snapshot = window_on(
-            HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
-            AttributeHistory::ObservedAt,
-            after_2019(),
-        );
+        let snapshot = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
         let (inside, _) = probes_of(&snapshot, above_100());
         assert!(!inside.contains(" OR "), "{inside}");
     }
@@ -479,7 +476,7 @@ mod tests {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(after_2019())
             .reach(WindowReach::Inside)
             .build();
@@ -526,7 +523,7 @@ mod tests {
     /// carries no value (clause 4.5.7), so no probe seeks it.
     #[test]
     fn a_deleted_at_interval_renders_no_in_effect_probe() {
-        let window = window_on(HistoryBranch::live(), AttributeHistory::DeletedAt, after_2019());
+        let window = window_on(HistoryBranch::live(), TimeProp::Deleted, after_2019());
         let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
         assert!(!sql.contains(r#""qe""#) && !sql.contains(r#""qs""#), "{sql}");
     }
@@ -535,11 +532,7 @@ mod tests {
     /// each of their sources.
     #[test]
     fn both_probes_carry_the_same_value_test() {
-        let snapshot = window_on(
-            HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
-            AttributeHistory::ObservedAt,
-            after_2019(),
-        );
+        let snapshot = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
         let sql = render(snapshot.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
         pretty_assertions::assert_eq!(sql.matches(r#""qh"."value_number" > 100"#).count(), 2, "{sql}");
         pretty_assertions::assert_eq!(sql.matches(r#""re"."id" = "e"."id""#).count(), 2, "{sql}");
@@ -584,7 +577,7 @@ mod tests {
     fn the_probe_reads_the_instances_of_every_dataset() {
         for interval in [TimeInterval::Unbounded, after_2019()] {
             let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-            assert!(!sql.contains(r#""qh"."dataset_id" ="#) && !sql.contains(r#""qh"."dataset_id" IN"#), "{sql}");
+            assert!(!sql.contains(r#""qh"."dataset_key" ="#) && !sql.contains(r#""qh"."dataset_key" IN"#), "{sql}");
         }
     }
 
@@ -608,7 +601,7 @@ mod tests {
                 id: Expr::col((Alias::new("e"), Alias::new("id"))),
                 key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
             }))
-            .axis(AttributeHistory::ObservedAt)
+            .timeproperty(TimeProp::Observed)
             .interval(after_2019())
             .reach(WindowReach::InsideAndInEffect)
             .build();
@@ -628,11 +621,7 @@ mod tests {
     /// with the branch schema.
     #[test]
     fn both_probes_are_qualified_with_the_branch_schema() {
-        let window = window_on(
-            HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
-            AttributeHistory::ObservedAt,
-            after_2019(),
-        );
+        let window = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
         let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
         pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 2, "{sql}");
         pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 2, "{sql}");

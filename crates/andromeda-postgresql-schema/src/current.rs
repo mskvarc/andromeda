@@ -169,8 +169,9 @@ pub enum CurrentAttributes {
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
     ValueBoolean,
-    /// Optional dataset identifier (clause 4.5.5); NULL is the default instance
-    DatasetId,
+    /// The grain key of the `datasetId` (clause 4.5.5): the empty string for
+    /// the default instance, the identifier otherwise
+    DatasetKey,
     /// Numeric value, when `value_kind` selects it
     ValueNumber,
     /// String value, when `value_kind` selects it
@@ -369,7 +370,7 @@ mod tests {
             CurrentAttributes::ValueTypeKey,
             CurrentAttributes::UnitCodeId,
             CurrentAttributes::ValueBoolean,
-            CurrentAttributes::DatasetId,
+            CurrentAttributes::DatasetKey,
             CurrentAttributes::ValueNumber,
             CurrentAttributes::ValueString,
             CurrentAttributes::ValueLanguage,
@@ -405,7 +406,7 @@ mod tests {
                 "value_type_key",
                 "unit_code_id",
                 "value_boolean",
-                "dataset_id",
+                "dataset_key",
                 "value_number",
                 "value_string",
                 "value_language",

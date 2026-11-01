@@ -24,7 +24,7 @@ use andromeda_postgresql_encoding::{
     ewkb::{EwkbError, encode},
     ewkb_binding::reach_bytes,
 };
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
     external_arguments::ExternalArguments,
@@ -109,8 +109,8 @@ pub struct StagedRows<'a> {
     entity_ids: Vec<&'a str>,
     /// `attribute_name_key`.
     attribute_name_keys: Vec<i32>,
-    /// `dataset_id`.
-    dataset_ids: Vec<Option<String>>,
+    /// `dataset_key`.
+    dataset_keys: Vec<String>,
     /// `ordinal`.
     ordinals: Vec<i32>,
     /// `attribute_kind`.
@@ -207,7 +207,7 @@ impl<'a> StagedRows<'a> {
                 .collect::<Result<Vec<_>, EwkbError>>()?;
             self.entity_ids.push(entity.as_str());
             self.attribute_name_keys.push(attribute_name_key.get());
-            self.dataset_ids.push(dataset_id.map(String::from));
+            self.dataset_keys.push(DatasetKey::of(dataset_id.as_ref()).as_str().to_owned());
             self.ordinals.push(ordinal);
             self.attribute_kinds.push(AttributeKind::code(attribute_kind));
             self.value_kinds.push(kind);
@@ -265,7 +265,7 @@ impl<'a> StagedRows<'a> {
         vec![
             text_array(&self.entity_ids),
             Expr::val(self.attribute_name_keys),
-            nullable_array(self.dataset_ids),
+            Expr::val(self.dataset_keys),
             Expr::val(self.ordinals),
             Expr::val(self.attribute_kinds),
             Expr::val(self.value_kinds),

@@ -41,7 +41,7 @@ pub enum StoredRegistrationError {
     /// `information`.
     #[error("a stored registration information does not assemble: {0}")]
     Information(#[from] StoredInformationError),
-    /// One `dataset_id` element is not a dataset selector.
+    /// One `dataset_ids` element is not a dataset selector.
     #[error("a stored registration datasetId is not a dataset selector: {0}")]
     DatasetId(#[source] Box<QueryError>),
     /// One `scope` label path does not convert back to a scope.

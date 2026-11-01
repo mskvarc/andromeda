@@ -105,7 +105,6 @@ pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: 
 
     Query::update()
         .table(TemporalAppendIntents::Table)
-        .value(TemporalAppendIntents::ClaimedAt, Expr::current_timestamp())
         .value(TemporalAppendIntents::LeaseUntil, lease_until)
         .value(TemporalAppendIntents::ClaimedBy, owner.as_uuid())
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).add(1))
@@ -191,7 +190,6 @@ pub(super) fn applied_removal_statement(intent_keys: &[i64], owner: LeaseHolder)
 pub(super) fn release_statement(intent_keys: &[i64], owner: LeaseHolder) -> UpdateStatement {
     Query::update()
         .table(TemporalAppendIntents::Table)
-        .value(TemporalAppendIntents::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).sub(1))
@@ -210,7 +208,6 @@ pub(super) fn retry_statement(next_attempt_at: DateTime<Utc>, last_error: &str, 
         .table(TemporalAppendIntents::Table)
         .value(TemporalAppendIntents::NextAttemptAt, next_attempt_at)
         .value(TemporalAppendIntents::LastError, last_error)
-        .value(TemporalAppendIntents::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .cond_where(lease_guard(intent_key, write_id, owner))
@@ -368,7 +365,7 @@ mod tests {
     fn a_release_gives_back_the_lease_and_the_claims_attempt_under_a_live_lease() {
         let sql = release_statement(&[2, 3], holder()).to_string(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"UPDATE "temporal_append_intents" SET"#), "{sql}");
-        for column in ["claimed_at", "lease_until", "claimed_by"] {
+        for column in ["lease_until", "claimed_by"] {
             assert!(sql.contains(&format!(r#""{column}" = NULL"#)), "{column}: {sql}");
         }
         assert!(sql.contains(r#""attempt_count" = "attempt_count" - 1"#), "{sql}");

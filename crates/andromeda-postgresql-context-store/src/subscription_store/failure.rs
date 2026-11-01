@@ -52,7 +52,7 @@ mod tests {
     /// The migrations name every constraint, so the duplicate-identifier
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
-    fn the_duplicate_id_refusal_names_the_constraint_migration_0024_declares() {
+    fn the_duplicate_id_refusal_names_the_unique_constraint_the_subscriptions_table_declares() {
         let declaration = format!("CONSTRAINT {UQ_SUBSCRIPTIONS_ID} UNIQUE (id)").to_ascii_uppercase();
         assert!(
             branch_migrations()

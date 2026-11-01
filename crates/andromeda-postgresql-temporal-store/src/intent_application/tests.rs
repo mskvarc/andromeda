@@ -545,7 +545,7 @@ fn each_statement_reads_no_entry_field_beyond_what_it_is_bound() {
     let identity = BTreeSet::from([
         "entry_kind",
         "attribute_name_key",
-        "dataset_id",
+        "dataset_key",
         "generated_instance_id",
         "verbatim_instance_id",
     ]);
@@ -593,8 +593,8 @@ fn a_bound_identity_drops_every_value() {
         panic!("one entry each: {identities:?}");
     };
     assert_eq!(
-        (identity.entry_kind, identity.attribute_name_key, &identity.dataset_id, identity.value_kind),
-        (entry.entry_kind, entry.attribute_name_key, &entry.dataset_id, entry.value_kind)
+        (identity.entry_kind, identity.attribute_name_key, &identity.dataset_key, identity.value_kind),
+        (entry.entry_kind, entry.attribute_name_key, &entry.dataset_key, entry.value_kind)
     );
     assert_eq!(
         (&identity.verbatim_instance_id, identity.generated_instance_id),
@@ -974,7 +974,7 @@ fn every_sibling_stream_and_claim_probe_is_keyed_by_the_entity_of_the_intent() {
 fn every_entry_looks_up_its_stream_on_its_own_by_its_whole_grain() {
     let lookup = concat!(
         r#"JOIN LATERAL (SELECT "s"."stream_key" FROM "temporal_attribute_streams" AS "s" WHERE "s"."entity_key" = "te"."entity_key""#,
-        r#" AND "s"."attribute_name_key" = "e"."attribute_name_key" AND COALESCE("s"."dataset_id", '') = COALESCE("e"."dataset_id", '')"#,
+        r#" AND "s"."attribute_name_key" = "e"."attribute_name_key" AND "s"."dataset_key" = "e"."dataset_key""#,
         r#" OFFSET 0) AS "s" ON TRUE"#,
     );
     for sql in [writing("attribute_history"), shape_growth(), growth()] {
@@ -1032,7 +1032,7 @@ fn the_streams_of_an_evolution_the_statement_creates_are_inserted_without_arbitr
     assert!(
         existing.ends_with(concat!(
             r#"FROM "grains" WHERE NOT "grains"."created" ORDER BY "grains"."first_intent" ASC, "grains"."first_ordinal" ASC "#,
-            r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO NOTHING RETURNING "entity_key", "attribute_name_key""#
+            r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_key") DO NOTHING RETURNING "entity_key", "attribute_name_key""#
         )),
         "{existing}"
     );
@@ -1217,12 +1217,12 @@ fn the_streams_of_a_typed_entity_take_the_key_its_evolution_insert_returned() {
     assert!(
         grains.contains(concat!(
             r#"FROM (SELECT "evolved"."entity_key" AS "entity_key", "e"."attribute_name_key" AS "attribute_name_key","#,
-            r#" "e"."dataset_id" AS "dataset_id", "evolved"."created" AS "created""#
+            r#" "e"."dataset_key" AS "dataset_key", "evolved"."created" AS "created""#
         )),
         "{grains}"
     );
     assert!(
-        grains.contains(r#"GROUP BY "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_id", "ah"."created""#),
+        grains.contains(r#"GROUP BY "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_key", "ah"."created""#),
         "one row a grain: {grains}"
     );
     assert!(
@@ -1245,7 +1245,7 @@ fn a_stream_is_inserted_with_the_shapes_and_extent_of_its_entries() {
     );
     assert!(grains.contains(r#"ST_Envelope(ST_Collect("ah"."extent_geometry"))"#), "{grains}");
     assert!(
-        evolving.contains(r#"SELECT "grains"."entity_key", "grains"."attribute_name_key", "grains"."dataset_id", "grains"."shape_mask", "grains"."value_extent" FROM "grains""#),
+        evolving.contains(r#"SELECT "grains"."entity_key", "grains"."attribute_name_key", "grains"."dataset_key", "grains"."shape_mask", "grains"."value_extent" FROM "grains""#),
         "{evolving}"
     );
 }
@@ -1278,7 +1278,7 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
     let streams = writing("temporal_attribute_streams");
     assert!(streams.contains(r#"(NOT cardinality("i"."entity_type_name_keys") > 0)"#), "{streams}");
     assert!(
-        streams.contains(r#"("entity_key", "attribute_name_key", "dataset_id", "shape_mask", "value_extent") SELECT "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_id","#),
+        streams.contains(r#"("entity_key", "attribute_name_key", "dataset_key", "shape_mask", "value_extent") SELECT "ah"."entity_key", "ah"."attribute_name_key", "ah"."dataset_key","#),
         "{streams}"
     );
     assert!(
@@ -1286,9 +1286,7 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
         "every stream carries its evolution's key: {streams}"
     );
     assert!(
-        streams.contains(
-            r#"ON CONFLICT ("entity_key", "attribute_name_key", COALESCE("dataset_id", '')) DO NOTHING RETURNING "entity_key", "attribute_name_key") "#
-        ),
+        streams.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_key") DO NOTHING RETURNING "entity_key", "attribute_name_key") "#),
         "{streams}"
     );
     let untyped = |entries: Vec<TemporalAppendEntry>| {
@@ -1325,7 +1323,7 @@ fn only_an_intent_stating_no_type_reaches_the_untyped_stream_insert() {
 fn a_replaced_instance_is_sought_across_every_dataset_of_its_attribute() {
     let replaced = in_role(StepRole::Replace);
     assert!(replaced.contains(r#""s2"."attribute_name_key" = "e"."attribute_name_key""#), "{replaced}");
-    assert!(!replaced.contains(r#""s2"."dataset_id""#), "{replaced}");
+    assert!(!replaced.contains(r#""s2"."dataset_key""#), "{replaced}");
     assert!(replaced.contains(r#""e"."verbatim_instance_id" IS NOT NULL"#), "{replaced}");
     assert!(!replaced.contains("observed_at") && !replaced.contains("generated_instance_id"), "{replaced}");
 }

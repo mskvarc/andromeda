@@ -191,7 +191,6 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
     Query::update()
         .table(PendingSideEffects::Table)
         .value(PendingSideEffects::AttemptCount, counted_attempts)
-        .value(PendingSideEffects::ClaimedAt, Expr::current_timestamp())
         .value(
             PendingSideEffects::LeaseUntil,
             Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
@@ -239,9 +238,8 @@ fn claimant_guard(id: Uuid, owner: LeaseHolder) -> SimpleExpr {
 /// The diagnostic is cut to the bound `chk_pse_last_error_length` states, so the
 /// retry never fails on its own bookkeeping.
 ///
-/// All three claim columns are released together: `chk_pse_claim_coherent`
-/// rejects a row that holds some but not all of `claimed_at`, `lease_until` and
-/// `claimed_by`.
+/// Both claim columns are released together: `chk_pse_claim_coherent` rejects
+/// a row that holds one of `lease_until` and `claimed_by` without the other.
 fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: DateTime<Utc>) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
@@ -251,7 +249,6 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
             bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
         )
         .value(PendingSideEffects::NextAttemptAt, next_attempt_at)
-        .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .and_where(claimant_guard(id, owner))
@@ -274,7 +271,6 @@ fn mark_dead_statement(id: Uuid, owner: LeaseHolder, error: &str) -> UpdateState
             PendingSideEffects::LastError,
             bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
         )
-        .value(PendingSideEffects::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .and_where(claimant_guard(id, owner))

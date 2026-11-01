@@ -210,7 +210,6 @@ async fn finalize_preparation(
         )
         .value(SnapshotPreparation::ModifiedAt, now())
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
-        .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(snapshot_key.as_i64()))
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
