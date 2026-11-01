@@ -44,6 +44,7 @@ pub mod explain;
 pub mod extension_update;
 pub mod external_arguments;
 pub mod gin_index;
+pub mod hashed_membership;
 mod identifier;
 pub mod interval;
 pub mod introspection;

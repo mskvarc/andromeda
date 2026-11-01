@@ -473,7 +473,17 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""dropped" AS (DELETE FROM "current_attributes" WHERE ("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN (SELECT "ents"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains""#),
+            sql.contains(r#""dropped" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "ents"."entity_key" FROM "ents" JOIN (SELECT DISTINCT "grains"."id" FROM "grains""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"IN (SELECT "ents"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ents" JOIN "grains" ON "grains"."id" = "ents"."id" WHERE "grains"."ordinal" IS NULL)) IS TRUE)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                r#"NOT IN (SELECT "ents"."entity_key", "instances"."attribute_name_key", COALESCE("instances"."dataset_id", '') FROM "instances" JOIN "ents""#
+            ),
             "{sql}"
         );
         assert!(

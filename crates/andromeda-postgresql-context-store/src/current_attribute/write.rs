@@ -12,7 +12,9 @@
 //! ([`RowEdit`](crate::current_attribute::row_edit::RowEdit)): the instances it
 //! writes whole are upserted, the rows that only move take their new ordinal,
 //! and the grains it removes are deleted. The four sets are disjoint, so the
-//! statements run together without touching a row twice.
+//! statements run together without touching a row twice. A deletion tests the
+//! stored rows against its staged grains as a hashed set, so its cost does not
+//! hang on statistics that may still describe the table before a large write.
 
 use crate::{
     current_attribute::{
@@ -26,12 +28,17 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     conflict_image::Excluded,
-    literal::int_literal,
+    hashed_membership::hashed_membership,
     nullable_text_key::{nullable_text_key, same_nullable_text_key},
     pg_array::any,
     pg_operator::PgBinaryOperator,
 };
-use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
+use sea_query::{Cond, DeleteStatement, DynIden, Expr, ExprTrait, Iden, InsertStatement, IntoIden, JoinType, OnConflict, Query, SimpleExpr, UpdateStatement};
+
+/// The identifiers of the Entities whose edit removes a grain, `removing`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "removing"]
+struct Removing;
 
 /// The columns a stored row takes from the row an update writes in its place:
 /// every written column but the grain it is matched by and `created_at`, which
@@ -129,16 +136,33 @@ pub(crate) fn moved_rows(target: &ContextTarget, anchor: impl IntoIden) -> Updat
 }
 
 /// The stored rows an update removes, for every Entity `anchor` holds:
-/// `DELETE FROM current_attributes WHERE (entity_key, attribute_name_key, COALESCE(dataset_id, ''))
-/// IN (SELECT anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, '') FROM anchor JOIN grains ON grains.id = anchor.id WHERE grains.ordinal IS NULL)`.
+/// `DELETE FROM current_attributes WHERE entity_key IN (SELECT anchor.entity_key FROM anchor JOIN (SELECT DISTINCT grains.id FROM grains WHERE grains.ordinal IS NULL) AS removing ON removing.id = anchor.id)
+/// AND ((entity_key, attribute_name_key, COALESCE(dataset_id, '')) IN (SELECT anchor.entity_key, grains.attribute_name_key, COALESCE(grains.dataset_id, '') FROM anchor JOIN grains ON grains.id = anchor.id WHERE grains.ordinal IS NULL)) IS TRUE`.
 ///
-/// The removed grains are the whole grain index key, so each is one index
-/// probe, and an Entity that removes nothing is not read. Matched by the
-/// full key rather than by a correlated test per stored row, the deletion
-/// never reads the staged grains once per row of the Entity, which a planner
-/// underestimating the rows of one large Entity would otherwise choose.
+/// Only the rows of an Entity that removes a grain are read, and each is
+/// tested against the removed grains as a hashed set ([`hashed_membership`]),
+/// so the deletion costs the rows of those Entities plus the grains whatever
+/// the planner believes about either: right after a large write the statistics
+/// of `current_attributes` can still read one row over pages that hold tens of
+/// thousands. No member of either grain is NULL.
 pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> DeleteStatement {
     let anchor = anchor.into_iden();
+    let removing = Query::select()
+        .distinct()
+        .column((Grains, Entities::Id))
+        .from(Grains)
+        .and_where(Expr::col((Grains, CurrentAttributes::Ordinal)).is_null())
+        .take();
+    let removing_entities = Query::select()
+        .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key, the source and the join
+        .from(anchor.clone()) // clone: as above
+        .join_subquery(
+            JoinType::Join,
+            removing,
+            Removing,
+            Expr::col((Removing, Entities::Id)).equals((anchor.clone(), Entities::Id)), // clone: as above
+        )
+        .take();
     let removed = Query::select()
         .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key and the join
         .column((Grains, CurrentAttributes::AttributeNameKey))
@@ -147,14 +171,10 @@ pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> Del
         .join(JoinType::Join, Grains, Expr::col((Grains, Entities::Id)).equals((anchor, Entities::Id)))
         .and_where(Expr::col((Grains, CurrentAttributes::Ordinal)).is_null())
         .take();
-    let grain = Expr::tuple([
-        stored(CurrentAttributes::EntityKey),
-        stored(CurrentAttributes::AttributeNameKey),
-        nullable_text_key(stored(CurrentAttributes::DatasetId)),
-    ]);
     Query::delete()
         .from_table(table_of(target, CurrentAttributes::Table))
-        .and_where(grain.in_subquery(removed))
+        .and_where(stored(CurrentAttributes::EntityKey).in_subquery(removing_entities))
+        .and_where(hashed_membership(stored_grain().in_subquery(removed)))
         .take()
 }
 
@@ -162,31 +182,25 @@ pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> Del
 /// `overwritten` and whose grain (clause 4.5.5) no staged row of that Entity
 /// has:
 /// `DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM anchor WHERE id = ANY(<overwritten>))
-/// AND NOT EXISTS (SELECT 1 FROM instances JOIN anchor ON anchor.id = instances.id
-/// WHERE anchor.entity_key = current_attributes.entity_key AND instances.attribute_name_key = current_attributes.attribute_name_key
-/// AND COALESCE(instances.dataset_id, '') = COALESCE(current_attributes.dataset_id, ''))`.
+/// AND (entity_key, attribute_name_key, COALESCE(dataset_id, '')) NOT IN (SELECT anchor.entity_key, instances.attribute_name_key, COALESCE(instances.dataset_id, '') FROM instances JOIN anchor ON anchor.id = instances.id)`.
 ///
 /// The rows an update writes for an Entity it overwrites are every row that
 /// Entity keeps, so a stored grain none of them has is one the written state
-/// no longer holds.
+/// no longer holds. PostgreSQL never turns `NOT IN` into a join: each row of
+/// the overwritten Entities is tested against the staged grains as a hashed
+/// set, whatever the planner believes about either side. No member of either
+/// grain is NULL, so `NOT IN` is the plain negation of membership.
 pub(crate) fn vanished_rows(target: &ContextTarget, anchor: impl IntoIden, overwritten: SimpleExpr) -> DeleteStatement {
     let anchor = anchor.into_iden();
     let staged = Query::select()
-        .expr(int_literal(1))
+        .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key and the join
+        .column((Instances, CurrentAttributes::AttributeNameKey))
+        .expr(nullable_text_key(Expr::col((Instances, CurrentAttributes::DatasetId))))
         .from(Instances)
         .join(
             JoinType::Join,
-            anchor.clone(), // clone: the anchor names the join and both of its key columns
-            Expr::col((anchor.clone(), Entities::Id)).equals((Instances, Entities::Id)),
-        )
-        .cond_where(
-            Cond::all()
-                .add(Expr::col((anchor.clone(), Entities::EntityKey)).equals((CurrentAttributes::Table, CurrentAttributes::EntityKey)))
-                .add(Expr::col((Instances, CurrentAttributes::AttributeNameKey)).equals((CurrentAttributes::Table, CurrentAttributes::AttributeNameKey)))
-                .add(same_nullable_text_key(
-                    Expr::col((Instances, CurrentAttributes::DatasetId)),
-                    stored(CurrentAttributes::DatasetId),
-                )),
+            anchor.clone(),                                                              // clone: as above
+            Expr::col((anchor.clone(), Entities::Id)).equals((Instances, Entities::Id)), // clone: as above
         )
         .take();
     let overwriting = Query::select()
@@ -197,8 +211,18 @@ pub(crate) fn vanished_rows(target: &ContextTarget, anchor: impl IntoIden, overw
     Query::delete()
         .from_table(table_of(target, CurrentAttributes::Table))
         .and_where(stored(CurrentAttributes::EntityKey).in_subquery(overwriting))
-        .and_where(Expr::exists(staged).not())
+        .and_where(stored_grain().not_in_subquery(staged))
         .take()
+}
+
+/// A stored row's grain, as its index key:
+/// `(entity_key, attribute_name_key, COALESCE(dataset_id, ''))`.
+fn stored_grain() -> SimpleExpr {
+    Expr::tuple([
+        stored(CurrentAttributes::EntityKey),
+        stored(CurrentAttributes::AttributeNameKey),
+        nullable_text_key(stored(CurrentAttributes::DatasetId)),
+    ])
 }
 
 /// A stored row's column, `current_attributes.<column>`.
@@ -329,34 +353,38 @@ mod tests {
     }
 
     /// Clause 4.5.5: deleting one dataset instance deletes the row of that
-    /// grain, matched by the whole grain key of the Entities that remove one.
+    /// grain. Only the Entities that remove a grain are read, and their rows
+    /// are tested against the removed grains by membership wrapped in
+    /// `IS TRUE`, which PostgreSQL hashes instead of joining.
     #[test]
-    fn a_vanished_grain_is_deleted() {
+    fn a_vanished_grain_is_deleted_by_hashed_membership() {
         let sql = dropped_rows(&ContextTarget::Live, anchor()).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
             concat!(
-                r#"DELETE FROM "current_attributes" WHERE ("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN "#,
-                r#"(SELECT "ins"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ins" JOIN "grains" ON "grains"."id" = "ins"."id" WHERE "grains"."ordinal" IS NULL)"#
+                r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN "#,
+                r#"(SELECT "ins"."entity_key" FROM "ins" JOIN (SELECT DISTINCT "grains"."id" FROM "grains" WHERE "grains"."ordinal" IS NULL) AS "removing" ON "removing"."id" = "ins"."id") "#,
+                r#"AND ((("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) IN "#,
+                r#"(SELECT "ins"."entity_key", "grains"."attribute_name_key", COALESCE("grains"."dataset_id", '') FROM "ins" JOIN "grains" ON "grains"."id" = "ins"."id" WHERE "grains"."ordinal" IS NULL)) IS TRUE)"#
             )
         );
     }
 
     /// An overwritten Entity's stored grain no staged row has is removed by
-    /// its whole grain, for the overwritten Entities alone.
+    /// its whole grain, for the overwritten Entities alone, through `NOT IN`,
+    /// which PostgreSQL hashes instead of joining.
     #[test]
-    fn a_grain_an_overwrite_does_not_restate_is_found_by_its_whole_grain() {
+    fn a_grain_an_overwrite_does_not_restate_is_removed_by_hashed_membership() {
         let (sql, values) = vanished_rows(&ContextTarget::Live, anchor(), overwritten()).build(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(values.0.len(), 1, "{sql}");
-        assert!(
-            sql.starts_with(r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ins" WHERE "id" = ANY($1)) AND (NOT EXISTS("#),
-            "{sql}"
+        assert_eq!(
+            sql,
+            concat!(
+                r#"DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ins" WHERE "id" = ANY($1)) "#,
+                r#"AND ("current_attributes"."entity_key", "current_attributes"."attribute_name_key", COALESCE("current_attributes"."dataset_id", '')) NOT IN "#,
+                r#"(SELECT "ins"."entity_key", "instances"."attribute_name_key", COALESCE("instances"."dataset_id", '') FROM "instances" JOIN "ins" ON "ins"."id" = "instances"."id")"#
+            )
         );
-        assert!(
-            sql.contains(r#"COALESCE("instances"."dataset_id", '') = COALESCE("current_attributes"."dataset_id", '')"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""ins"."entity_key" = "current_attributes"."entity_key""#), "{sql}");
     }
 
     #[test]
