@@ -37,11 +37,12 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     interval::make_interval_secs,
+    pg_array::{all, any, array_of_subquery},
     queue::{claimable_at, is_claimed_from},
     statement::Statement,
 };
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
-use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
+use sea_query::{Condition, Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use std::num::NonZeroU32;
 
@@ -201,6 +202,15 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// itself keeps it out until the next failed attempt sets it aside, so the
 /// probe stays the one attempt the Subscription's endpoint receives.
 ///
+/// The holds are read once per claim, not once per row: a candidate passes
+/// when its Subscription is not among the held ones or when it is one of the
+/// probes, and a probe is always a delivery of the Subscription it holds. As a
+/// correlated `NOT EXISTS`, PostgreSQL rates the rows that pass as rare
+/// whenever the holds' statistics cover the queued Subscriptions, then reads
+/// and sorts every due row to return one; tested against two arrays computed
+/// before the scan, the filter leaves the plan an index range scan in claim
+/// order that stops at the batch.
+///
 /// [`DeliveryClaimOrder::FewestInFlight`] picks its candidates through
 /// [`fewest_in_flight_candidates`] instead, under the same predicate and the
 /// same lock; the update and what it returns are the same for both orders.
@@ -246,7 +256,7 @@ fn queue_candidates(target: &ContextTarget, batch_size: NonZeroU32) -> SelectSta
         .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
         .and_where(Expr::col(NotificationDeliveries::HeldAt).is_null())
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
-        .and_where(Expr::exists(held_behind_another_probe(target)).not())
+        .cond_where(not_held_behind_another_probe(target))
         .order_by_expr(delivery_claimable_at(), Order::Asc)
         .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
         .limit(u64::from(batch_size.get()))
@@ -254,20 +264,22 @@ fn queue_candidates(target: &ContextTarget, batch_size: NonZeroU32) -> SelectSta
         .to_owned()
 }
 
-/// `SELECT 1 FROM notification_delivery_holds WHERE` the candidate's
-/// Subscription is held and the candidate is not its probe.
-fn held_behind_another_probe(target: &ContextTarget) -> SelectStatement {
+/// The candidate's Subscription is not held, or the candidate is a probe:
+/// `subscription_key <> ALL(ARRAY (SELECT subscription_key FROM
+/// notification_delivery_holds)) OR delivery_key = ANY(ARRAY (SELECT
+/// delivery_key FROM notification_delivery_holds))`.
+fn not_held_behind_another_probe(target: &ContextTarget) -> Condition {
+    Condition::any()
+        .add(Expr::col(NotificationDeliveries::SubscriptionKey).ne(all(array_of_subquery(holds_column(target, NotificationDeliveryHolds::SubscriptionKey)))))
+        .add(Expr::col(NotificationDeliveries::DeliveryKey).eq(any(array_of_subquery(holds_column(target, NotificationDeliveryHolds::DeliveryKey)))))
+}
+
+/// `SELECT <column> FROM notification_delivery_holds`, every hold of
+/// `target`'s branch.
+fn holds_column(target: &ContextTarget, column: NotificationDeliveryHolds) -> SelectStatement {
     Query::select()
-        .expr(Expr::val(1))
+        .column(column)
         .from(table_of(target, NotificationDeliveryHolds::Table))
-        .and_where(
-            Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::SubscriptionKey))
-                .equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
-        )
-        .and_where(
-            Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::DeliveryKey))
-                .ne(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey))),
-        )
         .to_owned()
 }
 
@@ -372,12 +384,17 @@ mod tests {
         let sql = claim_sql(&ContextTarget::Live);
         assert!(
             sql.contains(concat!(
-                r#"AND (NOT EXISTS(SELECT 1 FROM "notification_delivery_holds" WHERE "notification_delivery_holds"."subscription_key" = "#,
-                r#""notification_deliveries"."subscription_key" AND "notification_delivery_holds"."delivery_key" <> "#,
-                r#""notification_deliveries"."delivery_key")) ORDER BY"#
+                r#"AND ("subscription_key" <> ALL(ARRAY (SELECT "subscription_key" FROM "notification_delivery_holds")) "#,
+                r#"OR "delivery_key" = ANY(ARRAY (SELECT "delivery_key" FROM "notification_delivery_holds"))) ORDER BY"#
             )),
             "{sql}"
         );
+    }
+
+    #[test]
+    fn the_queue_claim_reads_the_holds_once_rather_than_per_candidate() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(!sql.contains("EXISTS"), "{sql}");
     }
 
     #[test]
