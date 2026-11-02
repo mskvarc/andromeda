@@ -563,7 +563,7 @@ mod tests {
                         sql.contains(concat!("pg_current_xact_id_if_assigned() IS NULL AS \"", "snapshot_is_committed", "\"")),
                         "{sql}"
                     );
-                    assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE \"name\" = ANY(")), "{sql}");
+                    assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE \"name\" = $1")), "{sql}");
                     assert_eq!(values.0.len(), 1, "the flag is computed server-side, not bound: {sql}");
                     assert_eq!(SNAPSHOT_IS_COMMITTED_COLUMN, "snapshot_is_committed");
                 }

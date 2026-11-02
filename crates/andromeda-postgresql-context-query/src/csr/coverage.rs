@@ -164,7 +164,7 @@ mod tests {
             sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1',''])"),
             "{sql}"
         );
-        assert!(sql.contains("\"ri\".\"entity_id\" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1'])"), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
         assert!(
             sql.contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR EXISTS("),
             "{sql}"

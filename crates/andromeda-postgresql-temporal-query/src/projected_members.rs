@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
         let sql = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
-        assert!(sql.contains(r#""ah"."attribute_name_key" = ANY(ARRAY [7])"#), "{sql}");
+        assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
         assert!(sql.contains(r#""ah"."observed_at" >="#), "the window bounds the instances: {sql}");
         assert!(!sql.contains("scope_history"), "the pick does not keep the scope: {sql}");
@@ -194,7 +194,7 @@ mod tests {
             &Projection::builder().omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, speed()]).build(),
         ))
         .expect("a condition");
-        assert!(sql.contains(r#""ah"."attribute_name_key" <> ALL(ARRAY [7])"#), "{sql}");
+        assert!(sql.contains(r#""ah"."attribute_name_key" <> 7"#), "{sql}");
         assert!(sql.contains(r#"FROM "scope_history""#), "the spared scope keeps an entity: {sql}");
         assert!(sql.contains(" OR "), "{sql}");
     }

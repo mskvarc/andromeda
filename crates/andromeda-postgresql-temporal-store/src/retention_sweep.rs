@@ -39,7 +39,7 @@ use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
 };
-use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement, timescale::drop_chunks};
+use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement, timescale::drop_chunks};
 use andromeda_postgresql_temporal_query::alias::{Ah, S};
 use chrono::{DateTime, TimeDelta, Utc};
 use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
@@ -208,7 +208,7 @@ impl TemporalRepository {
             return Ok(0);
         }
         let mut still_empty = empty_evolutions();
-        still_empty.and_where(Expr::col(Entities::EntityKey).eq(any(Expr::val(keys))));
+        still_empty.and_where(is_any_of(Expr::col(Entities::EntityKey), keys));
         let vacated: i64 = evolution_vacancy_statement(None, still_empty)
             .to_query_scalar()
             .fetch_one(&mut *transaction)

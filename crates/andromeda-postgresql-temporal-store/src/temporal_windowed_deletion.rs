@@ -27,7 +27,6 @@
 use crate::{
     decompression_allowance::allow_confined_decompression,
     error::TemporalStoreError,
-    history_removal::stream_key_array,
     repo::TemporalRepository,
     stored_catalog_error::StoredCatalogError,
     stream_census::counted_stream_removal,
@@ -53,7 +52,7 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
     branch::qualified,
-    pg_array::{any, is_any_of, is_none_of},
+    pg_array::{is_any_of, is_none_of},
     statement::Statement,
 };
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
@@ -229,12 +228,12 @@ fn matching_streams_query(
     streams.take()
 }
 
-/// `stream_key = ANY(keys)` and the window on the history row under `ah`, as
+/// The history row under `ah` in one of `stream_keys` and inside the window, as
 /// the temporal query bounds it: the history rows the request removes. An
 /// unbounded window removes every row of the streams.
 fn windowed_rows(stream_keys: &[i64], window: &TemporalWindow) -> Condition {
     Condition::all()
-        .add(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .add(is_any_of(Expr::col((Ah, AttributeHistory::StreamKey)), stream_keys.iter().copied()))
         .add(axis_window(Ah, window.timeproperty, &window.interval))
 }
 
@@ -266,12 +265,12 @@ fn empty_stream_cleanup_statement(schema: Option<&DynIden>, stream_keys: &[i64])
     let surviving_history = Query::select()
         .expr(Expr::val(1))
         .from(qualified(schema, AttributeHistory::Table).alias(Ah))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col((Ah, AttributeHistory::StreamKey)), stream_keys.iter().copied()))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)))
         .to_owned();
     Query::delete()
         .from_table(qualified(schema, TemporalAttributeStreams::Table))
-        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col(TemporalAttributeStreams::StreamKey), stream_keys.iter().copied()))
         .and_where(Expr::exists(surviving_history).not())
         .to_owned()
 }
@@ -393,14 +392,14 @@ mod tests {
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(drop.contains(r#""s"."attribute_name_key" = ANY(ARRAY [7])"#), "{drop}");
+        assert!(drop.contains(r#""s"."attribute_name_key" = 7"#), "{drop}");
         let keep = streams_sql(&scope(
             AttributeDeleteScope::Keep(vec![iri("https://example.com/speed")]),
             DatasetFilter::Unfiltered,
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(keep.contains(r#""s"."attribute_name_key" <> ALL(ARRAY [7])"#), "{keep}");
+        assert!(keep.contains(r#""s"."attribute_name_key" <> 7"#), "{keep}");
         let all = streams_sql(&scope(AttributeDeleteScope::All, DatasetFilter::Unfiltered, TimeInterval::Unbounded, false));
         assert!(!all.contains("\"an\".\"name\""), "{all}");
     }
@@ -418,7 +417,7 @@ mod tests {
             TimeInterval::Unbounded,
             false,
         ));
-        assert!(named.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:1'])"#), "{named}");
+        assert!(named.contains(r#""s"."dataset_key" = 'urn:ngsi-ld:Dataset:1'"#), "{named}");
         let both = streams_sql(&scope(
             AttributeDeleteScope::All,
             DatasetFilter::DefaultOrNamed(vec!["urn:ngsi-ld:Dataset:1".parse().expect("valid URI")]),
@@ -458,7 +457,7 @@ mod tests {
         )
         .window;
         let predicate = concat!(
-            r#"WHERE "ah"."stream_key" = ANY(ARRAY [3]) AND ("ah"."observed_at" < '2024-01-01 00:00:00.000000 +00:00' "#,
+            r#"WHERE "ah"."stream_key" = 3 AND ("ah"."observed_at" < '2024-01-01 00:00:00.000000 +00:00' "#,
             r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") < '2024-01-01 00:00:00.000000 +00:00')"#
         );
         let count = windowed_count_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
@@ -469,12 +468,12 @@ mod tests {
 
     #[test]
     fn empty_stream_cleanup_probes_the_surviving_history_of_each_resolved_stream() {
-        let sql = empty_stream_cleanup_statement(None, &[4]).to_string(PostgresQueryBuilder);
+        let sql = empty_stream_cleanup_statement(None, &[4, 5]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
             concat!(
-                r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah""#,
-                r#" WHERE "ah"."stream_key" = ANY(ARRAY [4]) AND "ah"."stream_key" = "temporal_attribute_streams"."stream_key"))"#
+                r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4,5]) AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah""#,
+                r#" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "temporal_attribute_streams"."stream_key"))"#
             )
         );
     }

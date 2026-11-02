@@ -466,7 +466,7 @@ mod tests {
         for predicate in [
             "\"ri\".\"registration_id\" = \"context_source_registrations\".\"id\"",
             "\"ri\".\"entity_types\"",
-            "\"ri\".\"entity_id\" = ANY(",
+            "\"ri\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'",
             "\"ri\".\"property_name_keys\"",
             "\"ri\".\"relationship_name_keys\"",
         ] {
@@ -753,7 +753,7 @@ mod tests {
         let mut q = empty_query();
         q.encountered_sources = vec![ContextSourcePseudonym::new("broker-b").unwrap()];
         let built = build(&q);
-        assert!(built.sql.contains("\"context_source_alias\" <> ALL(ARRAY ['broker-b'])"), "{}", built.sql);
+        assert!(built.sql.contains("\"context_source_alias\" <> 'broker-b'"), "{}", built.sql);
     }
 
     #[test]

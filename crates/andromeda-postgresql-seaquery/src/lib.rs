@@ -80,6 +80,7 @@ pub mod spherical_distance;
 pub mod statement;
 mod statement_arguments;
 pub mod statement_planning;
+mod statement_text;
 pub mod statistics_object;
 pub mod system_catalog;
 pub mod temporary_table;

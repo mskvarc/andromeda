@@ -175,14 +175,8 @@ mod tests {
         compiled.instances.attr_filter = vec![iri("https://example.com/speed")];
         let (sql, values) = built(&compiled, &speed_and_address());
         assert!(!sql.contains("attribute_names"), "{sql}");
-        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY($"#), "{sql}");
-        assert!(
-            values
-                .0
-                .iter()
-                .any(|value| matches!(value, Value::Array(_, Some(keys)) if keys.as_slice() == [Value::Int(Some(7))])),
-            "{values:?}"
-        );
+        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = $"#), "{sql}");
+        assert!(values.0.iter().any(|value| matches!(value, Value::Int(Some(7)))), "{values:?}");
     }
 
     /// An attribute the dictionary never keyed was never recorded, so a

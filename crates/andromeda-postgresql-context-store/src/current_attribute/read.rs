@@ -17,10 +17,10 @@ use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_postgresql_seaquery::pg_array::{all, any};
+use andromeda_postgresql_seaquery::pg_array::{is_any_of, is_none_of};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use sea_query::{Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Expr, Func, Iden, Query, SelectStatement, SimpleExpr};
 use sqlx::{FromRow, Row, postgres::PgRow};
 
 /// The name a statement reads rows under, `ca`.
@@ -67,12 +67,12 @@ impl RowSelection {
     #[must_use]
     pub fn condition(&self) -> Option<SimpleExpr> {
         let key = || Expr::col((Rows, CurrentAttributes::AttributeNameKey));
-        let bound = |keys: &[AttributeNameKey]| Expr::val(keys.iter().map(|key| key.get()).collect::<Vec<i32>>());
+        let bound = |keys: &[AttributeNameKey]| keys.iter().map(|key| key.get()).collect::<Vec<i32>>();
         match self {
             RowSelection::Every => None,
             RowSelection::AllBut(keys) if keys.is_empty() => None,
-            RowSelection::Named(keys) => Some(key().eq(any(bound(keys)))),
-            RowSelection::AllBut(keys) => Some(key().ne(all(bound(keys)))),
+            RowSelection::Named(keys) => Some(is_any_of(key(), bound(keys))),
+            RowSelection::AllBut(keys) => Some(is_none_of(key(), bound(keys))),
         }
     }
 }
@@ -128,7 +128,7 @@ pub fn rows_of(target: &ContextTarget, keys: &[EntityKey], selection: &RowSelect
     select_row_columns(&mut select);
     select
         .from_as(table_of(target, CurrentAttributes::Table), Rows)
-        .and_where(Expr::col((Rows, CurrentAttributes::EntityKey)).eq(any(Expr::val(keys.iter().map(|key| key.get()).collect::<Vec<i64>>()))));
+        .and_where(is_any_of(Expr::col((Rows, CurrentAttributes::EntityKey)), keys.iter().map(|key| key.get())));
     if let Some(condition) = selection.condition() {
         select.and_where(condition);
     }
@@ -256,8 +256,8 @@ mod tests {
     #[test]
     fn omit_pushes_the_exclusion_into_stage_two() {
         let (sql, values) = rows_of(&ContextTarget::Live, &keys(), &RowSelection::AllBut(names(&[4]))).build(PostgresQueryBuilder);
-        assert!(sql.ends_with(r#"AND "ca"."attribute_name_key" <> ALL($2)"#), "{sql}");
-        assert_eq!(values.0[1], Value::from(vec![4_i32]));
+        assert!(sql.ends_with(r#"AND "ca"."attribute_name_key" <> $2"#), "{sql}");
+        assert_eq!(values.0[1], Value::from(4_i32));
     }
 
     /// An omission naming no stored attribute leaves every row read.

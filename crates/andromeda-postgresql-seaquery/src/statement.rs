@@ -8,12 +8,14 @@
 //! holds a statement value and takes the driver query from it.
 //!
 //! A statement runs on the extended protocol: its text is prepared once per
-//! connection and its values travel as arguments, never inside the text.
+//! connection and its values travel as arguments. The exceptions are a row
+//! count and a boolean, which [`crate::statement_text`] writes into the text so
+//! PostgreSQL can reuse a generic plan for the statement.
 //!
 //! sea-query is built thread-safe, so a statement value is `Send` and may be
 //! held across the `await` that runs it.
 
-use crate::statement_arguments::statement_arguments;
+use crate::{statement_arguments::statement_arguments, statement_text::StatementText};
 use sea_query::{DeleteStatement, InsertStatement, PostgresQueryBuilder, SelectStatement, UpdateStatement, Values, WithQuery};
 use sqlx::{
     AssertSqlSafe,
@@ -74,7 +76,9 @@ macro_rules! sea_query_statement {
         $(
             impl rendering::Rendered for $statement {
                 fn rendered(&self) -> (String, Values) {
-                    self.build(PostgresQueryBuilder)
+                    let mut text = StatementText::default();
+                    self.build_collect_into(PostgresQueryBuilder, &mut text);
+                    text.into_parts()
                 }
             }
 
@@ -100,5 +104,18 @@ mod tests {
             .rendered();
         pretty_assertions::assert_eq!(sql, r#"SELECT "id" FROM "entities" WHERE "id" = $1"#);
         pretty_assertions::assert_eq!(values.0, vec![Value::String(Some("urn:a".to_owned()))]);
+    }
+
+    #[test]
+    fn a_select_writes_its_row_count_into_the_text() {
+        let (sql, values) = Query::select()
+            .column(Alias::new("id"))
+            .from(Alias::new("entities"))
+            .and_where(Expr::col(Alias::new("id")).eq("urn:a"))
+            .limit(1)
+            .to_owned()
+            .rendered();
+        pretty_assertions::assert_eq!(sql, r#"SELECT "id" FROM "entities" WHERE "id" = $1 LIMIT 1"#);
+        pretty_assertions::assert_eq!(values.0.len(), 1);
     }
 }

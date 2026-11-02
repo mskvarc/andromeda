@@ -37,7 +37,7 @@ mod tests {
             .cond_where(not_encountered(&encountered))
             .to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains("\"context_source_alias\" IS NULL OR \"context_source_alias\" <> ALL(ARRAY ['broker-b'])"),
+            sql.contains("\"context_source_alias\" IS NULL OR \"context_source_alias\" <> 'broker-b'"),
             "{sql}"
         );
     }

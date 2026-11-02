@@ -654,7 +654,7 @@ mod tests {
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a"])).build()];
         let built = build(&q, &known_types());
         assert!(built.sql.contains("FALSE"), "the statement stays unsatisfiable: {}", built.sql);
-        assert!(built.sql.contains("\"id\" = ANY("), "the selector is still rendered: {}", built.sql);
+        assert!(built.sql.contains("\"id\" = $1"), "the selector is still rendered: {}", built.sql);
     }
 
     /// A request that named no identifier at all considers whatever it selects,
@@ -895,9 +895,9 @@ mod tests {
         // bound as parameters, so the union shows in the structure, not the text.
         assert!(built.sql.contains(") OR ("), "the two selectors must be ORed as groups: {}", built.sql);
         assert_eq!(
-            built.sql.matches("\"id\" = ANY(").count(),
+            built.sql.matches("\"id\" = $").count(),
             2,
-            "each selector keeps its own single-array id filter: {}",
+            "each selector keeps its own id filter: {}",
             built.sql
         );
         assert_eq!(

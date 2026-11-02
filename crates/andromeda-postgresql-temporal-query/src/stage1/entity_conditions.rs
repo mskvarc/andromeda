@@ -287,7 +287,7 @@ mod tests {
         .to_string(PostgresQueryBuilder);
         let sql = PageBranches::of(&page).walk;
         let exemption = sql.find(r#" OR "e"."id" = ANY("#).expect("the contributed identifiers are exempt");
-        let selector = sql.find(r#""e"."id" = ANY("#).expect("the selector");
+        let selector = sql.find(r#""e"."id" = 'urn:ngsi-ld:Vehicle:9'"#).expect("the selector");
         let q = sql.find(r#"AS "qh""#).expect("the q probe");
         let geo = sql.find(r#"AS "qh""#).expect("the geo probe");
         let scope = sql.find("scope_history").expect("the scope probe");
@@ -307,7 +307,7 @@ mod tests {
     fn no_contributed_identifier_leaves_the_statement_as_it_was() {
         let compiled = filtered_compiled();
         let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(!sql.contains(r#" OR "e"."id" = ANY("#), "{sql}");
+        assert!(!sql.contains(r#" OR "e"."id" = "#), "{sql}");
         let mut contributed_elsewhere = filtered_compiled();
         contributed_elsewhere.contributed = ContributedEntities::default();
         pretty_assertions::assert_eq!(built(&contributed_elsewhere, &speed_and_address()).0, sql);

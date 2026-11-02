@@ -23,7 +23,7 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     cast::cast,
     external_arguments::ExternalArguments,
-    pg_array::{any, has_elements, text_array},
+    pg_array::{has_elements, is_any_of, text_array},
     pg_type::PostgresType,
     scalar_subquery::scalar_subquery,
     statement::Statement,
@@ -115,7 +115,7 @@ pub(crate) fn reach_statement(keys: &[i64]) -> SelectStatement {
         .distinct()
         .expr(unnest_of(Expr::col(TemporalAppendIntents::EntryNeeds)))
         .from(TemporalAppendIntents::Table)
-        .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray))));
+        .and_where(is_any_of(Expr::col(TemporalAppendIntents::IntentKey), keys.iter().copied()));
     statement
 }
 
@@ -219,7 +219,7 @@ impl<'a> StagedSource<'a> {
                 relation
                     .column(Asterisk)
                     .from(TemporalAppendIntents::Table)
-                    .and_where(Expr::col(TemporalAppendIntents::IntentKey).eq(any(cast(Expr::val(keys.to_vec()), PostgresType::BigintArray))));
+                    .and_where(is_any_of(Expr::col(TemporalAppendIntents::IntentKey), keys.iter().copied()));
                 if columns == IntentColumns::WithFirstTypedIntent {
                     relation.expr_window_as(
                         first_typed_intent(
@@ -261,10 +261,10 @@ impl<'a> StagedSource<'a> {
         relation
     }
 
-    /// The keys of the Temporal Evolutions the application created, as a
-    /// `bigint[]` value.
-    pub(crate) fn created_evolutions(&self) -> SimpleExpr {
-        cast(Expr::val(self.created.to_vec()), PostgresType::BigintArray)
+    /// Whether `key` is the key of a Temporal Evolution the application
+    /// created.
+    pub(crate) fn is_created_evolution(&self, key: SimpleExpr) -> SimpleExpr {
+        is_any_of(key, self.created.iter().copied())
     }
 
     /// The identifiers of the Entities whose Temporal Evolution the commit

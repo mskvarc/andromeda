@@ -179,31 +179,65 @@ pub fn all(array: SimpleExpr) -> SimpleExpr {
 /// filter that reads no row. The array owns its elements, so a text list is
 /// handed over as owned strings: a bound parameter cannot borrow across the
 /// round trip.
+///
+/// A list of one value renders as `operand = $n`. A generic plan estimates
+/// `= ANY($n)` as ten elements whatever the array holds, so for the one key a
+/// statement mostly carries it never looks as cheap as the custom plans and the
+/// statement is planned again on every execution; `= $n` estimates one row,
+/// which the generic plan shares with them.
 #[must_use]
 pub fn is_any_of<V>(operand: impl Into<SimpleExpr>, values: impl IntoIterator<Item = V>) -> SimpleExpr
 where
+    V: Into<Value>,
     Vec<V>: Into<Value>,
 {
-    let values: Vec<V> = values.into_iter().collect();
-    if values.is_empty() {
-        return false_literal();
+    match Membership::of(values) {
+        Membership::Empty => false_literal(),
+        Membership::Single(value) => operand.into().eq(Expr::val(value)),
+        Membership::Several(values) => operand.into().eq(any(Expr::val(values))),
     }
-    operand.into().eq(any(Expr::val(values)))
 }
 
 /// `operand <> ALL($n)`: whether `operand` is none of `values`, the list bound
 /// as one value for the reason [`is_any_of`] binds it as one. An empty list
-/// excludes nothing and renders as the constant `TRUE`.
+/// excludes nothing and renders as the constant `TRUE`, and a list of one value
+/// renders as `operand <> $n` for the reason [`is_any_of`] renders one as
+/// `operand = $n`.
 #[must_use]
 pub fn is_none_of<V>(operand: impl Into<SimpleExpr>, values: impl IntoIterator<Item = V>) -> SimpleExpr
 where
+    V: Into<Value>,
     Vec<V>: Into<Value>,
 {
-    let values: Vec<V> = values.into_iter().collect();
-    if values.is_empty() {
-        return true_literal();
+    match Membership::of(values) {
+        Membership::Empty => true_literal(),
+        Membership::Single(value) => operand.into().ne(Expr::val(value)),
+        Membership::Several(values) => operand.into().ne(all(Expr::val(values))),
     }
-    operand.into().ne(all(Expr::val(values)))
+}
+
+/// The values a membership test compares against, by how many there are.
+enum Membership<V> {
+    /// No value.
+    Empty,
+    /// Exactly one value, compared directly.
+    Single(V),
+    /// Two values or more, bound as one array.
+    Several(Vec<V>),
+}
+
+impl<V> Membership<V> {
+    /// The membership `values` make.
+    fn of(values: impl IntoIterator<Item = V>) -> Membership<V> {
+        let mut values = values.into_iter();
+        let Some(first) = values.next() else {
+            return Membership::Empty;
+        };
+        match values.next() {
+            None => Membership::Single(first),
+            Some(second) => Membership::Several([first, second].into_iter().chain(values).collect()),
+        }
+    }
 }
 
 /// A bound `text[]` value from a batch of borrowed strings.
@@ -267,7 +301,7 @@ mod tests {
         let identifiers: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
         let (sql, values) = Query::select()
             .expr(is_any_of(Expr::col(Alias::new("id")), identifiers.iter().cloned())) // clone: the expectation keeps the list
-            .and_where(is_none_of(Expr::col(Alias::new("name")), ["a".to_owned()]))
+            .and_where(is_none_of(Expr::col(Alias::new("name")), ["a".to_owned(), "b".to_owned()]))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT \"id\" = ANY($1) WHERE \"name\" <> ALL($2)");
@@ -284,6 +318,17 @@ mod tests {
             .build(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT FALSE, TRUE");
         assert_eq!(values.0, Vec::new());
+    }
+
+    #[test]
+    fn a_list_of_one_value_is_compared_directly() {
+        let (sql, values) = Query::select()
+            .expr(is_any_of(Expr::col(Alias::new("id")), ["urn:a".to_owned()]))
+            .expr(is_none_of(Expr::col(Alias::new("key")), [7_i64]))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT \"id\" = $1, \"key\" <> $2");
+        assert_eq!(values.0, vec![Value::String(Some("urn:a".to_owned())), Value::BigInt(Some(7))]);
     }
 
     #[test]

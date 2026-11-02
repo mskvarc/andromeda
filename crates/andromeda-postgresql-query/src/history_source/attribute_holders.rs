@@ -113,7 +113,7 @@ mod tests {
             holder_types_query(None, &[AttributeNameKey::from(7)]).to_string(PostgresQueryBuilder),
             concat!(
                 r#"SELECT "attribute_name_key", "entity_type_name_key", SUM("stream_delta")::bigint AS "streams" FROM "stream_type_census" "#,
-                r#"WHERE "attribute_name_key" = ANY(ARRAY [7]) GROUP BY "attribute_name_key", "entity_type_name_key" HAVING SUM("stream_delta") > (0)"#
+                r#"WHERE "attribute_name_key" = 7 GROUP BY "attribute_name_key", "entity_type_name_key" HAVING SUM("stream_delta") > (0)"#
             )
         );
     }

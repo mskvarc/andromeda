@@ -25,7 +25,7 @@ use sea_query::{Alias, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query};
 use std::{collections::BTreeSet, sync::LazyLock};
 
 /// The queue rows the drain reads, as every statement names them.
-const QUEUED: &str = r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])) AS "i""#;
+const QUEUED: &str = r#"(SELECT * FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5])) AS "i""#;
 
 /// The write record every commit statement is built over, so the text of the
 /// bound source is the same in every statement.
@@ -63,7 +63,7 @@ const CREATED: [i64; 2] = [7, 9];
 
 /// The keys of the evolutions the application created, as a statement names
 /// them.
-const CREATED_ARRAY: &str = "ARRAY [7,9]::bigint[]";
+const CREATED_ARRAY: &str = "ARRAY [7,9]";
 
 /// A statement as the text sea-query renders it, its values inline.
 fn text_of(statement: &StepStatement) -> String {
@@ -534,7 +534,7 @@ fn the_reach_of_claimed_intents_is_read_without_their_entries() {
     let sql = reach_statement(&[3, 5]).to_string(PostgresQueryBuilder);
     assert_eq!(
         sql,
-        r#"SELECT DISTINCT UNNEST("entry_needs") FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5]::bigint[])"#
+        r#"SELECT DISTINCT UNNEST("entry_needs") FROM "temporal_append_intents" WHERE "intent_key" = ANY(ARRAY [3,5])"#
     );
 }
 
@@ -1085,7 +1085,7 @@ fn the_evolution_statement_returns_the_evolutions_it_created_or_gave_a_type() {
 /// The judgement shared by every statement reading the attribute entries of
 /// an evolution, its created keys bound after the drain's claimed keys.
 const JUDGED: &str = concat!(
-    r#"(NOT ("e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7,9]::bigint[]) AND "#,
+    r#"(NOT ("e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7,9]) AND "#,
     r#"("i"."first_typed_intent" IS NULL OR "i"."first_typed_intent" > "i"."intent_key")))"#
 );
 

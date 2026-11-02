@@ -356,13 +356,13 @@ mod tests {
         assert!(
             branches.candidates.ends_with(concat!(
                 r#" UNION ALL (SELECT "entities"."entity_key" FROM "entities""#,
-                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009']) AND "entities"."evolution_created_at" IS NOT NULL)"#
+                r#" WHERE "entities"."id" = 'urn:ngsi-ld:Sensor:000009' AND "entities"."evolution_created_at" IS NOT NULL)"#
             )),
             "{}",
             branches.candidates
         );
         assert!(
-            branches.indexed.contains(r#" OR "e"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009'])"#),
+            branches.indexed.contains(r#" OR "e"."id" = 'urn:ngsi-ld:Sensor:000009'"#),
             "{}",
             branches.indexed
         );

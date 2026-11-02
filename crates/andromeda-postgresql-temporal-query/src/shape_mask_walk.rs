@@ -119,7 +119,7 @@ mod tests {
             concat!(
                 r#"WITH RECURSIVE "held" ("attribute_name_key", "shape_mask") AS (SELECT "step"."attribute_name_key", "step"."shape_mask" FROM "attribute_names" AS "an""#,
                 r#" JOIN LATERAL (SELECT "ms"."attribute_name_key", "ms"."shape_mask" FROM "temporal_attribute_streams" AS "ms" WHERE "ms"."attribute_name_key" = "an"."attribute_name_key" ORDER BY "ms"."shape_mask" ASC LIMIT 1) AS "step" ON TRUE"#,
-                r#" WHERE "an"."attribute_name_key" = ANY(ARRAY [7])"#,
+                r#" WHERE "an"."attribute_name_key" = 7"#,
                 r#" UNION ALL (SELECT "step"."attribute_name_key", "step"."shape_mask" FROM "held""#,
                 r#" JOIN LATERAL (SELECT "ms"."attribute_name_key", "ms"."shape_mask" FROM "temporal_attribute_streams" AS "ms" WHERE "ms"."attribute_name_key" = "held"."attribute_name_key" AND "ms"."shape_mask" > "held"."shape_mask" ORDER BY "ms"."shape_mask" ASC LIMIT 1) AS "step" ON TRUE))"#,
                 r#" SELECT * FROM "held""#

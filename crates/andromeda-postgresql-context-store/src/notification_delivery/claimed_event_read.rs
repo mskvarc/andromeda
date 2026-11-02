@@ -23,7 +23,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, notification::NotificationEvents};
 use andromeda_postgresql_seaquery::{
     aggregate::array_agg_ordered,
-    pg_array::{any, text_array},
+    pg_array::{is_any_of, text_array},
     pg_type::PostgresType,
     statement::Statement,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
@@ -191,7 +191,10 @@ fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> Unnes
         .column((ClaimedEventRow, NotificationEvents::CreatedAt))
         .column((ClaimedEventRow, NotificationEvents::CommittedAt))
         .from(table_of(target, NotificationEvents::Table).alias(ClaimedEventRow))
-        .and_where(Expr::col((ClaimedEventRow, NotificationEvents::EventKey)).eq(any(bigint_array(event_keys))))
+        .and_where(is_any_of(
+            Expr::col((ClaimedEventRow, NotificationEvents::EventKey)),
+            event_keys.iter().copied(),
+        ))
         .to_owned();
     UnnestAliased::new(select).with_ordinality(aliased, &unnest_columns, aliased_position)
 }
@@ -205,11 +208,6 @@ struct ClaimedEventRow;
 #[derive(Iden, Clone, Copy)]
 #[iden = "n"]
 struct ChangedName;
-
-/// A bound `bigint[]` value from a batch of claimed identifiers.
-fn bigint_array(ids: &[i64]) -> SimpleExpr {
-    Expr::val(ids.to_vec())
-}
 
 #[cfg(test)]
 #[expect(

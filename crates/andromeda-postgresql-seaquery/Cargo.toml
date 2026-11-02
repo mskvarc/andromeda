@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+derive_more = { version = "2.1.1", features = ["display"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "thread-safe", "with-bigdecimal", "with-chrono", "with-uuid"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "chrono", "postgres", "runtime-tokio", "uuid"] }
 sqlx-core = "0.9.0"

@@ -16,7 +16,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
-    pg_array::{all, any, is_any_of},
+    pg_array::{is_any_of, is_none_of},
     statement::Statement,
 };
 use andromeda_temporal::error::TemporalError;
@@ -86,8 +86,14 @@ pub(super) fn behind_earlier_statement(intent_keys: &[i64]) -> SelectStatement {
                 .add(Expr::col((EarlierIntent, TemporalAppendIntents::EntityId)).equals((ClaimedIntent, TemporalAppendIntents::EntityId)))
                 .add(Expr::col((EarlierIntent, TemporalAppendIntents::IntentKey)).lt(Expr::col((ClaimedIntent, TemporalAppendIntents::IntentKey)))),
         )
-        .and_where(Expr::col((ClaimedIntent, TemporalAppendIntents::IntentKey)).eq(any(Expr::val(intent_keys.to_vec()))))
-        .and_where(Expr::col((EarlierIntent, TemporalAppendIntents::IntentKey)).ne(all(Expr::val(intent_keys.to_vec()))));
+        .and_where(is_any_of(
+            Expr::col((ClaimedIntent, TemporalAppendIntents::IntentKey)),
+            intent_keys.iter().copied(),
+        ))
+        .and_where(is_none_of(
+            Expr::col((EarlierIntent, TemporalAppendIntents::IntentKey)),
+            intent_keys.iter().copied(),
+        ));
     Query::select().expr(Expr::exists(behind)).to_owned()
 }
 

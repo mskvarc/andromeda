@@ -35,10 +35,7 @@ use andromeda_postgresql_context_query::entity_head::select_head;
 use andromeda_postgresql_pool::read_share::PoolLane;
 use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{
-    pg_array::{any, text_array},
-    statement::Statement,
-};
+use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement};
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
@@ -73,9 +70,8 @@ impl EntityRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
         let retrieved = self
-            .read_joined(lane, entities_query(target, any(text_array(&id_strs)), &RowSelection::Every))
+            .read_joined(lane, entities_query(target, ids.iter().map(Identifier::as_str), &RowSelection::Every))
             .await?;
         // clone: the identifier keys the map and stays in the state it names
         Ok(retrieved.into_iter().map(|entity| (entity.state.id().clone(), entity)).collect())
@@ -89,7 +85,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as an entity state.
     pub async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, ContextStoreError> {
-        let statement = entities_query(target, Expr::val(id.as_str()), &RowSelection::Every);
+        let statement = entities_query(target, [id.as_str()], &RowSelection::Every);
         Ok(self.read_versioned(PoolLane::Whole, statement).await?.pop().map(VersionedEntity::into_snapshot))
     }
 
@@ -104,8 +100,7 @@ impl EntityRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
-        let statement = entities_query(target, any(text_array(&id_strs)), &RowSelection::Every);
+        let statement = entities_query(target, ids.iter().map(Identifier::as_str), &RowSelection::Every);
         Ok(self
             .read_versioned(PoolLane::Whole, statement)
             .await?
@@ -131,7 +126,7 @@ impl EntityRepository {
         returned: &ReturnedAttributes<'_>,
     ) -> Result<Option<RetrievedEntity>, ContextStoreError> {
         let selection = self.row_selection(returned).await?;
-        Ok(self.read_joined(lane, entities_query(target, Expr::val(id.as_str()), &selection)).await?.pop())
+        Ok(self.read_joined(lane, entities_query(target, [id.as_str()], &selection)).await?.pop())
     }
 
     /// The rows holding the Attributes `returned` lets a response hold, its
@@ -161,8 +156,10 @@ impl EntityRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
-        let rows = sys_attrs_query(target, any(text_array(&id_strs))).to_query().fetch_all(&self.pool).await?;
+        let rows = sys_attrs_query(target, ids.iter().map(Identifier::as_str))
+            .to_query()
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter()
             .map(|row| -> Result<(Identifier, SysAttrsSnapshot), ContextStoreError> { Ok((stored_uri(row.try_get("id")?)?, sys_attrs_of(row)?)) })
             .collect()
@@ -204,9 +201,9 @@ fn sys_attrs_of(row: &PgRow) -> Result<SysAttrsSnapshot, ContextStoreError> {
 /// FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key
 /// LEFT JOIN current_attributes ca ON ca.entity_key = e.entity_key
 ///     [AND ca.attribute_name_key = ANY(<keys>) | <> ALL(<keys>)]
-/// WHERE e.id = <ids>
+/// WHERE e.id = ANY(<ids>) | e.id = <id>
 /// ```
-fn entities_query(target: &ContextTarget, ids: SimpleExpr, selection: &RowSelection) -> SelectStatement {
+fn entities_query<'id>(target: &ContextTarget, ids: impl IntoIterator<Item = &'id str>, selection: &RowSelection) -> SelectStatement {
     let same_entity = Expr::col((Rows, CurrentAttributes::EntityKey)).equals((E, Entities::EntityKey));
     let join = match selection.condition() {
         Some(condition) => same_entity.and(condition),
@@ -224,20 +221,25 @@ fn entities_query(target: &ContextTarget, ids: SimpleExpr, selection: &RowSelect
             Expr::col((Search, EntitySearch::EntityKey)).equals((E, Entities::EntityKey)),
         )
         .join_as(JoinType::LeftJoin, table_of(target, CurrentAttributes::Table), Rows, join)
-        .and_where(Expr::col((E, Entities::Id)).eq(ids));
+        .and_where(identified(ids));
     statement
 }
 
 /// The identifier and system attributes of the Entities whose identifier
 /// equals `ids`, read from the identity row alone, of those holding a current
 /// state.
-fn sys_attrs_query(target: &ContextTarget, ids: SimpleExpr) -> SelectStatement {
+fn sys_attrs_query<'id>(target: &ContextTarget, ids: impl IntoIterator<Item = &'id str>) -> SelectStatement {
     Query::select()
         .columns([Entities::Id, Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt].map(|column| (E, column)))
         .from_as(table_of(target, Entities::Table), E)
-        .and_where(Expr::col((E, Entities::Id)).eq(ids))
+        .and_where(identified(ids))
         .and_where(holds_current_state(E))
         .take()
+}
+
+/// Whether the Entity under `e` is one `ids` names.
+fn identified<'id>(ids: impl IntoIterator<Item = &'id str>) -> SimpleExpr {
+    is_any_of(Expr::col((E, Entities::Id)), ids.into_iter().map(str::to_owned))
 }
 
 #[cfg(test)]
@@ -248,14 +250,13 @@ mod tests {
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
-    use andromeda_postgresql_seaquery::pg_array::{any, text_array};
     use pretty_assertions::assert_eq;
-    use sea_query::{Expr, PostgresQueryBuilder, Value};
+    use sea_query::{PostgresQueryBuilder, Value};
 
     const JOIN: &str = r#"LEFT JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "e"."entity_key""#;
 
     fn retrieve() -> String {
-        entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::Every).to_string(PostgresQueryBuilder)
+        entities_query(&ContextTarget::Live, ["urn:x"], &RowSelection::Every).to_string(PostgresQueryBuilder)
     }
 
     fn names(keys: &[i32]) -> Vec<AttributeNameKey> {
@@ -278,7 +279,7 @@ mod tests {
     #[test]
     fn a_retrieve_narrowed_to_named_attributes_joins_their_rows_alone() {
         let selection = RowSelection::Named(names(&[4, 7]));
-        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &selection).build(PostgresQueryBuilder);
+        let (sql, values) = entities_query(&ContextTarget::Live, ["urn:x"], &selection).build(PostgresQueryBuilder);
         assert!(
             sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" = ANY($1) WHERE "e"."id" = $2"#)),
             "{sql}"
@@ -290,30 +291,27 @@ mod tests {
     /// read, with no row joined to it.
     #[test]
     fn a_retrieve_selecting_no_attribute_keeps_the_head() {
-        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::Named(Vec::new())).build(PostgresQueryBuilder);
-        assert!(
-            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" = ANY($1) WHERE "e"."id" = $2"#)),
-            "{sql}"
-        );
-        assert_eq!(values.0[0], Value::from(Vec::<i32>::new()));
+        let (sql, values) = entities_query(&ContextTarget::Live, ["urn:x"], &RowSelection::Named(Vec::new())).build(PostgresQueryBuilder);
+        assert!(sql.ends_with(&format!(r#"{JOIN} AND (FALSE) WHERE "e"."id" = $1"#)), "{sql}");
+        assert_eq!(values.0, vec![Value::from("urn:x")]);
     }
 
     /// Clause 4.21: `omit=a` returns every attribute but `a`.
     #[test]
     fn a_retrieve_omitting_attributes_joins_every_other_row() {
-        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::AllBut(names(&[4]))).build(PostgresQueryBuilder);
+        let (sql, values) = entities_query(&ContextTarget::Live, ["urn:x"], &RowSelection::AllBut(names(&[4]))).build(PostgresQueryBuilder);
         assert!(
-            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" <> ALL($1) WHERE "e"."id" = $2"#)),
+            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" <> $1 WHERE "e"."id" = $2"#)),
             "{sql}"
         );
-        assert_eq!(values.0[0], Value::from(vec![4_i32]));
+        assert_eq!(values.0[0], Value::from(4_i32));
     }
 
     /// An omission naming no stored attribute is no selection at all.
     #[test]
     fn a_retrieve_omitting_nothing_joins_every_row() {
         assert_eq!(
-            entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::AllBut(Vec::new())).to_string(PostgresQueryBuilder),
+            entities_query(&ContextTarget::Live, ["urn:x"], &RowSelection::AllBut(Vec::new())).to_string(PostgresQueryBuilder),
             retrieve()
         );
     }
@@ -329,7 +327,7 @@ mod tests {
 
     #[test]
     fn a_batch_reads_through_one_array_membership_test() {
-        let (sql, values) = entities_query(&ContextTarget::Live, any(text_array(&["urn:a", "urn:b"])), &RowSelection::Every).build(PostgresQueryBuilder);
+        let (sql, values) = entities_query(&ContextTarget::Live, ["urn:a", "urn:b"], &RowSelection::Every).build(PostgresQueryBuilder);
         assert!(
             sql.ends_with(r#"WHERE "e"."id" = ANY($1)"#),
             "a batch must not expand to a placeholder per id: {sql}"
@@ -340,7 +338,7 @@ mod tests {
     #[test]
     fn system_attributes_read_the_three_lifecycle_instants_from_the_identity_row() {
         assert_eq!(
-            sys_attrs_query(&ContextTarget::Live, Expr::val("urn:x")).to_string(PostgresQueryBuilder),
+            sys_attrs_query(&ContextTarget::Live, ["urn:x"]).to_string(PostgresQueryBuilder),
             r#"SELECT "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM "entities" AS "e" WHERE "e"."id" = 'urn:x' AND "e"."created_at" IS NOT NULL"#
         );
     }

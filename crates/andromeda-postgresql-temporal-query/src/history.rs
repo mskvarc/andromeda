@@ -421,10 +421,7 @@ mod tests {
         };
         let sql =
             build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#""ah"."attribute_name_key" = ANY(ARRAY [7])"#),
-            "the attrs narrow by dictionary key: {sql}"
-        );
+        assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "the attrs narrow by dictionary key: {sql}");
         assert!(!sql.contains(r#""an"."name" ="#), "{sql}");
     }
 
@@ -440,12 +437,12 @@ mod tests {
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = sql_of(&compiled);
         assert!(sql.contains(r#""ah"."dataset_key" = ('')"#), "{sql}");
-        assert!(!sql.contains("= ANY(ARRAY ['urn"), "{sql}");
+        assert!(!sql.contains("urn:ngsi-ld:Dataset"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = sql_of(&compiled);
-        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
+        assert!(sql.contains(r#""ah"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);

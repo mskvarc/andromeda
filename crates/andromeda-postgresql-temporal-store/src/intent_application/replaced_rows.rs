@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     branch::qualified,
-    pg_array::any,
+    pg_array::is_any_of,
     pg_type::PostgresType,
     statement::Statement,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
@@ -96,7 +96,7 @@ fn delete_statement(schema: Option<&DynIden>, rows: &[ReplacedRow]) -> DeleteSta
             Replaced,
         )
         .to_owned();
-    statement.and_where(Expr::col(AttributeHistory::StreamKey).eq(any(Expr::val(streams()))));
+    statement.and_where(is_any_of(Expr::col(AttributeHistory::StreamKey), streams()));
     if let (Some(earliest), Some(latest)) = (earliest, latest) {
         statement
             .and_where(Expr::col(AttributeHistory::RecordedAt).gte(earliest))

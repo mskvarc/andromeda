@@ -382,7 +382,7 @@ mod tests {
         );
         assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
         assert!(
-            sql.contains(r#") AS "hg" WHERE "hg"."attribute_name_key" = ANY(ARRAY [11]) ORDER BY "id" ASC) AS "hq""#),
+            sql.contains(r#") AS "hg" WHERE "hg"."attribute_name_key" = 11 ORDER BY "id" ASC) AS "hq""#),
             "{sql}"
         );
         assert!(!sql.contains(r#""temporal_attribute_streams" AS "hs""#), "{sql}");

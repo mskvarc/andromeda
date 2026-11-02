@@ -58,7 +58,7 @@ mod tests {
         assert!(!render(&DatasetFilter::Unfiltered).contains("dataset_key"));
         assert!(render(&DatasetFilter::DefaultOnly).contains(r#""s"."dataset_key" = ('')"#));
         let only = render(&DatasetFilter::NamedOnly(named.clone()));
-        assert!(only.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{only}");
+        assert!(only.contains(r#""s"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{only}");
         let both = render(&DatasetFilter::DefaultOrNamed(named));
         assert!(both.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#), "{both}");
         assert!(!both.contains(" OR "), "{both}");

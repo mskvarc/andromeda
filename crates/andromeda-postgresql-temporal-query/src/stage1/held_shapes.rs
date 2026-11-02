@@ -399,8 +399,8 @@ mod tests {
             &compiled,
             &[string_load()],
         );
-        assert!(sql.contains(r#""rs"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
-        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one'])"#), "{sql}");
+        assert!(sql.contains(r#""rs"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
+        assert!(sql.contains(r#""ah"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
     }
 
     /// No catalogue row holds a queued entry yet, so every Entity a queued

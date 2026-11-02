@@ -235,8 +235,11 @@ mod tests {
             .0
             .into_iter()
             .flat_map(|value| {
+                if let Value::SmallInt(Some(identity)) = value {
+                    return vec![identity];
+                }
                 let Value::Array(_, Some(elements)) = &value else {
-                    panic!("not an identity array: {value:?}");
+                    panic!("not a stored identity or an identity array: {value:?}");
                 };
                 elements
                     .iter()
@@ -267,7 +270,7 @@ mod tests {
     #[test]
     fn a_unit_code_equality_compares_the_stored_identity_of_the_code() {
         let (sql, bound) = unit_code_condition("==\"CEL\"");
-        assert!(sql.contains(r#""ca"."unit_code_id" = ANY($1)"#), "{sql}");
+        assert!(sql.contains(r#""ca"."unit_code_id" = $1"#), "{sql}");
         assert_eq!(bound, [367]);
     }
 

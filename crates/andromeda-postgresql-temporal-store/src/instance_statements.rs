@@ -31,7 +31,7 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     clock::now,
     literal::int_literal,
-    pg_array::any,
+    pg_array::is_any_of,
     pg_type::PostgresType,
     postgis::{bounding_box_contains, repaired_when_invalid, st_collect, st_envelope, st_geom_from_ewkb},
 };
@@ -83,9 +83,10 @@ pub(crate) fn attribute_stream_keys_statement(target: &ContextTarget, entity_id:
     attribute_streams_query(target, entity_id, attribute)
 }
 
-/// `stream_key = ANY(streams)`, the resolved streams the instance is sought in.
+/// Whether the history row is in one of the resolved streams the instance is
+/// sought in.
 fn within_resolved_streams(stream_keys: &[i64]) -> SimpleExpr {
-    Expr::col(AttributeHistory::StreamKey).eq(any(Expr::val(stream_keys.to_vec())))
+    is_any_of(Expr::col(AttributeHistory::StreamKey), stream_keys.iter().copied())
 }
 
 /// The instance delete, removing the addressed row rather than tombstoning it.
@@ -253,7 +254,7 @@ pub(crate) fn grow_stream_extent_statement(target: &ContextTarget, stream_keys: 
             TemporalAttributeStreams::ValueExtent,
             st_envelope(st_collect(extent(), st_envelope(geometry()))),
         )
-        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(Expr::val(stream_keys.to_vec()))))
+        .and_where(is_any_of(Expr::col(TemporalAttributeStreams::StreamKey), stream_keys.iter().copied()))
         .cond_where(Condition::any().add(extent().is_null()).add(bounding_box_contains(extent(), geometry()).not()))
         .to_owned()
 }
@@ -265,7 +266,7 @@ pub(crate) fn grow_stream_shapes_statement(instance: &InstanceIdentity, target: 
     let rows = Query::select()
         .from(table_of(target, AttributeHistory::Table).alias(Ah))
         .and_where(Expr::col((Ah, identity_column(instance))).eq(identity_value(instance)))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(Expr::val(modified.to_vec()))))
+        .and_where(is_any_of(Expr::col((Ah, AttributeHistory::StreamKey)), modified.iter().copied()))
         .take();
     shape_growth_statement(table_of(target, TemporalAttributeStreams::Table), rows)
 }
@@ -411,7 +412,7 @@ mod tests {
                 "{statement}"
             );
             assert!(
-                statement.contains(r#"FROM "attribute_history" AS "ah" WHERE "ah"."#) && statement.contains(r#" AND "ah"."stream_key" = ANY($"#),
+                statement.contains(r#"FROM "attribute_history" AS "ah" WHERE "ah"."#) && statement.contains(r#" AND "ah"."stream_key" = $"#),
                 "{statement}"
             );
         }
@@ -460,7 +461,9 @@ mod tests {
     fn a_modification_or_deletion_is_confined_to_the_resolved_streams_as_bound_values() {
         for instance in identities() {
             for statement in [
-                delete_instance_statement(&instance, &ContextTarget::Live, &[4]).build(PostgresQueryBuilder).0,
+                delete_instance_statement(&instance, &ContextTarget::Live, &[4, 5])
+                    .build(PostgresQueryBuilder)
+                    .0,
                 update(&instance).0,
             ] {
                 assert!(statement.contains(r#""stream_key" = ANY($"#), "{statement}");

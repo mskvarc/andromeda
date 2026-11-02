@@ -6,7 +6,7 @@
 
 use crate::{
     error::TemporalStoreError,
-    history_removal::{remove_stream_history, stream_key_array},
+    history_removal::remove_stream_history,
     repo::TemporalRepository,
     stream_census::counted_stream_removal,
     temporal_catalog_read::{of_attribute, stream_catalog_join},
@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
 use andromeda_postgresql_schema::{current::Entities, temporal::TemporalAttributeStreams};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
 
@@ -112,7 +112,7 @@ fn select_attribute_streams_query(schema: Option<&DynIden>, entity_id: &str, att
 fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteStatement {
     Query::delete()
         .from_table(qualified(schema, TemporalAttributeStreams::Table))
-        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col(TemporalAttributeStreams::StreamKey), stream_keys.iter().copied()))
         .to_owned()
 }
 
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn attribute_deletion_removes_the_streams_by_their_bound_keys() {
         let streams = delete_streams_query(None, &[1]).to_string(PostgresQueryBuilder);
-        assert_eq!(streams, r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [1])"#);
+        assert_eq!(streams, r#"DELETE FROM "temporal_attribute_streams" WHERE "stream_key" = 1"#);
     }
 
     #[test]

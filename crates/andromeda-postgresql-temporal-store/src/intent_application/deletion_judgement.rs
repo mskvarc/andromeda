@@ -25,7 +25,6 @@
 use crate::intent_application::intent_source::{FirstTypedIntent, I, StagedSource, entry, intent};
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
-use andromeda_postgresql_seaquery::pg_array::any;
 use andromeda_postgresql_temporal_query::alias::Te;
 use sea_query::{Expr, ExprTrait, SimpleExpr};
 
@@ -44,7 +43,7 @@ pub(crate) fn ended_before_evolution(created: SimpleExpr) -> SimpleExpr {
 /// Whether the Temporal Evolution under `te` is one the evolution upsert of
 /// the application created, its key among the ones the upsert returned.
 pub(crate) fn created_by_application(source: &StagedSource<'_>) -> SimpleExpr {
-    Expr::col((Te, Entities::EntityKey)).eq(any(source.created_evolutions()))
+    source.is_created_evolution(Expr::col((Te, Entities::EntityKey)))
 }
 
 #[cfg(test)]
@@ -84,7 +83,7 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#""e"."entry_kind" = 2 AND "te"."entity_key" = ANY(ARRAY [7]::bigint[]) AND "#,
+                r#""e"."entry_kind" = 2 AND "te"."entity_key" = 7 AND "#,
                 r#"("i"."first_typed_intent" IS NULL OR "i"."first_typed_intent" > "i"."intent_key")"#
             )),
             "{sql}"
@@ -105,6 +104,6 @@ mod tests {
             },
             &[7, 9],
         );
-        assert!(sql.contains(r#""te"."entity_key" = ANY(ARRAY [7,9]::bigint[])"#), "{sql}");
+        assert!(sql.contains(r#""te"."entity_key" = ANY(ARRAY [7,9])"#), "{sql}");
     }
 }

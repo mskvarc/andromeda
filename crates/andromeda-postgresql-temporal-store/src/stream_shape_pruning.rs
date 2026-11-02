@@ -20,7 +20,7 @@
 //! instance, or waits until the prune has committed, and then adds the
 //! combination again.
 
-use crate::{error::TemporalStoreError, history_removal::stream_key_array, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
 use andromeda_postgresql_query::{entity_sides::holds_evolution, tombstone::carries_a_value};
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -30,7 +30,7 @@ use andromeda_postgresql_seaquery::{
     bit_string::bit_union_of_rows,
     branch::qualified,
     literal::int_literal,
-    pg_array::any,
+    pg_array::is_any_of,
     scalar_subquery::scalar_subquery,
     statement::Statement,
 };
@@ -129,7 +129,7 @@ fn evolution_lock_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> Se
     let owners = Query::select()
         .column(TemporalAttributeStreams::EntityKey)
         .from(qualified(schema, TemporalAttributeStreams::Table))
-        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col(TemporalAttributeStreams::StreamKey), stream_keys.iter().copied()))
         .to_owned();
     Query::select()
         .column(Entities::EntityKey)
@@ -159,7 +159,7 @@ fn evolution_streams_statement(evolutions: &[i64]) -> SelectStatement {
     Query::select()
         .column(TemporalAttributeStreams::StreamKey)
         .from(TemporalAttributeStreams::Table)
-        .and_where(Expr::col(TemporalAttributeStreams::EntityKey).eq(any(Expr::val(evolutions.to_vec()))))
+        .and_where(is_any_of(Expr::col(TemporalAttributeStreams::EntityKey), evolutions.iter().copied()))
         .to_owned()
 }
 
@@ -175,7 +175,7 @@ fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> UpdateState
     let carried = Query::select()
         .expr(int_literal(1))
         .from(qualified(schema, AttributeHistory::Table).alias(Ah))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col((Ah, AttributeHistory::StreamKey)), stream_keys.iter().copied()))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).equals((Pruned, TemporalAttributeStreams::StreamKey)))
         .and_where(carries_a_value(Ah))
         .and_where(recorded_combination().eq(position_mask()))
@@ -188,7 +188,7 @@ fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> UpdateState
         .column((Pruned, TemporalAttributeStreams::StreamKey))
         .expr_as(Func::coalesce([scalar_subquery(kept), no_shapes()]), TemporalAttributeStreams::ShapeMask)
         .from(qualified(schema, TemporalAttributeStreams::Table).alias(Pruned))
-        .and_where(Expr::col((Pruned, TemporalAttributeStreams::StreamKey)).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col((Pruned, TemporalAttributeStreams::StreamKey)), stream_keys.iter().copied()))
         .take();
     let mask = || Expr::col((TemporalAttributeStreams::Table, TemporalAttributeStreams::ShapeMask));
     Query::update()
@@ -236,7 +236,7 @@ mod tests {
         let sql = evolution_lock_statement(None, &[4]).to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT "entity_key" FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "temporal_attribute_streams" WHERE "stream_key" = ANY(ARRAY [4])) ORDER BY "entity_key" ASC FOR UPDATE"#
+            r#"SELECT "entity_key" FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "temporal_attribute_streams" WHERE "stream_key" = 4) ORDER BY "entity_key" ASC FOR UPDATE"#
         );
     }
 

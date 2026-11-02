@@ -11,17 +11,9 @@
 use crate::error::TemporalStoreError;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory};
-use andromeda_postgresql_seaquery::{branch::qualified, pg_array::any, statement::Statement};
-use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Query, SimpleExpr};
+use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
+use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Query};
 use sqlx::{Postgres, Transaction};
-
-/// A bound `bigint[]` value from a batch of stream keys.
-///
-/// The array value owns its elements, so the slice is copied: a bound parameter
-/// cannot borrow from the caller's slice across the round trip.
-pub(crate) fn stream_key_array(keys: &[i64]) -> SimpleExpr {
-    Expr::val(keys.to_vec())
-}
 
 /// Remove every history row of `stream_keys`, returning how many it removed.
 ///
@@ -54,7 +46,7 @@ pub(crate) async fn remove_scope_history(
 fn stream_history_delete(schema: Option<&DynIden>, stream_keys: &[i64]) -> DeleteStatement {
     Query::delete()
         .from_table(qualified(schema, AttributeHistory::Table))
-        .and_where(Expr::col(AttributeHistory::StreamKey).eq(any(stream_key_array(stream_keys))))
+        .and_where(is_any_of(Expr::col(AttributeHistory::StreamKey), stream_keys.iter().copied()))
         .to_owned()
 }
 

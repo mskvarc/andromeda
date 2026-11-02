@@ -9,7 +9,7 @@ use crate::intent_store::queue_order::{ClaimedIntent, HeadBlock, earlier_intent_
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
-use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::any, queue::is_claimed_from};
+use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::is_any_of, queue::is_claimed_from};
 use andromeda_temporal::append_intent::TemporalIntentKey;
 use chrono::{DateTime, Utc};
 use sea_query::{
@@ -174,7 +174,7 @@ pub(super) fn applied_removal_statement(intent_keys: &[i64], owner: LeaseHolder)
         .from_table(TemporalAppendIntents::Table)
         .cond_where(
             Cond::all()
-                .add(Expr::col(TemporalAppendIntents::IntentKey).eq(any(Expr::val(intent_keys.to_vec()))))
+                .add(is_any_of(Expr::col(TemporalAppendIntents::IntentKey), intent_keys.iter().copied()))
                 .add(Expr::col(TemporalAppendIntents::ClaimedBy).eq(owner.as_uuid()))
                 .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(wall_clock())),
         )
@@ -195,7 +195,7 @@ pub(super) fn release_statement(intent_keys: &[i64], owner: LeaseHolder) -> Upda
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).sub(1))
         .cond_where(
             Cond::all()
-                .add(Expr::col(TemporalAppendIntents::IntentKey).eq(any(Expr::val(intent_keys.to_vec()))))
+                .add(is_any_of(Expr::col(TemporalAppendIntents::IntentKey), intent_keys.iter().copied()))
                 .add(Expr::col(TemporalAppendIntents::ClaimedBy).eq(owner.as_uuid()))
                 .add(Expr::col(TemporalAppendIntents::LeaseUntil).gt(wall_clock())),
         )

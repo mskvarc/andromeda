@@ -428,7 +428,7 @@ mod tests {
             "{walk}"
         );
         assert!(!sql.contains(r#"FROM "entities" AS "re" UNION ALL"#), "{sql}");
-        assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY($"#), "{walk}");
+        assert!(walk.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = $"#), "{walk}");
         assert!(walk.contains(r#"ORDER BY "e"."id" ASC LIMIT $"#), "{walk}");
     }
 
@@ -458,7 +458,7 @@ mod tests {
             count.starts_with(concat!(
                 r#"SELECT COUNT("e"."id") FROM (SELECT "hm"."id" FROM (SELECT DISTINCT ON ("hs"."entity_key") "hi"."id", "hs"."entity_key" "#,
                 r#"FROM "temporal_attribute_streams" AS "hs" JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key" "#,
-                r#"WHERE "hs"."attribute_name_key" = ANY($1) ORDER BY "hs"."entity_key" ASC) AS "hm" UNION ALL (SELECT "hq"."id", NULL::bigint AS "entity_key" FROM "#
+                r#"WHERE "hs"."attribute_name_key" = $1 ORDER BY "hs"."entity_key" ASC) AS "hm" UNION ALL (SELECT "hq"."id", NULL::bigint AS "entity_key" FROM "#
             )),
             "{count}"
         );
@@ -490,7 +490,7 @@ mod tests {
             assert!(!count.contains(r#"AS "held""#), "{count}");
             assert!(
                 count.contains(concat!(
-                    r#") AS "ah" WHERE "ah"."attribute_name_key" = ANY(ARRAY [7]) AND ("ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
+                    r#") AS "ah" WHERE "ah"."attribute_name_key" = 7 AND ("ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
                     r#" AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00')"#,
                     r#" AND "ah"."entity_key" = "e"."entity_key")"#
                 )),

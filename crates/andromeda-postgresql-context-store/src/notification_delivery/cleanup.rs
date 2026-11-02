@@ -21,7 +21,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
-use andromeda_postgresql_seaquery::{pg_array::any, statement::Statement};
+use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement};
 use chrono::{DateTime, Utc};
 use sea_query::{DeleteStatement, Expr, ExprTrait, Query};
 use sqlx::postgres::PgPool;
@@ -148,7 +148,7 @@ fn purge_orphan_events_among_statement(target: &ContextTarget, event_keys: &[i64
         .to_owned();
     Query::delete()
         .from_table(table_of(target, NotificationEvents::Table))
-        .and_where(Expr::col(NotificationEvents::EventKey).eq(any(Expr::val(event_keys.to_vec()))))
+        .and_where(is_any_of(Expr::col(NotificationEvents::EventKey), event_keys.iter().copied()))
         .and_where(Expr::exists(referencing_delivery).not())
         .to_owned()
 }

@@ -203,10 +203,10 @@ mod tests {
         for fragment in [
             r#"COALESCE("qi"."observed_at", "qi"."deleted_at") <= '2020-08-01 12:00:00"#,
             r#""qh"."placed" < '2020-08-01 12:00:00"#,
-            r#""qs"."attribute_name_key" = ANY(ARRAY [7])"#,
+            r#""qs"."attribute_name_key" = 7"#,
             r#") AS "ah" ON TRUE JOIN "attribute_names" AS "an""#,
             r#"AS "read_entity_id""#,
-            r#""e"."id" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1'])"#,
+            r#""e"."id" = 'urn:ngsi-ld:Vehicle:1'"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -237,7 +237,7 @@ mod tests {
         let sql = build_window_relationship_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(4)])
             .to_string(PostgresQueryBuilder);
         for fragment in [
-            r#""wr"."attribute_name_key" = ANY(ARRAY [4])"#,
+            r#""wr"."attribute_name_key" = 4"#,
             r#""wr"."observed_at" IS NOT NULL"#,
             r#""wr"."observed_at" >= '2020-08-01 12:00:00"#,
             r#"AS "read_entity_id""#,

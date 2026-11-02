@@ -7,11 +7,11 @@
 use crate::dictionary_relation::DictionaryRelation;
 use andromeda_postgresql_seaquery::{
     introspection::transaction_has_not_written,
-    pg_array::{any, is_any_of, text_array},
+    pg_array::{is_any_of, text_array},
     pg_type::PostgresType,
     unnest::{UnnestColumn, unnest_call},
 };
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Order, Query, SelectStatement, error::Error as SeaQueryError};
+use sea_query::{Alias, Expr, InsertStatement, OnConflict, Order, Query, SelectStatement, error::Error as SeaQueryError};
 
 /// The column that reports whether the transaction reading the dictionary has
 /// written anything yet.
@@ -63,7 +63,7 @@ pub(crate) fn key_select_query<N: DictionaryRelation>(keys: &[i32]) -> SelectSta
     Query::select()
         .columns([N::key_column(), N::name_column()])
         .from(N::table())
-        .and_where(Expr::col(N::key_column()).eq(any(Expr::val(keys.to_vec()))))
+        .and_where(is_any_of(Expr::col(N::key_column()), keys.iter().copied()))
         .to_owned()
 }
 

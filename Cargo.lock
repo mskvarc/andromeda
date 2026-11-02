@@ -1882,6 +1882,7 @@ name = "andromeda-postgresql-seaquery"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "derive_more",
  "pretty_assertions",
  "sea-query",
  "sqlx",

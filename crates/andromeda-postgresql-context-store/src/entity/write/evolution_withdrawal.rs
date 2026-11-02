@@ -15,11 +15,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntityTypeMembers};
-use andromeda_postgresql_seaquery::{
-    literal::false_literal,
-    pg_array::{any, text_array},
-    statement::Statement,
-};
+use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of, statement::Statement};
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, Keyword, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
@@ -42,7 +38,6 @@ struct Withdrawn;
 /// The create minted each row with the current state, so every membership
 /// keeps its current flag and none is left belonging to neither side.
 fn withdrawal_statement(target: &ContextTarget, ids: &[Identifier]) -> WithQuery {
-    let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
     let mut withdrawn = Query::update();
     withdrawn
         .table(table_of(target, Entities::Table))
@@ -52,7 +47,7 @@ fn withdrawal_statement(target: &ContextTarget, ids: &[Identifier]) -> WithQuery
             (Entities::EvolutionActiveUntil, Keyword::Null.into()),
             (Entities::EvolutionTypeNameKeys, Keyword::Null.into()),
         ])
-        .and_where(Expr::col(Entities::Id).eq(any(text_array(&ids))))
+        .and_where(is_any_of(Expr::col(Entities::Id), ids.iter().map(|id| id.as_str().to_owned())))
         .returning(Query::returning().column(Entities::EntityKey));
     let mut memberships = Query::update();
     memberships
@@ -107,7 +102,7 @@ mod tests {
             sql,
             concat!(
                 r#"WITH "withdrawn" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_active_until" = NULL, "evolution_type_name_keys" = NULL "#,
-                r#"WHERE "id" = ANY($1) RETURNING "entity_key") "#,
+                r#"WHERE "id" = $1 RETURNING "entity_key") "#,
                 r#"UPDATE "entity_type_members" SET "is_evolution_member" = FALSE WHERE "entity_key" IN (SELECT "entity_key" FROM "withdrawn")"#
             )
         );
