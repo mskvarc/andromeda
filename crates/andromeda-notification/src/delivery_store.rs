@@ -14,10 +14,13 @@
 //!
 //! Deliveries live per context branch: the live branch and every Snapshot
 //! branch keep their own delivery queue. `claim_pending` drains across branches
-//! and reaping sweeps every branch, so neither names one; but an acknowledgement
+//! and reaping sweeps every branch, so neither names one; but a settlement
 //! addresses one delivery, whose identifier is unique only within its branch, so
-//! `mark_delivered`/`mark_failed`/`mark_terminal` take the delivery's
-//! [`ContextTarget`] to name the branch its row lives in.
+//! each [`DeliverySettlement`] names the branch its row lives in.
+//!
+//! The worker acknowledges its settlements in groups: `acknowledge` records a
+//! group in one transaction, so a group either lands whole or not at all, and
+//! a group asked again after a failure records no delivery twice.
 //!
 //! An endpoint that fails holds its Subscription's queue: a retryable failure
 //! makes the failed delivery the Subscription's probe, the one delivery of the
@@ -31,13 +34,12 @@
 use crate::{
     delivery_claim::DeliveryClaim,
     delivery_claim_order::DeliveryClaimOrder,
-    delivery_entry::DeliveryKey,
-    delivery_lease::{DeliveryLeaseError, LeaseTerm},
+    delivery_lease::LeaseTerm,
+    delivery_settlement::DeliverySettlement,
     error::NotificationError,
     held_events::HeldEvents,
 };
-use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_context_space::context_target::ContextTarget;
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use std::num::NonZeroU32;
@@ -53,10 +55,6 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// as it is rather than read again, and every event the claim does read is
     /// added to `held`, so the deliveries of one event share one payload across
     /// the claims of a pass.
-    ///
-    /// The attempt ceiling is not the store's concern: the worker acknowledges
-    /// the final failed attempt through [`DeliveryStore::mark_terminal`], which
-    /// is what takes a delivery out of the claimable set.
     ///
     /// A delivery whose stored row cannot be read back is returned as
     /// [`DeliveryClaim::Unreadable`], still leased, rather than failing the
@@ -88,63 +86,41 @@ pub trait DeliveryStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Mark a delivery delivered, provided `worker_id` still holds its lease.
+    /// Record every settlement of `settlements` in one transaction, each
+    /// provided `worker_id` still holds the delivery's lease, and move the
+    /// holds of their Subscriptions with them: a delivered settlement releases
+    /// its Subscription's hold, a failed one takes it and sets the rest of the
+    /// Subscription's queue aside, and an exhausted probe hands the hold to
+    /// the delivery set aside first.
     ///
-    /// `target` names the branch the delivery's row lives in, since its
-    /// identifier is unique only within that branch.
-    fn mark_delivered<'life0, 'life1, 'life2, 'async_trait>(
+    /// The settlements of one group were in flight together, so no order
+    /// between them is owed: the queue may record them in any order that
+    /// gives each the effect it would have alone.
+    ///
+    /// A failure diagnostic arrives already truncated to the bound the schema
+    /// accepts, so an implementation stores it verbatim rather than trimming
+    /// it again. The attempt ceiling is not the store's concern: the worker
+    /// settles the final failed attempt as exhausted, which is what takes a
+    /// delivery out of the claimable set, so a claim need not know the
+    /// ceiling either.
+    ///
+    /// Returns one answer per settlement, in the order given:
+    /// [`LeaseAcknowledgement::Lost`] for a delivery whose lease lapsed or
+    /// another worker took, which is left as that worker has it.
+    ///
+    /// # Errors
+    ///
+    /// [`NotificationError::Persistence`] when the group could not be
+    /// recorded; none of it is then.
+    fn acknowledge<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        key: DeliveryKey,
         worker_id: &'life1 LeaseHolder,
-        target: &'life2 ContextTarget,
-    ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
+        settlements: &'life2 [DeliverySettlement],
+    ) -> BoxFuture<'async_trait, Result<Vec<LeaseAcknowledgement>, NotificationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        Self: 'async_trait;
-
-    /// Record a failed attempt, release the lease and schedule the next attempt,
-    /// provided `worker_id` still holds that lease, and hold the rest of the
-    /// delivery's Subscription behind it.
-    ///
-    /// `error` arrives already truncated to the bound the schema accepts, so an
-    /// implementation stores it verbatim rather than trimming it again.
-    fn mark_failed<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-        &'life0 self,
-        key: DeliveryKey,
-        worker_id: &'life1 LeaseHolder,
-        error: &'life2 str,
-        next_attempt_at: DateTime<Utc>,
-        target: &'life3 ContextTarget,
-    ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        'life3: 'async_trait,
-        Self: 'async_trait;
-
-    /// Record a terminal failure — a failure no retry can fix, or the failure
-    /// of the attempt that reached the configured ceiling — stamp the delivery
-    /// exhausted, release the lease and make it permanently ineligible for
-    /// claims, provided `worker_id` still holds that lease. When the delivery
-    /// was its Subscription's probe, the next probe is due at `next_probe_at`.
-    ///
-    /// `error` arrives already truncated to the bound the schema accepts.
-    fn mark_terminal<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-        &'life0 self,
-        key: DeliveryKey,
-        worker_id: &'life1 LeaseHolder,
-        error: &'life2 str,
-        next_probe_at: DateTime<Utc>,
-        target: &'life3 ContextTarget,
-    ) -> BoxFuture<'async_trait, Result<(), DeliveryLeaseError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Reap deliveries acknowledged before `cutoff`, then the events no

@@ -244,14 +244,14 @@ mod tests {
         tasks::notification_delivery::{CleanupRetention, paced_cleanup},
     };
     use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
-    use andromeda_context_commit::lease_holder::LeaseHolder;
-    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
         delivery_claim_order::DeliveryClaimOrder,
         delivery_drain::NotificationDeliveryDrain,
-        delivery_entry::{DeliveryEntry, DeliveryKey},
-        delivery_lease::{DeliveryLeaseError, LeaseTerm},
+        delivery_entry::DeliveryEntry,
+        delivery_lease::LeaseTerm,
+        delivery_settlement::DeliverySettlement,
         delivery_store::DeliveryStore,
         delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
         error::NotificationError,
@@ -312,30 +312,8 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn mark_delivered(&self, _key: DeliveryKey, _worker_id: &LeaseHolder, _target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-            Ok(())
-        }
-
-        async fn mark_failed(
-            &self,
-            _key: DeliveryKey,
-            _worker_id: &LeaseHolder,
-            _error: &str,
-            _next_attempt_at: DateTime<Utc>,
-            _target: &ContextTarget,
-        ) -> Result<(), DeliveryLeaseError> {
-            Ok(())
-        }
-
-        async fn mark_terminal(
-            &self,
-            _key: DeliveryKey,
-            _worker_id: &LeaseHolder,
-            _error: &str,
-            _next_probe_at: DateTime<Utc>,
-            _target: &ContextTarget,
-        ) -> Result<(), DeliveryLeaseError> {
-            Ok(())
+        async fn acknowledge(&self, _worker_id: &LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
+            Ok(vec![LeaseAcknowledgement::Applied; settlements.len()])
         }
 
         async fn delete_delivered_before(&self, _cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {

@@ -8,9 +8,6 @@
 //! records what happened when a worker tried to act on a delivery whose lease
 //! it may no longer hold.
 
-use crate::delivery_entry::DeliveryKey;
-use andromeda_context_commit::lease_holder::LeaseHolder;
-use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use chrono::{DateTime, Duration, Utc};
 use derive_more::Display;
 use std::num::NonZeroU32;
@@ -86,42 +83,11 @@ impl LeaseTerm {
     }
 }
 
-/// Failure while acting on a leased notification delivery.
-#[derive(Debug, Error)]
-pub enum DeliveryLeaseError {
-    /// The delivery is no longer leased by this worker: its lease expired and
-    /// another worker reclaimed it, or the delivery was removed. Acknowledging
-    /// it would overwrite state this worker no longer owns.
-    #[error("notification delivery {delivery} is no longer leased by {worker}")]
-    LeaseLost {
-        /// The delivery the worker tried to acknowledge.
-        delivery: DeliveryKey,
-        /// The worker whose lease was not honoured.
-        worker: LeaseHolder,
-    },
-    /// The acknowledging statement itself failed.
-    #[error("notification delivery lease acknowledgement failed: {0}")]
-    Persistence(#[source] PersistenceFailure),
-}
-
-impl DeliveryLeaseError {
-    /// Construct the lost-lease failure for one delivery and worker.
-    #[must_use]
-    pub const fn lease_lost(delivery: DeliveryKey, worker: &LeaseHolder) -> DeliveryLeaseError {
-        DeliveryLeaseError::LeaseLost { delivery, worker: *worker }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        delivery_entry::DeliveryKey,
-        delivery_lease::{DeliveryLeaseError, LeaseTerm, LeaseTermError},
-    };
-    use andromeda_context_commit::lease_holder::LeaseHolder;
+    use crate::delivery_lease::{LeaseTerm, LeaseTermError};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
-    use uuid::Uuid;
 
     #[test]
     fn zero_second_lease_term_is_rejected() {
@@ -154,15 +120,5 @@ mod tests {
         assert_eq!(term.expires_at(now), Some(now + term.as_duration()));
         assert_eq!(term.expires_at(now).map(|at| at.timestamp()), Some(45));
         Ok(())
-    }
-
-    #[test]
-    fn lost_lease_failure_names_the_delivery_and_the_worker() {
-        let worker = LeaseHolder::from(Uuid::nil());
-        let error = DeliveryLeaseError::lease_lost(DeliveryKey::from(7_i64), &worker);
-        assert_eq!(
-            error.to_string(),
-            "notification delivery 7 is no longer leased by 00000000-0000-0000-0000-000000000000"
-        );
     }
 }

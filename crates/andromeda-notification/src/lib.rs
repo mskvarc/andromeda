@@ -17,8 +17,12 @@ mod csource_membership;
 pub mod csource_processor;
 /// The clause 5.3.3 transitions of a context source notification.
 mod csource_transition;
-/// Recording the outcome of a leased delivery, asked again while its lease can hold.
+/// Recording the outcomes of leased deliveries, asked again while their leases can hold.
 mod delivery_acknowledgement;
+/// When a delivery pass acknowledges, and which settlements go together.
+mod delivery_acknowledgement_group;
+/// Sending one claimed delivery and deciding how the queue settles it.
+mod delivery_attempt;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
 pub mod delivery_attempt_ceiling;
 /// Retry wait for a failed notification delivery.
@@ -41,6 +45,10 @@ pub mod delivery_lease;
 pub mod delivery_policy;
 /// Whether the queue may still supply due deliveries to a delivery pass.
 mod delivery_queue_supply;
+/// Whether a delivery pass is waiting on one of its requests to the queue.
+mod delivery_round_trip;
+/// What a worker records of one delivery it leased once the attempt ends.
+pub mod delivery_settlement;
 /// When a delivery pass claims again, and for how many of its slots.
 mod delivery_slot_refill;
 /// How the slots of a delivery pass are shared between Subscriptions.

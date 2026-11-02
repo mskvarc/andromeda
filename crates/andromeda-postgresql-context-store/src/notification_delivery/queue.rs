@@ -16,13 +16,13 @@ use crate::{
     store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
     delivery_claim_order::DeliveryClaimOrder,
-    delivery_entry::{DeliveryEntry, DeliveryKey},
-    delivery_lease::{DeliveryLeaseError, LeaseTerm},
+    delivery_entry::DeliveryEntry,
+    delivery_lease::LeaseTerm,
+    delivery_settlement::DeliverySettlement,
     delivery_store::DeliveryStore,
     error::NotificationError,
     held_events::HeldEvents,
@@ -93,39 +93,10 @@ impl DeliveryStore for NotificationDeliveryQueue {
         Ok(claimed.into_iter().map(delivery_claim).collect())
     }
 
-    async fn mark_delivered(&self, key: DeliveryKey, worker_id: &LeaseHolder, target: &ContextTarget) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_delivered(&self.pool, key.into_inner(), *worker_id, target)
+    async fn acknowledge(&self, worker_id: &LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
+        acknowledge::acknowledge(&self.pool, *worker_id, settlements)
             .await
-            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
-        held(outcome, key, worker_id)
-    }
-
-    async fn mark_failed(
-        &self,
-        key: DeliveryKey,
-        worker_id: &LeaseHolder,
-        failure: &str,
-        next_attempt_at: DateTime<Utc>,
-        target: &ContextTarget,
-    ) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_failed(&self.pool, key.into_inner(), *worker_id, failure, next_attempt_at, target)
-            .await
-            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
-        held(outcome, key, worker_id)
-    }
-
-    async fn mark_terminal(
-        &self,
-        key: DeliveryKey,
-        worker_id: &LeaseHolder,
-        failure: &str,
-        next_probe_at: DateTime<Utc>,
-        target: &ContextTarget,
-    ) -> Result<(), DeliveryLeaseError> {
-        let outcome = acknowledge::mark_exhausted(&self.pool, key.into_inner(), *worker_id, failure, next_probe_at, target)
-            .await
-            .map_err(|error| DeliveryLeaseError::Persistence(persistence_failure(&error)))?;
-        held(outcome, key, worker_id)
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 
     async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
@@ -144,14 +115,6 @@ impl DeliveryStore for NotificationDeliveryQueue {
         cleanup::purge_orphan_events_before(&self.pool, cutoff)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
-    }
-}
-
-/// Report a lost lease as the typed failure the port defines.
-const fn held(outcome: LeaseAcknowledgement, key: DeliveryKey, worker_id: &LeaseHolder) -> Result<(), DeliveryLeaseError> {
-    match outcome {
-        LeaseAcknowledgement::Applied => Ok(()),
-        LeaseAcknowledgement::Lost => Err(DeliveryLeaseError::lease_lost(key, worker_id)),
     }
 }
 
@@ -184,22 +147,15 @@ fn delivery_claim(claimed: Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>
 )]
 mod tests {
     use crate::notification_delivery::{
-        queue::{delivery_claim, held},
+        queue::delivery_claim,
         rows::{ClaimedDeliveryError, UnreadableClaimedDelivery},
     };
-    use andromeda_context_commit::{
-        lease_acknowledgement::LeaseAcknowledgement,
-        lease_holder::LeaseHolder,
-        store_instant::StoreInstant,
-        write_id::WriteId,
-        write_ordinal::WriteOrdinal,
-    };
+    use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
         delivery_entry::{DeliveryEntry, DeliveryKey},
-        delivery_lease::DeliveryLeaseError,
         notification_event::{NotificationEvent, NotificationEventKey},
     };
     use chrono::Utc;
@@ -225,19 +181,6 @@ mod tests {
                     .build(),
             ))
             .build()
-    }
-
-    #[test]
-    fn an_applied_acknowledgement_leaves_the_worker_holding_its_lease() {
-        let worker = LeaseHolder::from(Uuid::nil());
-        assert!(held(LeaseAcknowledgement::Applied, DeliveryKey::from(11_i64), &worker).is_ok());
-    }
-
-    #[test]
-    fn a_lost_acknowledgement_becomes_the_typed_lost_lease_failure() {
-        let worker = LeaseHolder::from(Uuid::nil());
-        let outcome = held(LeaseAcknowledgement::Lost, DeliveryKey::from(11_i64), &worker);
-        assert!(matches!(outcome, Err(DeliveryLeaseError::LeaseLost { .. })));
     }
 
     /// An unreadable row is still leased to the worker, so it reaches the

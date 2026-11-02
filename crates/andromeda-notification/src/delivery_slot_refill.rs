@@ -12,17 +12,8 @@
 //! that instant, is claimed again only with the next slot that frees: claiming
 //! it at once would ask the queue the same question again straight away.
 
+use crate::delivery_round_trip::RoundTrip;
 use std::num::NonZeroUsize;
-
-/// Whether a claim of the pass is in flight.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum ClaimFlight {
-    /// No claim is in flight, so the next free slot is claimed at once.
-    #[default]
-    Settled,
-    /// A claim was issued and has not come back yet.
-    InFlight,
-}
 
 /// The free slots of one delivery pass and its claim in flight.
 #[derive(Debug)]
@@ -33,7 +24,7 @@ pub(crate) struct SlotRefill {
     /// Slots earlier claims left empty because they came back short.
     left_empty: usize,
     /// Whether a claim is in flight.
-    claim: ClaimFlight,
+    claim: RoundTrip,
 }
 
 impl SlotRefill {
@@ -43,7 +34,7 @@ impl SlotRefill {
         SlotRefill {
             freed: slots.get(),
             left_empty: 0,
-            claim: ClaimFlight::Settled,
+            claim: RoundTrip::Settled,
         }
     }
 
@@ -56,7 +47,7 @@ impl SlotRefill {
     /// deliveries it asked for, `got` being 0 for a claim that failed.
     pub(crate) const fn settle(&mut self, asked: NonZeroUsize, got: usize) {
         self.left_empty = self.left_empty.saturating_add(asked.get().saturating_sub(got));
-        self.claim = ClaimFlight::Settled;
+        self.claim = RoundTrip::Settled;
     }
 
     /// The width of the claim to issue now, every free slot, or `None` while
@@ -64,12 +55,12 @@ impl SlotRefill {
     /// returned counts as a claim in flight until [`SlotRefill::settle`].
     pub(crate) const fn next_claim(&mut self) -> Option<NonZeroUsize> {
         match (self.claim, NonZeroUsize::new(self.freed)) {
-            (ClaimFlight::InFlight, _) | (ClaimFlight::Settled, None) => None,
-            (ClaimFlight::Settled, Some(freed)) => {
+            (RoundTrip::InFlight, _) | (RoundTrip::Settled, None) => None,
+            (RoundTrip::Settled, Some(freed)) => {
                 let width = freed.saturating_add(self.left_empty);
                 self.freed = 0;
                 self.left_empty = 0;
-                self.claim = ClaimFlight::InFlight;
+                self.claim = RoundTrip::InFlight;
                 Some(width)
             }
         }
