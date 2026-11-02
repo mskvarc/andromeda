@@ -152,8 +152,8 @@ impl NotificationProcessor {
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
 
         if let Err(error) = self
-            .sub_repo
-            .record_outcome(change.target, subscription_id, notification_outcome(&delivery), record)
+            .outcomes
+            .record(change.target, subscription_id, notification_outcome(&delivery), record)
             .await
         {
             debug!("Failed to record the notification outcome for {}: {}", subscription_id, error);

@@ -17,6 +17,7 @@ mod subscription_notification;
 
 use crate::{
     error::NotificationError,
+    outcome_batching::OutcomeBatcher,
     pending_change::{PendingChange, PendingCommits},
     processor::{
         attempt_failure::{FailedAttempts, NotificationAttemptFailure},
@@ -82,6 +83,7 @@ fn aggregate_delivery_outcomes(attempts: Vec<Option<Result<(), NotificationAttem
 pub struct NotificationProcessor {
     live_target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
+    outcomes: OutcomeBatcher,
     entity_reader: Arc<dyn EntityReader>,
     entity_query: Arc<EntityQueryService>,
     cache: Arc<SubscriptionCache>,
@@ -128,11 +130,13 @@ pub struct NotificationEvaluationOutcome {
 }
 
 impl NotificationProcessor {
-    /// Construct event evaluation from its focused capabilities.
+    /// Construct event evaluation from its focused capabilities, inside a
+    /// Tokio runtime: the task recording its notification outcomes runs on it.
     #[must_use]
     pub fn new(deps: NotificationProcessorDeps) -> NotificationProcessor {
         NotificationProcessor {
             live_target: deps.live_target,
+            outcomes: OutcomeBatcher::new(Arc::clone(&deps.sub_repo)),
             sub_repo: deps.sub_repo,
             entity_reader: deps.entity_reader,
             entity_query: deps.entity_query,

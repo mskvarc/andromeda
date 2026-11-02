@@ -291,8 +291,9 @@ mod tests {
         compiled::CompiledSubscription,
         error::SubscriptionError,
         geo_filter::SubscriptionGeoFilter,
-        notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+        notification_slot::{NotificationSlot, NotificationSlotGate},
         notifying_since::{NotifyingRestart, NotifyingSince},
+        outcome_tally::OutcomeTally,
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
@@ -370,14 +371,8 @@ mod tests {
             Err(unused("claim_notification_slot"))
         }
 
-        async fn record_outcome(
-            &self,
-            _target: &ContextTarget,
-            _id: &Identifier,
-            _outcome: NotificationOutcome,
-            _record: OutcomeRecord,
-        ) -> Result<(), SubscriptionError> {
-            Err(unused("record_outcome"))
+        async fn record_outcomes(&self, _target: &ContextTarget, _id: &Identifier, _tally: OutcomeTally) -> Result<(), SubscriptionError> {
+            Err(unused("record_outcomes"))
         }
 
         async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {

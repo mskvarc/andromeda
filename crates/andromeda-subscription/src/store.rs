@@ -6,8 +6,9 @@
 
 use crate::{
     error::SubscriptionError,
-    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     notifying_since::NotifyingRestart,
+    outcome_tally::OutcomeTally,
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -166,8 +167,8 @@ pub trait SubscriptionStore: Send + Sync + 'static {
     /// at or before it.
     ///
     /// A gate stamping at the claim moves `timesSent` and `lastNotification`
-    /// with it and answers [`OutcomeRecord::OutcomeOnly`]; any other gate
-    /// moves nothing and answers [`OutcomeRecord::CountingNotification`] with
+    /// with it and answers [`OutcomeRecord::OutcomeOnly`](crate::notification_slot::OutcomeRecord::OutcomeOnly); any other gate
+    /// moves nothing and answers [`OutcomeRecord::CountingNotification`](crate::notification_slot::OutcomeRecord::CountingNotification) with
     /// the claim's instant, so the outcome counts the notification.
     fn claim_notification_slot<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
@@ -180,14 +181,13 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// Record the outcome of one notification, whatever the subscription's
-    /// status is by then, with what `record` adds to it.
-    fn record_outcome<'life0, 'life1, 'life2, 'async_trait>(
+    /// Record the outcomes `tally` adds up on the subscription in one write,
+    /// whatever the subscription's status is by then.
+    fn record_outcomes<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,
-        outcome: NotificationOutcome,
-        record: OutcomeRecord,
+        tally: OutcomeTally,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,

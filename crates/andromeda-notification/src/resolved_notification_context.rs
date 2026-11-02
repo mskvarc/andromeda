@@ -15,6 +15,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::{
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    outcome_tally::OutcomeTally,
     store::SubscriptionStore,
 };
 use iri_rs::IriBuf;
@@ -94,7 +95,10 @@ pub(crate) async fn unclaimed_notification_context(
 
 /// Record the notification of `subscription_id` as failed with `record`.
 async fn record_failure(sub_repo: &dyn SubscriptionStore, target: &ContextTarget, subscription_id: &Identifier, record: OutcomeRecord) {
-    if let Err(error) = sub_repo.record_outcome(target, subscription_id, NotificationOutcome::Failure, record).await {
+    if let Err(error) = sub_repo
+        .record_outcomes(target, subscription_id, OutcomeTally::new(NotificationOutcome::Failure, record))
+        .await
+    {
         debug!(subscription = %subscription_id, %error, "failed to record the notification failure");
     }
 }
@@ -115,6 +119,7 @@ mod tests {
         error::SubscriptionError,
         notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
         notifying_since::NotifyingRestart,
+        outcome_tally::OutcomeTally,
         store::{SubscriptionFields, SubscriptionStore},
         stored_subscription::StoredSubscription,
     };
@@ -130,11 +135,11 @@ mod tests {
     #[derive(Default)]
     struct FailureRecordingStore {
         slot: Option<NotificationSlot>,
-        failures: Mutex<Vec<(Identifier, NotificationOutcome, OutcomeRecord)>>,
+        failures: Mutex<Vec<(Identifier, OutcomeTally)>>,
     }
 
     impl FailureRecordingStore {
-        fn failures(&self) -> Vec<(Identifier, NotificationOutcome, OutcomeRecord)> {
+        fn failures(&self) -> Vec<(Identifier, OutcomeTally)> {
             self.failures.lock().expect("the failure record is never poisoned").clone() // clone: the assertion reads a snapshot
         }
     }
@@ -170,17 +175,8 @@ mod tests {
             self.slot.ok_or(SubscriptionError::StoreSaturated)
         }
 
-        async fn record_outcome(
-            &self,
-            _target: &ContextTarget,
-            id: &Identifier,
-            outcome: NotificationOutcome,
-            record: OutcomeRecord,
-        ) -> Result<(), SubscriptionError> {
-            self.failures
-                .lock()
-                .expect("the failure record is never poisoned")
-                .push((id.clone(), outcome, record)); // clone: the record owns what it saw
+        async fn record_outcomes(&self, _target: &ContextTarget, id: &Identifier, tally: OutcomeTally) -> Result<(), SubscriptionError> {
+            self.failures.lock().expect("the failure record is never poisoned").push((id.clone(), tally)); // clone: the record owns what it saw
             Ok(())
         }
 
@@ -255,7 +251,10 @@ mod tests {
         .await;
 
         assert!(context.is_none());
-        pretty_assertions::assert_eq!(store.failures(), vec![(subscription(), NotificationOutcome::Failure, counting_record())]);
+        pretty_assertions::assert_eq!(
+            store.failures(),
+            vec![(subscription(), OutcomeTally::new(NotificationOutcome::Failure, counting_record()))]
+        );
     }
 
     async fn unclaimed(store: &FailureRecordingStore, jsonld_context: Option<&IriBuf>) -> UnclaimedContext {
@@ -289,7 +288,7 @@ mod tests {
         assert!(matches!(resolved, UnclaimedContext::Failed));
         pretty_assertions::assert_eq!(
             store.failures(),
-            vec![(subscription(), NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly)]
+            vec![(subscription(), OutcomeTally::new(NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly))]
         );
     }
 

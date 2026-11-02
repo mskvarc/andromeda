@@ -1513,6 +1513,7 @@ dependencies = [
  "andromeda-telemetry",
  "andromeda-tenancy",
  "async-trait",
+ "batch-aint-one",
  "chrono",
  "dashmap",
  "derive_more",
@@ -2675,6 +2676,19 @@ checksum = "339abbe78e73178762e23bea9dfd08e697eb3f3301cd4be981c0f78ba5859195"
 dependencies = [
  "outref",
  "vsimd",
+]
+
+[[package]]
+name = "batch-aint-one"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3e4ceb733b51eacac673090d478626b6b042dac80f0770d7fa3922d26bae106"
+dependencies = [
+ "bon",
+ "futures",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -9125,6 +9139,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 

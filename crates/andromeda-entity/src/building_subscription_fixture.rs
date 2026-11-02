@@ -13,8 +13,9 @@ use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, page_
 use andromeda_subscription::{
     cache::SubscriptionCache,
     error::SubscriptionError,
-    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationSlot, NotificationSlotGate},
     notifying_since::{NotifyingRestart, NotifyingSince},
+    outcome_tally::OutcomeTally,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -165,14 +166,8 @@ impl SubscriptionStore for FixtureSubscriptionStore {
         Err(unused_store_call("claim_notification_slot"))
     }
 
-    async fn record_outcome(
-        &self,
-        _target: &ContextTarget,
-        _id: &Identifier,
-        _outcome: NotificationOutcome,
-        _record: OutcomeRecord,
-    ) -> Result<(), SubscriptionError> {
-        Err(unused_store_call("record_outcome"))
+    async fn record_outcomes(&self, _target: &ContextTarget, _id: &Identifier, _tally: OutcomeTally) -> Result<(), SubscriptionError> {
+        Err(unused_store_call("record_outcomes"))
     }
 
     async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {

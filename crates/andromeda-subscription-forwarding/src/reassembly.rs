@@ -51,6 +51,7 @@ use andromeda_subscription::{
     compiled::CompiledSubscription,
     matching::matches_entity_filters,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate},
+    outcome_tally::OutcomeTally,
 };
 use chrono::Utc;
 use tracing::{debug, warn};
@@ -318,7 +319,9 @@ impl SubscriptionForwardingService {
         } else {
             NotificationOutcome::Failure
         };
-        self.subscriptions.record_outcome(&self.live_target, &local, outcome, record).await?;
+        self.subscriptions
+            .record_outcomes(&self.live_target, &local, OutcomeTally::new(outcome, record))
+            .await?;
         Ok(())
     }
 }

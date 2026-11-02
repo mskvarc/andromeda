@@ -23,18 +23,11 @@ use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subs
 use andromeda_postgresql_seaquery::{clock::now, interval::next_grid_point};
 use andromeda_subscription::{
     error::SubscriptionError,
-    notification_slot::{NotificationOutcome, NotificationSlotGate, NotificationStamp, OutcomeRecord},
+    notification_slot::{NotificationSlotGate, NotificationStamp},
+    outcome_tally::OutcomeTally,
 };
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Cond, Expr, ExprTrait, Func, InsertStatement, JoinType, Query, QueryStatementBuilder, SelectStatement, SimpleExpr, UpdateStatement};
-
-/// The state column `outcome` stamps.
-const fn outcome_column(outcome: NotificationOutcome) -> SubscriptionDeliveryState {
-    match outcome {
-        NotificationOutcome::Success => SubscriptionDeliveryState::LastSuccess,
-        NotificationOutcome::Failure => SubscriptionDeliveryState::LastFailure,
-    }
-}
 
 /// The statement claiming one notification slot, by when the gate stamps the
 /// notification.
@@ -154,38 +147,41 @@ fn stamping_claim(target: &ContextTarget, owner: SimpleExpr, cooldown: Option<Co
     statement
 }
 
-/// The write recording one notification's outcome on the state row, whatever
-/// the subscription's status is by then: `last_success` or `last_failure` at
-/// `NOW()`, and what `record` adds.
+/// The one write recording the outcomes `tally` adds up on the state row,
+/// whatever the subscription's status is by then: `last_success` at `NOW()`
+/// when any notification succeeded, `last_failure` at `NOW()` when any failed.
 ///
-/// A failure also advances `times_failed`, which Table 5.2.14.2-1 defines as
-/// the "number of times an unsuccessful response (or timeout) has been received
-/// when delivering the notification". A notification the claim did not stamp
-/// is counted here: `times_sent + 1`, and `last_notification` moves to the
-/// claim's instant unless a notification claimed later already finished, since
-/// clause 5.8.6 makes it the instant of the last notification sent.
-pub fn outcome_statement(outcome: NotificationOutcome, record: OutcomeRecord, target: &ContextTarget, id: &Identifier, kind: StoredKind) -> UpdateStatement {
+/// Failures also advance `times_failed` by their count, which Table 5.2.14.2-1
+/// defines as the "number of times an unsuccessful response (or timeout) has
+/// been received when delivering the notification". Notifications the claim did
+/// not stamp are counted here: `times_sent` advances by their count, and
+/// `last_notification` moves to the latest of their claim instants unless a
+/// notification claimed later already finished, since clause 5.8.6 makes it the
+/// instant of the last notification sent.
+pub fn outcome_statement(tally: OutcomeTally, target: &ContextTarget, id: &Identifier, kind: StoredKind) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
-        .value(outcome_column(outcome), now())
         .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::Any)));
-    match outcome {
-        NotificationOutcome::Success => {}
-        NotificationOutcome::Failure => {
-            statement.value(SubscriptionDeliveryState::TimesFailed, Expr::col(SubscriptionDeliveryState::TimesFailed).add(1));
-        }
+    if tally.successes() > 0 {
+        statement.value(SubscriptionDeliveryState::LastSuccess, now());
     }
-    match record {
-        OutcomeRecord::OutcomeOnly => {}
-        OutcomeRecord::CountingNotification { notified_at } => {
-            statement
-                .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
-                .value(
-                    SubscriptionDeliveryState::LastNotification,
-                    Func::greatest([Expr::col(SubscriptionDeliveryState::LastNotification), Expr::val(notified_at)]),
-                );
-        }
+    if tally.failures() > 0 {
+        statement.value(SubscriptionDeliveryState::LastFailure, now()).value(
+            SubscriptionDeliveryState::TimesFailed,
+            Expr::col(SubscriptionDeliveryState::TimesFailed).add(i64::from(tally.failures())),
+        );
+    }
+    if let Some(counted) = tally.counted() {
+        statement
+            .value(
+                SubscriptionDeliveryState::TimesSent,
+                Expr::col(SubscriptionDeliveryState::TimesSent).add(i64::from(counted.count.get())),
+            )
+            .value(
+                SubscriptionDeliveryState::LastNotification,
+                Func::greatest([Expr::col(SubscriptionDeliveryState::LastNotification), Expr::val(counted.latest)]),
+            );
     }
     statement
 }
@@ -306,7 +302,10 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds};
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
-    use andromeda_subscription::notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlotGate, OutcomeRecord};
+    use andromeda_subscription::{
+        notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlotGate, OutcomeRecord},
+        outcome_tally::OutcomeTally,
+    };
     use chrono::{DateTime, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
@@ -346,7 +345,11 @@ mod tests {
     }
 
     fn outcome_sql(outcome: NotificationOutcome, record: OutcomeRecord) -> String {
-        outcome_statement(outcome, record, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder)
+        tally_sql(OutcomeTally::new(outcome, record))
+    }
+
+    fn tally_sql(tally: OutcomeTally) -> String {
+        outcome_statement(tally, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder)
     }
 
     const ACTIVE_OWNER: &str = r#"WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = 1 AND "subscriptions"."status" = 1)"#;
@@ -485,6 +488,20 @@ mod tests {
             "{success}"
         );
         assert!(!success.contains("times_failed"), "{success}");
+    }
+
+    /// Outcomes recorded together move each counter by its count and each
+    /// instant once: `lastNotification` to the latest claim among them.
+    #[test]
+    fn a_tally_of_several_outcomes_moves_every_member_by_its_count_in_one_write() {
+        let mut tally = OutcomeTally::new(NotificationOutcome::Success, OutcomeRecord::CountingNotification { notified_at: instant(30) });
+        tally.include(NotificationOutcome::Failure, OutcomeRecord::CountingNotification { notified_at: instant(45) });
+        tally.include(NotificationOutcome::Success, OutcomeRecord::CountingNotification { notified_at: instant(40) });
+        tally.include(NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly);
+        assert_eq!(
+            tally_sql(tally),
+            r#"UPDATE "subscription_delivery_state" SET "last_success" = NOW(), "last_failure" = NOW(), "times_failed" = "times_failed" + 2, "times_sent" = "times_sent" + 3, "last_notification" = GREATEST("last_notification", '2026-08-17 12:00:45.000000 +00:00') WHERE "subscription_key" = (SELECT "subscriptions"."subscription_key" FROM "subscriptions" WHERE "subscriptions"."id" = 'urn:ngsi-ld:Subscription:one' AND "subscriptions"."kind" = 1)"#
+        );
     }
 
     #[test]

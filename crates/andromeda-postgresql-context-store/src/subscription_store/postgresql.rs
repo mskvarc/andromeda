@@ -38,8 +38,9 @@ use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use andromeda_subscription::{
     error::SubscriptionError,
     interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
-    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationSlot, NotificationSlotGate, OutcomeRecord},
     notifying_since::NotifyingRestart,
+    outcome_tally::OutcomeTally,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -173,16 +174,10 @@ macro_rules! impl_subscription_store {
                 }
             }
 
-            async fn record_outcome(
-                &self,
-                target: &ContextTarget,
-                id: &Identifier,
-                outcome: NotificationOutcome,
-                record: OutcomeRecord,
-            ) -> Result<(), SubscriptionError> {
+            async fn record_outcomes(&self, target: &ContextTarget, id: &Identifier, tally: OutcomeTally) -> Result<(), SubscriptionError> {
                 // A Snapshot branch reaped since the slot was claimed leaves no
                 // subscription to record the outcome on, as a deleted one does.
-                match outcome_statement(outcome, record, target, id, $kind).to_query().execute(&self.pool).await {
+                match outcome_statement(tally, target, id, $kind).to_query().execute(&self.pool).await {
                     Ok(_) => Ok(()),
                     Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(()),
                     Err(error) => Err(persistence_error::<SubscriptionError>(error)),

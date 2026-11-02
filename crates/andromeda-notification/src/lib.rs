@@ -83,6 +83,15 @@ pub mod notified_registration_store;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod notifier_test_double;
+/// Recording notification outcomes with one write in flight per subscription.
+mod outcome_batching;
+/// A subscription store recording the outcome writes it is asked for.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod outcome_recording_store;
 /// The committed entity changes handed to live evaluation and not yet
 /// evaluated.
 pub mod pending_change;

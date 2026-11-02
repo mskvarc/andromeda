@@ -258,7 +258,7 @@ impl ReassemblyScene {
     }
 
     /// How many deliveries were recorded as successful.
-    pub(crate) fn deliveries_succeeded(&self) -> usize {
+    pub(crate) fn deliveries_succeeded(&self) -> u32 {
         self.subscriptions.successes()
     }
 

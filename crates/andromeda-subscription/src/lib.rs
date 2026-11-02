@@ -72,6 +72,9 @@ mod notification_validation;
 /// Since when a Subscription may be notified of a change, and which committed
 /// changes that leaves owed to it.
 pub mod notifying_since;
+/// The outcomes of one or more notifications that one delivery-state write
+/// records.
+pub mod outcome_tally;
 /// Expansion of the projection lists of a subscription's notification.
 mod projection_expansion;
 /// Subscription request validation.

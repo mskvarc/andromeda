@@ -30,6 +30,7 @@ use andromeda_subscription::{
     compiled::CompiledCsrSubscription,
     csource_matching::matching_information,
     notification_slot::{NotificationSlot, NotificationSlotGate},
+    outcome_tally::OutcomeTally,
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -197,7 +198,7 @@ impl CsourceNotificationDelivery {
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
         if let Err(error) = self
             .sub_repo
-            .record_outcome(&self.target, sub_id, notification_outcome(&delivery), record)
+            .record_outcomes(&self.target, sub_id, OutcomeTally::new(notification_outcome(&delivery), record))
             .await
         {
             debug!("Failed to record the CSR notification outcome for {}: {}", sub_id, error);

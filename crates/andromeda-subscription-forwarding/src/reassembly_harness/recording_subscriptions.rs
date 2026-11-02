@@ -9,8 +9,9 @@ use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_subscription::{
     error::SubscriptionError,
-    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationSlot, NotificationSlotGate, OutcomeRecord},
     notifying_since::{NotifyingRestart, NotifyingSince},
+    outcome_tally::OutcomeTally,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
@@ -19,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 use tokio::{sync::Notify, task::yield_now};
 
@@ -50,7 +51,7 @@ pub(crate) struct RecordingSubscriptions {
     /// How many notification slots were claimed.
     claims: AtomicUsize,
     /// How many deliveries were recorded as successful.
-    successes: AtomicUsize,
+    successes: AtomicU32,
     /// The subscriptions deleted, in the order they were.
     deleted: Mutex<Vec<Identifier>>,
     /// The deletion a test holds between its start and its effect.
@@ -67,7 +68,7 @@ impl RecordingSubscriptions {
         RecordingSubscriptions {
             documents: Mutex::new(documents),
             claims: AtomicUsize::new(0),
-            successes: AtomicUsize::new(0),
+            successes: AtomicU32::new(0),
             deleted: Mutex::new(Vec::new()),
             hold: DeletionHold::default(),
             updates_in_flight: AtomicUsize::new(0),
@@ -129,7 +130,7 @@ impl RecordingSubscriptions {
     }
 
     /// How many deliveries were recorded as successful.
-    pub(crate) fn successes(&self) -> usize {
+    pub(crate) fn successes(&self) -> u32 {
         self.successes.load(Ordering::SeqCst)
     }
 }
@@ -188,19 +189,8 @@ impl SubscriptionStore for RecordingSubscriptions {
         Ok(NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly))
     }
 
-    async fn record_outcome(
-        &self,
-        _target: &ContextTarget,
-        _id: &Identifier,
-        outcome: NotificationOutcome,
-        _record: OutcomeRecord,
-    ) -> Result<(), SubscriptionError> {
-        match outcome {
-            NotificationOutcome::Success => {
-                self.successes.fetch_add(1, Ordering::SeqCst);
-            }
-            NotificationOutcome::Failure => {}
-        }
+    async fn record_outcomes(&self, _target: &ContextTarget, _id: &Identifier, tally: OutcomeTally) -> Result<(), SubscriptionError> {
+        self.successes.fetch_add(tally.successes(), Ordering::SeqCst);
         Ok(())
     }
 

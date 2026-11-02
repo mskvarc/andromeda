@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notificati
 use andromeda_subscription::{
     compilation::compile_subscription,
     notification_slot::{NotificationCadence, NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    outcome_tally::OutcomeTally,
     store::SubscriptionStore,
     stored_subscription::StoredSubscription,
 };
@@ -111,7 +112,11 @@ impl IntervalNotificationOperation {
                 error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
                 if let Err(e) = self
                     .sub_repo
-                    .record_outcome(&self.target, &sub.id, NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly)
+                    .record_outcomes(
+                        &self.target,
+                        &sub.id,
+                        OutcomeTally::new(NotificationOutcome::Failure, OutcomeRecord::OutcomeOnly),
+                    )
                     .await
                 {
                     debug!("Failed to mark failure for {}: {}", sub.id, e);
@@ -228,7 +233,7 @@ impl IntervalNotificationOperation {
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
         if let Err(e) = self
             .sub_repo
-            .record_outcome(&self.target, &sub.id, notification_outcome(&delivery), record)
+            .record_outcomes(&self.target, &sub.id, OutcomeTally::new(notification_outcome(&delivery), record))
             .await
         {
             debug!("Failed to record the notification outcome for {}: {}", sub.id, e);
