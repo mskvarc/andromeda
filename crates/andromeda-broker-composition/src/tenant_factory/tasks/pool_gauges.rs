@@ -13,7 +13,10 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use andromeda_telemetry::pool::{PoolGauges, PoolSample};
+use andromeda_telemetry::{
+    pool::{PoolGauges, PoolSample},
+    tenant_label::TenantLabel,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{convert::Infallible, time::Duration};
@@ -34,7 +37,7 @@ pub(super) fn register_pool_gauges(supervisor: &TaskSupervisor, pool: PgPool, te
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(SAMPLE_CADENCE)),
         ShutdownPolicy::new(SAMPLE_CADENCE),
     );
-    let gauges = PoolGauges::for_tenant(tenant.to_string());
+    let gauges = PoolGauges::for_tenant(TenantLabel::from(tenant));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let pool = pool.clone(); // clone: PgPool is a shared handle; each pass reads its counters.
         let gauges = gauges.clone(); // clone: each bounded pass owns the gauge labels while recording.

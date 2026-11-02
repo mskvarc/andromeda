@@ -34,9 +34,12 @@ pub enum BrokerMetric {
     /// The on-disk bytes of a tenant's base-table indexes, by tenant and table.
     #[strum(serialize = "andromeda_postgresql_table_index_bytes")]
     TableIndexBytes,
-    /// The heap-only share of a tenant's base-table updates, by tenant and table.
-    #[strum(serialize = "andromeda_postgresql_table_hot_update_ratio")]
-    TableHotUpdateRatio,
+    /// The rows a tenant's base table had updated, by tenant and table.
+    #[strum(serialize = "andromeda_postgresql_table_updates_total")]
+    TableUpdates,
+    /// The heap-only updates among them, by tenant and table.
+    #[strum(serialize = "andromeda_postgresql_table_hot_updates_total")]
+    TableHotUpdates,
     /// The largest history chunk of a tenant still in the rowstore, by tenant and hypertable.
     #[strum(serialize = "andromeda_postgresql_history_largest_rowstore_chunk_bytes")]
     HistoryLargestRowstoreChunkBytes,
@@ -53,7 +56,7 @@ pub enum MetricLabel {
 }
 
 /// The `tenant` label value of the default tenant's series.
-pub const DEFAULT_TENANT_LABEL: &str = "<unnamed default>";
+pub const DEFAULT_TENANT_LABEL: &str = "@default";
 
 /// Why the exposition could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -162,8 +165,8 @@ mod tests {
     fn a_labelled_sum_counts_only_the_samples_whose_label_reads_the_value() -> Result<()> {
         let reading = MetricsReading::parse(
             "# TYPE andromeda_postgresql_table_bytes gauge
-             andromeda_postgresql_table_bytes{tenant=\"<unnamed default>\",table=\"entities\"} 8192
-             andromeda_postgresql_table_bytes{tenant=\"<unnamed default>\",table=\"subscriptions\"} 4096
+             andromeda_postgresql_table_bytes{tenant=\"@default\",table=\"entities\"} 8192
+             andromeda_postgresql_table_bytes{tenant=\"@default\",table=\"subscriptions\"} 4096
              andromeda_postgresql_table_bytes{tenant=\"acme\",table=\"entities\"} 1024
 ",
         )?;

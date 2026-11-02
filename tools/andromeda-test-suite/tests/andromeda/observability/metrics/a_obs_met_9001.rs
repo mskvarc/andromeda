@@ -18,18 +18,19 @@ const PAST_THE_GAUGE_IDLE_TIMEOUT: Duration = Duration::from_secs(360);
 /// The route template of Create Entity, the only route the test sends a request to.
 const ENTITIES_ROUTE: &str = "/ngsi-ld/v1/entities";
 
-/// The gauges the default tenant's table sampling publishes.
-const TABLE_GAUGES: [BrokerMetric; 4] = [
+/// The series the default tenant's table sampling publishes.
+const TABLE_SERIES: [BrokerMetric; 5] = [
     BrokerMetric::TableBytes,
     BrokerMetric::TableIndexBytes,
-    BrokerMetric::TableHotUpdateRatio,
+    BrokerMetric::TableUpdates,
+    BrokerMetric::TableHotUpdates,
     BrokerMetric::HistoryLargestRowstoreChunkBytes,
 ];
 
 /// Pins: right after one Create Entity into the default tenant of a broker no other test talks to, and again six
 /// minutes later with no request in between, its scrape exposes `andromeda_tenant_runtimes_cached` and
 /// `andromeda_name_dictionary_entries` at 1 or more, `andromeda_http_requests_pending` of the entities route at 0, and
-/// every table size gauge of the default tenant
+/// every table series of the default tenant
 /// Clause: -
 /// Recorded: Andromeda extension, not v1.9.1: the Prometheus metrics on the management port
 #[gtest]
@@ -58,11 +59,11 @@ async fn a_obs_met_9001_every_gauge_stays_in_the_scrape_for_as_long_as_its_value
             some(eq(0.0)),
             "requests pending on {ENTITIES_ROUTE} {when}"
         );
-        for gauge in TABLE_GAUGES {
+        for series in TABLE_SERIES {
             expect_that!(
-                reading.sum_labelled(gauge, MetricLabel::Tenant, DEFAULT_TENANT_LABEL),
+                reading.sum_labelled(series, MetricLabel::Tenant, DEFAULT_TENANT_LABEL),
                 some(anything()),
-                "{gauge:?} of the default tenant {when}"
+                "{series:?} of the default tenant {when}"
             );
         }
     }

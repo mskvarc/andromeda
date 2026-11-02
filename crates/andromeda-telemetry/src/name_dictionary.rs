@@ -12,7 +12,7 @@ use crate::{
         LABEL_OUTCOME,
         NAME_DICTIONARY_ENTRIES,
         NAME_DICTIONARY_EVICTIONS_TOTAL,
-        NAME_DICTIONARY_INSERTED_TOTAL,
+        NAME_DICTIONARY_INSERTIONS_TOTAL,
         NAME_DICTIONARY_LOOKUPS_TOTAL,
     },
     sample_value::SampleValue,
@@ -104,7 +104,7 @@ pub fn record_inserted(dictionary: NameDictionary, count: u64) {
         return;
     }
     let dictionary: &'static str = dictionary.into();
-    counter!(NAME_DICTIONARY_INSERTED_TOTAL, LABEL_DICTIONARY => dictionary).increment(count);
+    counter!(NAME_DICTIONARY_INSERTIONS_TOTAL, LABEL_DICTIONARY => dictionary).increment(count);
 }
 
 /// One cache's share of the process-wide entries gauge.
@@ -165,7 +165,7 @@ mod tests {
     use crate::{
         error::TelemetryError,
         name_dictionary::{DictionaryEntries, DictionaryEviction, NameDictionary, record_eviction, record_inserted, record_lookups},
-        names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_EVICTIONS_TOTAL, NAME_DICTIONARY_INSERTED_TOTAL, NAME_DICTIONARY_LOOKUPS_TOTAL},
+        names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_EVICTIONS_TOTAL, NAME_DICTIONARY_INSERTIONS_TOTAL, NAME_DICTIONARY_LOOKUPS_TOTAL},
         recorder::TelemetryRecorder,
     };
     use std::{thread::sleep, time::Duration};
@@ -218,12 +218,12 @@ mod tests {
         for series in [
             format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"size\"}} 1"),
             format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"idle\"}} 2"),
-            format!("{NAME_DICTIONARY_INSERTED_TOTAL}{{dictionary=\"entity-type-names\"}} 1"),
+            format!("{NAME_DICTIONARY_INSERTIONS_TOTAL}{{dictionary=\"entity-type-names\"}} 1"),
         ] {
             assert!(rendered.contains(&series), "{rendered}");
         }
         assert!(
-            !rendered.contains(&format!("{NAME_DICTIONARY_INSERTED_TOTAL}{{dictionary=\"attribute-names\"}}")),
+            !rendered.contains(&format!("{NAME_DICTIONARY_INSERTIONS_TOTAL}{{dictionary=\"attribute-names\"}}")),
             "{rendered}"
         );
         Ok(())
@@ -231,7 +231,7 @@ mod tests {
 
     /// The only test that moves the process-wide totals, so no other test can
     /// race the values it asserts. The last value is still rendered past the
-    /// gauge idle timeout.
+    /// idle timeout.
     #[test]
     fn the_entries_gauge_sums_every_cache_and_forgets_a_dropped_one() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached_with(Duration::from_millis(50), None)?;

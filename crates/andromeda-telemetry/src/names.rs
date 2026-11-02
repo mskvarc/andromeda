@@ -29,13 +29,16 @@ pub const POSTGRESQL_POOL_IDLE_CONNECTIONS: &str = "andromeda_postgresql_pool_id
 pub const POSTGRESQL_TABLE_BYTES: &str = "andromeda_postgresql_table_bytes";
 /// Gauge of on-disk bytes held by one live-schema base table's indexes.
 pub const POSTGRESQL_TABLE_INDEX_BYTES: &str = "andromeda_postgresql_table_index_bytes";
-/// Gauge of the share, from 0 to 1, of one live-schema base table's updates
-/// since its statistics reset that were heap-only (touched no index).
-pub const POSTGRESQL_TABLE_HOT_UPDATE_RATIO: &str = "andromeda_postgresql_table_hot_update_ratio";
+/// Counter of rows one live-schema base table had updated, heap-only updates
+/// included, advanced from the statistics PostgreSQL keeps for the table.
+pub const POSTGRESQL_TABLE_UPDATES_TOTAL: &str = "andromeda_postgresql_table_updates_total";
+/// Counter of the updates of one live-schema base table that were heap-only
+/// (touched no index), advanced the same way.
+pub const POSTGRESQL_TABLE_HOT_UPDATES_TOTAL: &str = "andromeda_postgresql_table_hot_updates_total";
 /// Gauge of total on-disk bytes, indexes and TOAST included, of one history
 /// hypertable's largest chunk the columnstore has not yet converted: the chunk
-/// whose conversion blocks writes to it, and to the chunk it merges into, for
-/// about 20 to 25 s per GB.
+/// whose conversion blocks every history `UPDATE` and `DELETE`, for about 3 to
+/// 4 s per GB on `TimescaleDB` 2.31.
 pub const POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES: &str = "andromeda_postgresql_history_largest_rowstore_chunk_bytes";
 /// Counter of durable-queue item outcomes.
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
@@ -108,7 +111,7 @@ pub const NAME_DICTIONARY_EVICTIONS_TOTAL: &str = "andromeda_name_dictionary_evi
 /// Gauge of names held by every loaded cache of one name dictionary.
 pub const NAME_DICTIONARY_ENTRIES: &str = "andromeda_name_dictionary_entries";
 /// Counter of names newly inserted into a name dictionary, labelled by dictionary.
-pub const NAME_DICTIONARY_INSERTED_TOTAL: &str = "andromeda_name_dictionary_inserted_total";
+pub const NAME_DICTIONARY_INSERTIONS_TOTAL: &str = "andromeda_name_dictionary_insertions_total";
 
 /// The `version` label naming the broker release.
 pub const LABEL_VERSION: &str = "version";
@@ -118,7 +121,8 @@ pub const LABEL_METHOD: &str = "method";
 pub const LABEL_ENDPOINT: &str = "endpoint";
 /// The `statement` label naming a database statement.
 pub const LABEL_STATEMENT: &str = "statement";
-/// The `tenant` label naming the tenant a pool serves.
+/// The `tenant` label naming the tenant a series describes, its values spelled
+/// by [`crate::tenant_label::TenantLabel`].
 pub const LABEL_TENANT: &str = "tenant";
 /// The `table` label naming a database base table.
 pub const LABEL_TABLE: &str = "table";

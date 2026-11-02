@@ -4,10 +4,10 @@
 //! admission, which waits shed requests as saturated, why runtimes are
 //! evicted, and how dormant-tenant wake attempts resolve. None of these series carries a tenant label: a broker holding
 //! thousands of tenants would otherwise grow one series per tenant per metric.
-//! The per-tenant pool and storage gauges that do carry a tenant label
+//! The per-tenant pool and storage series that do carry a tenant label
 //! ([`crate::pool`], [`crate::storage`]) are bounded instead by the recorder's
-//! gauge idle timeout, which reaps a tenant's series once eviction stops it
-//! being sampled (see [`crate::recorder`]).
+//! idle timeout, which reaps a tenant's series once eviction stops it being
+//! sampled (see [`crate::recorder`]).
 
 use crate::{
     names::{

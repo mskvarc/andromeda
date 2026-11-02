@@ -16,7 +16,7 @@ use crate::names::{
     HTTP_REQUESTS_TOTAL,
     NAME_DICTIONARY_ENTRIES,
     NAME_DICTIONARY_EVICTIONS_TOTAL,
-    NAME_DICTIONARY_INSERTED_TOTAL,
+    NAME_DICTIONARY_INSERTIONS_TOTAL,
     NAME_DICTIONARY_LOOKUPS_TOTAL,
     NOTIFICATION_DELIVERIES_TOTAL,
     NOTIFICATION_DELIVERY_DURATION_SECONDS,
@@ -38,8 +38,9 @@ use crate::names::{
     POSTGRESQL_STATEMENT_DURATION_SECONDS,
     POSTGRESQL_STATEMENT_FAILURES_TOTAL,
     POSTGRESQL_TABLE_BYTES,
-    POSTGRESQL_TABLE_HOT_UPDATE_RATIO,
+    POSTGRESQL_TABLE_HOT_UPDATES_TOTAL,
     POSTGRESQL_TABLE_INDEX_BYTES,
+    POSTGRESQL_TABLE_UPDATES_TOTAL,
     QUEUE_OUTCOMES_TOTAL,
     SUBSCRIPTION_CANDIDATES,
     SUBSCRIPTION_OPERATIONS_TOTAL,
@@ -124,7 +125,7 @@ impl MetricDescription {
 }
 
 /// Every metric the broker emits.
-const DESCRIPTIONS: [MetricDescription; 48] = [
+const DESCRIPTIONS: [MetricDescription; 49] = [
     MetricDescription::gauge(BUILD_INFO, None, "Always 1, labelled by the version of the running broker."),
     MetricDescription::counter(HTTP_REQUESTS_TOTAL, "HTTP requests answered, by method, matched endpoint and status code."),
     MetricDescription::histogram(
@@ -147,10 +148,13 @@ const DESCRIPTIONS: [MetricDescription; 48] = [
         "On-disk size of a tenant table, indexes and TOAST included.",
     ),
     MetricDescription::gauge(POSTGRESQL_TABLE_INDEX_BYTES, Some(Unit::Bytes), "On-disk size of a tenant table's indexes."),
-    MetricDescription::gauge(
-        POSTGRESQL_TABLE_HOT_UPDATE_RATIO,
-        None,
-        "Share, from 0 to 1, of a tenant table's updates that were heap-only and touched no index.",
+    MetricDescription::counter(
+        POSTGRESQL_TABLE_UPDATES_TOTAL,
+        "Rows a tenant table had updated, heap-only updates included, by tenant and table.",
+    ),
+    MetricDescription::counter(
+        POSTGRESQL_TABLE_HOT_UPDATES_TOTAL,
+        "Updates of a tenant table that were heap-only and touched no index, by tenant and table.",
     ),
     MetricDescription::gauge(
         POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES,
@@ -279,7 +283,7 @@ const DESCRIPTIONS: [MetricDescription; 48] = [
     ),
     MetricDescription::gauge(NAME_DICTIONARY_ENTRIES, None, "Names the loaded name dictionary caches hold, by dictionary."),
     MetricDescription::counter(
-        NAME_DICTIONARY_INSERTED_TOTAL,
+        NAME_DICTIONARY_INSERTIONS_TOTAL,
         "Names added to a name dictionary for the first time, by dictionary.",
     ),
 ];

@@ -1,6 +1,6 @@
-//! Periodic sampling of one tenant's base-table sizes, heap-only update shares
-//! and the history chunk each temporal hypertable converts next into the
-//! metrics gauges.
+//! Periodic sampling of one tenant's base-table sizes and update counts, and
+//! of the history chunk each temporal hypertable converts next, into the
+//! metrics series.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_maintenance::{error::MaintenanceError, history_chunk_size::rowstore_chunk_sizes, table_size::table_sizes};
@@ -16,7 +16,10 @@ use andromeda_task_runtime::{
     supervisor::TaskSupervisor,
     task_name::TaskName,
 };
-use andromeda_telemetry::storage::{StorageGauges, TableSizeSample};
+use andromeda_telemetry::{
+    storage::{StorageMetrics, TableSizeSample},
+    tenant_label::TenantLabel,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{
@@ -30,8 +33,9 @@ use std::{
 /// so a minute keeps the load negligible.
 const SAMPLE_CADENCE: Duration = Duration::from_secs(60);
 
-/// Register the task that publishes the tenant's base-table sizes and the size
-/// of each history hypertable's largest unconverted chunk each minute.
+/// Register the task that publishes the tenant's base-table sizes and update
+/// counts, and the size of each history hypertable's largest unconverted
+/// chunk, each minute.
 ///
 /// The sizes are bounded catalog reads over fixed table allowlists, so the
 /// task is merely observed: its failure never degrades the tenant. Sizes move
@@ -58,16 +62,16 @@ pub(super) fn register_table_size_gauges(
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(SAMPLE_CADENCE)),
         ShutdownPolicy::new(SAMPLE_CADENCE),
     );
-    let gauges = StorageGauges::for_tenant(tenant.to_string());
+    let series = StorageMetrics::for_tenant(TenantLabel::from(tenant));
     // The write count the last sample ran under, shared by every tick.
     let observed = Arc::new(AtomicU64::new(0));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let pool = pool.clone(); // clone: PgPool is a shared handle; each pass acquires one connection.
-        let gauges = gauges.clone(); // clone: each bounded pass owns the gauge labels while recording.
+        let series = series.clone(); // clone: each bounded pass owns the series labels while recording.
         let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         let observed = Arc::clone(&observed); // clone: every tick compares against the one last-sample count.
         async move {
-            gauges.republish();
+            series.republish();
             pacer
                 .run_when_written(&observed, async move {
                     let mut connection = pool
@@ -76,7 +80,7 @@ pub(super) fn register_table_size_gauges(
                         .map_err(|error| TaskFailure::transient(MaintenanceError::Database(error)))?;
                     let samples = table_sizes(&mut connection).await.map_err(TaskFailure::transient)?;
                     for sample in samples {
-                        gauges.record(
+                        series.record(
                             sample.table.relation_name(),
                             TableSizeSample {
                                 total_bytes: sample.total_bytes,
@@ -87,7 +91,7 @@ pub(super) fn register_table_size_gauges(
                         );
                     }
                     for sample in rowstore_chunk_sizes(&mut connection).await.map_err(TaskFailure::transient)? {
-                        gauges.record_largest_rowstore_chunk(sample.table.relation_name(), sample.largest_bytes);
+                        series.record_largest_rowstore_chunk(sample.table.relation_name(), sample.largest_bytes);
                     }
                     Ok(())
                 })

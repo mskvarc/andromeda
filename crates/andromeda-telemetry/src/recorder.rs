@@ -25,9 +25,10 @@ use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use metrics_util::MetricKindMask;
 use std::{sync::Arc, time::Duration};
 
-/// How long a tenant-labelled gauge series is kept after it stops being updated.
+/// How long a tenant-labelled gauge or counter series is kept after it stops
+/// being updated.
 ///
-/// The per-tenant pool and storage gauges ([`crate::pool`], [`crate::storage`])
+/// The per-tenant pool and storage series ([`crate::pool`], [`crate::storage`])
 /// carry a tenant label, so a broker holding thousands of tenants would grow
 /// one series per tenant without bound. Their sampling workers refresh them
 /// while a tenant is cached, so a live tenant's series never lapses; once the
@@ -35,9 +36,9 @@ use std::{sync::Arc, time::Duration};
 /// next render past this window. This is the retraction the eviction path
 /// relies on: it stops sampling, and the idle timeout drops the series. It is
 /// comfortably longer than any sampling interval so a brief stall never drops a
-/// live tenant's gauges. Every gauge without a tenant label is held past it
-/// (see [`crate::holding_recorder`]).
-const TENANT_GAUGE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// live tenant's series. Every gauge and counter without a tenant label is held
+/// past it (see [`crate::holding_recorder`]).
+const TENANT_SERIES_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Histogram bucket bounds, in seconds, for HTTP request latency.
 const HTTP_REQUEST_SECONDS_BUCKETS: [f64; 11] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
@@ -133,7 +134,7 @@ impl TelemetryRecorder {
     /// [`TelemetryError::AlreadyInstalled`] when another recorder already holds
     /// the process-wide sink.
     pub fn install(version: BrokerVersion) -> Result<TelemetryRecorder, TelemetryError> {
-        let recorder = Arc::new(HoldingRecorder::new(builder(TENANT_GAUGE_IDLE_TIMEOUT)?.build_recorder()));
+        let recorder = Arc::new(HoldingRecorder::new(builder(TENANT_SERIES_IDLE_TIMEOUT)?.build_recorder()));
         set_global_recorder(Arc::clone(&recorder)).map_err(|_rejected| TelemetryError::AlreadyInstalled)?;
         describe_metrics(recorder.as_ref());
         version.record();
@@ -155,14 +156,14 @@ impl TelemetryRecorder {
     /// one of the configured bucket sets. Nothing is registered globally, so no
     /// already-installed recorder can make this fail.
     pub fn detached() -> Result<TelemetryRecorder, TelemetryError> {
-        Self::detached_with(TENANT_GAUGE_IDLE_TIMEOUT, None)
+        Self::detached_with(TENANT_SERIES_IDLE_TIMEOUT, None)
     }
 
-    /// Build a detached recorder with an explicit gauge idle timeout and
-    /// build-info version.
+    /// Build a detached recorder with an explicit idle timeout and build-info
+    /// version.
     ///
     /// Behaves exactly like [`TelemetryRecorder::detached`] but lets a test pick
-    /// a short timeout to observe the gauge retraction the eviction path relies
+    /// a short timeout to observe the series retraction the eviction path relies
     /// on without waiting the production window, or a version to observe the
     /// build-info gauge.
     ///
@@ -170,8 +171,8 @@ impl TelemetryRecorder {
     ///
     /// Returns [`TelemetryError::Recorder`] when the Prometheus builder rejects
     /// one of the configured bucket sets.
-    pub(crate) fn detached_with(gauge_idle_timeout: Duration, version: Option<BrokerVersion>) -> Result<TelemetryRecorder, TelemetryError> {
-        let recorder = Arc::new(HoldingRecorder::new(builder(gauge_idle_timeout)?.build_recorder()));
+    pub(crate) fn detached_with(idle_timeout: Duration, version: Option<BrokerVersion>) -> Result<TelemetryRecorder, TelemetryError> {
+        let recorder = Arc::new(HoldingRecorder::new(builder(idle_timeout)?.build_recorder()));
         describe_metrics(recorder.as_ref());
         let telemetry = TelemetryRecorder {
             handle: recorder.handle(),
@@ -200,8 +201,9 @@ impl TelemetryRecorder {
 
     /// Render every recorded series in the Prometheus text exposition format.
     ///
-    /// Every gauge without a tenant label is marked updated first, so the gauge
-    /// idle timeout reaps only the series of a tenant that stopped being sampled.
+    /// Every gauge and counter without a tenant label is marked updated first,
+    /// so the idle timeout reaps only the series of a tenant that stopped being
+    /// sampled.
     #[must_use]
     pub fn render(&self) -> String {
         self.recorder.refresh_held();
@@ -210,13 +212,14 @@ impl TelemetryRecorder {
 }
 
 /// The builder carrying the broker's histogram bucket configuration and the
-/// gauge idle timeout that bounds tenant-labelled series.
-fn builder(gauge_idle_timeout: Duration) -> Result<PrometheusBuilder, TelemetryError> {
+/// idle timeout that bounds tenant-labelled series.
+fn builder(idle_timeout: Duration) -> Result<PrometheusBuilder, TelemetryError> {
     HISTOGRAM_BUCKETS.into_iter().try_fold(
-        // Reap a per-tenant gauge series once its tenant is evicted and sampling
-        // stops, so tenant-labelled gauge cardinality stays bounded. Every other
-        // gauge is refreshed before each render and never lapses.
-        PrometheusBuilder::new().idle_timeout(MetricKindMask::GAUGE, Some(gauge_idle_timeout)),
+        // Reap a per-tenant gauge or counter series once its tenant is evicted
+        // and sampling stops, so tenant-labelled cardinality stays bounded. Every
+        // other gauge and counter is refreshed before each render and never
+        // lapses. No histogram carries a tenant label.
+        PrometheusBuilder::new().idle_timeout(MetricKindMask::GAUGE | MetricKindMask::COUNTER, Some(idle_timeout)),
         |builder, (name, buckets)| Ok(builder.set_buckets_for_metric(Matcher::Full(name.to_owned()), buckets)?),
     )
 }
@@ -241,18 +244,21 @@ mod tests {
             POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES,
             POSTGRESQL_STATEMENT_DURATION_SECONDS,
             POSTGRESQL_TABLE_BYTES,
+            POSTGRESQL_TABLE_UPDATES_TOTAL,
             QUEUE_OUTCOMES_TOTAL,
+            TASK_FAILURES_TOTAL,
             TENANT_RUNTIMES_CACHED,
         },
         pool::{PoolGauges, PoolSample},
         recorder::{HISTOGRAM_BUCKETS, TelemetryRecorder},
-        storage::{StorageGauges, TableSizeSample},
+        storage::{StorageMetrics, TableSizeSample},
         tenancy::set_runtimes_cached,
+        tenant_label::TenantLabel,
     };
     use metrics::{counter, histogram};
     use std::{sync::Arc, thread::sleep, time::Duration};
 
-    /// A gauge idle timeout short enough for a test to wait past.
+    /// An idle timeout short enough for a test to wait past.
     const SHORT_IDLE_TIMEOUT: Duration = Duration::from_millis(50);
 
     /// Three times [`SHORT_IDLE_TIMEOUT`], so a render after it is past the
@@ -320,7 +326,7 @@ mod tests {
 
     /// The build-info gauge is set once, when the recorder is built.
     #[test]
-    fn the_build_info_gauge_survives_the_gauge_idle_timeout() -> Result<(), TelemetryError> {
+    fn the_build_info_gauge_survives_the_idle_timeout() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached_with(SHORT_IDLE_TIMEOUT, Some(BrokerVersion::from_static("1.0.0")))?;
         let expected = format!("{BUILD_INFO}{{version=\"1.0.0\"}} 1");
         assert!(recorder.render().contains(&expected), "rendered at once");
@@ -330,22 +336,22 @@ mod tests {
         Ok(())
     }
 
-    /// The retraction the eviction path relies on: a tenant-labelled gauge that
-    /// stops being sampled (as it does once its tenant is evicted) is dropped at
-    /// the next render past the gauge idle timeout, so per-tenant cardinality
-    /// stays bounded.
+    /// The retraction the eviction path relies on: a tenant-labelled gauge or
+    /// counter that stops being sampled (as it does once its tenant is evicted)
+    /// is dropped at the next render past the idle timeout, so per-tenant
+    /// cardinality stays bounded.
     #[test]
-    fn an_idle_tenant_gauge_series_is_reaped_after_the_gauge_idle_timeout() -> Result<(), TelemetryError> {
+    fn an_idle_tenant_series_is_reaped_after_the_idle_timeout() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached_with(SHORT_IDLE_TIMEOUT, None)?;
         recorder.record_locally(|| {
-            PoolGauges::for_tenant("acme").record(PoolSample { open: 4, idle: 1 });
-            StorageGauges::for_tenant("acme").record(
+            PoolGauges::for_tenant(TenantLabel::named("acme")).record(PoolSample { open: 4, idle: 1 });
+            StorageMetrics::for_tenant(TenantLabel::named("acme")).record(
                 "entities",
                 TableSizeSample {
                     total_bytes: 8192,
                     index_bytes: 4096,
-                    updated_tuples: 0,
-                    hot_updated_tuples: 0,
+                    updated_tuples: 3,
+                    hot_updated_tuples: 2,
                 },
             );
         });
@@ -357,6 +363,10 @@ mod tests {
         assert!(
             sampled.contains(&format!("{POSTGRESQL_TABLE_BYTES}{{tenant=\"acme\",table=\"entities\"}}")),
             "the table series is present while the tenant is sampled: {sampled}"
+        );
+        assert!(
+            sampled.contains(&format!("{POSTGRESQL_TABLE_UPDATES_TOTAL}{{tenant=\"acme\",table=\"entities\"}} 3")),
+            "the update counter is present while the tenant is sampled: {sampled}"
         );
 
         sleep(PAST_THE_IDLE_TIMEOUT);
@@ -371,7 +381,7 @@ mod tests {
     /// Each gauge is set once and then left alone, as a gauge set only when its
     /// value changes is in a broker at rest.
     #[test]
-    fn every_gauge_without_a_tenant_label_survives_the_gauge_idle_timeout() -> Result<(), TelemetryError> {
+    fn every_gauge_without_a_tenant_label_survives_the_idle_timeout() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached_with(SHORT_IDLE_TIMEOUT, None)?;
         recorder.record_locally(|| {
             set_runtimes_cached(3);
@@ -404,8 +414,28 @@ mod tests {
         Ok(())
     }
 
+    /// Each counter is incremented once and then left alone, as a counter of
+    /// rare events is in a broker at rest.
     #[test]
-    fn a_gauge_that_was_never_set_is_not_rendered_after_the_gauge_idle_timeout() -> Result<(), TelemetryError> {
+    fn every_counter_without_a_tenant_label_survives_the_idle_timeout() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached_with(SHORT_IDLE_TIMEOUT, None)?;
+        recorder.record_locally(|| {
+            counter!(QUEUE_OUTCOMES_TOTAL, "queue" => "unit", "outcome" => "stuck").increment(1);
+            counter!(TASK_FAILURES_TOTAL, "class" => "permanent", "criticality" => "tenant-fatal").increment(2);
+        });
+        sleep(PAST_THE_IDLE_TIMEOUT);
+        let rendered = recorder.render();
+        for series in [
+            format!("{QUEUE_OUTCOMES_TOTAL}{{queue=\"unit\",outcome=\"stuck\"}} 1"),
+            format!("{TASK_FAILURES_TOTAL}{{class=\"permanent\",criticality=\"tenant-fatal\"}} 2"),
+        ] {
+            assert!(rendered.contains(&format!("{series}\n")), "{series} after the idle timeout: {rendered}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_gauge_that_was_never_set_is_not_rendered_after_the_idle_timeout() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached_with(SHORT_IDLE_TIMEOUT, None)?;
         recorder.record_locally(|| set_runtimes_cached(1));
         sleep(PAST_THE_IDLE_TIMEOUT);

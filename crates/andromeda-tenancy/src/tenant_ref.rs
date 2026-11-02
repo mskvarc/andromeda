@@ -1,6 +1,7 @@
 //! Which tenant a request is scoped to.
 
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_telemetry::tenant_label::TenantLabel;
 use std::fmt;
 
 /// Reference to a tenant, either the unnamed default or a named tenant.
@@ -52,6 +53,17 @@ impl fmt::Display for TenantRef {
     }
 }
 
+/// The `tenant` label a tenant's metric series carry: its name, or the
+/// unnamed default's own value, which no tenant name can spell.
+impl From<&TenantRef> for TenantLabel {
+    fn from(tenant: &TenantRef) -> TenantLabel {
+        match tenant {
+            TenantRef::UnnamedDefault => TenantLabel::unnamed_default(),
+            TenantRef::Named(name) => TenantLabel::named(name.as_str()),
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -60,6 +72,7 @@ impl fmt::Display for TenantRef {
 mod tests {
     use crate::tenant_ref::TenantRef;
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_telemetry::tenant_label::TenantLabel;
 
     fn named(raw: &str) -> TenantRef {
         TenantRef::Named(TenantName::try_from(raw.to_string()).expect("a valid tenant name"))
@@ -84,5 +97,12 @@ mod tests {
     fn the_unnamed_default_renders_as_something_a_log_line_can_carry() {
         pretty_assertions::assert_eq!(TenantRef::UnnamedDefault.to_string(), "<unnamed default>");
         pretty_assertions::assert_eq!(named("tenant_a").to_string(), "tenant_a");
+    }
+
+    #[test]
+    fn the_unnamed_default_and_a_tenant_called_default_carry_different_metric_labels() {
+        pretty_assertions::assert_eq!(TenantLabel::from(&TenantRef::UnnamedDefault), TenantLabel::unnamed_default());
+        pretty_assertions::assert_eq!(TenantLabel::from(&named("default")), TenantLabel::named("default"));
+        assert_ne!(TenantLabel::from(&named("default")), TenantLabel::from(&TenantRef::UnnamedDefault));
     }
 }
