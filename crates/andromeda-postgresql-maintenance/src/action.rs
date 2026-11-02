@@ -249,19 +249,31 @@ pub(crate) async fn withdraw_observed(platform: &mut PgConnection, tenant: &Regi
     Ok(())
 }
 
-/// Drop a pending action whose live reading no longer meets the threshold
-/// that queued it: nothing runs, and a later sample queues it again if it
-/// qualifies again.
+/// Drop the pending action of `row`, whose reading no longer meets the
+/// threshold that queued it: nothing runs, and a later sample queues it again
+/// if it qualifies again.
+pub(crate) async fn withdraw_lapsed(
+    platform: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    row: BranchTarget,
+    reason: DeferralReason,
+) -> Result<(), MaintenanceError> {
+    let target = row.target();
+    target_record::record_lapsed_action(platform, tenant, row, reason).await?;
+    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?row.branch(), target = target.relation_name(), action = ?target_action(target), reason = ?reason, decision = "no-longer-qualifies", "PostgreSQL maintenance pending action dropped");
+    Ok(())
+}
+
+/// Drop a pending action whose live reading, taken just before it would run,
+/// no longer meets the threshold that queued it, ending the pass idle.
 async fn drop_lapsed(
     platform: &mut PgConnection,
     tenant: &RegisteredTenant,
     row: BranchTarget,
     reason: DeferralReason,
 ) -> Result<PassOutcome, MaintenanceError> {
-    let target = row.target();
-    target_record::record_lapsed_action(platform, tenant, row, reason).await?;
+    withdraw_lapsed(platform, tenant, row, reason).await?;
     tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Idle).await?;
-    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?row.branch(), target = target.relation_name(), action = ?target_action(target), reason = ?reason, decision = "no-longer-qualifies", "PostgreSQL maintenance pending action dropped");
     Ok(PassOutcome::Idle)
 }
 

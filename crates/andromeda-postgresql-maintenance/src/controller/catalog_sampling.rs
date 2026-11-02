@@ -4,6 +4,7 @@
 //! chunks awaiting a rebuild of each history hypertable.
 
 use crate::{
+    action,
     branch::BranchTarget,
     candidate::{MaintenanceTarget, heap_target::HeapTarget},
     columnstore_partiality::ColumnstorePartiality,
@@ -11,10 +12,11 @@ use crate::{
     error::MaintenanceError,
     heap_reading::HeapSample,
     history_chunk_policy::{decide_recompression, decide_rowstore_rebuild},
-    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, decide_analyze},
+    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, lapse},
     rowstore_rebuild::RowstoreRebuild,
     state::{RegisteredTenant, target_record},
     statistics_freshness::HeapStatistics,
+    statistics_policy::decide_analyze,
 };
 use chrono::Utc;
 use sqlx::PgConnection;
@@ -77,8 +79,9 @@ impl CatalogSample {
 }
 
 /// Persist the cheap catalog evidence of the branch of `visit` without
-/// executing newly queued work in this pass. A target whose right the role
-/// lacks, by `rights`, is decided under observe mode.
+/// executing newly queued work in this pass, and withdraw every queued action
+/// a sample shows has lapsed. A target whose right the role lacks, by
+/// `rights`, is decided under observe mode.
 pub(crate) async fn record_catalog_samples(
     visit: VisitBranch,
     rights: &ActionRights,
@@ -95,33 +98,33 @@ pub(crate) async fn record_catalog_samples(
         let mode = rights.mode(row, visit.mode);
         let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
-        let decision = match sample.evidence {
+        let (decision, degradation) = match sample.evidence {
             SampleEvidence::Degradation(degradation) => {
                 let decision = decide(mode, profile, target_state, degradation, idle_gates(), now);
-                target_record::record_decision(platform, tenant, row, Some(degradation), decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), relation_bytes = degradation.relation_bytes, reclaimable_bytes = degradation.reclaimable_bytes, degraded_percent = degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance catalog sample completed");
-                decision
+                (decision, Some(degradation))
             }
             SampleEvidence::Statistics(statistics) => {
                 let freshness = statistics.freshness(now);
                 let decision = decide_analyze(mode, profile, target_state, freshness, idle_gates(), now);
-                target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), modified_since_analyze = statistics.modified_since_analyze, analyze_trigger = statistics.analyze_trigger, last_analyzed = ?statistics.last_analyzed, freshness = ?freshness, decision = ?decision, "PostgreSQL maintenance statistics sample completed");
-                decision
+                (decision, None)
             }
             SampleEvidence::Partiality(partiality) => {
                 let decision = decide_recompression(mode, profile, target_state, partiality.state(), idle_gates(), now);
-                target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), partial_chunks = partiality.partial_chunks, oldest_uncompressed_bytes = partiality.oldest_uncompressed_bytes, decision = ?decision, "PostgreSQL maintenance columnstore sample completed");
-                decision
+                (decision, None)
             }
             SampleEvidence::Rebuild(rebuild) => {
                 let decision = decide_rowstore_rebuild(mode, profile, target_state, rebuild.state(), idle_gates(), now);
-                target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
                 info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), awaiting_chunks = rebuild.awaiting_chunks, oldest_index_bytes = rebuild.oldest_index_bytes, decision = ?decision, "PostgreSQL maintenance rowstore sample completed");
-                decision
+                (decision, None)
             }
         };
+        match lapse(target_state, decision) {
+            Some(reason) => action::withdraw_lapsed(platform, tenant, row, reason).await?,
+            None => target_record::record_decision(platform, tenant, row, degradation, decision, target_state.breach, now).await?,
+        }
         match decision {
             PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
             PolicyDecision::WouldAct if outcome.is_none() => outcome = Some(PassOutcome::WouldAct),

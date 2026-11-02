@@ -1,6 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::{statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
+use crate::vacuum_horizon::HorizonHolderKind;
 use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -281,26 +281,6 @@ pub fn decide(
     newly_qualified(mode)
 }
 
-/// Apply cooldown and load gates to a heap's statistics, which qualify for
-/// `ANALYZE` on one stale sample: an analyze reads a bounded sample, so
-/// neither a breach duration nor the size floors apply.
-pub(crate) fn decide_analyze(
-    mode: MaintenanceMode,
-    profile: PolicyProfile,
-    state: TargetState,
-    freshness: StatisticsFreshness,
-    gates: SafetyGates,
-    now: DateTime<Utc>,
-) -> PolicyDecision {
-    if let Some(decision) = gated_decision(mode, profile, state, gates, now) {
-        return decision;
-    }
-    match freshness {
-        StatisticsFreshness::Stale => newly_qualified(mode),
-        StatisticsFreshness::Fresh => PolicyDecision::Deferred(DeferralReason::BelowThreshold),
-    }
-}
-
 /// The decision every target takes before its own qualification: deferred in
 /// its cooldown or by a load gate, and acted on once pending. `None` leaves
 /// the target to its qualification.
@@ -311,18 +291,57 @@ pub(crate) fn gated_decision(
     gates: SafetyGates,
     now: DateTime<Utc>,
 ) -> Option<PolicyDecision> {
+    held(profile, state, gates, now)
+        .map(PolicyDecision::Deferred)
+        .or_else(|| state.is_action_pending.then_some(pending_decision(mode)))
+}
+
+/// Why a target is held back whatever its sample shows: its cooldown, then
+/// the first active load gate.
+pub(crate) fn held(profile: PolicyProfile, state: TargetState, gates: SafetyGates, now: DateTime<Utc>) -> Option<DeferralReason> {
     if let Some(until) = state.cooldown_until
         && until > now
     {
-        return Some(PolicyDecision::Deferred(DeferralReason::Cooldown));
+        return Some(DeferralReason::Cooldown);
     }
-    if let Some(reason) = safety_deferral(profile, gates) {
-        return Some(PolicyDecision::Deferred(reason));
-    }
-    state.is_action_pending.then_some(match mode {
+    safety_deferral(profile, gates)
+}
+
+/// The decision on work queued on an earlier pass.
+pub(crate) const fn pending_decision(mode: MaintenanceMode) -> PolicyDecision {
+    match mode {
         MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
         MaintenanceMode::Automatic => PolicyDecision::Act,
-    })
+    }
+}
+
+/// Why the action queued on a target in `state` has lapsed by `decision`: a
+/// sample that no longer meets the threshold that queued it. `None` when no
+/// action is queued or the sample still qualifies, or when a cooldown or a
+/// load gate decided before the sample was judged.
+pub(crate) const fn lapse(state: TargetState, decision: PolicyDecision) -> Option<DeferralReason> {
+    match decision {
+        PolicyDecision::Deferred(reason @ (DeferralReason::RelationTooSmall | DeferralReason::ReclaimTooSmall | DeferralReason::BelowThreshold))
+            if state.is_action_pending =>
+        {
+            Some(reason)
+        }
+        PolicyDecision::Act
+        | PolicyDecision::Queued
+        | PolicyDecision::WouldAct
+        | PolicyDecision::Deferred(
+            DeferralReason::RelationTooSmall
+            | DeferralReason::ReclaimTooSmall
+            | DeferralReason::BelowThreshold
+            | DeferralReason::ConsecutiveSamples
+            | DeferralReason::Cooldown
+            | DeferralReason::ActiveBackendRatio
+            | DeferralReason::LongTransaction
+            | DeferralReason::HorizonHeld
+            | DeferralReason::ActiveMaintenance
+            | DeferralReason::WaitingRelationLock,
+        ) => None,
+    }
 }
 
 /// The decision on work that qualified on this sample.
@@ -361,8 +380,7 @@ pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample:
 #[cfg(test)]
 mod tests {
     use crate::{
-        policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after, decide, decide_analyze},
-        statistics_freshness::StatisticsFreshness,
+        policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after, decide, lapse},
         vacuum_horizon::HorizonHolderKind,
     };
     use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
@@ -638,47 +656,38 @@ mod tests {
         }
     }
 
-    /// An analyze reads a bounded sample, so one stale sample of a heap of any
-    /// size qualifies it, while cooldown and load gates still defer it.
-    #[test]
-    fn stale_statistics_qualify_on_one_sample_within_the_gates() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
-        let now = Utc::now();
-        let fresh_state = TargetState::default();
-        assert_eq!(
-            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Stale, idle_gates(), now),
-            PolicyDecision::Queued
-        );
-        assert_eq!(
-            decide_analyze(MaintenanceMode::Observe, profile, fresh_state, StatisticsFreshness::Stale, idle_gates(), now),
-            PolicyDecision::WouldAct
-        );
-        assert_eq!(
-            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Fresh, idle_gates(), now),
-            PolicyDecision::Deferred(DeferralReason::BelowThreshold)
-        );
-        let cooling = TargetState {
-            cooldown_until: Some(now + ChronoDuration::minutes(30)),
-            ..TargetState::default()
-        };
-        assert_eq!(
-            decide_analyze(MaintenanceMode::Automatic, profile, cooling, StatisticsFreshness::Stale, idle_gates(), now),
-            PolicyDecision::Deferred(DeferralReason::Cooldown)
-        );
-        let busy = SafetyGates {
-            active_maintenance: true,
-            ..idle_gates()
-        };
-        assert_eq!(
-            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Stale, busy, now),
-            PolicyDecision::Deferred(DeferralReason::ActiveMaintenance)
-        );
-        let pending = TargetState {
+    fn queued() -> TargetState {
+        TargetState {
             is_action_pending: true,
             ..TargetState::default()
-        };
+        }
+    }
+
+    #[test]
+    fn a_sample_under_its_threshold_lapses_only_a_queued_action() {
+        let below = PolicyDecision::Deferred(DeferralReason::BelowThreshold);
+
+        assert_eq!(lapse(TargetState::default(), below), None);
         assert_eq!(
-            decide_analyze(MaintenanceMode::Automatic, profile, pending, StatisticsFreshness::Fresh, idle_gates(), now),
+            lapse(queued(), PolicyDecision::Deferred(DeferralReason::ReclaimTooSmall)),
+            Some(DeferralReason::ReclaimTooSmall)
+        );
+        assert_eq!(lapse(queued(), PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)), None);
+    }
+
+    /// Other queued work is acted on before its sample is judged: an index
+    /// does not shed bloat on its own, and a vacuum or a recompression is
+    /// judged again just before it runs.
+    #[test]
+    fn a_queued_rebuild_is_acted_on_whatever_its_sample_shows() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let under = DegradationSample {
+            degraded_percent: 0,
+            ..qualifying(profile)
+        };
+
+        assert_eq!(
+            decide(MaintenanceMode::Automatic, profile, queued(), under, idle_gates(), Utc::now()),
             PolicyDecision::Act
         );
     }

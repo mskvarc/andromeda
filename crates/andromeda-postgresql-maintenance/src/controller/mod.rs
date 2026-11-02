@@ -217,8 +217,9 @@ impl MaintenanceController {
         for branch in branches.observed() {
             action::withdraw_observed(platform, tenant, branch).await?;
         }
-        let pending_before_sampling = pending_action::first_branch_action(platform, tenant, branches.acting()).await?;
+        let queued = pending_action::queued_actions(platform, tenant, branches.acting()).await?;
         let sampling = branch_sampling::sample_branches(platform, &mut connection, tenant, &branches, profile).await?;
+        let pending = pending_action::first_branch_action(platform, tenant, branches.acting(), &queued).await?;
 
         report_invalid_indexes(tenant, &invalid, &branches);
         let branch_artifact = invalid
@@ -238,7 +239,7 @@ impl MaintenanceController {
             action_rights::report_undroppable_artifact(tenant, &artifact);
             flagged = flagged.or(Some(PassOutcome::WouldAct));
         }
-        if let Some(row) = pending_before_sampling.filter(|&row| sampling.rights.privilege(row) == MaintainPrivilege::Held) {
+        if let Some(row) = pending.filter(|&row| sampling.rights.privilege(row) == MaintainPrivilege::Held) {
             let mode = branches.mode(row.branch());
             return action::execute_pending(mode, platform, &mut connection, tenant, row, profile, cancellation).await;
         }

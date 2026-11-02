@@ -69,6 +69,7 @@ mod safety_gate_inspection;
 mod state;
 mod statement_statistics;
 mod statistics_freshness;
+mod statistics_policy;
 /// Bounded on-disk size sampling of the live schema's base tables.
 pub mod table_size;
 mod timescale_observation;

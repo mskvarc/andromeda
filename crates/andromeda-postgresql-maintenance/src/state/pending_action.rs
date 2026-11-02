@@ -56,35 +56,51 @@ struct PendingAction {
     cooldown_until: Option<DateTime<Utc>>,
 }
 
-/// Return the first pending action of `branch` whose backoff has elapsed,
-/// keeping the canary B-tree ahead of its GIN pair.
-pub(crate) async fn pending_action(
+/// Every action queued in `branches` at this instant: the work queued on an
+/// earlier pass, which a visit may run once its samples are recorded.
+pub(crate) async fn queued_actions(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    branch: Branch,
-) -> Result<Option<MaintenanceTarget>, MaintenanceError> {
+    branches: impl IntoIterator<Item = Branch>,
+) -> Result<Vec<BranchTarget>, MaintenanceError> {
+    let mut queued = Vec::new();
+    for branch in branches {
+        for action in branch_pending_actions(connection, tenant, branch).await? {
+            queued.push(BranchTarget::new(branch, action.target)?);
+        }
+    }
+    Ok(queued)
+}
+
+/// The first action of `branches` still pending among `queued`, searched in
+/// order, each branch's chosen by [`first_pending`]. An action queued since
+/// `queued` was read is not chosen and still holds back a GIN its canary
+/// queued.
+pub(crate) async fn first_branch_action(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branches: impl IntoIterator<Item = Branch>,
+    queued: &[BranchTarget],
+) -> Result<Option<BranchTarget>, MaintenanceError> {
+    let now = Utc::now();
+    for branch in branches {
+        let pending = branch_pending_actions(connection, tenant, branch).await?;
+        let eligible = |target| queued.iter().any(|row| row.branch() == branch && row.target() == target);
+        if let Some(target) = first_pending(&pending, now, eligible) {
+            return Ok(Some(BranchTarget::new(branch, target)?));
+        }
+    }
+    Ok(None)
+}
+
+/// Every pending action of `tenant`'s `branch`, in target order.
+async fn branch_pending_actions(connection: &mut PgConnection, tenant: &RegisteredTenant, branch: Branch) -> Result<Vec<PendingAction>, MaintenanceError> {
     let statement = pending_actions_statement()
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(branch_rows(branch))
         .to_owned();
     let pending = read_pending_actions(connection, &statement).await?;
-    let pending = pending.into_iter().map(|row| row.action).collect::<Vec<_>>();
-    Ok(first_pending(&pending, Utc::now()))
-}
-
-/// The first pending action of `branches`, searched in order, each branch's
-/// chosen by [`pending_action`].
-pub(crate) async fn first_branch_action(
-    connection: &mut PgConnection,
-    tenant: &RegisteredTenant,
-    branches: impl IntoIterator<Item = Branch>,
-) -> Result<Option<BranchTarget>, MaintenanceError> {
-    for branch in branches {
-        if let Some(target) = pending_action(connection, tenant, branch).await? {
-            return Ok(Some(BranchTarget::new(branch, target)?));
-        }
-    }
-    Ok(None)
+    Ok(pending.into_iter().map(|row| row.action).collect())
 }
 
 /// Withdraw every action queued in `branch`, recording each as one automatic
@@ -145,7 +161,7 @@ fn withdraw_action_update(tenant: TenantKey, row: BranchTarget) -> UpdateStateme
         .to_owned()
 }
 
-/// Every tenant to which [`pending_action`] would give an action of some
+/// Every tenant to which [`first_pending`] would give an action of some
 /// branch now.
 pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
     let pending = read_pending_actions(connection, &pending_actions_statement()).await?;
@@ -161,7 +177,7 @@ fn due_tenants(pending: &[PendingRow], now: DateTime<Utc>) -> Vec<TenantKey> {
         .chunk_by(|left, right| (left.tenant, left.branch) == (right.tenant, right.branch))
         .filter_map(|branch_pending| {
             let actions = branch_pending.iter().map(|row| row.action).collect::<Vec<_>>();
-            first_pending(&actions, now).and(branch_pending.first().map(|row| row.tenant))
+            first_pending(&actions, now, |_| true).and(branch_pending.first().map(|row| row.tenant))
         })
         .collect::<Vec<_>>();
     due.dedup();
@@ -207,21 +223,22 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
         .collect()
 }
 
-/// The pending target to act on first: any due target but a GIN queued
-/// through a canary, so a canary is rebuilt on an earlier pass than its GIN,
-/// and a due canary-queued GIN once nothing else is pending. A target still in its failure
-/// backoff is skipped, so it does not hold back the rest of the tenant's pass,
-/// yet it still holds back every canary-queued GIN.
-fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<MaintenanceTarget> {
+/// The pending target to act on first among those `eligible` admits: any due
+/// target but a GIN queued through a canary, so a canary is rebuilt on an
+/// earlier pass than its GIN, and a due canary-queued GIN once nothing else
+/// is pending. A target still in its failure backoff, or one `eligible`
+/// refuses, is skipped, so it does not hold back the rest of the tenant's
+/// pass, yet it still holds back every canary-queued GIN.
+fn first_pending(pending: &[PendingAction], now: DateTime<Utc>, eligible: impl Fn(MaintenanceTarget) -> bool) -> Option<MaintenanceTarget> {
     let is_gin = |action: &PendingAction| match action.target {
         MaintenanceTarget::Index(index) => index.canary().is_some(),
         MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => false,
     };
-    let is_due = |action: &PendingAction| action.cooldown_until.is_none_or(|until| until <= now);
+    let is_ready = |action: &PendingAction| action.cooldown_until.is_none_or(|until| until <= now) && eligible(action.target);
     if pending.iter().all(is_gin) {
-        pending.iter().find(|action| is_due(action))
+        pending.iter().find(|action| is_ready(action))
     } else {
-        pending.iter().find(|action| !is_gin(action) && is_due(action))
+        pending.iter().find(|action| !is_gin(action) && is_ready(action))
     }
     .map(|action| action.target)
 }
@@ -266,20 +283,42 @@ mod tests {
         }
     }
 
+    /// Every target is eligible.
+    const fn any(_: MaintenanceTarget) -> bool {
+        true
+    }
+
+    #[test]
+    fn an_action_queued_since_the_visit_began_is_not_chosen() {
+        let lapsed = MaintenanceTarget::Statistics(HeapTarget::Entities);
+        let stale = MaintenanceTarget::Statistics(HeapTarget::TemporalAttributeStreams);
+        let new = MaintenanceTarget::Heap(HeapTarget::CurrentAttributes);
+        let queued_before = |target| target == lapsed || target == stale;
+        assert_eq!(first_pending(&[due(new), due(stale)], Utc::now(), queued_before), Some(stale));
+        assert_eq!(first_pending(&[due(new)], Utc::now(), queued_before), None);
+    }
+
+    #[test]
+    fn a_canary_queued_since_the_visit_began_still_holds_back_its_gin() {
+        let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
+        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
+        assert_eq!(first_pending(&[due(canary), due(gin)], Utc::now(), |target| target == gin), None);
+    }
+
     #[test]
     fn a_canary_is_acted_on_before_the_gin_it_queued() {
         let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
         let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
-        assert_eq!(first_pending(&[due(gin), due(canary)], Utc::now()), Some(canary));
+        assert_eq!(first_pending(&[due(gin), due(canary)], Utc::now(), any), Some(canary));
     }
 
     #[test]
     fn a_gin_is_acted_on_once_nothing_else_is_pending() {
         assert_eq!(
-            first_pending(&[due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))], Utc::now()),
+            first_pending(&[due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))], Utc::now(), any),
             Some(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))
         );
-        assert_eq!(first_pending(&[], Utc::now()), None);
+        assert_eq!(first_pending(&[], Utc::now(), any), None);
     }
 
     #[test]
@@ -290,7 +329,8 @@ mod tests {
                     due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm)),
                     due(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
                 ],
-                Utc::now()
+                Utc::now(),
+                any
             ),
             Some(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes))
         );
@@ -302,7 +342,7 @@ mod tests {
     fn a_density_measured_gin_is_not_held_back_behind_other_work() {
         let gin = MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys);
         let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
-        assert_eq!(first_pending(&[due(gin), due(heap)], Utc::now()), Some(gin));
+        assert_eq!(first_pending(&[due(gin), due(heap)], Utc::now(), any), Some(gin));
     }
 
     /// Tenant 1's live canary backs off, which holds back its live GIN, while
@@ -367,9 +407,9 @@ mod tests {
         let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
         let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
         let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
-        assert_eq!(first_pending(&[backing_off(canary, now), due(heap)], now), Some(heap));
-        assert_eq!(first_pending(&[backing_off(canary, now), due(gin)], now), None);
-        assert_eq!(first_pending(&[backing_off(gin, now)], now), None);
-        assert_eq!(first_pending(&[backing_off(canary, now)], now + Duration::minutes(15)), Some(canary));
+        assert_eq!(first_pending(&[backing_off(canary, now), due(heap)], now, any), Some(heap));
+        assert_eq!(first_pending(&[backing_off(canary, now), due(gin)], now, any), None);
+        assert_eq!(first_pending(&[backing_off(gin, now)], now, any), None);
+        assert_eq!(first_pending(&[backing_off(canary, now)], now + Duration::minutes(15), any), Some(canary));
     }
 }
