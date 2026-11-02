@@ -19,7 +19,7 @@ use crate::{
     aggregation_grid::AggregationGrid,
     alias::Ah,
     listed_period_page::within_page_period,
-    period_edge::{PagedWalk, ProbedPeriods, page_edge, stream_bound},
+    period_edge::{CountEdge, PagedWalk, ProbedPeriods, page_edge, stream_bound},
     stream_page::{Walk, latest_instances},
     stream_parts::{admitted, over_parts},
     stream_probes::StreamProbes,
@@ -139,6 +139,10 @@ fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &Aggregat
             rows
         })
     };
+    let count = match compiled.representation.aggr_period_duration {
+        Some(period) if period.spans_at_most(compiled.window.interval, paged.periods) => CountEdge::OutOfReach,
+        Some(_) | None => CountEdge::Probed,
+    };
     let (periods, rows) = match (grid.grid(), paged.last_n) {
         (PeriodGrid::Exact, Some(n)) => (
             ProbedPeriods::Unlisted,
@@ -154,8 +158,14 @@ fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &Aggregat
             StreamRows::OfEachListedPeriod(every_kept(&kept.add(within_page_period(compiled.window.timeproperty)))),
         ),
     };
+    // A calendar grid lists every period its probes found, and no calendar
+    // period spans a known count, so its edge is always probed.
+    let count = match periods {
+        ProbedPeriods::Listed => CountEdge::Probed,
+        ProbedPeriods::Unlisted => count,
+    };
     AggregatedStreamRead {
-        edge: Some(page_edge(probes, grid, paged, periods)),
+        edge: Some(page_edge(probes, grid, paged, periods, count)),
         rows,
     }
 }
@@ -276,6 +286,27 @@ mod tests {
         );
         assert!(edge.contains(r#"time_bucket('PT1H'::interval, "found"."instant""#), "{sql}");
         assert!(edge.contains(r#""found_period"."bucket_start" + ('PT1H'::interval) AS "period_end""#), "{sql}");
+    }
+
+    /// A day holds at most 25 hourly periods, so a page of 1,000 cannot stop
+    /// inside it: the edge takes the first probe alone, which the instance
+    /// budget's edge reads, and walks no period after it.
+    #[test]
+    fn a_window_holding_fewer_periods_than_the_page_reads_the_first_probe_alone() {
+        let mut compiled = aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() });
+        compiled.window.interval = TimeInterval::Between {
+            from: "2026-01-01T00:00:00Z".parse().expect("a valid instant"),
+            to: "2026-01-02T00:00:00Z".parse().expect("a valid instant"),
+        };
+        let sql = sql_of(&compiled);
+        let edge = edge_of(&sql);
+        assert!(
+            edge.contains(r#"WITH RECURSIVE "probes" ("probe", "period_start", "period_end") AS (SELECT 1 AS "probe""#),
+            "{sql}"
+        );
+        assert!(!edge.contains(r#""probes"."probe" + (1)"#), "{sql}");
+        assert!(!edge.contains(r#""probes"."probe" <= (1000)"#), "{sql}");
+        assert!(edge.contains(r#""probes"."probe" = (1001)"#), "{sql}");
     }
 
     /// On the calendar grid the next probe starts at the next period's start,

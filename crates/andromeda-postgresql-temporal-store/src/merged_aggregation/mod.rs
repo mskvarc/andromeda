@@ -53,7 +53,7 @@ use andromeda_temporal::{error::TemporalError, merged_parts::LocalPart};
 use chrono::Utc;
 use sea_query::DynIden;
 use sqlx::{Connection, PgConnection, Row};
-use std::collections::HashSet;
+use std::{collections::HashSet, slice};
 
 /// The key the staging counts its own catalogue and stream keys down from:
 /// far past every key an identity sequence assigns, so a staged key never
@@ -93,7 +93,7 @@ impl TemporalRepository {
         }
         self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
         let names = self.resolve_query_names(compiled).await?;
-        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), entity_id, compiled, &names);
+        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), slice::from_ref(entity_id), compiled, &names);
         let pg_rows = statement.to_query().fetch_all(&mut *tx).await.map_err(TemporalStoreError::from)?;
         let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
         tx.commit().await.map_err(TemporalStoreError::from)?;

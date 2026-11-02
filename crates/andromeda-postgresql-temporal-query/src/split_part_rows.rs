@@ -17,6 +17,7 @@
 
 use crate::{
     alias::Ah,
+    entity_reads::READ_ENTITY_ID,
     history::{join_attribute_names, project_base_columns},
     scope_history::{order_scope_events, project_scope_event},
     stream_page::project_whole_streams,
@@ -42,9 +43,6 @@ use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
-/// The name every statement here projects each row's entity identifier under.
-pub const PART_ENTITY_ID: &str = "part_entity_id";
-
 /// Build the statement reading, for every entity of `entity_ids` this broker
 /// holds a Temporal Evolution of, the instance each stream of the attributes
 /// keyed `attributes` held when the window opens, deletions included, as
@@ -63,7 +61,7 @@ pub fn build_in_effect_attribute_instances(
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     select
-        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(READ_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, rows, Ah, SimpleExpr::from(true));
     join_attribute_names(&mut select);
@@ -94,7 +92,7 @@ pub fn build_in_effect_scope(branch: &HistoryBranch, compiled: &CompiledTemporal
     let mut select = Query::select();
     project_scope_event(&mut select, axis);
     select
-        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(READ_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, events.take(), ScopeEvent, SimpleExpr::from(true))
         .and_where(of_entities(entity_ids))
@@ -132,7 +130,7 @@ pub fn build_window_relationship_instances(
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     select
-        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(PART_ENTITY_ID))
+        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(READ_ENTITY_ID))
         .from(entity_rows(branch, E))
         .join_lateral(JoinType::Join, rows.take(), Ah, SimpleExpr::from(true));
     join_attribute_names(&mut select);
@@ -207,7 +205,7 @@ mod tests {
             r#""qh"."placed" < '2020-08-01 12:00:00"#,
             r#""qs"."attribute_name_key" = ANY(ARRAY [7])"#,
             r#") AS "ah" ON TRUE JOIN "attribute_names" AS "an""#,
-            r#"AS "part_entity_id""#,
+            r#"AS "read_entity_id""#,
             r#""e"."id" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1'])"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
@@ -226,7 +224,7 @@ mod tests {
             r#""sh"."observed_at" < '2020-08-01 12:00:00"#,
             r#""sh_next"."observed_at" <= '2020-08-01 12:00:00"#,
             r#"AS "scope_event_at""#,
-            r#"AS "part_entity_id""#,
+            r#"AS "read_entity_id""#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -242,7 +240,7 @@ mod tests {
             r#""wr"."attribute_name_key" = ANY(ARRAY [4])"#,
             r#""wr"."observed_at" IS NOT NULL"#,
             r#""wr"."observed_at" >= '2020-08-01 12:00:00"#,
-            r#"AS "part_entity_id""#,
+            r#"AS "read_entity_id""#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }

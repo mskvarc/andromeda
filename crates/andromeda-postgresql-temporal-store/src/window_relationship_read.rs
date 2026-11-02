@@ -2,7 +2,7 @@
 //! Relationships its Query Terms' hops start from, over the part of each
 //! contributed entity this store holds (clauses 4.9 and 5.7.4.4).
 
-use crate::{history_row_decode::assembled_history, in_effect_instance_read::entity_of, repo::TemporalRepository, temporal_query_execution::TemporalStatement};
+use crate::{entity_history_runs::entity_of, history_row_decode::assembled_history, repo::TemporalRepository, temporal_query_execution::TemporalStatement};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};

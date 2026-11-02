@@ -3,11 +3,11 @@
 //! (clauses 4.11 and 5.7.4.4).
 
 use crate::{
+    entity_history_runs::{by_entity, entity_of},
     error::TemporalStoreError,
     history_row_decode::assembled_history,
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
-    stored_catalog_error::StoredCatalogError,
     temporal_query_execution::TemporalStatement,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -15,12 +15,11 @@ use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-use andromeda_postgresql_temporal_query::split_part_rows::{PART_ENTITY_ID, build_in_effect_attribute_instances, build_in_effect_scope};
+use andromeda_postgresql_temporal_query::split_part_rows::{build_in_effect_attribute_instances, build_in_effect_scope};
 use andromeda_temporal::{
     error::TemporalError,
     port::in_effect_reads::{InEffectReads, ScopeRead},
 };
-use sqlx::{Row, postgres::PgRow};
 use std::collections::HashMap;
 
 impl TemporalRepository {
@@ -76,29 +75,4 @@ impl TemporalRepository {
         }
         Ok(in_effect)
     }
-}
-
-/// The entity a row was read for.
-pub(crate) fn entity_of(row: &PgRow) -> Result<Identifier, TemporalStoreError> {
-    let raw: String = row.try_get(PART_ENTITY_ID)?;
-    Ok(raw.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?)
-}
-
-/// `rows`, ordered by entity, cut into the runs of each entity.
-///
-/// A Scope event is folded from the rows it landed, so the rows of one
-/// entity are decoded apart from every other entity's.
-fn by_entity(rows: &[PgRow]) -> Result<Vec<(Identifier, &[PgRow])>, TemporalStoreError> {
-    let entities = rows.iter().map(entity_of).collect::<Result<Vec<_>, _>>()?;
-    let mut runs: Vec<(Identifier, &[PgRow])> = Vec::new();
-    let mut start = 0;
-    for end in 1..=rows.len() {
-        if entities.get(end) != entities.get(start)
-            && let (Some(entity_id), Some(run)) = (entities.get(start), rows.get(start..end))
-        {
-            runs.push((entity_id.clone(), run)); // clone: each run owns the identifier it is keyed by
-            start = end;
-        }
-    }
-    Ok(runs)
 }

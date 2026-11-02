@@ -35,6 +35,8 @@ pub mod columnstore_enablement;
 /// Letting a transaction decompress what its own confined statements must.
 pub(crate) mod decompression_allowance;
 mod entity_attribute_history;
+/// The rows of a read of several entities, cut and decoded per entity.
+pub(crate) mod entity_history_runs;
 /// Error types for the temporal store crate.
 pub mod error;
 /// The activity horizon bounding every instant a Temporal Evolution holds.
@@ -76,7 +78,8 @@ pub mod intent_application;
 pub(crate) mod merged_aggregation;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod mutator;
-/// Removing the families and value shapes a stream no longer holds.
+/// Reading the history or the aggregates of every entity of a page at once.
+pub(crate) mod page_history_read;
 /// Resolving the names and the attribute holders a temporal statement renders
 /// against.
 pub(crate) mod query_names_resolution;
@@ -115,6 +118,7 @@ pub mod stored_history_error;
 pub mod stored_instance_columns;
 pub(crate) mod stream_census;
 pub(crate) mod stream_shape_growth;
+/// Removing the families and value shapes a stream no longer holds.
 pub(crate) mod stream_shape_pruning;
 /// Reading the families and value shapes each attribute has been recorded with.
 pub(crate) mod stream_shape_read;

@@ -1,7 +1,10 @@
 //! The `aggrPeriodDuration` bucket width of an aggregated temporal query
 //! (clause 4.5.19).
 
-use crate::{error::QueryError, temporal::period_grid::PeriodGrid};
+use crate::{
+    error::QueryError,
+    temporal::{period_grid::PeriodGrid, window::TimeInterval},
+};
 use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
 
 /// A non-zero aggregation bucket width.
@@ -55,6 +58,23 @@ impl AggregationPeriod {
         } else {
             PeriodGrid::Calendar
         }
+    }
+
+    /// Whether no grid of this duration, wherever its origin lies, lays more
+    /// than `periods` periods over `interval`: never for an interval open at
+    /// either end or a calendar grid, whose periods have no fixed length.
+    ///
+    /// An interval of span s overlaps at most ⌈s / w⌉ + 1 periods of width w;
+    /// one more is allowed for the rounding of a fractional width.
+    #[must_use]
+    pub fn spans_at_most(&self, interval: TimeInterval, periods: u32) -> bool {
+        let (Some(from), Some(to)) = (interval.opening(), interval.closing()) else {
+            return false;
+        };
+        let (Some(width), Ok(span)) = (self.0.to_std(), (*to - *from).to_std()) else {
+            return false;
+        };
+        (span.as_secs_f64() / width.as_secs_f64()).ceil() + 2.0 <= f64::from(periods)
     }
 
     /// Whether the duration is a whole number of months and nothing else, so
@@ -119,7 +139,7 @@ pub mod optional {
 mod tests {
     use crate::{
         error::QueryError,
-        temporal::{aggregation_period::AggregationPeriod, period_grid::PeriodGrid},
+        temporal::{aggregation_period::AggregationPeriod, period_grid::PeriodGrid, window::TimeInterval},
     };
     use pretty_assertions::assert_eq;
 
@@ -174,6 +194,40 @@ mod tests {
             let period = AggregationPeriod::parse(raw).expect("parses").expect("non-zero");
             assert!(!period.is_whole_months(), "{raw}");
         }
+    }
+
+    fn between(from: &str, to: &str) -> TimeInterval {
+        TimeInterval::Between {
+            from: from.parse().expect("a valid instant"),
+            to: to.parse().expect("a valid instant"),
+        }
+    }
+
+    /// A day overlaps at most 25 hourly periods (24 plus one the origin may
+    /// split), so it fits a page of 26 and not one of 25, which keeps the
+    /// one-period allowance for a fractional width.
+    #[test]
+    fn a_bounded_window_on_an_exact_grid_spans_its_periods_plus_two() {
+        let hourly = AggregationPeriod::parse("PT1H").expect("parses").expect("non-zero");
+        let day = between("2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z");
+        assert!(hourly.spans_at_most(day, 26));
+        assert!(!hourly.spans_at_most(day, 25));
+        let quarter_hours = AggregationPeriod::parse("PT15M").expect("parses").expect("non-zero");
+        assert!(quarter_hours.spans_at_most(between("2024-01-01T00:00:00Z", "2024-01-01T00:20:00Z"), 4));
+        assert!(!quarter_hours.spans_at_most(between("2024-01-01T00:00:00Z", "2024-01-01T00:20:00Z"), 3));
+    }
+
+    /// The count of an open window or a calendar grid is not known before the
+    /// instances are read.
+    #[test]
+    fn an_open_window_or_a_calendar_grid_spans_no_known_count() {
+        let hourly = AggregationPeriod::parse("PT1H").expect("parses").expect("non-zero");
+        let instant = "2024-01-01T00:00:00Z".parse().expect("a valid instant");
+        for open in [TimeInterval::Unbounded, TimeInterval::After(instant), TimeInterval::Before(instant)] {
+            assert!(!hourly.spans_at_most(open, u32::MAX), "{open:?}");
+        }
+        let monthly = AggregationPeriod::parse("P1M").expect("parses").expect("non-zero");
+        assert!(!monthly.spans_at_most(between("2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"), u32::MAX));
     }
 
     #[test]

@@ -279,6 +279,8 @@ mod query;
 pub(crate) mod rendered_entity;
 /// The cut a partial response is made at, and the request that continues it.
 mod response_cut;
+/// An entity of a page whose stored history did not read back.
+mod unread_entity;
 
 /// What a listing of the identifiers a temporal query matches holds them to.
 #[cfg(test)]

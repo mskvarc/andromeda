@@ -1,7 +1,7 @@
 //! Reading the temporal evolution of one entity over a compiled window.
 //!
 //! Three callers need exactly this and nothing more: the query endpoint reads
-//! it once per matching identifier, the clause 4.5.23 join reads it once per
+//! it for every matching identifier of its page at once, the clause 4.5.23 join reads it once per
 //! Linked Entity it resolves, and both must produce the same history for the
 //! same entity over the same window. Keeping the pipeline -- history read and
 //! representation build -- in one place is what guarantees that. What is read
@@ -14,10 +14,11 @@
 
 use crate::{
     error::TemporalError,
-    port::read_scope::TemporalReadScope,
+    port::{history_reader::TemporalHistoryOutcome, read_scope::TemporalReadScope},
     read::{
         aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
         response_cut::ResponseCut,
+        unread_entity::UnreadEntity,
     },
     result_bound::ResultBound,
     service::TemporalService,
@@ -137,18 +138,43 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Persistence`] when the history cannot be read.
+    /// Returns [`TemporalError::Persistence`] when the history cannot be read,
+    /// or the failure that kept it from reading back.
     pub(crate) async fn read_history_page(
         &self,
         scope: &TemporalReadScope<'_>,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityHistoryPage, TemporalError> {
-        let rows = self.reader.query_entity_history(scope, entity_id, compiled).await?.into_rows();
-        Ok(EntityHistoryPage {
-            entity_id: entity_id.clone(), // clone: the page owns the identifier it is rendered under.
-            rows,
-        })
+        let mut read = self.reader.query_entities_history(scope, slice::from_ref(entity_id), compiled).await?;
+        // clone: the page owns the identifier it is rendered under.
+        history_page(entity_id.clone(), read.remove(entity_id)).map_err(|unread| *unread.error)
+    }
+
+    /// Read the page of each of `entity_ids` the compiled query selects, in
+    /// one read and in their order, each the page or the failure that kept
+    /// its history from reading back.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Persistence`] when the read itself fails.
+    pub(crate) async fn read_history_pages(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        entity_ids: Vec<Identifier>,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<Result<EntityHistoryPage, UnreadEntity>>, TemporalError> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut read = self.reader.query_entities_history(scope, &entity_ids, compiled).await?;
+        Ok(entity_ids
+            .into_iter()
+            .map(|entity_id| {
+                let answer = read.remove(&entity_id);
+                history_page(entity_id, answer)
+            })
+            .collect())
     }
 
     /// The one cut every entity of a response is made at, or `None` when the
@@ -217,6 +243,22 @@ impl TemporalService {
                 cut,
             },
         )
+    }
+}
+
+/// The page of `entity_id` the reader's `answer` for it holds: none when the
+/// compiled query selected nothing of it.
+fn history_page(entity_id: Identifier, answer: Option<Result<TemporalHistoryOutcome, TemporalError>>) -> Result<EntityHistoryPage, UnreadEntity> {
+    match answer {
+        None => Ok(EntityHistoryPage { entity_id, rows: Vec::new() }),
+        Some(Ok(outcome)) => Ok(EntityHistoryPage {
+            entity_id,
+            rows: outcome.into_rows(),
+        }),
+        Some(Err(error)) => Err(UnreadEntity {
+            entity_id,
+            error: Box::new(error),
+        }),
     }
 }
 

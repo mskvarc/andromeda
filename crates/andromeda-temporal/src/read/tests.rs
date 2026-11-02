@@ -130,22 +130,22 @@ impl TemporalHistoryReader for RefusingReader {
         panic!("query must not execute")
     }
 
-    async fn query_entity_history(
+    async fn query_entities_history(
         &self,
         _scope: &TemporalReadScope<'_>,
-        _entity_id: &Identifier,
+        _entity_ids: &[Identifier],
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalHistoryOutcome, TemporalError> {
+    ) -> Result<HashMap<Identifier, Result<TemporalHistoryOutcome, TemporalError>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")
     }
 
-    async fn query_entity_aggregation(
+    async fn query_entities_aggregation(
         &self,
         _scope: &TemporalReadScope<'_>,
-        _entity_id: &Identifier,
+        _entity_ids: &[Identifier],
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalAggregationOutcome, TemporalError> {
+    ) -> Result<HashMap<Identifier, Result<TemporalAggregationOutcome, TemporalError>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")
     }

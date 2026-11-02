@@ -141,28 +141,33 @@ impl TemporalHistoryReader for StubBroker {
         Ok(self.window_relationships_of(entity_ids))
     }
 
-    async fn query_entity_history(
+    async fn query_entities_history(
         &self,
         _scope: &TemporalReadScope<'_>,
-        entity_id: &Identifier,
+        entity_ids: &[Identifier],
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalHistoryOutcome, TemporalError> {
-        Ok(TemporalHistoryOutcome {
-            observations: self
-                .rows(entity_id)
-                .into_iter()
-                .map(|row| TemporalHistoryObservation { row, identity: None })
-                .collect(),
-        })
+    ) -> Result<HashMap<Identifier, Result<TemporalHistoryOutcome, TemporalError>>, TemporalError> {
+        Ok(entity_ids
+            .iter()
+            .filter_map(|entity_id| {
+                let observations: Vec<TemporalHistoryObservation> = self
+                    .rows(entity_id)
+                    .into_iter()
+                    .map(|row| TemporalHistoryObservation { row, identity: None })
+                    .collect();
+                // clone: the answer is keyed by the identifier it was read for.
+                (!observations.is_empty()).then(|| (entity_id.clone(), Ok(TemporalHistoryOutcome { observations })))
+            })
+            .collect())
     }
 
-    async fn query_entity_aggregation(
+    async fn query_entities_aggregation(
         &self,
         _scope: &TemporalReadScope<'_>,
-        _entity_id: &Identifier,
+        _entity_ids: &[Identifier],
         _compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalAggregationOutcome, TemporalError> {
-        Err(unsupported("query_entity_aggregation"))
+    ) -> Result<HashMap<Identifier, Result<TemporalAggregationOutcome, TemporalError>>, TemporalError> {
+        Err(unsupported("query_entities_aggregation"))
     }
     async fn query_merged_entity_aggregation(
         &self,

@@ -173,15 +173,17 @@ pub(crate) fn project_whole_streams(select: &mut SelectStatement) {
     select.expr_as(false_literal(), StreamContinues);
 }
 
-/// Order the page rows under `page` as the reconstruction reads them: by
+/// Order the history rows under `rows` as the reconstruction reads them: by
 /// attribute, then on the axis, ties broken on the hypertable's unique key.
-fn in_rendering_order(select: &mut SelectStatement, axis: AttributeHistory) {
+pub(crate) fn in_rendering_order(select: &mut SelectStatement, rows: impl IntoIden, axis: AttributeHistory) {
+    let rows = rows.into_iden();
+    // clone: every ordering key names the rows' alias.
     select
-        .order_by((Page, Alias::new("attribute_name")), Order::Asc)
-        .order_by((Page, axis), Order::Asc)
-        .order_by((Page, AttributeHistory::RecordedAt), Order::Asc)
-        .order_by((Page, AttributeHistory::WriteId), Order::Asc)
-        .order_by((Page, AttributeHistory::WriteOrdinal), Order::Asc);
+        .order_by((rows.clone(), Alias::new("attribute_name")), Order::Asc)
+        .order_by((rows.clone(), axis), Order::Asc)
+        .order_by((rows.clone(), AttributeHistory::RecordedAt), Order::Asc)
+        .order_by((rows.clone(), AttributeHistory::WriteId), Order::Asc)
+        .order_by((rows, AttributeHistory::WriteOrdinal), Order::Asc);
 }
 
 /// Clause 6.3.10: the page of `size` instances of every stream the Entity
@@ -208,7 +210,6 @@ pub(crate) fn walked_history(
             SimpleExpr::from(true),
         )
         .join_lateral(JoinType::Join, kept_instances(branch, compiled, condition, walk), Page, SimpleExpr::from(true));
-    in_rendering_order(&mut select, axis_column(compiled.window.timeproperty));
     select
 }
 
@@ -270,6 +271,5 @@ pub(crate) fn last_n_history(
         Page,
         SimpleExpr::from(true),
     );
-    in_rendering_order(&mut select, axis_column(compiled.window.timeproperty));
     select
 }

@@ -67,7 +67,7 @@ const TABLE: HistoryTable = HistoryTable::AttributeHistory;
 
 /// One `attribute_history` row read back but for its metadata, whose names
 /// the read looks up for every row at once.
-struct DecodedHistoryRow {
+pub(crate) struct DecodedHistoryRow {
     /// The observation, its metadata not yet assembled.
     observation: TemporalHistoryObservation,
     /// What the row stores beside its value, every name still a key.
@@ -78,7 +78,7 @@ struct DecodedHistoryRow {
 
 impl DecodedHistoryRow {
     /// Add every key the row's members and value hold to `held`.
-    fn collect_keys(&self, held: &mut HeldKeys) {
+    pub(crate) fn collect_keys(&self, held: &mut HeldKeys) {
         self.members.collect_keys(held);
         held.types.extend(self.datatype_key);
     }
@@ -90,7 +90,7 @@ impl DecodedHistoryRow {
     ///
     /// Returns [`TemporalStoreError`] when a key has no name in `names` or the
     /// members do not assemble.
-    fn assemble(self, names: &KeyNames) -> Result<TemporalHistoryObservation, TemporalStoreError> {
+    pub(crate) fn assemble(self, names: &KeyNames) -> Result<TemporalHistoryObservation, TemporalStoreError> {
         let DecodedHistoryRow {
             mut observation,
             members,
@@ -196,7 +196,7 @@ async fn assemble_history(
 
 /// Decode one `attribute_history` row into a [`TemporalHistoryRow`] whose
 /// metadata is assembled once the read has the names of its keys.
-fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreError> {
+pub(crate) fn decode_history_row(row: &PgRow) -> Result<DecodedHistoryRow, TemporalStoreError> {
     let attribute_type = attribute_type_of(decode_attribute_kind(row)?);
     let attribute_name = decode_attribute_name(row)?;
     let value = decode_value(row, attribute_type, &attribute_name)?;

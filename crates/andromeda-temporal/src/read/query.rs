@@ -15,6 +15,7 @@ use crate::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
+        unread_entity::UnreadEntity,
     },
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalService},
 };
@@ -157,8 +158,8 @@ impl TemporalService {
 }
 
 impl TemporalService {
-    /// Read the aggregated page of every entity of the response, then render
-    /// each at the response's common cut.
+    /// Read the aggregated page of every entity of the response in one read,
+    /// then render each at the response's common cut.
     ///
     /// Clause 6.3.10: one response carries one `Content-Range`, so every
     /// entity of the page is cut at the same period boundary, and an absent
@@ -168,8 +169,9 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns the [`TemporalError::TooManyResults`] an entity raised, or the
-    /// failure to resolve the names the request context gives.
+    /// Returns the [`TemporalError::TooManyResults`] an entity raised, the
+    /// failure of the read itself, or the failure to resolve the names the
+    /// request context gives.
     async fn render_aggregated_pages(
         &self,
         scope: &TemporalReadScope<'_>,
@@ -180,11 +182,11 @@ impl TemporalService {
         warnings: &mut Vec<TemporalQueryWarning>,
     ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
         let mut pages = Vec::with_capacity(entity_ids.len());
-        for entity_id in entity_ids {
-            match self.read_aggregation_page(scope, &entity_id, compiled).await {
+        for read in self.read_aggregation_pages(scope, entity_ids, compiled).await? {
+            match read {
                 Ok(page) => pages.push(page),
-                Err(error) => {
-                    settle_entity(entity_id, Err(error), warnings)?;
+                Err(UnreadEntity { entity_id, error }) => {
+                    settle_entity(entity_id, Err(*error), warnings)?;
                 }
             }
         }
@@ -206,8 +208,8 @@ impl TemporalService {
         Ok(rendered)
     }
 
-    /// Read the instance page of every entity of the response, then render
-    /// each at the response's common cut.
+    /// Read the instance page of every entity of the response in one read,
+    /// then render each at the response's common cut.
     ///
     /// Clause 6.3.10: one response carries one `Content-Range`, so every
     /// entity of the page is cut at the same instant. Every page is read
@@ -216,7 +218,7 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns the [`TemporalError::TooManyResults`] an entity or the common
-    /// cut raised.
+    /// cut raised, or the failure of the read itself.
     async fn render_instance_pages(
         &self,
         scope: &TemporalReadScope<'_>,
@@ -226,11 +228,11 @@ impl TemporalService {
         warnings: &mut Vec<TemporalQueryWarning>,
     ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
         let mut pages = Vec::with_capacity(entity_ids.len());
-        for entity_id in entity_ids {
-            match self.read_history_page(scope, &entity_id, compiled).await {
+        for read in self.read_history_pages(scope, entity_ids, compiled).await? {
+            match read {
                 Ok(page) => pages.push(page),
-                Err(error) => {
-                    settle_entity(entity_id, Err(error), warnings)?;
+                Err(UnreadEntity { entity_id, error }) => {
+                    settle_entity(entity_id, Err(*error), warnings)?;
                 }
             }
         }

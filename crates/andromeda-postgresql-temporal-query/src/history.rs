@@ -1,5 +1,6 @@
-//! Stage 2 of a temporal query: attribute history for one entity, optionally
-//! narrowed to one clause 6.3.10 page of instances per attribute.
+//! Stage 2 of a temporal query: the attribute history of every entity of a
+//! page, optionally narrowed to one clause 6.3.10 page of instances per
+//! attribute, read in one statement.
 //!
 //! The statement reads the attribute source of the branch, which reaches the
 //! hypertable through the temporal catalogue alone, so an entity whose
@@ -11,9 +12,10 @@
 //! overwritten.
 
 use crate::{
-    aggregation::build_aggregation_query,
+    aggregation::{build_aggregation_query, in_listing_order},
     alias::{Ah, An},
-    stream_page::{Walk, last_n_history, project_whole_streams, walked_history},
+    entity_reads::each_entity,
+    stream_page::{Walk, in_rendering_order, last_n_history, project_whole_streams, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
@@ -35,26 +37,48 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, postgis::st_as_ewkb};
 use iri_rs::IriBuf;
-use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
+use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 
-/// Build Stage 2 query: temporal history for a single entity.
+/// Alias `entity_rows`: the rows the read of one Entity answers.
+#[derive(Iden, Clone, Copy)]
+#[iden = "entity_rows"]
+struct EntityRows;
+
+/// Build Stage 2: the temporal history of each of `entity_ids`, every row
+/// beside the identifier of its Entity, ordered by it and then in the order
+/// the representation reads the rows of one Entity.
 ///
-/// The entity id is bound here rather than by the caller, so the statement owns
-/// its whole placeholder sequence and no two functions have to agree on where
-/// it starts.
+/// Every Entity is read on its own inside one statement
+/// ([`each_entity`]), so a page of entities costs one round trip and one
+/// planning, and each Entity's streams are still read through their own
+/// indexes.
 #[must_use]
-pub fn build_temporal_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
+pub fn build_temporal_history_query(
+    branch: &HistoryBranch,
+    entity_ids: &[Identifier],
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+) -> SelectStatement {
     // The ranked, unranked and aggregated shapes read the same entity's rows
     // among the same represented instances, so none can reach a row the others
     // cannot.
-    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
     let condition = represented_instances(compiled, names);
-    match compiled.representation.format {
+    let mut select = match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
-        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => build_aggregation_query(branch, &of, compiled, &condition, names),
-        TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(branch, &of, compiled, condition),
-    }
+        TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => {
+            let mut select = each_entity(entity_ids, EntityRows, |of| build_aggregation_query(branch, of, compiled, &condition, names));
+            in_listing_order(&mut select, EntityRows);
+            select
+        }
+        TemporalFormat::Normalized | TemporalFormat::TemporalValues => {
+            let mut select = each_entity(entity_ids, EntityRows, |of| build_history_query(branch, of, compiled, condition));
+            in_rendering_order(&mut select, EntityRows, axis_column(compiled.window.timeproperty));
+            select
+        }
+    };
+    select.expr(Expr::col((EntityRows, Asterisk)));
+    select
 }
 
 /// The Attribute instances the temporal representation of an entity carries,
@@ -170,7 +194,7 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
 /// periods as instances.
 fn build_history_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
     match compiled.instances.page {
-        InstancePage::Whole => whole_history(branch, of, compiled, condition),
+        InstancePage::Whole => whole_history(branch, of, condition),
         InstancePage::LastN { n } => last_n_history(branch, of, compiled, &condition, n),
         InstancePage::Forward { size }
         | InstancePage::Periods {
@@ -184,20 +208,13 @@ fn build_history_query(branch: &HistoryBranch, of: &HistoryOf, compiled: &Compil
     }
 }
 
-/// Every instance in the window, in rendering order.
-fn whole_history(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
-    let axis = axis_column(compiled.window.timeproperty);
+/// Every instance in the window.
+fn whole_history(branch: &HistoryBranch, of: &HistoryOf, condition: Condition) -> SelectStatement {
     let mut select = Query::select();
     project_base_columns(&mut select);
     project_whole_streams(&mut select);
     base_history_source(&mut select, branch, of);
     select.cond_where(condition);
-    select
-        .order_by((An, AttributeNames::Name), Order::Asc)
-        .order_by((Ah, axis), Order::Asc)
-        .order_by((Ah, AttributeHistory::RecordedAt), Order::Asc)
-        .order_by((Ah, AttributeHistory::WriteId), Order::Asc)
-        .order_by((Ah, AttributeHistory::WriteOrdinal), Order::Asc);
     select.take()
 }
 
@@ -228,7 +245,7 @@ mod tests {
     };
     use iri_rs::IriBuf;
     use sea_query::{IntoIden, PostgresQueryBuilder};
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, slice};
 
     /// The one entity these tests build a history statement for.
     fn vehicle_id() -> Identifier {
@@ -258,7 +275,7 @@ mod tests {
     /// The stage-2 statement rendered as SQL with its values inlined, which is
     /// what the shape assertions read.
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_temporal_history_query(&HistoryBranch::live(), &vehicle_id(), compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
     }
 
     #[test]
@@ -402,7 +419,8 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &names).to_string(PostgresQueryBuilder);
+        let sql =
+            build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#""ah"."attribute_name_key" = ANY(ARRAY [7])"#),
             "the attrs narrow by dictionary key: {sql}"
@@ -481,13 +499,14 @@ mod tests {
     #[test]
     fn the_history_read_unions_the_pending_rows_of_the_entity() {
         let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains(r#""re"."id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        assert!(sql.contains(r#"UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1']) AS "read_entity""#), "{sql}");
+        assert!(sql.contains(r#""re"."id" = "read_entity"."read_entity""#), "{sql}");
         assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(sql.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
+        assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
         let snapshot = Alias::new("snap_7").into_iden();
         let recorded = build_temporal_history_query(
             &HistoryBranch::recorded_in(snapshot),
-            &vehicle_id(),
+            slice::from_ref(&vehicle_id()),
             &minimal_compiled(),
             &QueryNames::default(),
         )
@@ -510,7 +529,13 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.page = page;
         compiled.window.interval = interval;
-        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(
+            &HistoryBranch::live_recorded(),
+            slice::from_ref(&vehicle_id()),
+            &compiled,
+            &QueryNames::default(),
+        )
+        .to_string(PostgresQueryBuilder)
     }
 
     /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is the last `n` instances of each
@@ -679,8 +704,13 @@ mod tests {
                 compiled.representation.aggr_methods = vec![AggrMethod::Sum];
                 compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
                 compiled.instances.page = page;
-                let sql = build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default())
-                    .to_string(PostgresQueryBuilder);
+                let sql = build_temporal_history_query(
+                    &HistoryBranch::live_recorded(),
+                    slice::from_ref(&vehicle_id()),
+                    &compiled,
+                    &QueryNames::default(),
+                )
+                .to_string(PostgresQueryBuilder);
                 assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{period}: {sql}");
                 assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
             }
@@ -721,7 +751,13 @@ mod tests {
         compiled.window.timeproperty = axis;
         compiled.instances.page = page;
         compiled.window.interval = interval;
-        build_temporal_history_query(&HistoryBranch::live_recorded(), &vehicle_id(), &compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
+        build_temporal_history_query(
+            &HistoryBranch::live_recorded(),
+            slice::from_ref(&vehicle_id()),
+            &compiled,
+            &QueryNames::default(),
+        )
+        .to_string(PostgresQueryBuilder)
     }
 
     /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` on every
@@ -770,11 +806,12 @@ mod tests {
         assert!(!sql.contains("DISTINCT FROM"), "{sql}");
     }
 
-    /// Every instance in the window is read when no page applies.
+    /// Every instance in the window is read when no page applies: the one
+    /// LATERAL is the read of each entity, none reads a stream on its own.
     #[test]
     fn the_whole_history_reads_every_instance() {
         let sql = sql_of(&minimal_compiled());
-        assert!(!sql.contains("LATERAL"), "{sql}");
+        pretty_assertions::assert_eq!(sql.matches("LATERAL").count(), 1, "{sql}");
         assert!(!sql.contains("LIMIT"), "{sql}");
     }
 }

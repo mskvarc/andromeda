@@ -27,7 +27,7 @@ use std::{
     time::Duration,
 };
 
-/// Result of one entity history read.
+/// What a history read answered for one entity.
 #[derive(Debug)]
 pub struct TemporalHistoryOutcome {
     /// Neutral history observations in stable temporal order with optional append provenance.
@@ -42,7 +42,7 @@ impl TemporalHistoryOutcome {
     }
 }
 
-/// Result of one entity aggregation read.
+/// What an aggregation read answered for one entity.
 #[derive(Debug)]
 pub struct TemporalAggregationOutcome {
     /// The periods read, each stream's in the order the representation lists
@@ -270,24 +270,36 @@ pub trait TemporalHistoryReader: Send + Sync {
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError>;
 
-    /// Read neutral temporal observations for one entity.
+    /// Read neutral temporal observations for each of `entity_ids`, in one
+    /// read whatever their number.
+    ///
+    /// An entity the compiled query selects nothing of is absent from the
+    /// result. One whose stored history does not read back maps to that
+    /// failure, so a caller can drop it alone; a failure of the read itself
+    /// fails the call.
     #[must_use = "temporal history reads must be awaited"]
-    async fn query_entity_history(
+    async fn query_entities_history(
         &self,
         scope: &TemporalReadScope<'_>,
-        entity_id: &Identifier,
+        entity_ids: &[Identifier],
         compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalHistoryOutcome, TemporalError>;
+    ) -> Result<HashMap<Identifier, Result<TemporalHistoryOutcome, TemporalError>>, TemporalError>;
 
-    /// Read neutral aggregation buckets for one entity, with the origin they
-    /// were laid from.
+    /// Read neutral aggregation buckets for each of `entity_ids`, with the
+    /// origin each entity's were laid from, in one read whatever their
+    /// number.
+    ///
+    /// An entity the compiled query aggregates nothing of is absent from the
+    /// result. One whose aggregates do not read back, or whose groups span
+    /// inputs a requested method cannot, maps to that failure; a failure of
+    /// the read itself fails the call.
     #[must_use = "temporal aggregation reads must be awaited"]
-    async fn query_entity_aggregation(
+    async fn query_entities_aggregation(
         &self,
         scope: &TemporalReadScope<'_>,
-        entity_id: &Identifier,
+        entity_ids: &[Identifier],
         compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalAggregationOutcome, TemporalError>;
+    ) -> Result<HashMap<Identifier, Result<TemporalAggregationOutcome, TemporalError>>, TemporalError>;
 
     /// Read the aggregation buckets of one entity over its instances held in
     /// this view together with `answered`, the instances Context Sources

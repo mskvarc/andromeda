@@ -57,6 +57,7 @@ use sea_query::{
     ExprTrait,
     Func,
     Iden,
+    IntoIden,
     JoinType,
     Order,
     Query,
@@ -364,17 +365,25 @@ pub fn build_aggregation_query(
         Page,
         SimpleExpr::from(true),
     );
-    select
-        .order_by((An, AttributeNames::Name), Order::Asc)
-        // The named instances of an attribute come before its default
-        // instance, whose grain key, the empty string, sorts first.
-        .order_by_expr(is_default_instance(Expr::col((St, HistoryGrain::DatasetKey))), Order::Asc)
-        .order_by((St, HistoryGrain::DatasetKey), Order::Asc)
-        .order_by((Page, PeriodOrder), Order::Asc);
     if let Some(origin) = origin {
         select.with_cte(WithClause::new().cte(origin).to_owned());
     }
     select.take()
+}
+
+/// Order the aggregated rows under `rows` as the representation lists them:
+/// by attribute, each attribute's named instances before its default one,
+/// then each stream's periods in order.
+pub(crate) fn in_listing_order(select: &mut SelectStatement, rows: impl IntoIden) {
+    let rows = rows.into_iden();
+    // clone: every ordering key names the rows' alias.
+    select
+        .order_by((rows.clone(), Alias::new("attribute_name")), Order::Asc)
+        // The named instances of an attribute come before its default
+        // instance, whose grain key, the empty string, sorts first.
+        .order_by_expr(is_default_instance(Expr::col((rows.clone(), HistoryGrain::DatasetKey))), Order::Asc)
+        .order_by((rows.clone(), HistoryGrain::DatasetKey), Order::Asc)
+        .order_by((rows, PeriodOrder), Order::Asc);
 }
 
 #[cfg(test)]
@@ -383,8 +392,14 @@ pub fn build_aggregation_query(
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::aggregation::build_aggregation_query;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use crate::{aggregation::build_aggregation_query, history::build_temporal_history_query};
+    use andromeda_ngsi_ld_lexicon::{
+        aggr_method::AggrMethod,
+        identifier::Identifier,
+        temporal_format::TemporalFormat,
+        time::date_time::NgsiLdDateTime,
+        time_prop::TimeProp,
+    };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         temporal::{
@@ -402,6 +417,7 @@ mod tests {
     };
     use chrono::{DateTime, Utc};
     use sea_query::{Condition, Expr, PostgresQueryBuilder};
+    use std::slice;
 
     fn aggregated(methods: Vec<AggrMethod>, period: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -811,11 +827,18 @@ mod tests {
             sql.contains(r#"ROW_NUMBER() OVER (  ORDER BY "bucket"."bucket_start" ASC ) AS "period_order""#),
             "{sql}"
         );
-        let order_by = sql.rsplit("ORDER BY").next().expect("an ORDER BY clause").trim();
+        let read = build_temporal_history_query(
+            &HistoryBranch::live(),
+            slice::from_ref(&"urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("a valid identifier")),
+            &aggregated(vec![AggrMethod::Avg], Some("PT1H")),
+            &QueryNames::default(),
+        )
+        .to_string(PostgresQueryBuilder);
+        let order_by = read.rsplit("ORDER BY").next().expect("an ORDER BY clause").trim();
         pretty_assertions::assert_eq!(
             order_by,
-            "\"an\".\"name\" ASC, \"st\".\"dataset_key\" = ('') ASC, \"st\".\"dataset_key\" ASC, \"page\".\"period_order\" ASC",
-            "{sql}"
+            "\"read_entity\".\"read_entity\" ASC, \"entity_rows\".\"attribute_name\" ASC, \"entity_rows\".\"dataset_key\" = ('') ASC, \"entity_rows\".\"dataset_key\" ASC, \"entity_rows\".\"period_order\" ASC",
+            "{read}"
         );
     }
 

@@ -1,4 +1,5 @@
-//! The scope half of stage 2: the reified temporal scope of one entity.
+//! The scope half of stage 2: the reified temporal scope of the entities of
+//! a page.
 //!
 //! Clause 4.18 makes the Scope "a special scope Property that is non-reified in
 //! the normalized Entity representation and reified in the temporal
@@ -16,16 +17,17 @@
 //! Vehicle B9211 (scoped at 11:00, queried between 12:00 and 13:00) into the
 //! answer with the 11:00 instant the annex renders.
 
+use crate::entity_reads::each_entity;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::{
-    history_source::{HistoryBranch, HistoryOf, scope_rows::scope_rows},
+    history_source::{HistoryBranch, scope_rows::scope_rows},
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
     window_reach::WindowReach,
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
-use sea_query::{Alias, Expr, Order, Query, SelectStatement};
+use sea_query::{Alias, Asterisk, Expr, Order, Query, SelectStatement};
 
 /// The name the statement projects the requested axis under.
 ///
@@ -53,41 +55,42 @@ pub fn scope_is_selected(compiled: &CompiledTemporalQuery) -> bool {
             .any(|attribute| attribute.as_str() == expanded_properties::SCOPE.as_str())
 }
 
-/// Build the scope half of stage 2: the scope events of one entity whose
-/// clause 4.18 validity interval overlaps the compiled window.
+/// Build the scope half of stage 2: the scope events of each of `entity_ids`
+/// whose clause 4.18 validity interval overlaps the compiled window, every
+/// row beside the identifier of its Entity ([`each_entity`]).
 ///
-/// Every row is returned, ordered so that the rows of a single event arrive
-/// together: clause 4.18 admits at most one instance of the scope Property per
-/// Entity and renders more than one Scope as a JSON array, so the several rows
-/// a multi-Scope write lands at one instant are one rendered instance. One
-/// write can still state several instances: clause 4.5.7 makes the temporal
-/// representation of a Property "an Array of JSON-LD objects, each one
-/// representing an instance of the referred Property [...] at a particular
-/// point in time", so the instant separates the events and the write identity
-/// alone does not.
+/// Every row is returned, ordered by the Entity and then so that the rows of a
+/// single event arrive together: clause 4.18 admits at most one instance of
+/// the scope Property per Entity and renders more than one Scope as a JSON
+/// array, so the several rows a multi-Scope write lands at one instant are one
+/// rendered instance. One write can still state several instances: clause
+/// 4.5.7 makes the temporal representation of a Property "an Array of JSON-LD
+/// objects, each one representing an instance of the referred Property [...]
+/// at a particular point in time", so the instant separates the events and
+/// the write identity alone does not.
 ///
 /// `lastN` does not bound this statement. Clause 5.7.4.4 defines it over "a
 /// number, n, of Attribute instances", and clause 4.5.6 names the Scope beside
 /// "each Property and Relationship" rather than among them; the events the
 /// window admits are what the representation carries.
 #[must_use]
-pub fn build_scope_history_query(branch: &HistoryBranch, entity_id: &Identifier, compiled: &CompiledTemporalQuery) -> SelectStatement {
+pub fn build_scope_history_query(branch: &HistoryBranch, entity_ids: &[Identifier], compiled: &CompiledTemporalQuery) -> SelectStatement {
     let axis = scope_history_axis(compiled.window.timeproperty);
-
-    let mut select = Query::select();
-    project_scope_event(&mut select, axis);
-
     // Clause 5.6.6 leaves the Temporal Evolution standing when the entity is
     // deleted, so the scope source reads the identity from the temporal
     // catalogue and never from current state.
-    let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
-    select
-        .from(scope_rows(branch, &of, ScopeEvent))
-        .cond_where(positioned_on_axis(axis))
-        .cond_where(overlaps_window(axis, compiled.window.interval, WindowReach::InsideAndInEffect, branch, &of));
+    let mut select = each_entity(entity_ids, ScopeEvent, |of| {
+        let mut events = Query::select();
+        events
+            .column((ScopeEvent, Asterisk))
+            .from(scope_rows(branch, of, ScopeEvent))
+            .cond_where(positioned_on_axis(axis))
+            .cond_where(overlaps_window(axis, compiled.window.interval, WindowReach::InsideAndInEffect, branch, of));
+        events.take()
+    });
+    project_scope_event(&mut select, axis);
     order_scope_events(&mut select, axis);
-
-    select.take()
+    select
 }
 
 /// Project every column one scope event row is read back from, the event read
@@ -147,6 +150,7 @@ mod tests {
     use andromeda_postgresql_query::history_source::HistoryBranch;
     use iri_rs::IriBuf;
     use sea_query::PostgresQueryBuilder;
+    use std::slice;
 
     fn vehicle_id() -> Identifier {
         "urn:ngsi-ld:Vehicle:B9211".parse().expect("valid entity id")
@@ -167,7 +171,7 @@ mod tests {
     }
 
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_scope_history_query(&HistoryBranch::live(), &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        build_scope_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled).to_string(PostgresQueryBuilder)
     }
 
     fn iri(raw: &str) -> IriBuf {
@@ -234,7 +238,7 @@ mod tests {
     fn the_rows_of_one_event_are_ordered_together() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("ORDER BY \"sh\".\"observed_at\" ASC, \"sh\".\"recorded_at\" ASC, \"sh\".\"write_id\" ASC, \"sh\".\"write_ordinal\" ASC"),
+            sql.contains("ORDER BY \"read_entity\".\"read_entity\" ASC, \"sh\".\"observed_at\" ASC, \"sh\".\"recorded_at\" ASC, \"sh\".\"write_id\" ASC, \"sh\".\"write_ordinal\" ASC"),
             "{sql}"
         );
     }
@@ -297,6 +301,7 @@ mod tests {
             sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3, 4)"#),
             "{sql}"
         );
-        assert!(sql.contains(&format!(r#""pe"."entity_id" = '{}'"#, vehicle_id())), "{sql}");
+        assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
+        assert!(sql.contains(&format!("UNNEST(ARRAY ['{}'])", vehicle_id())), "{sql}");
     }
 }

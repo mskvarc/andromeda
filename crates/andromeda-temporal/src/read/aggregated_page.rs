@@ -14,10 +14,11 @@
 use crate::{
     error::TemporalError,
     grouping_depth::grouping_depth,
-    port::read_scope::TemporalReadScope,
+    port::{history_reader::TemporalAggregationOutcome, read_scope::TemporalReadScope},
     read::{
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, presence_of},
         response_cut::ResponseCut,
+        unread_entity::UnreadEntity,
     },
     result_bound::ResultBound,
     service::TemporalService,
@@ -28,6 +29,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, temporal_history
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_grid::PeriodGrid};
 use andromeda_ngsi_ld_render::temporal::{page_cut::PageCut, period_cut::period_time_range, whole_range::WholeRange};
 use chrono::{DateTime, Utc};
+use std::slice;
 
 /// One entity's aggregated periods as its page read them, before the
 /// response's common cut is applied.
@@ -76,9 +78,48 @@ impl TemporalService {
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAggregationPage, TemporalError> {
-        let outcome = self.reader.query_entity_aggregation(scope, entity_id, compiled).await?;
+        let mut read = self.reader.query_entities_aggregation(scope, slice::from_ref(entity_id), compiled).await?;
         // clone: the page owns the identifier it is rendered under.
-        Ok(EntityAggregationPage::read(entity_id.clone(), outcome.periods, outcome.origin))
+        aggregation_page(entity_id.clone(), read.remove(entity_id)).map_err(|unread| *unread.error)
+    }
+
+    /// Read the page of aggregated periods of each of `entity_ids` the
+    /// compiled query selects, in one read and in their order, each the page
+    /// or the failure that kept its aggregates from reading back.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError`] when the read itself fails.
+    pub(crate) async fn read_aggregation_pages(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        entity_ids: Vec<Identifier>,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<Result<EntityAggregationPage, UnreadEntity>>, TemporalError> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut read = self.reader.query_entities_aggregation(scope, &entity_ids, compiled).await?;
+        Ok(entity_ids
+            .into_iter()
+            .map(|entity_id| {
+                let answer = read.remove(&entity_id);
+                aggregation_page(entity_id, answer)
+            })
+            .collect())
+    }
+}
+
+/// The page of `entity_id` the reader's `answer` for it holds: no period when
+/// the compiled query aggregated nothing of it.
+fn aggregation_page(entity_id: Identifier, answer: Option<Result<TemporalAggregationOutcome, TemporalError>>) -> Result<EntityAggregationPage, UnreadEntity> {
+    match answer {
+        None => Ok(EntityAggregationPage::read(entity_id, Vec::new(), None)),
+        Some(Ok(outcome)) => Ok(EntityAggregationPage::read(entity_id, outcome.periods, outcome.origin)),
+        Some(Err(error)) => Err(UnreadEntity {
+            entity_id,
+            error: Box::new(error),
+        }),
     }
 }
 

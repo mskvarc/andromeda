@@ -128,6 +128,18 @@ pub(crate) enum ProbedPeriods {
     Unlisted,
 }
 
+/// Whether the window can hold more periods than a page, so the count edge
+/// may fall inside it.
+#[derive(Clone, Copy)]
+pub(crate) enum CountEdge {
+    /// The window may hold more: the probes walk the stream to find the edge.
+    Probed,
+    /// No grid of the period lays more periods than a page over the window,
+    /// so the count edge lies beyond it and only the first probe, which the
+    /// budget edge reads, is taken.
+    OutOfReach,
+}
+
 /// How one stream's page of periods is walked: the direction, the periods
 /// it holds at most, the instances when the page bounds them, and the
 /// `lastN` a backward page keeps.
@@ -145,10 +157,11 @@ pub(crate) struct PagedWalk {
     pub(crate) last_n: Option<NonZeroU32>,
 }
 
-/// The skip-scan's probes: the first instance `walk` reaches, then from each
-/// probe's period the first instance beyond it, at most `periods` + 1 probes,
-/// each beside the start and end of the period it fell in.
-fn probes_of_stream(probes_of: &StreamProbes<'_>, grid: &AggregationGrid, walk: Walk, periods: u32) -> CommonTableExpression {
+/// The skip-scan's probes: the first instance `walk` reaches, then, unless
+/// `count` puts the count edge out of reach, from each probe's period the
+/// first instance beyond it, at most `periods` + 1 probes, each beside the
+/// start and end of the period it fell in.
+fn probes_of_stream(probes_of: &StreamProbes<'_>, grid: &AggregationGrid, walk: Walk, periods: u32, count: CountEdge) -> CommonTableExpression {
     let found_period = |select: &mut SelectStatement| {
         select
             .expr_as(AggregationGrid::start_under(FoundPeriod), PeriodStart)
@@ -174,7 +187,12 @@ fn probes_of_stream(probes_of: &StreamProbes<'_>, grid: &AggregationGrid, walk: 
     next.and_where(Expr::col((Probes, Probe)).lte(int_literal(i64::from(periods))))
         .and_where(Expr::col((Found, Instant)).is_not_null());
 
-    first.union(UnionType::All, next);
+    match count {
+        CountEdge::Probed => {
+            first.union(UnionType::All, next);
+        }
+        CountEdge::OutOfReach => {}
+    }
     CommonTableExpression::new()
         .query(first)
         .columns([Probe.into_iden(), PeriodStart.into_iden(), PeriodEnd.into_iden()])
@@ -211,8 +229,10 @@ fn open_bound(walk: Walk, edge: SimpleExpr) -> SimpleExpr {
 /// one alone holds more; the edge is the nearer of the two. A backward page
 /// keeping the last `lastN` instances is complete when it already holds that
 /// many. `periods` says whether the edge also lists the periods the probes
-/// found.
-pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged: PagedWalk, periods: ProbedPeriods) -> SelectStatement {
+/// found, and `count` whether the count edge can fall inside the window: out
+/// of reach, no probe lands one past the period count and the count edge is
+/// NULL.
+pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged: PagedWalk, periods: ProbedPeriods, count: CountEdge) -> SelectStatement {
     let walk = paged.walk;
     let beyond_count = i64::from(paged.periods) + 1;
     let count_edge = match walk {
@@ -252,7 +272,7 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
     edge_cut.expr_as(edge, Cut).with_cte(
         WithClause::new()
             .recursive(true)
-            .cte(probes_of_stream(probes, grid, walk, paged.periods))
+            .cte(probes_of_stream(probes, grid, walk, paged.periods, count))
             .to_owned(),
     );
     let mut edge_bound = Query::select();

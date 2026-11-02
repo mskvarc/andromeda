@@ -1,12 +1,9 @@
-//! Stage 1 resolves entity ids, including the `q`-attribute dictionary lookup; stage 2 runs the per-entity history SQL builder and decodes each `PgRow` into a [`TemporalHistoryRow`].
+//! Stage 1 resolves entity ids, including the `q`-attribute dictionary lookup; stage 2 reads the history of every entity of the page in one statement and decodes each `PgRow` into a [`TemporalHistoryRow`].
 
 use crate::{
-    aggregation_rows_read::{decode_aggregation_rows, decode_period_origin},
     error::TemporalStoreError,
     history_branch::branch_of,
-    history_row_decode::assembled_history,
     repo::TemporalRepository,
-    scope_history_read::decode_scope_history,
     stored_attribute_shape::StoredAttributeShape,
     stored_catalog_error::StoredCatalogError,
     temporal_query_execution::TemporalStatement,
@@ -20,13 +17,7 @@ use andromeda_postgresql_codes::{
     attribute_kind_code::{attribute_type_of, stored_attribute_kind},
     recorded_shape::RecordedShape,
 };
-use andromeda_postgresql_query::history_source::HistoryBranch;
-use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-use andromeda_postgresql_temporal_query::{
-    history::build_temporal_history_query,
-    scope_history::{build_scope_history_query, scope_is_selected},
-    stage1::build_stage1_entity_ids,
-};
+use andromeda_postgresql_temporal_query::stage1::build_stage1_entity_ids;
 use andromeda_temporal::{
     error::TemporalError,
     merged_parts::LocalPart,
@@ -39,7 +30,6 @@ use andromeda_temporal::{
             RecordedValueKind,
             ShapeHolders,
             TemporalAggregationOutcome,
-            TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
             TemporalReaderCapabilities,
@@ -121,33 +111,6 @@ const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttrib
     RecordedAttributeShape {
         family: attribute_type_of(stored.kind),
         value_kind: recorded_value_kind(stored.shape),
-    }
-}
-
-impl TemporalRepository {
-    /// Read the reified temporal scope of one entity over the compiled window.
-    ///
-    /// Clause 4.18 makes the Scope "a special scope Property that is
-    /// non-reified in the normalized Entity representation and reified in the
-    /// temporal representation of an Entity", and Table 6.18.3.2-1 lets a
-    /// request narrow to it through `attrs` — which annex C clause C.5.16 does
-    /// with `attrs=speed,scope`. An `attrs` that names other members alone
-    /// therefore skips the read entirely rather than reading rows the response
-    /// would drop.
-    async fn read_scope_history(
-        &self,
-        branch: &HistoryBranch,
-        entity_id: &Identifier,
-        compiled: &CompiledTemporalQuery,
-    ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
-        if !scope_is_selected(compiled) {
-            return Ok(Vec::new());
-        }
-        let statement = build_scope_history_query(branch, entity_id, compiled);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::ScopeHistory, &statement, StatementPlanning::Cached)
-            .await?;
-        decode_scope_history(&pg_rows).map_err(TemporalError::from)
     }
 }
 
@@ -278,32 +241,13 @@ impl TemporalHistoryReader for TemporalRepository {
         self.read_window_relationship_instances(&branch_of(scope), compiled, entity_ids).await
     }
 
-    async fn query_entity_history(
+    async fn query_entities_history(
         &self,
         scope: &TemporalReadScope<'_>,
-        entity_id: &Identifier,
+        entity_ids: &[Identifier],
         compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let branch = branch_of(scope);
-        let names = self.resolve_query_names(compiled).await?;
-        let stage2 = build_temporal_history_query(&branch, entity_id, compiled, &names);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::History, &stage2, StatementPlanning::Cached)
-            .await?;
-
-        // Clause 4.18 reifies the Scope in the temporal representation, and it
-        // is stored apart from attribute history because clause 4.5.4 gives it
-        // no attribute stream, so the representation is assembled from two
-        // reads. The scope leads, which is the order annex C clause C.5.16
-        // renders it in.
-        let mut observations = self.read_scope_history(&branch, entity_id, compiled).await?;
-        observations.extend(
-            assembled_history(&pg_rows, self.attribute_names.as_ref(), self.entity_type_names.as_ref())
-                .await
-                .map_err(TemporalError::from)?,
-        );
-
-        Ok(TemporalHistoryOutcome { observations })
+    ) -> Result<HashMap<Identifier, Result<TemporalHistoryOutcome, TemporalError>>, TemporalError> {
+        self.read_entities_history(&branch_of(scope), entity_ids, compiled).await
     }
 
     async fn query_merged_entity_aggregation(
@@ -319,22 +263,13 @@ impl TemporalHistoryReader for TemporalRepository {
             .await
     }
 
-    async fn query_entity_aggregation(
+    async fn query_entities_aggregation(
         &self,
         scope: &TemporalReadScope<'_>,
-        entity_id: &Identifier,
+        entity_ids: &[Identifier],
         compiled: &CompiledTemporalQuery,
-    ) -> Result<TemporalAggregationOutcome, TemporalError> {
-        let names = self.resolve_query_names(compiled).await?;
-        let stage2 = build_temporal_history_query(&branch_of(scope), entity_id, compiled, &names);
-        let pg_rows = self
-            .execute_temporal_query(TemporalStatement::Aggregation, &stage2, StatementPlanning::Cached)
-            .await?;
-
-        Ok(TemporalAggregationOutcome {
-            periods: decode_aggregation_rows(&pg_rows, entity_id, compiled)?,
-            origin: decode_period_origin(&pg_rows)?,
-        })
+    ) -> Result<HashMap<Identifier, Result<TemporalAggregationOutcome, TemporalError>>, TemporalError> {
+        self.read_entities_aggregation(&branch_of(scope), entity_ids, compiled).await
     }
 }
 
