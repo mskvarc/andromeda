@@ -111,8 +111,7 @@ pub fn record_inserted(dictionary: NameDictionary, count: u64) {
 ///
 /// The cache reports what it holds, the share moves the dictionary's total by
 /// the difference and sets the gauge to the total, and dropping the share takes
-/// its last report back out. The gauge is set absolutely, so a series the
-/// recorder reaps while idle comes back with the right value.
+/// its last report back out.
 #[derive(Debug)]
 pub struct DictionaryEntries {
     /// The dictionary whose total this share moves.
@@ -169,6 +168,7 @@ mod tests {
         names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_EVICTIONS_TOTAL, NAME_DICTIONARY_INSERTED_TOTAL, NAME_DICTIONARY_LOOKUPS_TOTAL},
         recorder::TelemetryRecorder,
     };
+    use std::{thread::sleep, time::Duration};
 
     #[test]
     fn dictionaries_and_causes_render_as_kebab_case_label_values() {
@@ -230,10 +230,11 @@ mod tests {
     }
 
     /// The only test that moves the process-wide totals, so no other test can
-    /// race the values it asserts.
+    /// race the values it asserts. The last value is still rendered past the
+    /// gauge idle timeout.
     #[test]
     fn the_entries_gauge_sums_every_cache_and_forgets_a_dropped_one() -> Result<(), TelemetryError> {
-        let recorder = TelemetryRecorder::detached()?;
+        let recorder = TelemetryRecorder::detached_with(Duration::from_millis(50), None)?;
         let gauge = |rendered: &str, value: u64| rendered.contains(&format!("{NAME_DICTIONARY_ENTRIES}{{dictionary=\"attribute-names\"}} {value}\n"));
         recorder.record_locally(|| {
             let first = DictionaryEntries::new(NameDictionary::AttributeNames);
@@ -248,6 +249,8 @@ mod tests {
             drop(first);
             assert!(gauge(&recorder.render(), 0), "{}", recorder.render());
         });
+        sleep(Duration::from_millis(150));
+        assert!(gauge(&recorder.render(), 0), "{}", recorder.render());
         Ok(())
     }
 }

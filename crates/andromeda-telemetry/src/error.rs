@@ -6,7 +6,10 @@ use thiserror::Error;
 /// Why the metrics recorder could not be installed.
 #[derive(Debug, Error)]
 pub enum TelemetryError {
-    /// The Prometheus recorder could not be built or registered as the global recorder.
+    /// The Prometheus recorder could not be built.
     #[error("metrics recorder installation failed: {0}")]
     Recorder(#[from] BuildError),
+    /// Another recorder already holds the process-wide sink.
+    #[error("another metrics recorder is already installed")]
+    AlreadyInstalled,
 }

@@ -2217,6 +2217,7 @@ name = "andromeda-telemetry"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "dashmap",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-util",

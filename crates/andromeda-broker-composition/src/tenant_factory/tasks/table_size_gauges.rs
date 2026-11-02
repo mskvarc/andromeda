@@ -36,7 +36,9 @@ const SAMPLE_CADENCE: Duration = Duration::from_secs(60);
 /// The sizes are bounded catalog reads over fixed table allowlists, so the
 /// task is merely observed: its failure never degrades the tenant. Sizes move
 /// only when something writes, so a tick samples only when the tenant has been
-/// used or a background pass has run since the last sample.
+/// used or a background pass has run since the last sample. Every tick first
+/// publishes the last samples again, so they stay in the exposition while the
+/// tenant is loaded, and leave it once the task stops with the tenant.
 ///
 /// # Errors
 ///
@@ -65,6 +67,7 @@ pub(super) fn register_table_size_gauges(
         let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
         let observed = Arc::clone(&observed); // clone: every tick compares against the one last-sample count.
         async move {
+            gauges.republish();
             pacer
                 .run_when_written(&observed, async move {
                     let mut connection = pool

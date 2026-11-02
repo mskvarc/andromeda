@@ -6,4 +6,5 @@
 #![deny(clippy::missing_docs_in_private_items)]
 #![forbid(unsafe_code)]
 
+mod metrics;
 mod readiness;

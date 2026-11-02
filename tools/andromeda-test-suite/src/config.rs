@@ -84,6 +84,9 @@ pub enum BrokerRole {
     /// The andromeda stack broker configured with a path-prefixed apiRoot and admitting every RFC 5646 tag as a `q`
     /// target language.
     Prefixed,
+    /// The andromeda stack broker serving its Prometheus metrics, which only the metrics tests talk to, so a series
+    /// it exposes moves only with what those tests do.
+    Observed,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,
@@ -167,8 +170,11 @@ pub struct SuiteConfig {
     callback_host: Option<HostName>,
     /// The MQTT brokers, on a stack that runs them.
     mqtt: Option<MqttSettings>,
-    /// The servers, poolers and metrics behind the brokers, on the pgbouncer stack.
+    /// The servers and poolers behind the brokers, on the pgbouncer stack.
     pooling: Option<PoolingSettings>,
+    /// The Prometheus exposition each broker that serves one serves on its management listener, by role.
+    #[serde(default)]
+    metrics: BTreeMap<BrokerRole, Url>,
     /// The limits the brokers are configured with.
     #[serde(default)]
     budgets: BTreeMap<Budget, u64>,
@@ -268,13 +274,22 @@ impl SuiteConfig {
         self.mqtt.as_ref().ok_or(ConfigError::Missing(ConfigKey::Mqtt))
     }
 
-    /// The servers, poolers and metrics behind the brokers.
+    /// The servers and poolers behind the brokers.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError::Missing`] on a stack that names none.
     pub fn pooling(&self) -> Result<&PoolingSettings, ConfigError> {
         self.pooling.as_ref().ok_or(ConfigError::Missing(ConfigKey::Pooling))
+    }
+
+    /// The Prometheus exposition of the broker of `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] when the stack names no such exposition.
+    pub fn metrics(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
+        self.metrics.get(&role).ok_or_else(|| ConfigError::missing("METRICS", role.into()))
     }
 
     /// The NGSI-LD core `@context` the brokers answer with.
@@ -454,7 +469,6 @@ mod tests {
         pairs.extend([
             ("POOLING__SERVERS__DORMANT", "postgres://postgres:postgres@postgres-dormant:5432/postgres"),
             ("POOLING__POOLERS__DORMANT", "postgres://postgres:postgres@pgbouncer-dormant:6432/pgbouncer"),
-            ("POOLING__METRICS__DORMANT", "http://broker-dormant:1086/metrics"),
             ("POOLING__SCALE_TENANTS", "100"),
             ("POOLING__LOAD_SECONDS", "60"),
         ]);
@@ -465,14 +479,23 @@ mod tests {
             ok(eq(&"postgres://postgres:postgres@postgres-dormant:5432/postgres"))
         );
         expect_that!(pooling.pooler(BrokerRole::Dormant).map(Url::path), ok(eq(&"/pgbouncer")));
-        expect_that!(
-            pooling.metrics(BrokerRole::Dormant).map(Url::as_str),
-            ok(eq(&"http://broker-dormant:1086/metrics"))
-        );
         expect_that!(pooling.scale_tenants(), eq(100));
         expect_that!(pooling.load_duration(), eq(Duration::from_secs(60)));
         let error = pooling.pooler(BrokerRole::Direct).err().or_fail()?;
         verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__POOLING__POOLERS__DIRECT"))
+    }
+
+    #[gtest]
+    fn the_metrics_expositions_are_read_by_role_and_a_missing_one_names_its_key() -> Result<()> {
+        let mut pairs = REQUIRED.to_vec();
+        pairs.push(("METRICS__OBSERVED", "http://broker-observed:1086/metrics"));
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        expect_that!(
+            config.metrics(BrokerRole::Observed).map(Url::as_str),
+            ok(eq(&"http://broker-observed:1086/metrics"))
+        );
+        let error = config.metrics(BrokerRole::Dormant).err().or_fail()?;
+        verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__METRICS__DORMANT"))
     }
 
     #[gtest]

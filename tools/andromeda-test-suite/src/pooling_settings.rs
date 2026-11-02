@@ -6,8 +6,7 @@ use std::{collections::BTreeMap, time::Duration};
 use url::Url;
 
 /// The infrastructure behind the brokers of the pgbouncer stack, by broker role: the PostgreSQL server each broker
-/// owns, the admin console of the pooler in front of it, the metrics each broker serves, and the size of the scale
-/// tests' workloads.
+/// owns, the admin console of the pooler in front of it, and the size of the scale tests' workloads.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PoolingSettings {
     /// The PostgreSQL server each broker owns, reached directly with the server's administrative login.
@@ -16,9 +15,6 @@ pub struct PoolingSettings {
     /// The admin console (database `pgbouncer`) of the pooler in front of each pooled broker's server.
     #[serde(default)]
     poolers: BTreeMap<BrokerRole, Url>,
-    /// The Prometheus exposition each broker serves on its management listener.
-    #[serde(default)]
-    metrics: BTreeMap<BrokerRole, Url>,
     /// How many tenants a scale test provisions.
     scale_tenants: usize,
     /// How long one load run of a scale test lasts, in seconds.
@@ -42,15 +38,6 @@ impl PoolingSettings {
     /// Returns [`ConfigError::Missing`] when the stack names no such pooler.
     pub fn pooler(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
         self.poolers.get(&role).ok_or_else(|| ConfigError::missing("POOLING__POOLERS", role.into()))
-    }
-
-    /// The Prometheus exposition of the broker of `role`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] when the stack names no such exposition.
-    pub fn metrics(&self, role: BrokerRole) -> Result<&Url, ConfigError> {
-        self.metrics.get(&role).ok_or_else(|| ConfigError::missing("POOLING__METRICS", role.into()))
     }
 
     /// How many tenants a scale test provisions.

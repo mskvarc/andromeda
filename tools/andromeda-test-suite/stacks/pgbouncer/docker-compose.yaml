@@ -48,7 +48,7 @@ x-broker-env: &broker-env
 
 # The settings of a broker whose tests read its metrics or manage its tenants.
 x-observed-env: &observed-env
-  ANDROMEDA__OBSERVABILITY__METRICS__MODE: "prometheus"
+  ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
   ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
 
 services:

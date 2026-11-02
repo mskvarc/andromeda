@@ -1,11 +1,12 @@
 //! The Prometheus exposition a broker serves on its management listener, for a test whose subject a broker reports
-//! only as a metric: how many tenants it built cold, how many it keeps resident, the maintenance decisions it took.
+//! only as a metric: how many tenants it built cold, how many it keeps resident, the maintenance decisions it took, or
+//! whether a series is exposed at all.
 
 use crate::{
     config::{BrokerRole, SuiteConfig},
     config_error::ConfigError,
 };
-use prometheus_parse::{Scrape, Value};
+use prometheus_parse::{Sample, Scrape, Value};
 use std::io;
 use strum::IntoStaticStr;
 
@@ -21,7 +22,38 @@ pub enum BrokerMetric {
     /// The maintenance decisions the broker took, over every outcome.
     #[strum(serialize = "andromeda_postgresql_maintenance_decisions_total")]
     MaintenanceDecisions,
+    /// The names the loaded tenants' name dictionary caches hold, by dictionary.
+    #[strum(serialize = "andromeda_name_dictionary_entries")]
+    NameDictionaryEntries,
+    /// The requests in progress, by method and endpoint.
+    #[strum(serialize = "andromeda_http_requests_pending")]
+    HttpRequestsPending,
+    /// The on-disk bytes of a tenant's base tables, by tenant and table.
+    #[strum(serialize = "andromeda_postgresql_table_bytes")]
+    TableBytes,
+    /// The on-disk bytes of a tenant's base-table indexes, by tenant and table.
+    #[strum(serialize = "andromeda_postgresql_table_index_bytes")]
+    TableIndexBytes,
+    /// The heap-only share of a tenant's base-table updates, by tenant and table.
+    #[strum(serialize = "andromeda_postgresql_table_hot_update_ratio")]
+    TableHotUpdateRatio,
+    /// The largest history chunk of a tenant still in the rowstore, by tenant and hypertable.
+    #[strum(serialize = "andromeda_postgresql_history_largest_rowstore_chunk_bytes")]
+    HistoryLargestRowstoreChunkBytes,
 }
+
+/// A label a test selects samples by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
+pub enum MetricLabel {
+    /// The tenant a series describes: the tenant name, or [`DEFAULT_TENANT_LABEL`].
+    Tenant,
+    /// The route template an HTTP series describes, such as `/ngsi-ld/v1/entities`.
+    Endpoint,
+}
+
+/// The `tenant` label value of the default tenant's series.
+pub const DEFAULT_TENANT_LABEL: &str = "<unnamed default>";
 
 /// Why the exposition could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -53,7 +85,7 @@ impl MetricsReading {
     /// never reads as zero.
     pub async fn of(role: BrokerRole) -> Result<MetricsReading, BrokerMetricsError> {
         let config = SuiteConfig::get().map_err(Clone::clone)?;
-        let url = config.pooling()?.metrics(role)?;
+        let url = config.metrics(role)?;
         let text = reqwest::Client::builder()
             .no_proxy()
             .build()?
@@ -80,11 +112,24 @@ impl MetricsReading {
     /// is exposed once it was first incremented.
     #[must_use]
     pub fn sum(&self, metric: BrokerMetric) -> Option<f64> {
+        self.sum_where(metric, |_| true)
+    }
+
+    /// The sum of the samples of `metric` whose `label` reads `value`, as the exposition spells it, or `None` when
+    /// the exposition holds none.
+    #[must_use]
+    pub fn sum_labelled(&self, metric: BrokerMetric, label: MetricLabel, value: &str) -> Option<f64> {
+        let label: &'static str = label.into();
+        self.sum_where(metric, |sample| sample.labels.get(label) == Some(value))
+    }
+
+    /// The sum of the samples of `metric` that `selected` keeps, or `None` when it keeps none.
+    fn sum_where(&self, metric: BrokerMetric, selected: impl Fn(&Sample) -> bool) -> Option<f64> {
         let name: &'static str = metric.into();
         self.scrape
             .samples
             .iter()
-            .filter(|sample| sample.metric == name)
+            .filter(|sample| sample.metric == name && selected(sample))
             .filter_map(|sample| match sample.value {
                 Value::Counter(value) | Value::Gauge(value) | Value::Untyped(value) => Some(value),
                 Value::Histogram(_) | Value::Summary(_) => None,
@@ -95,7 +140,7 @@ impl MetricsReading {
 
 #[cfg(test)]
 mod tests {
-    use crate::broker_metrics::{BrokerMetric, MetricsReading};
+    use crate::broker_metrics::{BrokerMetric, DEFAULT_TENANT_LABEL, MetricLabel, MetricsReading};
     use googletest::prelude::*;
 
     #[gtest]
@@ -110,6 +155,29 @@ mod tests {
         expect_that!(reading.sum(BrokerMetric::ColdBuilds), some(approx_eq(4.0)));
         expect_that!(reading.sum(BrokerMetric::RuntimesCached), some(approx_eq(32.0)));
         expect_that!(reading.sum(BrokerMetric::MaintenanceDecisions), none());
+        Ok(())
+    }
+
+    #[gtest]
+    fn a_labelled_sum_counts_only_the_samples_whose_label_reads_the_value() -> Result<()> {
+        let reading = MetricsReading::parse(
+            "# TYPE andromeda_postgresql_table_bytes gauge
+             andromeda_postgresql_table_bytes{tenant=\"<unnamed default>\",table=\"entities\"} 8192
+             andromeda_postgresql_table_bytes{tenant=\"<unnamed default>\",table=\"subscriptions\"} 4096
+             andromeda_postgresql_table_bytes{tenant=\"acme\",table=\"entities\"} 1024
+",
+        )?;
+        expect_that!(
+            reading.sum_labelled(BrokerMetric::TableBytes, MetricLabel::Tenant, DEFAULT_TENANT_LABEL),
+            some(approx_eq(12_288.0))
+        );
+        expect_that!(
+            reading.sum_labelled(BrokerMetric::TableBytes, MetricLabel::Tenant, "acme"),
+            some(approx_eq(1_024.0))
+        );
+        expect_that!(reading.sum_labelled(BrokerMetric::TableBytes, MetricLabel::Tenant, "other"), none());
+        expect_that!(reading.sum_labelled(BrokerMetric::TableBytes, MetricLabel::Endpoint, "acme"), none());
+        expect_that!(reading.sum_labelled(BrokerMetric::TableIndexBytes, MetricLabel::Tenant, "acme"), none());
         Ok(())
     }
 }

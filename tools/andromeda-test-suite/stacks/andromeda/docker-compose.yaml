@@ -347,6 +347,28 @@ services:
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "enabled"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-tags"
 
+  postgres-observed:
+    extends:
+      <<: *template
+      service: postgres
+
+  # Serves its Prometheus metrics on the management port. Only the metrics tests talk to it, since a request from any
+  # other test would move the series they read, and a write from one would keep a gauge fresh that they wait to see
+  # go untouched.
+  broker-observed:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-observed:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1082"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-observed:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-observed"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-observed"
+      ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
+
   runner:
     extends:
       <<: *template
@@ -373,6 +395,8 @@ services:
       terminator:
         condition: service_healthy
       broker-prefixed:
+        condition: service_healthy
+      broker-observed:
         condition: service_healthy
     volumes:
       - mutual-identity:/identities/mutual

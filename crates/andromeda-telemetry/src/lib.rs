@@ -15,6 +15,7 @@ mod description;
 pub mod entity;
 pub mod error;
 pub mod federation_ops;
+mod holding_recorder;
 pub mod http;
 pub mod maintenance;
 pub mod name_dictionary;

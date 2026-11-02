@@ -39,6 +39,11 @@ filter = 'package(andromeda-test-suite) & binary(~pgbouncer_)'
 test-group = 'pgbouncer'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# The metrics test waits six minutes, past the broker's five-minute gauge idle timeout, before its last scrape.
+[[profile.suite.overrides]]
+filter = 'package(andromeda-test-suite) & binary(=andromeda_observability) & test(/(^|::)a_obs_met_9001_/)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 [[profile.suite.overrides]]
 filter = '''
 package(andromeda-test-suite) & binary(~ngsi_ld_) & (
@@ -100,6 +105,10 @@ test-group = 'interoperability'
 [[profile.suite-verdict.overrides]]
 filter = 'package(andromeda-test-suite) & binary(~pgbouncer_)'
 test-group = 'pgbouncer'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+[[profile.suite-verdict.overrides]]
+filter = 'package(andromeda-test-suite) & binary(=andromeda_observability) & test(/(^|::)a_obs_met_9001_/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.suite-verdict.overrides]]

@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+dashmap = { version = "6.2.1", features = ["inline"] }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 metrics-util = { version = "0.20.4", default-features = false }
