@@ -302,6 +302,6 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
-        assert!(sql.contains(&format!("UNNEST(ARRAY ['{}'])", vehicle_id())), "{sql}");
+        assert!(sql.contains(&format!("UNNEST(ARRAY[ '{}' ])", vehicle_id())), "{sql}");
     }
 }

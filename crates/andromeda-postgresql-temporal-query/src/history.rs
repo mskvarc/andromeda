@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn the_history_read_unions_the_pending_rows_of_the_entity() {
         let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains(r#"UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1']) AS "read_entity""#), "{sql}");
+        assert!(sql.contains(r#"UNNEST(ARRAY[ 'urn:ngsi-ld:Vehicle:1' ]) AS "read_entity""#), "{sql}");
         assert!(sql.contains(r#""re"."id" = "read_entity"."read_entity""#), "{sql}");
         assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
         assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
