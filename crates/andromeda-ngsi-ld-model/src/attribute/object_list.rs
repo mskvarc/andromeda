@@ -2,9 +2,16 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
-use derive_more::{AsRef, Deref, From};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{slice::Iter, vec::IntoIter};
+use derive_more::{AsRef, Deref, Display, From};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
+    de::{Error as DeserializeError, MapAccess, Visitor, value::StrDeserializer},
+};
+use std::{fmt, slice::Iter, vec::IntoIter};
+use thiserror::Error;
 
 /// `objectList` / `previousObjectList` value as defined by clause 5.2.37.
 ///
@@ -93,40 +100,81 @@ impl Serialize for RelationshipObjectList {
 // it, and the list holds the targets alone.
 impl<'de> Deserialize<'de> for RelationshipObjectList {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RelationshipObjectList, D::Error> {
-        Vec::<ObjectListEntry>::deserialize(deserializer).map(|entries| RelationshipObjectList(entries.into_iter().map(ObjectListEntry::into_target).collect()))
+        Vec::<ObjectListEntry>::deserialize(deserializer).map(|entries| RelationshipObjectList(entries.into_iter().map(|entry| entry.0).collect()))
     }
 }
 
-/// One entry of an `objectList` as written: the bare URI of the concise form,
-/// the Relationship Object of the normalized form (clause 4.5.22.2), or the
-/// node reference a concise entry was expanded to and compacted back as.
-#[derive(Deserialize)]
-#[serde(
-    untagged,
-    expecting = "a relationship target URI, an {\"object\": ...} object or an {\"id\": ...} node reference"
-)]
-enum ObjectListEntry {
-    /// The bare URI.
-    Bare(Uri),
-    /// The Relationship Object.
-    Object {
-        /// The target.
-        object: Uri,
-    },
-    /// The node reference.
-    Node {
-        /// The target.
-        id: Uri,
-    },
+/// The target one entry of an `objectList` names, written as the bare URI of
+/// the concise form, the Relationship Object of the normalized form (clause
+/// 4.5.22.2), or the node reference a concise entry was expanded to and
+/// compacted back as.
+struct ObjectListEntry(Uri);
+
+// Hand-written: the entry is read by the kind of JSON it is, so the refusal of
+// a target that is no URI, or of an object holding other members, is the
+// refusal of the entry. A derived untagged union reports only that no spelling
+// matched.
+impl<'de> Deserialize<'de> for ObjectListEntry {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ObjectListEntry, D::Error> {
+        deserializer.deserialize_any(ObjectListEntryVisitor)
+    }
 }
 
-impl ObjectListEntry {
-    /// The target the entry names.
-    fn into_target(self) -> Uri {
-        match self {
-            ObjectListEntry::Bare(target) | ObjectListEntry::Object { object: target } | ObjectListEntry::Node { id: target } => target,
+/// Reads one `objectList` entry.
+struct ObjectListEntryVisitor;
+
+impl<'de> Visitor<'de> for ObjectListEntryVisitor {
+    type Value = ObjectListEntry;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a relationship target URI, an {\"object\": ...} object or an {\"id\": ...} node reference")
+    }
+
+    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<ObjectListEntry, E> {
+        Uri::deserialize(StrDeserializer::<E>::new(text)).map(ObjectListEntry)
+    }
+
+    // Clause 4.5.22.2: a Relationship Object is "a JSON object containing a
+    // single Attribute with a key called `object`"; a node reference likewise
+    // holds its `id` alone.
+    fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<ObjectListEntry, A::Error> {
+        let Some(member) = members.next_key::<EntryMember>()? else {
+            return Err(A::Error::custom(ObjectListEntryRefusal::Empty));
+        };
+        let target = members.next_value::<Uri>()?;
+        match members.next_key::<EntryMember>()? {
+            None => Ok(ObjectListEntry(target)),
+            Some(beside) => Err(A::Error::custom(ObjectListEntryRefusal::Crowded { member, beside })),
         }
     }
+}
+
+/// A member an `objectList` entry written as an object may hold.
+#[derive(Debug, Clone, Copy, Deserialize, Display)]
+#[serde(field_identifier, rename_all = "camelCase")]
+enum EntryMember {
+    /// The target of a Relationship Object.
+    #[display("object")]
+    Object,
+    /// The target of a node reference.
+    #[display("id")]
+    Id,
+}
+
+/// Why an `objectList` entry written as an object names no target.
+#[derive(Debug, Error)]
+enum ObjectListEntryRefusal {
+    /// The object holds no member.
+    #[error("an objectList entry written as an object holds a single member, 'object' or 'id', and this one holds none")]
+    Empty,
+    /// The object holds a second member beside its target.
+    #[error("an objectList entry written as an object holds a single member, and this one holds '{beside}' beside '{member}'")]
+    Crowded {
+        /// The member naming the target.
+        member: EntryMember,
+        /// The member written beside it.
+        beside: EntryMember,
+    },
 }
 
 impl<'a> IntoIterator for &'a RelationshipObjectList {
@@ -157,6 +205,11 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
     use std::str::FromStr;
+
+    /// The refusal of `written` read as an `objectList`.
+    fn refusal(written: &str) -> String {
+        serde_json::from_str::<RelationshipObjectList>(written).expect_err(written).to_string()
+    }
 
     /// The normalized representation of `targets`, as JSON.
     fn normalized(targets: &[&str]) -> serde_json::Value {
@@ -263,5 +316,42 @@ mod tests {
             serde_json::to_value(&concise).expect("serialises"),
             serde_json::json!([{"object": "urn:ngsi-ld:Entity:1"}, {"object": "urn:ngsi-ld:Entity:2"}])
         );
+    }
+
+    #[test]
+    fn a_target_that_is_no_uri_is_refused_with_the_uri_reason_in_every_spelling() {
+        for written in [r#"["not a uri"]"#, r#"[{"object": "not a uri"}]"#, r#"[{"id": "not a uri"}]"#] {
+            let refused = refusal(written);
+            assert!(refused.starts_with("invalid URI: not a valid URN, URL or IRI"), "{written}: {refused}");
+        }
+    }
+
+    #[test]
+    fn an_entry_object_with_an_unknown_member_is_refused_naming_the_members_it_may_hold() {
+        let refused = refusal(r#"[{"subject": "urn:ngsi-ld:Entity:1"}]"#);
+        assert!(refused.starts_with("unknown field `subject`, expected `object` or `id`"), "{refused}");
+    }
+
+    /// Clause 4.5.22.2: a Relationship Object is "a JSON object containing a
+    /// single Attribute with a key called `object`".
+    #[test]
+    fn an_entry_object_holding_no_member_or_a_second_one_is_refused() {
+        let empty = refusal("[{}]");
+        assert!(empty.contains("holds none"), "{empty}");
+        let crowded = refusal(r#"[{"object": "urn:ngsi-ld:A:1", "id": "urn:ngsi-ld:A:2"}]"#);
+        assert!(crowded.contains("holds 'id' beside 'object'"), "{crowded}");
+        let unknown_beside = refusal(r#"[{"object": "urn:ngsi-ld:A:1", "extra": 1}]"#);
+        assert!(unknown_beside.starts_with("unknown field `extra`"), "{unknown_beside}");
+    }
+
+    #[test]
+    fn an_entry_of_another_kind_is_refused_naming_the_spellings() {
+        for written in ["[42]", "[null]", "[[\"urn:ngsi-ld:A:1\"]]"] {
+            let refused = refusal(written);
+            assert!(
+                refused.contains("expected a relationship target URI, an {\"object\": ...} object or an {\"id\": ...} node reference"),
+                "{written}: {refused}"
+            );
+        }
     }
 }
