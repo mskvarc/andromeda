@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
-    notification::{NotificationDeliveries, NotificationEvents},
+    notification::{NotificationDeliveries, NotificationDeliveryHolds, NotificationEvents},
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
@@ -29,7 +29,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockType, OnConflict, Query, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockType, OnConflict, Query, SimpleExpr};
 use sqlx::{Postgres, Transaction};
 
 /// Persist the notification events of one write and the deliveries they owe.
@@ -299,7 +299,8 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// lock is the weakest row lock there is, so it blocks only deletions and key
 /// changes of the subscription, never its ordinary updates. Every delivery starts
 /// due at the write's own ingestion instant so the queue's ordering reflects
-/// the order changes were accepted in.
+/// the order changes were accepted in, and one queued for a held Subscription
+/// starts set aside ([`held_at_insert`]).
 ///
 /// A change owes each subscription one delivery (clause 5.8.6), which
 /// `uq_notification_deliveries_event_subscription` holds:
@@ -319,6 +320,7 @@ fn insert_deliveries_statement(
         .column((pairs.clone(), NotificationDeliveries::EventKey))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
         .expr(Expr::val(next_attempt_at))
+        .expr(held_at_insert(target, &subscription))
         .from_function(
             unnest_call([(&columns[0], Expr::val(event_keys)), (&columns[1], Expr::val(subscription_keys))]),
             pairs.clone(),
@@ -340,6 +342,7 @@ fn insert_deliveries_statement(
             NotificationDeliveries::EventKey,
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
+            NotificationDeliveries::HeldAt,
         ])
         .select_from(source)?
         .on_conflict(
@@ -348,6 +351,43 @@ fn insert_deliveries_statement(
                 .to_owned(),
         );
     Ok(UnnestAliased::new(statement).with_columns(aliased, &columns))
+}
+
+/// The `held_at` a delivery is queued with: the queueing instant when its
+/// Subscription, joined as `subscription`, is held behind a probe, NULL
+/// otherwise.
+///
+/// ```sql
+/// CASE WHEN EXISTS (SELECT h.subscription_key FROM notification_delivery_holds AS h
+///                   WHERE h.subscription_key = s.subscription_key FOR KEY SHARE)
+///      THEN CURRENT_TIMESTAMP ELSE NULL END
+/// ```
+///
+/// A delivery queued behind a hold is set aside from the start, so it never
+/// enters the claim index for the claim to step over until the probe's next
+/// failure. It is never the probe: a probe is a delivery that was attempted.
+///
+/// The key-share lock is what keeps such a row from outliving its hold. The
+/// release deletes the hold, which waits for this transaction to commit, and
+/// takes the Subscription's set-aside rows back in a later statement that sees
+/// this one's rows. A hold whose deletion is in flight is waited for and then
+/// read as gone, so the delivery is queued unheld. A hold still being taken is
+/// not seen, so the delivery is queued unheld and the claim's own hold check
+/// keeps it back until the probe's next failure sets it aside.
+fn held_at_insert(target: &ContextTarget, subscription: &Alias) -> SimpleExpr {
+    let hold = Alias::new("h");
+    // clone: sea-query takes each alias occurrence by value
+    let hold_key = (hold.clone(), NotificationDeliveryHolds::SubscriptionKey);
+    let hold_row = Query::select()
+        .column(hold_key.clone())
+        .from_as(table_of(target, NotificationDeliveryHolds::Table), hold)
+        .and_where(Expr::col(hold_key).equals((subscription.clone(), Subscriptions::SubscriptionKey)))
+        .lock(LockType::KeyShare)
+        .to_owned();
+    CaseStatement::new()
+        .case(Expr::exists(hold_row), Expr::current_timestamp())
+        .finally(Keyword::Null)
+        .into()
 }
 
 #[cfg(test)]
@@ -365,7 +405,7 @@ mod tests {
         statement_text::text_of,
     };
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         entity_types::EntityTypes,
@@ -615,7 +655,7 @@ mod tests {
     fn every_delivery_of_every_written_event_is_inserted_from_one_pair_of_arrays() {
         let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], Utc::now()).expect("a valid insert"));
         assert!(
-            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at")"#),
+            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at", "held_at")"#),
             "{sql}"
         );
         assert!(
@@ -633,6 +673,28 @@ mod tests {
     fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
         let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
         assert!(sql.contains(r#"FOR KEY SHARE OF "s" ON CONFLICT"#), "{sql}");
+    }
+
+    #[test]
+    fn a_delivery_queued_for_a_held_subscription_is_written_already_set_aside() {
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
+        assert!(
+            sql.contains(concat!(
+                r#"(CASE WHEN (EXISTS(SELECT "h"."subscription_key" FROM "notification_delivery_holds" AS "h" "#,
+                r#"WHERE "h"."subscription_key" = "s"."subscription_key" FOR KEY SHARE)) "#,
+                r#"THEN CURRENT_TIMESTAMP ELSE NULL END)"#
+            )),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_branch_delivery_reads_the_holds_of_its_own_branch() {
+        let key = SnapshotKey::try_from(5).expect("positive key");
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let branch = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
+        let sql = text_of(&insert_deliveries_statement(&branch, vec![42], vec![1], Utc::now()).expect("a valid insert"));
+        assert!(sql.contains(r#"FROM "snap_5"."notification_delivery_holds" AS "h""#), "{sql}");
     }
 
     /// Clause 5.8.6 notifies a change once per subscription, so a pair the

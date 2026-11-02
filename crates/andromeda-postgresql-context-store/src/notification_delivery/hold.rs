@@ -24,6 +24,13 @@
 //! the deliveries a failure committed while it waited. A delivery not yet set
 //! aside is never lost that way, because the claim keeps it back only while
 //! the hold exists.
+//!
+//! A delivery queued while its Subscription is held is written set aside,
+//! under a key-share lock on the hold row. The release's deletion of the hold
+//! waits for that lock, so the statement that takes the deliveries back sees
+//! the new row and takes it back with the rest. Only a delivery queued while
+//! the hold is being taken reaches the claim index unheld, and the claim's own
+//! hold check keeps it back until the probe's next failure sets it aside.
 
 use crate::error::ContextStoreError;
 use andromeda_context_space::context_target::ContextTarget;
