@@ -30,12 +30,9 @@ use andromeda_postgresql_schema::{
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::{clock::now, pg_array::text_array, statement::Statement, unnest::UnnestAliased};
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Postgres, Row, Transaction};
-
-/// The statement name the entity set-delete is observed under.
-const ENTITY_DELETE: StatementName = StatementName("entity-delete");
 
 /// The column the delete answers its transaction timestamp under.
 const COMMITTED_AT: &str = "committed_at";
@@ -281,7 +278,7 @@ impl EntityRepository {
         }
 
         let rows = entity_delete_statement(target, ids, expected)?.to_query().fetch_all(&mut **tx);
-        let rows = observe_statement(ENTITY_DELETE, rows).await?;
+        let rows = observe_statement(ObservedStatement::EntityDelete, rows).await?;
 
         rows.into_iter()
             .map(|row| {

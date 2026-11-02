@@ -50,7 +50,7 @@ use andromeda_postgresql_seaquery::{
     returning_image::{New, Old},
     unnest::UnnestAliased,
 };
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{
     CaseStatement,
@@ -68,9 +68,6 @@ use sea_query::{
 };
 use sqlx::{Postgres, Transaction};
 use std::collections::HashSet;
-
-/// The statement name the entity set-insert is observed under.
-const ENTITY_INSERT: StatementName = StatementName("entity-insert");
 
 /// Build the batch insert of `entities` and the attribute instance rows
 /// `rows` stages for them, each entity created and modified at `accepted_at`,
@@ -310,7 +307,7 @@ impl EntityRepository {
         let rows = entity_insert_statement(target, entities, rows, accepted_at, establishing)?
             .into_query_as::<(String, bool, DateTime<Utc>)>()
             .fetch_all(&mut **tx);
-        let rows = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
+        let rows = observe_statement(ObservedStatement::EntityInsert, rows).await.map_err(entity_write_failure)?;
 
         let mut created = CreatedEntities::default();
         for (id, established, committed_at) in &rows {

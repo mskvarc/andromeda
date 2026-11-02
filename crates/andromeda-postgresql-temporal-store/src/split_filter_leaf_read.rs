@@ -1,7 +1,7 @@
 //! Reading the truth of every leaf of a split temporal query's filters over
 //! the part of each contributed entity this store holds (clause 5.7.4.4).
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_error::StoredCatalogError, temporal_query_execution::TemporalStatement};
+use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_error::StoredCatalogError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     split_filter::{LeafTruths, SplitFilter},
@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::split_filter_leaves::build_filter_leaf_truths;
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::error::TemporalError;
 use sqlx::{Row, postgres::PgRow};
 use std::collections::HashMap;
@@ -36,7 +37,7 @@ impl TemporalRepository {
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_filter_leaf_truths(branch, compiled, entity_ids, &names).map_err(TemporalStoreError::Render)?;
         let rows = self
-            .execute_temporal_query(TemporalStatement::SplitFilterLeaves, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalSourceFilterEvaluation, &statement, StatementPlanning::Cached)
             .await?;
         let leaves = filter.leaf_count();
         rows.iter()

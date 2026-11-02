@@ -2,13 +2,7 @@
 //! representation aggregates carry, which clause 5.7.4.4 decides aggregation
 //! eligibility from once the shapes held anywhere in the branch did not.
 
-use crate::{
-    error::TemporalStoreError,
-    reader::stored_attribute_shape,
-    repo::TemporalRepository,
-    temporal_query_execution::TemporalStatement,
-    temporal_store_invariant::TemporalStoreInvariant,
-};
+use crate::{error::TemporalStoreError, reader::stored_attribute_shape, repo::TemporalRepository, temporal_store_invariant::TemporalStoreInvariant};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::HistoryBranch;
@@ -19,6 +13,7 @@ use andromeda_postgresql_temporal_query::stage1::held_shapes::{
     ShapeHolders as StatementHolders,
     build_held_shapes_query,
 };
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::{
     error::TemporalError,
     port::history_reader::{RecordedAttributeShape, ShapeHolders},
@@ -74,7 +69,7 @@ impl TemporalRepository {
         // The candidates a combination names range from none to most of the
         // branch, so the plan is chosen for the combinations bound.
         let rows = self
-            .execute_temporal_query(TemporalStatement::HeldShapes, &statement, StatementPlanning::BoundValues)
+            .execute_temporal_query(ObservedStatement::TemporalAggregationShapeCheck, &statement, StatementPlanning::BoundValues)
             .await?;
         let mut held: HashMap<AttributeName, HashSet<RecordedAttributeShape>> = HashMap::new();
         for row in rows {

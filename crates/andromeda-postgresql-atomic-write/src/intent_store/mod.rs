@@ -35,7 +35,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_postgresql_temporal_store::intent_application::{apply_intents_in_tx, intent_source::IntentSource};
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use andromeda_temporal::{
     append_intent::TemporalIntentKey,
     error::TemporalError,
@@ -49,16 +49,6 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row, postgres::PgRow};
 use std::time::Duration;
 use uuid::Uuid;
-
-/// The statement name the intent claim is observed under.
-const INTENT_CLAIM: StatementName = StatementName("temporal-intent-claim");
-/// The statement name intent retry is observed under.
-const INTENT_RETRY: StatementName = StatementName("temporal-intent-retry");
-/// The statement name the release of held-back intents is observed under.
-const INTENT_RELEASE: StatementName = StatementName("temporal-intent-release");
-/// The name an intent application, from its first statement to its commit, is
-/// observed under.
-const INTENT_APPLICATION: StatementName = StatementName("temporal-intent-application");
 
 /// PostgreSQL-backed pending temporal intent queue for one tenant.
 #[derive(Clone, Debug)]
@@ -104,7 +94,7 @@ impl PostgresTemporalIntentStore {
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let rows = observe_statement(
-            INTENT_CLAIM,
+            ObservedStatement::TemporalIntentClaim,
             claim_statement(owner, scope, limit.get(), lease_until).to_query().fetch_all(&self.pool),
         )
         .await
@@ -184,7 +174,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
 
     async fn retry(&self, owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
         let result = observe_statement(
-            INTENT_RETRY,
+            ObservedStatement::TemporalIntentRetry,
             retry_statement(retry.eligible_at, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner)
                 .to_query()
                 .execute(&self.pool),
@@ -199,10 +189,13 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             return Ok(LeaseAcknowledgement::Applied);
         }
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
-        let released = observe_statement(INTENT_RELEASE, release_statement(&keys, owner).to_query().execute(&self.pool))
-            .await
-            .map_err(|error| persistence(&error))?
-            .rows_affected();
+        let released = observe_statement(
+            ObservedStatement::TemporalIntentRelease,
+            release_statement(&keys, owner).to_query().execute(&self.pool),
+        )
+        .await
+        .map_err(|error| persistence(&error))?
+        .rows_affected();
         Ok(if usize::try_from(released).ok() == Some(keys.len()) {
             LeaseAcknowledgement::Applied
         } else {
@@ -217,7 +210,7 @@ impl TemporalIntentApplication for PostgresTemporalIntentStore {
         if intents.is_empty() {
             return Ok(TemporalIntentApplicationOutcome::Applied);
         }
-        observe_statement(INTENT_APPLICATION, self.apply_held(owner, intents)).await
+        observe_statement(ObservedStatement::TemporalIntentApplication, self.apply_held(owner, intents)).await
     }
 }
 

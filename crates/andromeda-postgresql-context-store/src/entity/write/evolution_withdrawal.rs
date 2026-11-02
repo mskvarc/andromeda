@@ -20,12 +20,9 @@ use andromeda_postgresql_seaquery::{
     pg_array::{any, text_array},
     statement::Statement,
 };
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, Keyword, Query, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
-
-/// The statement name the withdrawal is observed under.
-const EVOLUTION_WITHDRAWAL: StatementName = StatementName("entity-evolution-withdrawal");
 
 /// The identity rows the withdrawal cleared, `withdrawn`.
 #[derive(Iden, Clone, Copy)]
@@ -83,7 +80,7 @@ impl EntityRepository {
             return Ok(());
         }
         let done = withdrawal_statement(target, ids).to_query().execute(&mut **tx);
-        observe_statement(EVOLUTION_WITHDRAWAL, done).await?;
+        observe_statement(ObservedStatement::EntityEvolutionWithdrawal, done).await?;
         Ok(())
     }
 }

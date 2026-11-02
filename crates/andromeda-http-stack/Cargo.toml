@@ -16,9 +16,9 @@ andromeda-http-response.workspace = true
 andromeda-http-tenancy.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-telemetry.workspace = true
 axum = "0.8.9"
 axum-helmet = "1.0.2"
-axum-prometheus = "0.10.1"
 axum-server-timing = "3.0.1"
 enumset = { version = "1.1.15", features = ["serde"] }
 headers = "0.4.2"

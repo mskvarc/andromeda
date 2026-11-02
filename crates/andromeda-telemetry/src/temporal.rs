@@ -1,7 +1,7 @@
 //! Operation accounting for the temporal service.
 
 use crate::{
-    names::{TEMPORAL_OPERATION_SECONDS, TEMPORAL_OPERATIONS_TOTAL},
+    names::{TEMPORAL_OPERATION_DURATION_SECONDS, TEMPORAL_OPERATIONS_TOTAL},
     operation::OperationTimer,
 };
 use strum::IntoStaticStr;
@@ -33,5 +33,5 @@ pub enum TemporalOperation {
 /// Start timing a temporal-service `operation`.
 #[must_use]
 pub fn start(operation: TemporalOperation) -> OperationTimer {
-    OperationTimer::start(TEMPORAL_OPERATIONS_TOTAL, TEMPORAL_OPERATION_SECONDS, operation.into())
+    OperationTimer::start(TEMPORAL_OPERATIONS_TOTAL, TEMPORAL_OPERATION_DURATION_SECONDS, operation.into())
 }

@@ -1,7 +1,7 @@
 //! Outcome accounting for notification deliveries.
 
 use crate::{
-    names::{LABEL_OUTCOME, NOTIFICATION_DELIVERIES_TOTAL, NOTIFICATION_DELIVERY_SECONDS},
+    names::{LABEL_OUTCOME, NOTIFICATION_DELIVERIES_TOTAL, NOTIFICATION_DELIVERY_DURATION_SECONDS},
     operation::Outcome,
 };
 use metrics::{counter, histogram};
@@ -26,7 +26,7 @@ impl DeliveryTimer {
 
     /// Record the elapsed time and count the delivery under `outcome`.
     pub fn finish(self, outcome: Outcome) {
-        histogram!(NOTIFICATION_DELIVERY_SECONDS).record(self.started.elapsed().as_secs_f64());
+        histogram!(NOTIFICATION_DELIVERY_DURATION_SECONDS).record(self.started.elapsed().as_secs_f64());
         counter!(NOTIFICATION_DELIVERIES_TOTAL, LABEL_OUTCOME => <&'static str>::from(outcome)).increment(1);
     }
 

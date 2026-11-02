@@ -61,7 +61,7 @@ use andromeda_postgresql_context_store::{
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options, tenant_probe_urls::TenantProbeUrls};
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
-use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
+use andromeda_telemetry::{build_info::BrokerVersion, error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
     administration::TenantAdministration,
     creation_policy::TenantCreationPolicy,
@@ -198,7 +198,9 @@ pub async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
 fn install_telemetry(prometheus: FeatureMode) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
     match prometheus {
         FeatureMode::Disabled => Ok(None),
-        FeatureMode::Enabled => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
+        FeatureMode::Enabled => Ok(Some(Arc::new(TelemetryRecorder::install(BrokerVersion::from_static(env!(
+            "CARGO_PKG_VERSION"
+        )))?))),
     }
 }
 

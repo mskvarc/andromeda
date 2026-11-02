@@ -76,7 +76,7 @@ impl OperationTimer {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{ENTITY_OPERATION_SECONDS, ENTITY_OPERATIONS_TOTAL},
+        names::{ENTITY_OPERATION_DURATION_SECONDS, ENTITY_OPERATIONS_TOTAL},
         operation::{OperationTimer, Outcome},
         recorder::TelemetryRecorder,
     };
@@ -91,9 +91,9 @@ mod tests {
     fn finishing_records_the_counter_and_histogram_under_operation_and_outcome() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached()?;
         recorder.record_locally(|| {
-            OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_SECONDS, "create").finish(Outcome::Ok);
+            OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_DURATION_SECONDS, "create").finish(Outcome::Ok);
             let failed: Result<(), ()> = Err(());
-            OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_SECONDS, "delete").finish_result(&failed);
+            OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_DURATION_SECONDS, "delete").finish_result(&failed);
         });
         let rendered = recorder.render();
         assert!(
@@ -104,7 +104,7 @@ mod tests {
             rendered.contains(&format!("{ENTITY_OPERATIONS_TOTAL}{{operation=\"delete\",outcome=\"error\"}} 1")),
             "{rendered}"
         );
-        assert!(rendered.contains(&format!("{ENTITY_OPERATION_SECONDS}_bucket")), "{rendered}");
+        assert!(rendered.contains(&format!("{ENTITY_OPERATION_DURATION_SECONDS}_bucket")), "{rendered}");
         Ok(())
     }
 }

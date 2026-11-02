@@ -1,7 +1,7 @@
 //! Gauges describing one connection pool.
 
 use crate::{
-    names::{DB_POOL_CONNECTIONS, DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT},
+    names::{LABEL_TENANT, POSTGRESQL_POOL_CONNECTIONS, POSTGRESQL_POOL_IDLE_CONNECTIONS},
     sample_value::SampleValue,
 };
 use metrics::gauge;
@@ -37,8 +37,8 @@ impl PoolGauges {
     /// Publish `sample` on both gauges.
     pub fn record(&self, sample: PoolSample) {
         // clone: the metrics facade owns each label value it stores.
-        gauge!(DB_POOL_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(f64::from(sample.open));
-        gauge!(DB_POOL_IDLE_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(SampleValue::from(sample.idle));
+        gauge!(POSTGRESQL_POOL_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(f64::from(sample.open));
+        gauge!(POSTGRESQL_POOL_IDLE_CONNECTIONS, LABEL_TENANT => self.tenant.clone()).set(SampleValue::from(sample.idle));
     }
 }
 
@@ -46,7 +46,7 @@ impl PoolGauges {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{DB_POOL_CONNECTIONS, DB_POOL_IDLE_CONNECTIONS},
+        names::{POSTGRESQL_POOL_CONNECTIONS, POSTGRESQL_POOL_IDLE_CONNECTIONS},
         pool::{PoolGauges, PoolSample},
         recorder::TelemetryRecorder,
     };
@@ -56,8 +56,14 @@ mod tests {
         let recorder = TelemetryRecorder::detached()?;
         recorder.record_locally(|| PoolGauges::for_tenant("default").record(PoolSample { open: 8, idle: 3 }));
         let rendered = recorder.render();
-        assert!(rendered.contains(&format!("{DB_POOL_CONNECTIONS}{{tenant=\"default\"}} 8")), "{rendered}");
-        assert!(rendered.contains(&format!("{DB_POOL_IDLE_CONNECTIONS}{{tenant=\"default\"}} 3")), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{POSTGRESQL_POOL_CONNECTIONS}{{tenant=\"default\"}} 8")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{POSTGRESQL_POOL_IDLE_CONNECTIONS}{{tenant=\"default\"}} 3")),
+            "{rendered}"
+        );
         Ok(())
     }
 }

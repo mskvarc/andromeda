@@ -8,8 +8,8 @@ mod decompression_layer;
 mod encoded_entity_tag;
 mod forwarded_trust_layer;
 pub mod helmet_layer;
-mod metric_layer;
 mod request_deadline;
+mod request_metrics;
 mod server_timing;
 mod strict_transport_security_layer;
 
@@ -23,8 +23,8 @@ use crate::{
         encoded_entity_tag::EncodedEntityTags,
         forwarded_trust_layer::{ForwardedTrustPolicy, install_forwarded_trust},
         helmet_layer::{SecurityHeadersError, build_helmet_layer},
-        metric_layer::http_metric_layer,
         request_deadline::{RequestDeadline, answer_within_deadline},
+        request_metrics::observe_request,
         server_timing::apply_server_timing,
         strict_transport_security_layer::{set_strict_transport_security, strict_transport_security},
     },
@@ -271,10 +271,11 @@ impl HttpStack {
                 .layer(middleware::map_request(record_received_content_length));
         }
         router = self.apply_diagnostic_layers(router);
-        // Outermost of the diagnostic core so the matched route is populated by
-        // the time the layer records the response, giving the `endpoint` label its
-        // low-cardinality `MatchedPath` value rather than the raw URI.
-        router = router.layer(http_metric_layer());
+        // Outside the diagnostic core, so a request the deadline or the body
+        // limits answer is counted with the status it was answered with.
+        // `Router::layer` runs it after routing, which gives the `endpoint`
+        // label the matched route template rather than the raw path.
+        router = router.layer(middleware::from_fn(observe_request));
         if let Some(cors) = &self.cors {
             router = router.layer(cors.clone());
         }

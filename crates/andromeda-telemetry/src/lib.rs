@@ -2,17 +2,20 @@
 //!
 //! Every metric the broker emits is named here, recorded through the
 //! [`metrics`] facade, and rendered by the one installed [`recorder`]. Nothing
-//! in this crate knows about PostgreSQL, HTTP or any other backend: callers
-//! hand it typed names and outcomes, and the crate turns them into labelled
+//! in this crate reads PostgreSQL, HTTP or any other backend's types: callers
+//! hand it typed names, outcomes and plain values, and the crate turns them into labelled
 //! series.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod build_info;
 pub mod delivery_ops;
+mod description;
 pub mod entity;
 pub mod error;
 pub mod federation_ops;
+pub mod http;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod names;

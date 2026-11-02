@@ -3,7 +3,14 @@
 //! chunk each temporal hypertable converts next.
 
 use crate::{
-    names::{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES, LABEL_TABLE, LABEL_TENANT},
+    names::{
+        LABEL_TABLE,
+        LABEL_TENANT,
+        POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES,
+        POSTGRESQL_TABLE_BYTES,
+        POSTGRESQL_TABLE_HOT_UPDATE_RATIO,
+        POSTGRESQL_TABLE_INDEX_BYTES,
+    },
     sample_value::SampleValue,
 };
 use metrics::{IntoF64, gauge};
@@ -58,9 +65,9 @@ impl StorageGauges {
     /// closed set, not free-form input.
     pub fn record(&self, table: &'static str, sample: TableSizeSample) {
         // clone: the metrics facade owns each label value it stores.
-        gauge!(DB_TABLE_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.total_bytes));
-        gauge!(DB_TABLE_INDEX_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.index_bytes));
-        gauge!(DB_TABLE_HOT_UPDATE_RATIO, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(sample.hot_update_ratio());
+        gauge!(POSTGRESQL_TABLE_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.total_bytes));
+        gauge!(POSTGRESQL_TABLE_INDEX_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.index_bytes));
+        gauge!(POSTGRESQL_TABLE_HOT_UPDATE_RATIO, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(sample.hot_update_ratio());
     }
 
     /// Publish the `bytes` of the largest chunk of history hypertable `table`
@@ -70,7 +77,7 @@ impl StorageGauges {
     /// closed set, not free-form input.
     pub fn record_largest_rowstore_chunk(&self, table: &'static str, bytes: u64) {
         // clone: the metrics facade owns each label value it stores.
-        gauge!(DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(bytes));
+        gauge!(POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(bytes));
     }
 }
 
@@ -78,7 +85,7 @@ impl StorageGauges {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES},
+        names::{POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES, POSTGRESQL_TABLE_BYTES, POSTGRESQL_TABLE_HOT_UPDATE_RATIO, POSTGRESQL_TABLE_INDEX_BYTES},
         recorder::TelemetryRecorder,
         storage::{StorageGauges, TableSizeSample},
     };
@@ -94,13 +101,13 @@ mod tests {
         let rendered = recorder.render();
         assert!(
             rendered.contains(&format!(
-                "{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"attribute_history\"}} 600000000"
+                "{POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"attribute_history\"}} 600000000"
             )),
             "{rendered}"
         );
         assert!(
             rendered.contains(&format!(
-                "{DB_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"scope_history\"}} 0"
+                "{POSTGRESQL_HISTORY_LARGEST_ROWSTORE_CHUNK_BYTES}{{tenant=\"default\",table=\"scope_history\"}} 0"
             )),
             "{rendered}"
         );
@@ -123,15 +130,19 @@ mod tests {
         });
         let rendered = recorder.render();
         assert!(
-            rendered.contains(&format!("{DB_TABLE_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 4096")),
+            rendered.contains(&format!("{POSTGRESQL_TABLE_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 4096")),
             "{rendered}"
         );
         assert!(
-            rendered.contains(&format!("{DB_TABLE_INDEX_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 1024")),
+            rendered.contains(&format!(
+                "{POSTGRESQL_TABLE_INDEX_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 1024"
+            )),
             "{rendered}"
         );
         assert!(
-            rendered.contains(&format!("{DB_TABLE_HOT_UPDATE_RATIO}{{tenant=\"default\",table=\"current_attributes\"}} 0.75")),
+            rendered.contains(&format!(
+                "{POSTGRESQL_TABLE_HOT_UPDATE_RATIO}{{tenant=\"default\",table=\"current_attributes\"}} 0.75"
+            )),
             "{rendered}"
         );
         Ok(())

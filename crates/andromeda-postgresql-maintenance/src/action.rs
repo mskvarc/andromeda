@@ -59,7 +59,7 @@ pub(crate) async fn recover_artifact(
     let result = execute_statement(tenant_connection, &statement, cancellation).await;
     match result {
         StatementOutcome::Succeeded => {
-            record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Succeeded, started.elapsed(), None);
+            record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Ok, started.elapsed(), None);
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
             Ok(PassOutcome::Acted)
@@ -69,7 +69,7 @@ pub(crate) async fn recover_artifact(
             Ok(PassOutcome::Cancelled)
         }
         StatementOutcome::Failed(error) => {
-            record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Failed, started.elapsed(), None);
+            record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Error, started.elapsed(), None);
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
             Ok(PassOutcome::ActionFailed)
@@ -135,7 +135,7 @@ pub(crate) async fn execute_pending(
             Ok(PassOutcome::Cancelled)
         }
         StatementOutcome::Failed(error) => {
-            record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
+            record_action(action, MaintenanceActionOutcome::Error, started.elapsed(), None);
             let consecutive_failures = RetryNumber::new(NonZeroU32::MIN.saturating_add(target_state.consecutive_failures));
             let cooldown_until = cooldown_after(profile, target, ActionEnding::Failed { consecutive_failures }, Utc::now());
             target_record::record_action_failure(platform, tenant, row, cooldown_until).await?;
@@ -146,7 +146,7 @@ pub(crate) async fn execute_pending(
         StatementOutcome::Succeeded => {
             let duration = started.elapsed();
             let comparison = read_comparison(tenant_connection, branch, baseline).await?;
-            record_action(action, MaintenanceActionOutcome::Succeeded, duration, comparison.effect());
+            record_action(action, MaintenanceActionOutcome::Ok, duration, comparison.effect());
             let verdict = action_verdict(profile, target, comparison);
             let cooldown_until = cooldown_after(profile, target, ActionEnding::Completed(verdict), Utc::now());
             target_record::record_action_completion(platform, tenant, row, verdict, cooldown_until, comparison).await?;

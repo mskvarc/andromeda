@@ -21,7 +21,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::is_claimed_from, statement::Statement};
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, Query, SimpleExpr, UpdateStatement};
@@ -29,15 +29,6 @@ use sqlx::postgres::PgRow;
 use std::num::NonZeroU32;
 use tracing::error;
 use uuid::Uuid;
-
-/// The statement name the side-effect lease claim is observed under.
-const SIDE_EFFECT_CLAIM: StatementName = StatementName("pending-side-effect-claim");
-/// The statement name every claimant-guarded release of a failed attempt
-/// (a retry, or the dead letter of an unreadable job) is observed under.
-///
-/// A replay that succeeds releases nothing: its commit removes the job as the
-/// first statement of the replay transaction.
-const SIDE_EFFECT_RELEASE: StatementName = StatementName("pending-side-effect-release");
 
 #[async_trait]
 impl SideEffectQueue for PendingSideEffectsRepository {
@@ -72,7 +63,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
 
     async fn nack(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, next_attempt_at: DateTime<Utc>) -> Result<LeaseAcknowledgement, EntityError> {
         let result = observe_statement(
-            SIDE_EFFECT_RELEASE,
+            ObservedStatement::PendingSideEffectRelease,
             nack_statement(id.as_uuid(), *owner, error, next_attempt_at).to_query().execute(self.pool()),
         )
         .await
@@ -95,7 +86,7 @@ impl PendingSideEffectsRepository {
     async fn claim_rows(&self, owner: &LeaseHolder, limit: usize, lease_seconds: i32) -> Result<Vec<PgRow>, EntityError> {
         let limit = u64::try_from(limit).map_err(|error| EntityError::from(PersistenceFailure::Unencodable.record(&error)))?;
         observe_statement(
-            SIDE_EFFECT_CLAIM,
+            ObservedStatement::PendingSideEffectClaim,
             lease_batch_statement(*owner, limit, f64::from(lease_seconds)).to_query().fetch_all(self.pool()),
         )
         .await
@@ -112,7 +103,7 @@ impl PendingSideEffectsRepository {
     /// retire is reported rather than passed over.
     async fn retire_unreadable(&self, id: SideEffectJobId, owner: &LeaseHolder, detail: &str) {
         let retired = observe_statement(
-            SIDE_EFFECT_RELEASE,
+            ObservedStatement::PendingSideEffectRelease,
             mark_dead_statement(id.as_uuid(), *owner, detail).to_query().execute(self.pool()),
         )
         .await;

@@ -155,7 +155,7 @@ pub struct TenantBuildConfig {
     /// A cold build opens a connection pool and, on a schema that is behind or
     /// absent, runs the migrator over a direct connection. Requests past the
     /// bound wait for a build permit for at most `admission_timeout`; the wait
-    /// is reported as `andromeda_tenant_build_admission_wait_seconds`.
+    /// is reported as `andromeda_tenant_build_admission_wait_duration_seconds`.
     #[schemars(
         description = "The most tenants loading at once. Loading opens a pool and, when the tenant's schema is behind or absent, runs migrations over a direct connection. Requests past the bound wait for at most `tenancy.build.admission_timeout`."
     )]

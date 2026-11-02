@@ -8,16 +8,16 @@ use crate::{
         LABEL_OUTCOME,
         POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
         POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
-        POSTGRESQL_DATABASES_FREEZE_PRESSURE,
         POSTGRESQL_FREEZE_AGE_MAX,
-        POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
+        POSTGRESQL_FREEZE_PRESSURE_DATABASES,
+        POSTGRESQL_MAINTENANCE_ACTION_DURATION_SECONDS,
         POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
         POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
         POSTGRESQL_MULTIXACT_AGE_MAX,
         POSTGRESQL_OVERDUE_RELATIONS,
-        POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX,
+        POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES,
     },
     sample_value::SampleValue,
 };
@@ -78,9 +78,9 @@ pub enum MaintenanceAction {
 #[strum(serialize_all = "kebab-case")]
 pub enum MaintenanceActionOutcome {
     /// Statement completed successfully.
-    Succeeded,
+    Ok,
     /// Statement returned an error.
-    Failed,
+    Error,
     /// Cooperative cancellation stopped the statement future.
     Cancelled,
 }
@@ -119,7 +119,7 @@ pub fn record_fleet_freeze(transaction_age_max: u64, multixact_age_max: u64, lev
     for level in FreezePressureLevel::iter() {
         let databases = levels.iter().filter(|observed| **observed == level).count();
         let level: &'static str = level.into();
-        gauge!(POSTGRESQL_DATABASES_FREEZE_PRESSURE, LABEL_LEVEL => level).set(SampleValue::from(databases));
+        gauge!(POSTGRESQL_FREEZE_PRESSURE_DATABASES, LABEL_LEVEL => level).set(SampleValue::from(databases));
     }
 }
 
@@ -139,7 +139,7 @@ pub fn record_overdue_relations(relations: usize) {
 /// Record the most WAL any replication slot keeps on disk, zero without a
 /// slot.
 pub fn record_replication_slot_wal(retained_bytes_max: u64) {
-    gauge!(POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX).set(SampleValue::from(retained_bytes_max));
+    gauge!(POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES).set(SampleValue::from(retained_bytes_max));
 }
 
 /// Count one bounded pass decision without a tenant label.
@@ -154,7 +154,7 @@ pub fn record_action(action: MaintenanceAction, outcome: MaintenanceActionOutcom
     let action: &'static str = action.into();
     let outcome: &'static str = outcome.into();
     counter!(POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL, LABEL_ACTION => action, LABEL_OUTCOME => outcome).increment(1);
-    histogram!(POSTGRESQL_MAINTENANCE_ACTION_SECONDS, LABEL_ACTION => action, LABEL_OUTCOME => outcome).record(duration);
+    histogram!(POSTGRESQL_MAINTENANCE_ACTION_DURATION_SECONDS, LABEL_ACTION => action, LABEL_OUTCOME => outcome).record(duration);
     match effect {
         Some(ActionEffect::ReclaimedBytes(bytes)) => {
             histogram!(POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES, LABEL_ACTION => action).record(SampleValue::from(bytes));
@@ -186,15 +186,15 @@ mod tests {
         names::{
             POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
             POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
-            POSTGRESQL_DATABASES_FREEZE_PRESSURE,
             POSTGRESQL_FREEZE_AGE_MAX,
+            POSTGRESQL_FREEZE_PRESSURE_DATABASES,
             POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
             POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
             POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
             POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
             POSTGRESQL_MULTIXACT_AGE_MAX,
             POSTGRESQL_OVERDUE_RELATIONS,
-            POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX,
+            POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES,
         },
         recorder::TelemetryRecorder,
     };
@@ -207,7 +207,7 @@ mod tests {
             record_decision(MaintenanceDecision::Deferred);
             record_action(
                 MaintenanceAction::Reindex,
-                MaintenanceActionOutcome::Succeeded,
+                MaintenanceActionOutcome::Ok,
                 Duration::from_secs(1),
                 Some(ActionEffect::ReclaimedBytes(1024)),
             );
@@ -225,7 +225,7 @@ mod tests {
         recorder.record_locally(|| {
             record_action(
                 MaintenanceAction::Vacuum,
-                MaintenanceActionOutcome::Succeeded,
+                MaintenanceActionOutcome::Ok,
                 Duration::from_secs(1),
                 Some(ActionEffect::RemovedDeadTuples(49_000)),
             );
@@ -251,7 +251,7 @@ mod tests {
         assert!(rendered.contains(&format!("{POSTGRESQL_MULTIXACT_AGE_MAX} 1000")), "{rendered}");
         for (level, databases) in [("normal", 2), ("overdue", 1), ("critical", 0)] {
             assert!(
-                rendered.contains(&format!("{POSTGRESQL_DATABASES_FREEZE_PRESSURE}{{level=\"{level}\"}} {databases}")),
+                rendered.contains(&format!("{POSTGRESQL_FREEZE_PRESSURE_DATABASES}{{level=\"{level}\"}} {databases}")),
                 "{rendered}"
             );
         }
@@ -272,7 +272,7 @@ mod tests {
         assert!(rendered.contains(&format!("{POSTGRESQL_AUTOVACUUM_WORKERS_MAX} 3")), "{rendered}");
         assert!(rendered.contains(&format!("{POSTGRESQL_OVERDUE_RELATIONS} 2")), "{rendered}");
         assert!(
-            rendered.contains(&format!("{POSTGRESQL_REPLICATION_SLOT_RETAINED_WAL_BYTES_MAX} 4096")),
+            rendered.contains(&format!("{POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES} 4096")),
             "{rendered}"
         );
         assert!(!rendered.contains("tenant="), "{rendered}");

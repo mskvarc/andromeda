@@ -20,7 +20,10 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
-use andromeda_telemetry::tenancy::{ColdBuildOutcome, record_build_admission_wait, record_cold_build};
+use andromeda_telemetry::{
+    operation::Outcome,
+    tenancy::{record_build_admission_wait, record_cold_build},
+};
 use dashmap::mapref::entry::Entry;
 use std::{sync::Arc, time::Instant as StdInstant};
 use tokio::{
@@ -167,12 +170,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
         let build_started = StdInstant::now();
         let result = self.resolve_state_cold(tenant, policy, deadline).await;
-        let outcome = if result.is_ok() {
-            ColdBuildOutcome::Succeeded
-        } else {
-            ColdBuildOutcome::Failed
-        };
-        record_cold_build(outcome, build_started.elapsed().as_secs_f64());
+        record_cold_build(Outcome::of(&result), build_started.elapsed().as_secs_f64());
 
         // Release the admission permit before the trim: the trim bounds only the
         // cache size, and holding a build permit across it would charge another

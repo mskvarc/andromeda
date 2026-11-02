@@ -6,7 +6,6 @@ use crate::{
     repo::TemporalRepository,
     stored_attribute_shape::StoredAttributeShape,
     stored_catalog_error::StoredCatalogError,
-    temporal_query_execution::TemporalStatement,
     temporal_store_invariant::TemporalStoreInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -18,6 +17,7 @@ use andromeda_postgresql_codes::{
     recorded_shape::RecordedShape,
 };
 use andromeda_postgresql_temporal_query::stage1::build_stage1_entity_ids;
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::{
     error::TemporalError,
     merged_parts::LocalPart,
@@ -180,7 +180,9 @@ impl TemporalHistoryReader for TemporalRepository {
 
         let stage1 = build_stage1_entity_ids(&branch_of(scope), compiled, window, count, &names).map_err(TemporalStoreError::Render)?;
 
-        let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, &stage1.select, stage1.planning).await?;
+        let entity_id_rows = self
+            .execute_temporal_query(ObservedStatement::TemporalCandidateEntities, &stage1.select, stage1.planning)
+            .await?;
 
         let mut entity_ids = entity_id_rows
             .into_iter()
@@ -200,7 +202,7 @@ impl TemporalHistoryReader for TemporalRepository {
                 .count
                 .ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::CountStatementMissing))?;
             let count_rows = self
-                .execute_temporal_query(TemporalStatement::Stage1Count, &count, stage1.count_planning)
+                .execute_temporal_query(ObservedStatement::TemporalCandidateEntityCount, &count, stage1.count_planning)
                 .await?;
             Some(stage1_total(&count_rows)?)
         } else {

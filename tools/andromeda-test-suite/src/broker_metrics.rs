@@ -102,8 +102,8 @@ mod tests {
     fn a_counter_sums_over_its_labels_and_an_absent_one_reads_none() -> Result<()> {
         let reading = MetricsReading::parse(
             "# TYPE andromeda_tenant_cold_builds_total counter\n\
-             andromeda_tenant_cold_builds_total{outcome=\"succeeded\"} 3\n\
-             andromeda_tenant_cold_builds_total{outcome=\"failed\"} 1\n\
+             andromeda_tenant_cold_builds_total{outcome=\"ok\"} 3\n\
+             andromeda_tenant_cold_builds_total{outcome=\"error\"} 1\n\
              # TYPE andromeda_tenant_runtimes_cached gauge\n\
              andromeda_tenant_runtimes_cached 32\n",
         )?;

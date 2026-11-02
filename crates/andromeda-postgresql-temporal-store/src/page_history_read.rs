@@ -12,7 +12,6 @@ use crate::{
     error::TemporalStoreError,
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
-    temporal_query_execution::TemporalStatement,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -22,6 +21,7 @@ use andromeda_postgresql_temporal_query::{
     history::build_temporal_history_query,
     scope_history::{build_scope_history_query, scope_is_selected},
 };
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::{
     error::TemporalError,
     port::history_reader::{TemporalAggregationOutcome, TemporalHistoryObservation, TemporalHistoryOutcome},
@@ -55,7 +55,7 @@ impl TemporalRepository {
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
         let rows = self
-            .execute_temporal_query(TemporalStatement::History, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalHistory, &statement, StatementPlanning::Cached)
             .await?;
         let mut answers = self.read_entities_scope_history(branch, entity_ids, compiled).await?;
         let histories = assembled_entity_histories(by_entity(&rows)?, self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
@@ -102,7 +102,7 @@ impl TemporalRepository {
         }
         let statement = build_scope_history_query(branch, entity_ids, compiled);
         let rows = self
-            .execute_temporal_query(TemporalStatement::ScopeHistory, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalScopeHistory, &statement, StatementPlanning::Cached)
             .await?;
         Ok(by_entity(&rows)?
             .into_iter()
@@ -125,7 +125,7 @@ impl TemporalRepository {
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
         let rows = self
-            .execute_temporal_query(TemporalStatement::Aggregation, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalAggregation, &statement, StatementPlanning::Cached)
             .await?;
         Ok(by_entity(&rows)?
             .into_iter()

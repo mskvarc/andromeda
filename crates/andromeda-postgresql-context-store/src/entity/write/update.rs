@@ -56,13 +56,10 @@ use andromeda_postgresql_seaquery::{
     transaction_id::current_transaction_id,
     unnest::UnnestAliased,
 };
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, IntoIden, Query, SimpleExpr, UpdateStatement, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
-
-/// The statement name the entity set-update is observed under.
-const ENTITY_UPDATE: StatementName = StatementName("entity-update");
 
 /// Build the batch update of `entities`, each held to its entry of
 /// `expected` and modified at `accepted_at`, with the attribute
@@ -350,7 +347,7 @@ impl EntityRepository {
         let rows = entity_update_statement(target, entities, rows, grains, expected, accepted_at)?
             .into_query_as::<(String, DateTime<Utc>)>()
             .fetch_all(&mut **tx);
-        let rows = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
+        let rows = observe_statement(ObservedStatement::EntityUpdate, rows).await.map_err(entity_write_failure)?;
 
         rows.iter()
             .map(|(id, committed_at)| {

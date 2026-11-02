@@ -2,13 +2,14 @@
 //! Relationships its Query Terms' hops start from, over the part of each
 //! contributed entity this store holds (clauses 4.9 and 5.7.4.4).
 
-use crate::{entity_history_runs::entity_of, history_row_decode::assembled_history, repo::TemporalRepository, temporal_query_execution::TemporalStatement};
+use crate::{entity_history_runs::entity_of, history_row_decode::assembled_history, repo::TemporalRepository};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{split_filter::SplitFilter, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::split_part_rows::build_window_relationship_instances;
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::error::TemporalError;
 use std::collections::HashMap;
 
@@ -42,7 +43,7 @@ impl TemporalRepository {
         }
         let statement = build_window_relationship_instances(branch, compiled, entity_ids, &keys);
         let rows = self
-            .execute_temporal_query(TemporalStatement::WindowRelationships, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalSourceWindowRelationships, &statement, StatementPlanning::Cached)
             .await?;
         let entities = rows.iter().map(entity_of).collect::<Result<Vec<_>, _>>()?;
         let observations = assembled_history(&rows, self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;

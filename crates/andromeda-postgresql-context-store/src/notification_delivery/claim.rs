@@ -40,13 +40,10 @@ use andromeda_postgresql_seaquery::{
     queue::{claimable_at, is_claimed_from},
     statement::Statement,
 };
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use sea_query::{Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use std::num::NonZeroU32;
-
-/// The statement name the delivery claim is observed under.
-const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
 
 /// Claim up to `batch_size` due deliveries under `terms`, sweeping the live
 /// branch and every Snapshot branch until the batch is filled.
@@ -128,7 +125,7 @@ async fn claim_branch(
     let claim = claim_statement(target, terms.worker_id, batch_size, terms.order, f64::from(terms.lease.seconds()))
         .to_query_as()
         .fetch_all(&mut *tx);
-    let deliveries: Vec<RawClaimedDeliveryRow> = observe_statement(DELIVERY_CLAIM, claim).await?;
+    let deliveries: Vec<RawClaimedDeliveryRow> = observe_statement(ObservedStatement::NotificationDeliveryClaim, claim).await?;
     if deliveries.is_empty() {
         tx.commit().await?;
         return Ok(Vec::new());

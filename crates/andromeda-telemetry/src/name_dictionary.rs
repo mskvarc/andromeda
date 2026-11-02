@@ -1,7 +1,7 @@
 //! Metrics describing the per-tenant name dictionary caches.
 //!
 //! How often a name is answered from the cache, why cached names leave it, how
-//! many it holds and how many names are minted. No series carries a tenant
+//! many it holds and how many names are inserted. No series carries a tenant
 //! label: the entries gauge is the process-wide total over every loaded
 //! tenant's cache, which each cache adjusts by what it holds.
 
@@ -12,8 +12,8 @@ use crate::{
         LABEL_OUTCOME,
         NAME_DICTIONARY_ENTRIES,
         NAME_DICTIONARY_EVICTIONS_TOTAL,
+        NAME_DICTIONARY_INSERTED_TOTAL,
         NAME_DICTIONARY_LOOKUPS_TOTAL,
-        NAME_DICTIONARY_MINTED_TOTAL,
     },
     sample_value::SampleValue,
 };
@@ -99,12 +99,12 @@ pub fn record_eviction(dictionary: NameDictionary, cause: DictionaryEviction) {
 }
 
 /// Count `count` names newly inserted into `dictionary`.
-pub fn record_minted(dictionary: NameDictionary, count: u64) {
+pub fn record_inserted(dictionary: NameDictionary, count: u64) {
     if count == 0 {
         return;
     }
     let dictionary: &'static str = dictionary.into();
-    counter!(NAME_DICTIONARY_MINTED_TOTAL, LABEL_DICTIONARY => dictionary).increment(count);
+    counter!(NAME_DICTIONARY_INSERTED_TOTAL, LABEL_DICTIONARY => dictionary).increment(count);
 }
 
 /// One cache's share of the process-wide entries gauge.
@@ -165,8 +165,8 @@ impl Drop for DictionaryEntries {
 mod tests {
     use crate::{
         error::TelemetryError,
-        name_dictionary::{DictionaryEntries, DictionaryEviction, NameDictionary, record_eviction, record_lookups, record_minted},
-        names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_EVICTIONS_TOTAL, NAME_DICTIONARY_LOOKUPS_TOTAL, NAME_DICTIONARY_MINTED_TOTAL},
+        name_dictionary::{DictionaryEntries, DictionaryEviction, NameDictionary, record_eviction, record_inserted, record_lookups},
+        names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_EVICTIONS_TOTAL, NAME_DICTIONARY_INSERTED_TOTAL, NAME_DICTIONARY_LOOKUPS_TOTAL},
         recorder::TelemetryRecorder,
     };
 
@@ -211,19 +211,19 @@ mod tests {
             record_eviction(NameDictionary::AttributeNames, DictionaryEviction::Size);
             record_eviction(NameDictionary::AttributeNames, DictionaryEviction::Idle);
             record_eviction(NameDictionary::AttributeNames, DictionaryEviction::Idle);
-            record_minted(NameDictionary::EntityTypeNames, 1);
-            record_minted(NameDictionary::AttributeNames, 0);
+            record_inserted(NameDictionary::EntityTypeNames, 1);
+            record_inserted(NameDictionary::AttributeNames, 0);
         });
         let rendered = recorder.render();
         for series in [
             format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"size\"}} 1"),
             format!("{NAME_DICTIONARY_EVICTIONS_TOTAL}{{dictionary=\"attribute-names\",cause=\"idle\"}} 2"),
-            format!("{NAME_DICTIONARY_MINTED_TOTAL}{{dictionary=\"entity-type-names\"}} 1"),
+            format!("{NAME_DICTIONARY_INSERTED_TOTAL}{{dictionary=\"entity-type-names\"}} 1"),
         ] {
             assert!(rendered.contains(&series), "{rendered}");
         }
         assert!(
-            !rendered.contains(&format!("{NAME_DICTIONARY_MINTED_TOTAL}{{dictionary=\"attribute-names\"}}")),
+            !rendered.contains(&format!("{NAME_DICTIONARY_INSERTED_TOTAL}{{dictionary=\"attribute-names\"}}")),
             "{rendered}"
         );
         Ok(())

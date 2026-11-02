@@ -21,7 +21,7 @@ use crate::{
 use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
 use andromeda_postgresql_seaquery::statement::Statement;
-use andromeda_telemetry::name_dictionary::{DictionaryEntries, record_lookups, record_minted};
+use andromeda_telemetry::name_dictionary::{DictionaryEntries, record_inserted, record_lookups};
 use moka::sync::Cache;
 use sqlx::{Executor, PgConnection, Postgres, postgres::PgPool};
 use std::{
@@ -280,7 +280,7 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
             .execute(&mut *connection)
             .await?
             .rows_affected();
-        record_minted(N::KIND.into(), inserted);
+        record_inserted(N::KIND.into(), inserted);
         let minted = decode::<N>(&name_select_query::<N>(&unheld).to_query().fetch_all(&mut *connection).await?)?;
         self.absorb(&minted, CachePublication::Withhold);
         resolved.extend(minted);

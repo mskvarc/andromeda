@@ -1,7 +1,7 @@
 //! Operation accounting for the entity service.
 
 use crate::{
-    names::{ENTITY_OPERATION_SECONDS, ENTITY_OPERATIONS_TOTAL},
+    names::{ENTITY_OPERATION_DURATION_SECONDS, ENTITY_OPERATIONS_TOTAL},
     operation::OperationTimer,
 };
 use strum::IntoStaticStr;
@@ -37,5 +37,5 @@ pub enum EntityOperation {
 /// Start timing an entity-service `operation`.
 #[must_use]
 pub fn start(operation: EntityOperation) -> OperationTimer {
-    OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_SECONDS, operation.into())
+    OperationTimer::start(ENTITY_OPERATIONS_TOTAL, ENTITY_OPERATION_DURATION_SECONDS, operation.into())
 }

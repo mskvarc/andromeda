@@ -41,19 +41,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
 use andromeda_postgresql_seaquery::statement::Statement;
-use andromeda_telemetry::statement::{StatementName, observe_statement};
+use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, JoinType, Keyword, Query, SelectStatement, SimpleExpr, UpdateStatement, WithClause, WithQuery};
 use sqlx::postgres::PgPool;
-
-/// The statement name every delivery acknowledgement (delivered, failed,
-/// exhausted) is observed under.
-const DELIVERY_ACKNOWLEDGE: StatementName = StatementName("notification-delivery-acknowledge");
-
-/// The statement name the second statement of an acknowledgement, the one
-/// that sets deliveries aside, releases them or hands their hold over, is
-/// observed under.
-const DELIVERY_HOLD: StatementName = StatementName("notification-delivery-hold");
 
 /// Record that `worker_id` delivered the notification, and release the hold of
 /// its Subscription.
@@ -74,7 +65,7 @@ pub async fn mark_delivered(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let mut tx = pool.begin().await?;
     let recorded: Option<(i64, Option<i64>)> = observe_statement(
-        DELIVERY_ACKNOWLEDGE,
+        ObservedStatement::NotificationDeliveryAcknowledge,
         mark_delivered_statement(delivery_key, worker_id, target).to_query_as().fetch_optional(&mut *tx),
     )
     .await?;
@@ -82,7 +73,11 @@ pub async fn mark_delivered(
         None => LeaseAcknowledgement::Lost,
         Some((_, released)) => {
             if let Some(subscription_key) = released {
-                observe_statement(DELIVERY_HOLD, resume_statement(target, subscription_key).to_query().execute(&mut *tx)).await?;
+                observe_statement(
+                    ObservedStatement::NotificationDeliveryHold,
+                    resume_statement(target, subscription_key).to_query().execute(&mut *tx),
+                )
+                .await?;
             }
             LeaseAcknowledgement::Applied
         }
@@ -107,7 +102,11 @@ pub async fn mark_failed(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let statement = mark_failed_statement(delivery_key, worker_id, failure, next_attempt_at, target)?;
     let mut tx = pool.begin().await?;
-    let recorded: Option<(i64, i64, i64)> = observe_statement(DELIVERY_ACKNOWLEDGE, statement.to_query_as().fetch_optional(&mut *tx)).await?;
+    let recorded: Option<(i64, i64, i64)> = observe_statement(
+        ObservedStatement::NotificationDeliveryAcknowledge,
+        statement.to_query_as().fetch_optional(&mut *tx),
+    )
+    .await?;
     let outcome = match recorded {
         None => LeaseAcknowledgement::Lost,
         Some((_, subscription_key, probe_delivery_key)) => {
@@ -115,7 +114,11 @@ pub async fn mark_failed(
                 subscription_key,
                 probe_delivery_key,
             };
-            observe_statement(DELIVERY_HOLD, set_aside_statement(target, held).to_query().execute(&mut *tx)).await?;
+            observe_statement(
+                ObservedStatement::NotificationDeliveryHold,
+                set_aside_statement(target, held).to_query().execute(&mut *tx),
+            )
+            .await?;
             LeaseAcknowledgement::Applied
         }
     };
@@ -145,7 +148,7 @@ pub async fn mark_exhausted(
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let mut tx = pool.begin().await?;
     let recorded: Option<(i64, Option<i64>)> = observe_statement(
-        DELIVERY_ACKNOWLEDGE,
+        ObservedStatement::NotificationDeliveryAcknowledge,
         mark_exhausted_statement(delivery_key, worker_id, failure, target)
             .to_query_as()
             .fetch_optional(&mut *tx),
@@ -156,7 +159,7 @@ pub async fn mark_exhausted(
         Some((_, probed)) => {
             if let Some(subscription_key) = probed {
                 observe_statement(
-                    DELIVERY_HOLD,
+                    ObservedStatement::NotificationDeliveryHold,
                     hand_over_statement(target, subscription_key, next_probe_at).to_query().execute(&mut *tx),
                 )
                 .await?;

@@ -8,7 +8,6 @@ use crate::{
     history_row_decode::assembled_history,
     repo::TemporalRepository,
     scope_history_read::decode_scope_history,
-    temporal_query_execution::TemporalStatement,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
@@ -16,6 +15,7 @@ use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::history_source::HistoryBranch;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use andromeda_postgresql_temporal_query::split_part_rows::{build_in_effect_attribute_instances, build_in_effect_scope};
+use andromeda_telemetry::statement::ObservedStatement;
 use andromeda_temporal::{
     error::TemporalError,
     port::in_effect_reads::{InEffectReads, ScopeRead},
@@ -46,7 +46,7 @@ impl TemporalRepository {
             && let Some(statement) = build_in_effect_scope(branch, compiled, entity_ids)
         {
             let rows = self
-                .execute_temporal_query(TemporalStatement::InEffectScope, &statement, StatementPlanning::Cached)
+                .execute_temporal_query(ObservedStatement::TemporalSourceWindowStartScope, &statement, StatementPlanning::Cached)
                 .await?;
             for (entity_id, entity_rows) in by_entity(&rows)? {
                 let events = decode_scope_history(entity_rows)?;
@@ -66,7 +66,7 @@ impl TemporalRepository {
             return Ok(in_effect);
         };
         let rows = self
-            .execute_temporal_query(TemporalStatement::InEffectInstances, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalSourceWindowStartInstances, &statement, StatementPlanning::Cached)
             .await?;
         let entities = rows.iter().map(entity_of).collect::<Result<Vec<_>, _>>()?;
         let observations = assembled_history(&rows, self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
