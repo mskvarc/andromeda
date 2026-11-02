@@ -11,18 +11,24 @@ use andromeda_sql::declared_schema::index::DeclaredIndex;
 
 /// Every read of a stream on a time axis is a range of the rows carrying it,
 /// ordered on the axis and then on the write that recorded the row, so each
-/// axis's stream-led index keys that whole order and holds only those rows.
+/// axis's stream-led index holds only those rows. The `observed_at` and
+/// `deleted_at` indexes key that whole order; the `created_at` and
+/// `modified_at` indexes key the write instant alone, which every instance of
+/// one write shares, so B-tree deduplication folds those ties into one entry.
 #[test]
 fn each_time_axis_has_a_stream_index_over_the_rows_carrying_it() -> Result<(), PinError> {
     let schema = schema()?;
-    for axis in ["observed_at", "created_at", "modified_at", "deleted_at"] {
+    for (axis, tie_breakers) in [
+        ("observed_at", ", recorded_at desc, write_id desc, write_ordinal desc"),
+        ("created_at", ""),
+        ("modified_at", ""),
+        ("deleted_at", ", recorded_at desc, write_id desc, write_ordinal desc"),
+    ] {
         let name = format!("idx_attribute_history_stream_{axis}");
         pretty_assertions::assert_eq!(index(&schema, &name)?.table(), "attribute_history");
         let definition = index_definition(&schema, &name)?;
         assert!(
-            definition.ends_with(&format!(
-                "(stream_key, {axis} desc, recorded_at desc, write_id desc, write_ordinal desc) where {axis} is not null"
-            )),
+            definition.ends_with(&format!("(stream_key, {axis} desc{tie_breakers}) where {axis} is not null")),
             "{definition}"
         );
     }

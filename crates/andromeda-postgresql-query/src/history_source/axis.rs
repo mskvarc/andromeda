@@ -167,15 +167,22 @@ mod tests {
         }
     }
 
-    /// Each axis's stream-led index keys the column and then the write that
-    /// recorded the row, in the order a `lastN` reads, and holds only the rows
-    /// carrying the axis.
+    /// Each axis's stream-led index holds only the rows carrying the axis.
+    /// `observedAt` and `deletedAt` key the column and then the write that
+    /// recorded the row, in the order a `lastN` reads; `createdAt` and
+    /// `modifiedAt` key the write instant alone, which every instance of one
+    /// write shares.
     #[test]
-    fn the_migration_indexes_each_axis_by_its_column_and_the_recording_write() {
+    fn the_migration_indexes_each_axis_by_its_column_over_the_rows_carrying_it() {
         let migration = include_str!("../../../../migrations/branch/0018_attribute_history.sql");
-        for column in ["observed_at", "created_at", "modified_at", "deleted_at"] {
+        for (column, tie_breakers) in [
+            ("observed_at", ", recorded_at desc, write_id desc, write_ordinal desc"),
+            ("created_at", ""),
+            ("modified_at", ""),
+            ("deleted_at", ", recorded_at desc, write_id desc, write_ordinal desc"),
+        ] {
             let index = format!(
-                "create index idx_attribute_history_stream_{column} on attribute_history (stream_key, {column} desc, recorded_at desc, write_id desc, write_ordinal desc)\nwhere\n    {column} is not null;"
+                "create index idx_attribute_history_stream_{column} on attribute_history (stream_key, {column} desc{tie_breakers})\nwhere\n    {column} is not null;"
             );
             assert!(migration.contains(&index), "the migration declares {index}");
         }

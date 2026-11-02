@@ -144,13 +144,18 @@ with (
 -- instant there, ordered on that instant and then on the write that recorded
 -- the row: a window, a clause 6.3.10 page and a `lastN` (clauses 5.7.3.4 and
 -- 5.7.4.4) on `observedAt`, `createdAt`, `modifiedAt` or `deletedAt`. Each
--- axis has one stream-led index holding exactly the rows that carry it, keyed
--- in that whole order, so a read limited to n instances reads n entries
--- however many instances share an instant, and a stream with no instance on
--- the axis holds no entry to read. A row with no instant on an axis is
--- represented by no read on it (clause 5.2.21), so leaving it out of the
--- index loses nothing. A bound on the column, which every read states, is
--- also what excludes a columnstore chunk by its range on the axis.
+-- axis has one stream-led index holding exactly the rows that carry it, so a
+-- stream with no instance on the axis holds no entry to read. The
+-- `observedAt` and `deletedAt` indexes are keyed in that whole order, so a
+-- read limited to n instances reads n entries however many instances share
+-- an instant. The `createdAt` and `modifiedAt` indexes key the instant alone:
+-- every instance one write records holds the write instant on both, a key
+-- with no tie-breaker keeps those ties in one deduplicated entry, and a read
+-- on either axis sorts the ties of one write instant above the scan. A row
+-- with no instant on an axis is represented by no read on it (clause
+-- 5.2.21), so leaving it out of the index loses nothing. A bound on the
+-- column, which every read states, is also what excludes a columnstore chunk
+-- by its range on the axis.
 --
 -- The instance a stream held when a window opens (clause 4.11) is its latest
 -- row at or before the start: a row at its instant on the window's axis, or a
@@ -168,11 +173,11 @@ create index idx_attribute_history_stream_observed_at on attribute_history (stre
 where
     observed_at is not null;
 
-create index idx_attribute_history_stream_created_at on attribute_history (stream_key, created_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+create index idx_attribute_history_stream_created_at on attribute_history (stream_key, created_at desc)
 where
     created_at is not null;
 
-create index idx_attribute_history_stream_modified_at on attribute_history (stream_key, modified_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+create index idx_attribute_history_stream_modified_at on attribute_history (stream_key, modified_at desc)
 where
     modified_at is not null;
 
