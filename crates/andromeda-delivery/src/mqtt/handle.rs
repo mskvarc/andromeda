@@ -164,9 +164,33 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_outbound_http::address_policy::AddressPolicy;
     use bytes::BytesMut;
-    use rumqttc::{ConnAck, ConnectReturnCode, Packet, PubAck, QoS, SubAck, SubscribeReasonCode, mqttbytes::Error as PacketError};
+    use rumqttc::{
+        ConnAck,
+        ConnectReturnCode,
+        Packet,
+        PubAck,
+        QoS,
+        SubAck,
+        SubscribeReasonCode,
+        mqttbytes::Error as PacketError,
+        v5::mqttbytes::{
+            Error as PacketErrorV5,
+            QoS as QoSV5,
+            v5::{
+                ConnAck as ConnAckV5,
+                ConnAckProperties,
+                ConnectReturnCode as ConnectReturnCodeV5,
+                Packet as PacketV5,
+                PingResp as PingRespV5,
+                PubAck as PubAckV5,
+                SubAck as SubAckV5,
+                SubscribeReasonCode as SubscribeReasonCodeV5,
+            },
+        },
+    };
     use serde_json::json;
     use std::{
+        future::Future,
         net::SocketAddr,
         str::FromStr,
         sync::{
@@ -234,19 +258,117 @@ mod tests {
         }
     }
 
-    /// An MQTT 3.1.1 broker on loopback that records the payload length of the
-    /// last publish it received.
-    async fn broker() -> (SocketAddr, Arc<AtomicUsize>) {
+    /// A CONNACK accepting the session and announcing `announced` as the
+    /// largest packet the server accepts.
+    const fn connack_v5(announced: u32) -> ConnAckV5 {
+        ConnAckV5 {
+            session_present: false,
+            code: ConnectReturnCodeV5::Success,
+            properties: Some(ConnAckProperties {
+                session_expiry_interval: None,
+                receive_max: None,
+                max_qos: None,
+                retain_available: None,
+                max_packet_size: Some(announced),
+                assigned_client_identifier: None,
+                topic_alias_max: None,
+                reason_string: None,
+                user_properties: Vec::new(),
+                wildcard_subscription_available: None,
+                subscription_identifiers_available: None,
+                shared_subscription_available: None,
+                server_keep_alive: None,
+                response_information: None,
+                server_reference: None,
+                authentication_method: None,
+                authentication_data: None,
+            }),
+        }
+    }
+
+    /// The packet an MQTT 5 server announcing `announced` writes back for
+    /// `packet`, if any.
+    fn answer_v5(packet: &PacketV5, received: &AtomicUsize, announced: u32) -> Option<PacketV5> {
+        match packet {
+            PacketV5::Connect(..) => Some(PacketV5::ConnAck(connack_v5(announced))),
+            PacketV5::Subscribe(subscribe) => Some(PacketV5::SubAck(SubAckV5 {
+                pkid: subscribe.pkid,
+                return_codes: subscribe.filters.iter().map(|_| SubscribeReasonCodeV5::Success(QoSV5::AtMostOnce)).collect(),
+                properties: None,
+            })),
+            PacketV5::Publish(publish) => {
+                received.store(publish.payload.len(), Ordering::SeqCst);
+                (publish.qos == QoSV5::AtLeastOnce).then(|| PacketV5::PubAck(PubAckV5::new(publish.pkid, None)))
+            }
+            PacketV5::PingReq(_) => Some(PacketV5::PingResp(PingRespV5)),
+            PacketV5::Auth(_)
+            | PacketV5::ConnAck(_)
+            | PacketV5::PubAck(_)
+            | PacketV5::PingResp(_)
+            | PacketV5::SubAck(_)
+            | PacketV5::PubRec(_)
+            | PacketV5::PubRel(_)
+            | PacketV5::PubComp(_)
+            | PacketV5::Unsubscribe(_)
+            | PacketV5::UnsubAck(_)
+            | PacketV5::Disconnect(_) => None,
+        }
+    }
+
+    /// Serve one MQTT 5 session as [`serve`] does a 3.1.1 one, announcing
+    /// `announced` as the largest packet the server accepts.
+    async fn serve_v5(mut stream: TcpStream, received: Arc<AtomicUsize>, announced: u32) {
+        let mut buffer = BytesMut::new();
+        loop {
+            match stream.read_buf(&mut buffer).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            loop {
+                let packet = match PacketV5::read(&mut buffer, None) {
+                    Ok(packet) => packet,
+                    Err(PacketErrorV5::InsufficientBytes(_)) => break,
+                    Err(_) => return,
+                };
+                if let Some(reply) = answer_v5(&packet, &received, announced) {
+                    let mut written = BytesMut::new();
+                    reply.write(&mut written, None).expect("the reply is written");
+                    if stream.write_all(&written).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A broker on loopback serving each session with `session`, which records
+    /// the payload length of the last publish it received.
+    async fn listen<S, F>(session: S) -> (SocketAddr, Arc<AtomicUsize>)
+    where
+        S: Fn(TcpStream, Arc<AtomicUsize>) -> F + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
+    {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");
         let address = listener.local_addr().expect("the listener has an address");
         let received = Arc::new(AtomicUsize::new(0));
         let recorder = Arc::clone(&received);
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(serve(stream, Arc::clone(&recorder)));
+                tokio::spawn(session(stream, Arc::clone(&recorder)));
             }
         });
         (address, received)
+    }
+
+    /// An MQTT 3.1.1 broker on loopback.
+    async fn broker() -> (SocketAddr, Arc<AtomicUsize>) {
+        listen(serve).await
+    }
+
+    /// An MQTT 5 broker on loopback announcing `announced` as the largest
+    /// packet it accepts.
+    async fn broker_v5(announced: u32) -> (SocketAddr, Arc<AtomicUsize>) {
+        listen(move |stream, received| serve_v5(stream, received, announced)).await
     }
 
     fn endpoint(address: SocketAddr, qos: MqttQoS) -> MqttEndpointConfig {
@@ -277,6 +399,10 @@ mod tests {
 
     fn pool(config: MqttPoolConfig) -> Arc<MqttTransportPool> {
         Arc::new(MqttTransportPool::new(config, Arc::new(RumqttcDialer)))
+    }
+
+    fn packet_limit_mib(mib: u64) -> MqttPacketLimit {
+        MqttPacketLimit::try_from(HumanByteSize::mib(mib)).expect("a limit within the protocol")
     }
 
     #[tokio::test]
@@ -311,7 +437,7 @@ mod tests {
         let (address, _received) = broker().await;
         let endpoint = endpoint(address, MqttQoS::AtMost);
         let config = MqttPoolConfig {
-            max_packet_size: MqttPacketLimit::try_from(HumanByteSize::mib(1)).expect("a limit within the protocol"),
+            max_packet_size: packet_limit_mib(1),
             ..MqttPoolConfig::default()
         };
         let handle = pool(config).transport_for(&endpoint);
@@ -333,6 +459,71 @@ mod tests {
         let small = notification(&endpoint, 64);
         let outcome = handle.deliver(&small).await.expect("the connection still delivers");
         assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+    }
+
+    /// The announced maximum is refused before the client sees the packet, so
+    /// nothing reaches the server and the connection carries the next
+    /// notification.
+    #[tokio::test]
+    async fn an_mqtt_5_notification_over_the_maximum_the_server_announced_is_refused_naming_the_server_and_max_mqtt_packet() {
+        let (address, received) = broker_v5(1_048_576).await;
+        let endpoint = MqttEndpointConfig {
+            version: MqttVersion::V5,
+            ..endpoint(address, MqttQoS::AtLeast)
+        };
+        let handle = pool(MqttPoolConfig::default()).transport_for(&endpoint);
+
+        let refused = handle
+            .deliver(&notification(&endpoint, 2 * MIB))
+            .await
+            .map(drop)
+            .expect_err("the notification exceeds the announced maximum");
+        assert!(
+            matches!(
+                refused,
+                TransportError::Oversized(OversizedNotification::MqttServerAnnounced {
+                    announced: 1_048_576,
+                    configured: 134_217_728,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+        assert!(!refused.is_retryable(), "every attempt would publish the same packet");
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the server");
+
+        let small = notification(&endpoint, 64);
+        let outcome = handle.deliver(&small).await.expect("the connection still delivers");
+        assert!(matches!(outcome, DeliveryOutcome::Success { .. }), "{outcome:?}");
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), build_envelope(&small).expect("the envelope is written").len());
+    }
+
+    #[tokio::test]
+    async fn an_mqtt_5_notification_over_max_mqtt_packet_is_refused_naming_it_when_the_server_announced_more() {
+        let (address, received) = broker_v5(2 * 1_048_576).await;
+        let endpoint = MqttEndpointConfig {
+            version: MqttVersion::V5,
+            ..endpoint(address, MqttQoS::AtLeast)
+        };
+        let config = MqttPoolConfig {
+            max_packet_size: packet_limit_mib(1),
+            ..MqttPoolConfig::default()
+        };
+        let handle = pool(config).transport_for(&endpoint);
+
+        let refused = handle
+            .deliver(&notification(&endpoint, MIB + MIB / 2))
+            .await
+            .map(drop)
+            .expect_err("the notification exceeds max_mqtt_packet");
+        assert!(
+            matches!(
+                refused,
+                TransportError::Oversized(OversizedNotification::MaxMqttPacket { limit: 1_048_576, .. })
+            ),
+            "{refused:?}"
+        );
+        pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the server");
     }
 
     #[tokio::test]
