@@ -41,6 +41,8 @@ pub mod delivery_lease;
 pub mod delivery_policy;
 /// Whether the queue may still supply due deliveries to a delivery pass.
 mod delivery_queue_supply;
+/// When a delivery pass claims again, and for how many of its slots.
+mod delivery_slot_refill;
 /// How the slots of a delivery pass are shared between Subscriptions.
 mod delivery_slot_share;
 /// Notification delivery queue persistence.
