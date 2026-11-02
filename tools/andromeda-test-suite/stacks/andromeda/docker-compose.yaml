@@ -448,8 +448,8 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "5s"
       ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "5s"
 
-  # Announces a 1 MiB maximum packet in its CONNACK, below the brokers' 128 MiB max_mqtt_packet. Only the test of an
-  # MQTT notification over that maximum publishes to it.
+  # Announces a 1 MiB maximum packet in its CONNACK, below broker-oversized's 2 MiB max_mqtt_packet. Only the tests of
+  # oversized MQTT notifications publish to it.
   mosquitto-capped:
     image: eclipse-mosquitto:2.1.2-alpine
     command: ["mosquitto", "-c", "/mosquitto/config/capped.conf"]
@@ -485,6 +485,11 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-oversized"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-oversized:1087"
       ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
+      # A packet limit above mosquitto-capped's 1 MiB, so an MQTT 5 notification between the two is refused under the
+      # announced maximum and an MQTT 3.1.1 one, which no server bounds, under max_mqtt_packet. max_mqtt_packet must
+      # stay above max_body.
+      ANDROMEDA__REQUEST_LIMITS__MAX_BODY: "1800 KiB"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_MQTT_PACKET: "2 MiB"
 
   runner:
     extends:
