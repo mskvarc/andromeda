@@ -57,18 +57,15 @@ impl HttpEndpoint {
     }
 }
 
-/// Marks a response the request counter and duration histogram leave out: the
-/// scrape of the metrics themselves, so a scrape never counts itself. Carried
-/// in the response's extensions; while in progress, a scrape is pending like
-/// any request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnmeteredResponse;
+/// The path the metrics are scraped at. A request that matched this route is
+/// not observed at all, so a scrape never counts itself or shows as pending.
+pub const SCRAPE_PATH: &str = "/metrics";
 
 /// One request in progress, counted in the pending gauge until it is dropped.
 ///
 /// [`HttpRequestObservation::finish`] records the answered request; dropping
-/// the observation unfinished (the client went away, or the request is not
-/// counted) only takes it off the pending gauge.
+/// the observation unfinished (the client went away) only takes it off the
+/// pending gauge.
 #[derive(Debug)]
 pub struct HttpRequestObservation {
     /// The request's method.

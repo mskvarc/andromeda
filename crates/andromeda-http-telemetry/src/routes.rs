@@ -1,7 +1,7 @@
 //! Typed, state-complete metrics route inventory.
 
 use crate::{error::TelemetryHttpError, exposition::PrometheusText, handler, state::TelemetryRouteState};
-use andromeda_telemetry::recorder::TelemetryRecorder;
+use andromeda_telemetry::{http::SCRAPE_PATH, recorder::TelemetryRecorder};
 use axum::{Router, routing::get};
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ pub struct TelemetryRoutes {
 }
 
 impl TelemetryRoutes {
-    /// Construct `GET /metrics` over the installed recorder.
+    /// Construct `GET` at [`SCRAPE_PATH`] over the installed recorder.
     ///
     /// # Errors
     ///
@@ -20,7 +20,7 @@ impl TelemetryRoutes {
     /// and [`TelemetryHttpError::HeaderValue`] when its rendering is not a valid header value.
     pub fn new(recorder: Arc<TelemetryRecorder>) -> Result<TelemetryRoutes, TelemetryHttpError> {
         let router = Router::new()
-            .route("/metrics", get(handler::scrape))
+            .route(SCRAPE_PATH, get(handler::scrape))
             .with_state(TelemetryRouteState::new(recorder, PrometheusText::content_type()?));
         Ok(TelemetryRoutes { router })
     }
