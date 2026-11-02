@@ -490,8 +490,7 @@ mod tests {
             assert!(!count.contains(r#"AS "held""#), "{count}");
             assert!(
                 count.contains(concat!(
-                    r#") AS "ah" WHERE "ah"."attribute_name_key" = 7 AND ("ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
-                    r#" AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00')"#,
+                    r#") AS "ah" WHERE "ah"."attribute_name_key" = 7 AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#,
                     r#" AND "ah"."entity_key" = "e"."entity_key")"#
                 )),
                 "{count}"

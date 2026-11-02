@@ -140,39 +140,45 @@ with (
     autovacuum_vacuum_insert_scale_factor = 0.05
 );
 
--- The instance a stream held when a temporal window opens is its latest row
--- placed at or before the start, a row placed at its instant on the window's
--- axis and a deletion without one at its `deleted_at` (clause 4.5.7). A
--- temporal `q` or geo-query reads each tested stream down from the start in
--- this order and stops after the rows tied with the first, so the order is
--- indexed whole on each axis a window can open on: one entry per chunk is
--- read however long the stream. `deletedAt` places every row on its own
--- column and opens no window with an instance in effect.
+-- Every read of a stream on a time axis is a range of its rows that carry an
+-- instant there, ordered on that instant and then on the write that recorded
+-- the row: a window, a clause 6.3.10 page and a `lastN` (clauses 5.7.3.4 and
+-- 5.7.4.4) on `observedAt`, `createdAt`, `modifiedAt` or `deletedAt`. Each
+-- axis has one stream-led index holding exactly the rows that carry it, keyed
+-- in that whole order, so a read limited to n instances reads n entries
+-- however many instances share an instant, and a stream with no instance on
+-- the axis holds no entry to read. A row with no instant on an axis is
+-- represented by no read on it (clause 5.2.21), so leaving it out of the
+-- index loses nothing. A bound on the column, which every read states, is
+-- also what excludes a columnstore chunk by its range on the axis.
 --
--- A row with neither `observedAt` nor `deletedAt` is placed nowhere on the
--- `observedAt` axis, and every read on the axis bounds the placement or
--- states it is not NULL, which no NULL placement passes, so that index holds
--- only the rows it can return.
--- Every instance carries `createdAt` and `modifiedAt` (clause 4.8), so the
--- other two hold every row.
+-- The instance a stream held when a window opens (clause 4.11) is its latest
+-- row at or before the start: a row at its instant on the window's axis, or a
+-- deletion carrying none there at its `deleted_at` (clause 4.5.7). It is read
+-- as the later of the two heads, one from the axis index and one from the
+-- `deletedAt` index among the deletions without the axis, each stopped after
+-- the rows tied with its first. `deletedAt` opens no window with an instance
+-- in effect.
 --
--- No index keys an axis column alone. The broker stamps `createdAt` and
--- `modifiedAt` at an appended row's write instant, so an index of either
--- column would repeat its placement for every row but a deletion's, and an
--- index of `observed_at` would repeat the `observedAt` placement index for
--- every row that carries the axis. A window, a page or a `lastN` on any of the
--- three axes reads the placement index: it orders on the placement and bounds
--- both the placement and the column, which agree on every row carrying the
--- axis, while the bound on the column keeps out a deletion placed at its
--- `deletedAt`. The bound on the column is also what excludes a columnstore
--- chunk by its range on the axis.
-create index idx_attribute_history_stream_observed_placement on attribute_history (stream_key, (coalesce(observed_at, deleted_at)) desc)
+-- A row lands in at most the three indexes of the axes it carries: an
+-- observation in `createdAt`, `modifiedAt` and, when observed, `observedAt`
+-- (the broker stamps the first two on every instance, clause 4.8), a
+-- deletion in `deletedAt` alone.
+create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc, recorded_at desc, write_id desc, write_ordinal desc)
 where
-    coalesce(observed_at, deleted_at) is not null;
+    observed_at is not null;
 
-create index idx_attribute_history_stream_created_placement on attribute_history (stream_key, (coalesce(created_at, deleted_at)) desc);
+create index idx_attribute_history_stream_created_at on attribute_history (stream_key, created_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+where
+    created_at is not null;
 
-create index idx_attribute_history_stream_modified_placement on attribute_history (stream_key, (coalesce(modified_at, deleted_at)) desc);
+create index idx_attribute_history_stream_modified_at on attribute_history (stream_key, modified_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+where
+    modified_at is not null;
+
+create index idx_attribute_history_stream_deleted_at on attribute_history (stream_key, deleted_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+where
+    deleted_at is not null;
 
 create index idx_attribute_history_stream_generated_instance on attribute_history (stream_key, generated_instance_id)
 where

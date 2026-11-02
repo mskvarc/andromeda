@@ -328,17 +328,16 @@ mod tests {
     }
 
     /// Clause 4.11 defaults the axis to `observedAt`; each time property filters
-    /// its own column, and on every axis but `deletedAt` its placement beside
-    /// it, matching stage 1.
+    /// its own column alone, matching stage 1.
     #[test]
     fn each_time_property_filters_its_own_column() {
         let expected = [
-            (TimeProp::Observed, r#""ah"."observed_at" >="#, true),
-            (TimeProp::Created, r#""ah"."created_at" >="#, true),
-            (TimeProp::Modified, r#""ah"."modified_at" >="#, true),
-            (TimeProp::Deleted, r#""ah"."deleted_at" >="#, false),
+            (TimeProp::Observed, r#""ah"."observed_at" >="#),
+            (TimeProp::Created, r#""ah"."created_at" >="#),
+            (TimeProp::Modified, r#""ah"."modified_at" >="#),
+            (TimeProp::Deleted, r#""ah"."deleted_at" >="#),
         ];
-        for (prop, column, placed) in expected {
+        for (prop, column) in expected {
             let mut scope = scope(
                 AttributeDeleteScope::All,
                 DatasetFilter::Unfiltered,
@@ -348,7 +347,7 @@ mod tests {
             scope.window = TemporalWindow::builder().interval(scope.window.interval).timeproperty(prop).build();
             let sql = delete_sql(&scope);
             assert!(sql.contains(column), "{prop}: {sql}");
-            assert_eq!(sql.contains("COALESCE"), placed, "{prop}: {sql}");
+            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
         }
     }
 
@@ -441,8 +440,7 @@ mod tests {
             sql,
             concat!(
                 r#"DELETE FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [1,2]) "#,
-                r#"AND ("ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' "#,
-                r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00')"#
+                r#"AND "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#
             )
         );
     }
@@ -456,10 +454,7 @@ mod tests {
             false,
         )
         .window;
-        let predicate = concat!(
-            r#"WHERE "ah"."stream_key" = 3 AND ("ah"."observed_at" < '2024-01-01 00:00:00.000000 +00:00' "#,
-            r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") < '2024-01-01 00:00:00.000000 +00:00')"#
-        );
+        let predicate = r#"WHERE "ah"."stream_key" = 3 AND "ah"."observed_at" < '2024-01-01 00:00:00.000000 +00:00'"#;
         let count = windowed_count_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
         let delete = windowed_delete_statement(None, &[3], &window).to_string(PostgresQueryBuilder);
         assert_eq!(count, format!(r#"SELECT COUNT(*) AS "matched" FROM "attribute_history" AS "ah" {predicate}"#));

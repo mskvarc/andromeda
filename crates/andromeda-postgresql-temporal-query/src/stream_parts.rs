@@ -2,8 +2,8 @@
 //! streams a statement reads them for.
 //!
 //! Every attribute stream (an attribute and a `datasetId`) is read on its own
-//! in a LATERAL over the Entity's streams, so the stream-led axis and
-//! placement indexes serve each read. A stream's recorded rows and its queued
+//! in a LATERAL over the Entity's streams, so the stream-led axis indexes
+//! serve each read. A stream's recorded rows and its queued
 //! entries are parts read one by one and only then joined, so an order, a
 //! limit or a bound reaches the index of each part.
 

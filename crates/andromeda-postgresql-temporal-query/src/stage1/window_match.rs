@@ -112,40 +112,23 @@ mod tests {
 
     /// Clause 4.11 defaults the selector to `observedAt` and clause 5.2.21
     /// admits only the four semantic axes, so the window filters the requested
-    /// column and nothing stands in for a missing value on it. The placement
-    /// bounded beside the column on every axis but `deletedAt` is what the
-    /// stream-led index serves; the bound on the column keeps out a row that
-    /// carries no instant on the axis.
+    /// column and nothing stands in for a missing value on it: the bound on
+    /// the column keeps out a row that carries no instant on the axis.
     #[test]
     fn each_time_property_filters_its_own_column_with_no_fallback() {
         let expected = [
-            (
-                TimeProp::Observed,
-                r#""ah"."observed_at" <"#,
-                Some(r#"COALESCE("ah"."observed_at", "ah"."deleted_at") <"#),
-            ),
-            (
-                TimeProp::Created,
-                r#""ah"."created_at" <"#,
-                Some(r#"COALESCE("ah"."created_at", "ah"."deleted_at") <"#),
-            ),
-            (
-                TimeProp::Modified,
-                r#""ah"."modified_at" <"#,
-                Some(r#"COALESCE("ah"."modified_at", "ah"."deleted_at") <"#),
-            ),
-            (TimeProp::Deleted, r#""ah"."deleted_at" <"#, None),
+            (TimeProp::Observed, r#""ah"."observed_at" <"#),
+            (TimeProp::Created, r#""ah"."created_at" <"#),
+            (TimeProp::Modified, r#""ah"."modified_at" <"#),
+            (TimeProp::Deleted, r#""ah"."deleted_at" <"#),
         ];
-        for (prop, column, placement) in expected {
+        for (prop, column) in expected {
             let mut compiled = minimal_compiled();
             compiled.window.timeproperty = prop;
             compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
             let (sql, _) = built(&compiled, &QueryNames::default());
             assert!(sql.contains(column), "{prop}: {sql}");
-            match placement {
-                Some(placed) => assert!(sql.contains(placed), "{prop}: {sql}"),
-                None => assert!(!sql.contains("COALESCE"), "{prop}: {sql}"),
-            }
+            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
             assert!(!sql.contains("\"ah\".\"recorded_at\""), "{prop}: {sql}");
         }
     }
@@ -274,18 +257,12 @@ mod tests {
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
             let [page, count] = page_and_count(&branch, Some("2024-01-01T00:00:00Z"));
             assert!(
-                page.contains(concat!(
-                    r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' "#,
-                    r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#
-                )),
+                page.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#),
                 "{page}"
             );
             assert!(!page.contains(r#""re"."id" = "e"."id""#), "{page}");
             assert!(
-                count.contains(concat!(
-                    r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' "#,
-                    r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key")"#
-                )),
+                count.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key")"#),
                 "{count}"
             );
             assert!(!count.contains(r#"AS "re""#), "{count}");

@@ -267,11 +267,7 @@ mod tests {
         let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
         let edge = edge_of(&sql);
         assert!(edge.contains(r#"WITH RECURSIVE "probes" ("probe", "period_start", "period_end") AS"#), "{sql}");
-        pretty_assertions::assert_eq!(
-            edge.matches(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 1)"#).count(),
-            3,
-            "{sql}"
-        );
+        pretty_assertions::assert_eq!(edge.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1)"#).count(), 3, "{sql}");
         assert!(
             edge.contains(r#""ah"."observed_at" >= "probes"."period_end" AND "ah"."observed_at" < "probes"."period_end" + ('PT1H'::interval)"#),
             "{sql}"
@@ -341,9 +337,9 @@ mod tests {
         assert!(rows.contains(r#"UNNEST("stream_edge"."period_starts") AS "bucket_start""#), "{sql}");
         assert!(
             rows.contains(concat!(
-                r#""ah"."observed_at" < "stream_edge"."bound" AND COALESCE("ah"."observed_at", "ah"."deleted_at") < "stream_edge"."bound") "#,
-                r#"AND ("ah"."observed_at" >= "page_period"."bucket_start" AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= "page_period"."bucket_start" "#,
-                r#"AND ("ah"."observed_at" < "page_period"."bucket_end" AND COALESCE("ah"."observed_at", "ah"."deleted_at") < "page_period"."bucket_end"))"#
+                r#""ah"."observed_at" < "stream_edge"."bound" "#,
+                r#"AND ("ah"."observed_at" >= "page_period"."bucket_start" "#,
+                r#"AND "ah"."observed_at" < "page_period"."bucket_end")"#
             )),
             "{sql}"
         );
@@ -387,10 +383,7 @@ mod tests {
     fn the_instance_budget_cuts_at_the_start_of_the_period_it_falls_in() {
         let sql = sql_of(&aggregated("P1D", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
         let edge = edge_of(&sql);
-        assert!(
-            edge.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 1000001"#),
-            "{sql}"
-        );
+        assert!(edge.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1000001"#), "{sql}");
         assert!(edge.contains(r#"ORDER BY "found"."instant" ASC LIMIT 1 OFFSET 1000000"#), "{sql}");
         assert!(
             edge.contains(r#"SELECT COALESCE((SELECT "probes"."period_start" FROM "probes" WHERE "probes"."probe" = (1001)), 'infinity'::timestamptz) AS "bound" OFFSET 0"#),
@@ -414,19 +407,17 @@ mod tests {
     /// Every part of a live stream (its recorded rows and its queued
     /// entries) is read ordered and limited on its own before the parts are
     /// joined, so each limit reaches its index; on `createdAt` the order is
-    /// the placement the stream-led index keys.
+    /// the column the stream-led index keys.
     #[test]
     fn each_part_of_a_live_stream_is_ordered_and_limited_on_its_own() {
         let page = InstancePage::Periods { budget: budget() };
         let live = sql_on(&HistoryBranch::live(), &aggregated("PT1H", TimeProp::Created, page));
-        let placement = r#"ORDER BY COALESCE("ah"."created_at", "ah"."deleted_at") ASC"#;
-        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{placement} LIMIT 1000001")).count(), 2, "{live}");
-        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{placement} LIMIT 1)")).count(), 6, "{live}");
+        let ordered = r#"ORDER BY "ah"."created_at" ASC"#;
+        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{ordered} LIMIT 1000001")).count(), 2, "{live}");
+        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{ordered} LIMIT 1)")).count(), 6, "{live}");
         let recorded = sql_of(&aggregated("PT1H", TimeProp::Observed, page));
         pretty_assertions::assert_eq!(
-            edge_of(&recorded)
-                .matches(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 1000001"#)
-                .count(),
+            edge_of(&recorded).matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1000001"#).count(),
             1,
             "{recorded}"
         );
@@ -460,10 +451,7 @@ mod tests {
         };
         let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, page));
         let edge = edge_of(&sql);
-        assert!(
-            edge.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC LIMIT 1)"#),
-            "{sql}"
-        );
+        assert!(edge.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1)"#), "{sql}");
         assert!(edge.contains(r#""ah"."observed_at" < "probes"."period_start""#), "{sql}");
         assert!(
             edge.contains(r#"SELECT GREATEST((SELECT "probes"."period_end" FROM "probes" WHERE "probes"."probe" = (1001))"#),
@@ -486,10 +474,7 @@ mod tests {
         };
         let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, last_n));
         assert!(!sql.contains("stream_edge"), "{sql}");
-        assert!(
-            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC, "ah"."recorded_at" DESC"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC"#), "{sql}");
         assert!(sql.contains("LIMIT 5"), "{sql}");
         let whole = sql_of(&aggregated("", TimeProp::Observed, InstancePage::Whole));
         assert!(!whole.contains("stream_edge"), "{whole}");

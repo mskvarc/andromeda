@@ -75,7 +75,7 @@ impl StreamProbes<'_> {
     /// instants at or after it, backwards the instants before it.
     pub(crate) fn beyond(&self, walk: Walk, from: &SimpleExpr) -> SimpleExpr {
         axis_bound(Ah, self.axis(), |instant| match walk {
-            // clone: the column and the placement are bounded by the same instant.
+            // clone: the instant is borrowed and bounds the column by value.
             Walk::Forward => instant.gte(from.clone()),
             Walk::Backward => instant.lt(from.clone()),
         })
@@ -99,7 +99,7 @@ impl StreamProbes<'_> {
             Walk::Forward => from.clone().add(width),
             Walk::Backward => from.clone().sub(width),
         };
-        // clone: the near search is bounded by both instants, on the column and the placement.
+        // clone: the near search bounds the column by both instants.
         let near = axis_bound(Ah, self.axis(), |instant| match walk {
             Walk::Forward => instant.clone().gte(from.clone()).and(instant.lt(step.clone())),
             Walk::Backward => instant.clone().lt(from.clone()).and(instant.gte(step.clone())),
@@ -121,7 +121,7 @@ impl StreamProbes<'_> {
     /// and most recent instant and decompresses only the batches it admits.
     pub(crate) fn kept_side(&self, walk: Walk, bound: &SimpleExpr) -> SimpleExpr {
         axis_bound(Ah, self.axis(), |instant| match walk {
-            // clone: the column and the placement are compared with the same bound.
+            // clone: the bound is borrowed and compared with the column by value.
             Walk::Forward => instant.lt(bound.clone()),
             Walk::Backward => instant.gte(bound.clone()),
         })

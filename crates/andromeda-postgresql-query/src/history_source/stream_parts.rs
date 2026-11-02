@@ -25,8 +25,8 @@ use sea_query::{DynIden, Expr, ExprTrait, Query, SelectStatement};
 /// replaces when `pending` unions them.
 ///
 /// The rows are narrowed by their stream key alone, so the stream-led axis
-/// and placement indexes return them in their order and a limited read stops
-/// after its page.
+/// indexes return them in their order and a limited read stops after its
+/// page.
 fn recorded_stream_rows(schema: Option<&DynIden>, stream: &HistoryStream, pending: PendingEntries) -> SelectStatement {
     let mut select = Query::select();
     select
@@ -114,8 +114,8 @@ mod tests {
     }
 
     /// The recorded part of one stream is narrowed by its stream key alone,
-    /// so the stream-led axis and placement indexes serve it, and takes its
-    /// grain from the stream row.
+    /// so the stream-led axis indexes serve it, and takes its grain from the
+    /// stream row.
     #[test]
     fn a_stream_part_reads_its_recorded_rows_by_stream_key() {
         let reads = reads(&HistoryBranch::live_recorded());

@@ -60,8 +60,6 @@ pub mod holder_rows;
 pub mod instance_replacement;
 /// The queued entries the application would write, as source rows.
 mod pending;
-/// Where a row stands on a Temporal Property's axis.
-pub mod placement;
 /// The rows of scope history.
 pub mod scope_rows;
 /// The attribute history of one stream, read in parts.

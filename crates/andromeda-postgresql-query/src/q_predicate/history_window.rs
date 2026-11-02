@@ -25,10 +25,10 @@
 //!
 //! The two kinds of valid instance are read by two probes, each one an index
 //! range rather than a disjunction no index can drive: the instances inside
-//! the interval, on the stream-led index of the axis's placement, and the instance in
+//! the interval, on the stream-led index of the axis, and the instance in
 //! effect when it opens, which [`InEffectInstance`] reads down from the start
-//! on the stream-led index of its placement, one stream of a tested attribute
-//! at a time.
+//! on the stream-led indexes of the axis and of `deletedAt`, one stream of a
+//! tested attribute at a time.
 //!
 //! Both probes read the history sources of the branch, so on the live branch
 //! the entries still queued for the Temporal Evolution are instances like the
@@ -42,7 +42,7 @@ use crate::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{attribute_rows, stream_rows},
-        axis::{axis_column, axis_present, axis_window},
+        axis::{axis_present, axis_window},
         entity_rows::entity_rows,
         grain::HistoryGrain,
     },
@@ -306,7 +306,7 @@ impl HistoryWindow {
         let instance = InEffectInstance::builder()
             .branch(&self.branch)
             .of(&self.of)
-            .axis(axis_column(self.timeproperty))
+            .timeproperty(self.timeproperty)
             .start(start)
             .build();
         let mut source = Query::select();
@@ -498,7 +498,8 @@ mod tests {
             r#"SELECT "qh".* FROM"#,
             r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#,
             r#""qh"."placed" < '2019-01-01"#,
-            r#"COALESCE("qi"."observed_at", "qi"."deleted_at") <= '2019-01-01"#,
+            r#""qi"."observed_at" <= '2019-01-01"#,
+            r#""qi"."deleted_at" <= '2019-01-01"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -617,14 +618,14 @@ mod tests {
     }
 
     /// A Snapshot reads its own branch: every history relation of both probes,
-    /// the stream the instance in effect is placed in included, is qualified
-    /// with the branch schema.
+    /// both heads of the stream the instance in effect is placed in included,
+    /// is qualified with the branch schema.
     #[test]
     fn both_probes_are_qualified_with_the_branch_schema() {
         let window = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
         let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-        pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 2, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 3, "{sql}");
+        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 3, "{sql}");
         pretty_assertions::assert_eq!(sql.matches(r#""temporal_attribute_streams""#).count(), 2, "{sql}");
         pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."temporal_attribute_streams""#).count(), 2, "{sql}");
         assert!(!sql.contains("temporal_append"), "{sql}");

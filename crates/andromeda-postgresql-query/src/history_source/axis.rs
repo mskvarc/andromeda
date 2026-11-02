@@ -7,25 +7,16 @@
 //! carries no value on the requested axis is outside every bounded window on it,
 //! and the operational `recorded_at` never stands in for a missing one.
 //!
-//! A stream's rows are read on `observedAt`, `createdAt` and `modifiedAt`
-//! through the stream-led placement index of the axis rather than an index of
-//! the axis column alone: the broker stamps `createdAt` and `modifiedAt` on
-//! every instance (clause 4.8), so an index of either column would repeat its
-//! placement for every row but a deletion's, and the placement index of
-//! `observedAt` serves both the window and the instance in effect when it
-//! opens. A read orders on the placement and bounds both the column and the
-//! placement. The two agree on every row that carries an instant on the axis,
-//! and the bound on the column keeps out a deletion placed at its `deletedAt`,
-//! so a read returns the same rows it would on the column alone. The bound on
-//! the placement is what the index serves; the bound on the column is what
-//! excludes a columnstore chunk by its range on the axis, which no bound on an
-//! expression does. `deletedAt` places every row on its own column.
+//! Each axis has a stream-led index holding the rows that carry it, keyed on
+//! the column and then on the write that recorded the row, so a read ordered
+//! and bounded on the column is a range of that index. The bound on the column
+//! is also what excludes a columnstore chunk by its range on the axis.
 
-use crate::{history_source::placement::placement, time_interval_predicate::within_interval};
+use crate::time_interval_predicate::within_interval;
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
-use sea_query::{Condition, DynIden, Expr, ExprTrait, IntoIden, SimpleExpr};
+use sea_query::{Condition, Expr, ExprTrait, IntoIden, SimpleExpr};
 
 /// The `attribute_history` column that holds `timeproperty`.
 #[must_use]
@@ -38,65 +29,32 @@ pub const fn axis_column(timeproperty: TimeProp) -> AttributeHistory {
     }
 }
 
-/// The axis column of the row under `row`.
-fn column_of(row: &DynIden, timeproperty: TimeProp) -> SimpleExpr {
-    // clone: each column reference takes the alias by value.
-    Expr::col((row.clone(), axis_column(timeproperty)))
-}
-
-/// The placement of the row under `row` on `timeproperty` when a stream is
-/// read on it through the axis's placement index, `None` on `deletedAt`.
-fn indexed_placement(row: &DynIden, timeproperty: TimeProp) -> Option<SimpleExpr> {
-    match timeproperty {
-        // clone: the placement names the alias in both of its columns.
-        TimeProp::Observed | TimeProp::Created | TimeProp::Modified => Some(placement(row.clone(), axis_column(timeproperty))),
-        TimeProp::Deleted => None,
-    }
-}
-
-/// The key a stream's rows under `row` are ordered on for `timeproperty`.
+/// The key a stream's rows under `row` are ordered on for `timeproperty`: the
+/// instant on its column.
 #[must_use]
 pub fn axis_order(row: impl IntoIden, timeproperty: TimeProp) -> SimpleExpr {
-    let row = row.into_iden();
-    indexed_placement(&row, timeproperty).unwrap_or_else(|| column_of(&row, timeproperty))
+    Expr::col((row.into_iden(), axis_column(timeproperty)))
 }
 
-/// The rows under `row` that carry an instant on `timeproperty`, stated on the
-/// placement too where the stream is read through the placement index, so a
-/// read the window leaves unbounded still meets the predicate of a partial
-/// placement index.
+/// The rows under `row` that carry an instant on `timeproperty`, which is the
+/// predicate of the axis's stream-led index, so a read the window leaves
+/// unbounded still reads that index.
 #[must_use]
 pub fn axis_present(row: impl IntoIden, timeproperty: TimeProp) -> Condition {
-    let row = row.into_iden();
-    let column = Condition::all().add(Expr::expr(column_of(&row, timeproperty)).is_not_null());
-    match indexed_placement(&row, timeproperty) {
-        Some(placed) => column.add(Expr::expr(placed).is_not_null()),
-        None => column,
-    }
+    Condition::all().add(Expr::expr(axis_order(row, timeproperty)).is_not_null())
 }
 
-/// `compare` of the instant of the row under `row` on `timeproperty`, and of
-/// its placement where the stream is read through the placement index.
+/// `compare` of the instant of the row under `row` on `timeproperty`.
 #[must_use]
 pub fn axis_bound(row: impl IntoIden, timeproperty: TimeProp, compare: impl Fn(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
-    let row = row.into_iden();
-    let column = compare(column_of(&row, timeproperty));
-    match indexed_placement(&row, timeproperty) {
-        Some(placed) => column.and(compare(placed)),
-        None => column,
-    }
+    compare(axis_order(row, timeproperty))
 }
 
 /// The rows under `row` whose instant on `timeproperty` lies within
-/// `interval`, bounded as [`axis_bound`] bounds them.
+/// `interval`.
 #[must_use]
 pub fn axis_window(row: impl IntoIden, timeproperty: TimeProp, interval: &TimeInterval) -> Condition {
-    let row = row.into_iden();
-    let column = within_interval(&column_of(&row, timeproperty), interval);
-    match indexed_placement(&row, timeproperty) {
-        Some(placed) => column.add(within_interval(&placed, interval)),
-        None => column,
-    }
+    within_interval(&axis_order(row, timeproperty), interval)
 }
 
 #[cfg(test)]
@@ -145,14 +103,14 @@ mod tests {
         }
     }
 
-    /// Every axis but `deletedAt` is ordered on the placement its stream-led
-    /// index keys; `deletedAt` on its column.
+    /// Every axis is ordered on its own column, which its stream-led index
+    /// keys.
     #[test]
-    fn a_stream_is_ordered_on_the_placement_of_an_indexed_axis_and_on_the_column_of_deleted_at() {
+    fn a_stream_is_ordered_on_the_column_of_its_axis() {
         for (prop, key) in [
-            (TimeProp::Observed, r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC"#),
-            (TimeProp::Created, r#"ORDER BY COALESCE("ah"."created_at", "ah"."deleted_at") ASC"#),
-            (TimeProp::Modified, r#"ORDER BY COALESCE("ah"."modified_at", "ah"."deleted_at") ASC"#),
+            (TimeProp::Observed, r#"ORDER BY "ah"."observed_at" ASC"#),
+            (TimeProp::Created, r#"ORDER BY "ah"."created_at" ASC"#),
+            (TimeProp::Modified, r#"ORDER BY "ah"."modified_at" ASC"#),
             (TimeProp::Deleted, r#"ORDER BY "ah"."deleted_at" ASC"#),
         ] {
             let sql = rendered(|select| {
@@ -162,33 +120,28 @@ mod tests {
         }
     }
 
-    /// A bound keeps the bound on the column, which excludes columnstore
-    /// chunks and a deletion placed at its `deletedAt`, beside the one on the
-    /// placement, which the placement index serves.
+    /// A bound names the column alone, so a deletion carrying no instant on
+    /// the axis is never inside it.
     #[test]
-    fn a_bound_on_an_indexed_axis_bounds_both_the_column_and_the_placement() {
+    fn a_bound_on_an_axis_bounds_its_column_alone() {
         let at = instant("2026-01-01T00:00:00Z");
-        for (prop, column) in [(TimeProp::Observed, "observed_at"), (TimeProp::Created, "created_at")] {
+        for (prop, column) in [
+            (TimeProp::Observed, "observed_at"),
+            (TimeProp::Created, "created_at"),
+            (TimeProp::Deleted, "deleted_at"),
+        ] {
             let sql = rendered(|select| {
                 select.and_where(axis_bound(ah(), prop, |instant| instant.gt(at)));
             });
-            let expected = format!(
-                r#"WHERE "ah"."{column}" > '2026-01-01 00:00:00.000000 +00:00' AND COALESCE("ah"."{column}", "ah"."deleted_at") > '2026-01-01 00:00:00.000000 +00:00'"#
-            );
+            let expected = format!(r#"WHERE "ah"."{column}" > '2026-01-01 00:00:00.000000 +00:00'"#);
             assert!(sql.ends_with(&expected), "{prop}: {sql}");
+            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
         }
-        let deleted = rendered(|select| {
-            select.and_where(axis_bound(ah(), TimeProp::Deleted, |instant| instant.gt(at)));
-        });
-        assert!(
-            deleted.ends_with(r#"WHERE "ah"."deleted_at" > '2026-01-01 00:00:00.000000 +00:00'"#),
-            "{deleted}"
-        );
     }
 
-    /// A window on an indexed axis bounds both from each side.
+    /// A window bounds the column from each side.
     #[test]
-    fn a_window_on_an_indexed_axis_bounds_both_the_column_and_the_placement_from_each_side() {
+    fn a_window_on_an_axis_bounds_its_column_from_each_side() {
         let interval = TimeInterval::Between {
             from: instant("2026-01-01T00:00:00Z"),
             to: instant("2026-02-01T00:00:00Z"),
@@ -197,36 +150,34 @@ mod tests {
             let sql = rendered(|select| {
                 select.cond_where(axis_window(ah(), prop, &interval));
             });
-            for bound in [
-                format!(r#""ah"."{column}" >= '2026-01-01 00:00:00.000000 +00:00'"#),
-                format!(r#""ah"."{column}" < '2026-02-01 00:00:00.000000 +00:00'"#),
-                format!(r#"COALESCE("ah"."{column}", "ah"."deleted_at") >= '2026-01-01 00:00:00.000000 +00:00'"#),
-                format!(r#"COALESCE("ah"."{column}", "ah"."deleted_at") < '2026-02-01 00:00:00.000000 +00:00'"#),
-            ] {
-                assert!(sql.contains(&bound), "{prop} {bound}: {sql}");
-            }
+            let expected = format!(r#"WHERE "ah"."{column}" >= '2026-01-01 00:00:00.000000 +00:00' AND "ah"."{column}" < '2026-02-01 00:00:00.000000 +00:00'"#);
+            assert!(sql.ends_with(&expected), "{prop}: {sql}");
         }
-        let deleted = rendered(|select| {
-            select.cond_where(axis_window(ah(), TimeProp::Deleted, &interval));
-        });
-        assert!(!deleted.contains("COALESCE"), "{deleted}");
     }
 
-    /// An unbounded window on an indexed axis still states the placement,
-    /// which the partial `observedAt` placement index requires, beside the
-    /// column, which keeps a row without the axis out.
+    /// An unbounded window still states the predicate of the axis's partial
+    /// index, which keeps a row without the axis out.
     #[test]
-    fn presence_on_an_indexed_axis_is_stated_on_both_the_column_and_the_placement() {
-        let sql = rendered(|select| {
-            select.cond_where(axis_present(ah(), TimeProp::Observed));
-        });
-        assert!(
-            sql.ends_with(r#"WHERE "ah"."observed_at" IS NOT NULL AND COALESCE("ah"."observed_at", "ah"."deleted_at") IS NOT NULL"#),
-            "{sql}"
-        );
-        let deleted = rendered(|select| {
-            select.cond_where(axis_present(ah(), TimeProp::Deleted));
-        });
-        assert!(deleted.ends_with(r#"WHERE "ah"."deleted_at" IS NOT NULL"#), "{deleted}");
+    fn presence_on_an_axis_is_stated_on_its_column() {
+        for (prop, column) in [(TimeProp::Observed, "observed_at"), (TimeProp::Deleted, "deleted_at")] {
+            let sql = rendered(|select| {
+                select.cond_where(axis_present(ah(), prop));
+            });
+            assert!(sql.ends_with(&format!(r#"WHERE "ah"."{column}" IS NOT NULL"#)), "{prop}: {sql}");
+        }
+    }
+
+    /// Each axis's stream-led index keys the column and then the write that
+    /// recorded the row, in the order a `lastN` reads, and holds only the rows
+    /// carrying the axis.
+    #[test]
+    fn the_migration_indexes_each_axis_by_its_column_and_the_recording_write() {
+        let migration = include_str!("../../../../migrations/branch/0018_attribute_history.sql");
+        for column in ["observed_at", "created_at", "modified_at", "deleted_at"] {
+            let index = format!(
+                "create index idx_attribute_history_stream_{column} on attribute_history (stream_key, {column} desc, recorded_at desc, write_id desc, write_ordinal desc)\nwhere\n    {column} is not null;"
+            );
+            assert!(migration.contains(&index), "the migration declares {index}");
+        }
     }
 }

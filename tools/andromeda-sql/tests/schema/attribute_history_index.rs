@@ -9,44 +9,30 @@
 use crate::repository::{PinError, index, index_definition, schema};
 use andromeda_sql::declared_schema::index::DeclaredIndex;
 
-/// Clause 4.11: the in-effect read bounds the placement from above, so a row
-/// with neither `observedAt` nor `deletedAt` is never read on that axis.
+/// Every read of a stream on a time axis is a range of the rows carrying it,
+/// ordered on the axis and then on the write that recorded the row, so each
+/// axis's stream-led index keys that whole order and holds only those rows.
 #[test]
-fn the_observed_at_placement_index_skips_rows_placed_nowhere() -> Result<(), PinError> {
+fn each_time_axis_has_a_stream_index_over_the_rows_carrying_it() -> Result<(), PinError> {
     let schema = schema()?;
-    pretty_assertions::assert_eq!(index(&schema, "idx_attribute_history_stream_observed_placement")?.table(), "attribute_history");
-    let definition = index_definition(&schema, "idx_attribute_history_stream_observed_placement")?;
-    assert!(
-        definition.ends_with("(stream_key, (coalesce(observed_at, deleted_at)) desc) where coalesce(observed_at, deleted_at) is not null"),
-        "{definition}"
-    );
-    Ok(())
-}
-
-/// Clause 4.8: the broker stamps `createdAt` and `modifiedAt` on every
-/// instance, so every row has a placement on those axes.
-#[test]
-fn the_created_and_modified_placement_indexes_cover_every_row() -> Result<(), PinError> {
-    let schema = schema()?;
-    for (name, axis) in [
-        ("idx_attribute_history_stream_created_placement", "created_at"),
-        ("idx_attribute_history_stream_modified_placement", "modified_at"),
-    ] {
-        let definition = index_definition(&schema, name)?;
+    for axis in ["observed_at", "created_at", "modified_at", "deleted_at"] {
+        let name = format!("idx_attribute_history_stream_{axis}");
+        pretty_assertions::assert_eq!(index(&schema, &name)?.table(), "attribute_history");
+        let definition = index_definition(&schema, &name)?;
         assert!(
-            definition.ends_with(&format!("(stream_key, (coalesce({axis}, deleted_at)) desc)")),
+            definition.ends_with(&format!(
+                "(stream_key, {axis} desc, recorded_at desc, write_id desc, write_ordinal desc) where {axis} is not null"
+            )),
             "{definition}"
         );
-        assert!(index(&schema, name)?.predicate().is_none(), "{definition}");
     }
     Ok(())
 }
 
-/// Every read on `observedAt` bounds or states the placement beside the
-/// column, so the placement index serves it and no index keys the column
-/// alone.
+/// No B-tree keys an axis through another: a row is read on an axis by its
+/// own column alone, so every B-tree naming `observed_at` is its stream index.
 #[test]
-fn no_index_keys_the_observed_at_column_alone() -> Result<(), PinError> {
+fn only_the_observed_at_stream_index_keys_the_observed_at_column() -> Result<(), PinError> {
     let schema = schema()?;
     let observed: Vec<&str> = schema
         .indexes()
@@ -55,7 +41,7 @@ fn no_index_keys_the_observed_at_column_alone() -> Result<(), PinError> {
         .filter(|index| index.referenced_columns().iter().any(|column| column == "observed_at"))
         .map(DeclaredIndex::name)
         .collect();
-    pretty_assertions::assert_eq!(observed, ["idx_attribute_history_stream_observed_placement"]);
+    pretty_assertions::assert_eq!(observed, ["idx_attribute_history_stream_observed_at"]);
     Ok(())
 }
 

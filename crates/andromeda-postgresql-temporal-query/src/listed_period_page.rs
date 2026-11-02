@@ -251,8 +251,8 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(
             sql.ends_with(concat!(
-                r#"WHERE "ah"."observed_at" >= "page_period"."bucket_start" AND COALESCE("ah"."observed_at", "ah"."deleted_at") >= "page_period"."bucket_start" "#,
-                r#"AND ("ah"."observed_at" < "page_period"."bucket_end" AND COALESCE("ah"."observed_at", "ah"."deleted_at") < "page_period"."bucket_end")"#
+                r#"WHERE "ah"."observed_at" >= "page_period"."bucket_start" "#,
+                r#"AND "ah"."observed_at" < "page_period"."bucket_end""#
             )),
             "{sql}"
         );

@@ -201,7 +201,7 @@ mod tests {
             .expect("a window with a start")
             .to_string(PostgresQueryBuilder);
         for fragment in [
-            r#"COALESCE("qi"."observed_at", "qi"."deleted_at") <= '2020-08-01 12:00:00"#,
+            r#""qi"."observed_at" <= '2020-08-01 12:00:00"#,
             r#""qh"."placed" < '2020-08-01 12:00:00"#,
             r#""qs"."attribute_name_key" = 7"#,
             r#") AS "ah" ON TRUE JOIN "attribute_names" AS "an""#,

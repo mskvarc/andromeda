@@ -331,19 +331,14 @@ mod tests {
 
     /// All four axes of clause 5.2.21 are rendered, and the operational
     /// `recorded_at` is projected for ordering only, never as a substitute for
-    /// an axis the row does not carry. The only `COALESCE` is the placement
-    /// stated beside the axis column, which keeps a row without the axis out.
+    /// an axis the row does not carry: no axis is coalesced with another.
     #[test]
     fn all_four_time_axes_are_projected_without_substitution() {
         let sql = sql_of(&minimal_compiled());
         for column in ["observed_at", "created_at", "modified_at", "deleted_at", "recorded_at"] {
             assert!(sql.contains(&format!("\"ah\".\"{column}\"")), "{column} missing: {sql}");
         }
-        assert_eq!(
-            sql.matches("COALESCE(").count(),
-            sql.matches(r#"COALESCE("ah"."observed_at", "ah"."deleted_at")"#).count(),
-            "{sql}"
-        );
+        assert!(!sql.contains("COALESCE(\"ah\""), "{sql}");
         assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{sql}");
     }
 
@@ -544,7 +539,7 @@ mod tests {
         assert!(sql.contains("JOIN LATERAL"), "{sql}");
         assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
         assert!(
-            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
+            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
             "{sql}"
         );
         assert!(!sql.contains("OVER"), "{sql}");
@@ -558,10 +553,7 @@ mod tests {
     fn a_forward_page_reads_each_stream_with_a_limit() {
         let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
         assert!(sql.contains("LEFT JOIN LATERAL"), "{sql}");
-        assert!(
-            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "edge_candidates"."edge" ASC LIMIT 1 OFFSET 99"#), "{sql}");
         assert!(!sql.contains("OVER"), "{sql}");
         assert!(!sql.contains("COUNT(*)"), "{sql}");
@@ -599,16 +591,15 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#"AND ("ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' "#,
-                r#"AND COALESCE("ah"."observed_at", "ah"."deleted_at") > '2024-01-15 10:00:00.000000 +00:00') "#,
-                r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#
+                r#"AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' "#,
+                r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#
             )),
             "{sql}"
         );
         let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
         assert!(!unbounded.contains(r#""ah"."observed_at" > '"#), "{unbounded}");
         assert!(
-            unbounded.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#),
+            unbounded.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
             "an unbounded window has no lower bound to leave uncounted: {unbounded}"
         );
     }
@@ -624,10 +615,7 @@ mod tests {
             },
             TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant")),
         );
-        assert!(
-            sql.contains(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") DESC LIMIT 1000"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1000"#), "{sql}");
         assert!(sql.contains("OFFSET 999"), "{sql}");
         assert!(
             sql.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
@@ -759,34 +747,29 @@ mod tests {
 
     /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` on every
     /// instance, so a page on either reads each stream's recorded rows in one
-    /// part, ordered on the axis's placement, which its stream-led index
-    /// keys, and bounded on both the column and the placement.
+    /// part, ordered and bounded on the axis column, which its stream-led
+    /// index keys.
     #[test]
-    fn a_system_time_page_reads_one_recorded_part_ordered_on_the_placement() {
+    fn a_system_time_page_reads_one_recorded_part_ordered_on_the_axis_column() {
         for (axis, column) in [(TimeProp::Created, "created_at"), (TimeProp::Modified, "modified_at")] {
             let sql = recorded_sql_on(axis, InstancePage::Forward { size: 100 }, one_day());
-            let placement = format!(r#"COALESCE("ah"."{column}", "ah"."deleted_at")"#);
-            assert_eq!(sql.matches(&format!("ORDER BY {placement} ASC LIMIT 100")).count(), 1, "one edge read: {sql}");
+            let ordered = format!(r#"ORDER BY "ah"."{column}" ASC LIMIT 100"#);
+            assert_eq!(sql.matches(&ordered).count(), 1, "one edge read: {sql}");
             assert!(sql.contains(&format!(r#""ah"."{column}" >= '"#)), "{sql}");
-            assert!(sql.contains(&format!("{placement} >= '")), "{sql}");
             assert!(sql.contains(&format!(r#""ah"."{column}" <= COALESCE("stream_edge"."edge""#)), "{sql}");
-            assert!(sql.contains(&format!(r#"{placement} <= COALESCE("stream_edge"."edge""#)), "{sql}");
             assert!(!sql.contains("DISTINCT FROM") && !sql.contains(r#""rh"."recorded_at" AS"#), "{sql}");
             assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM"), "one part to continue in: {sql}");
         }
     }
 
     /// A `lastN` on a system-time axis takes the last `n` of the recorded
-    /// part on its placement, and the last `n` of the parts joined on the
+    /// part on the axis column, and the last `n` of the parts joined on the
     /// instant they project.
     #[test]
-    fn a_system_time_last_n_takes_the_last_instances_on_the_placement() {
+    fn a_system_time_last_n_takes_the_last_instances_on_the_axis_column() {
         let sql = recorded_sql_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
         assert_eq!(sql.matches("LIMIT 5").count(), 2, "the part and the join: {sql}");
-        assert!(
-            sql.contains(r#"ORDER BY COALESCE("ah"."modified_at", "ah"."deleted_at") DESC, "ah"."recorded_at" DESC"#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#"ORDER BY "ah"."modified_at" DESC, "ah"."recorded_at" DESC"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "latest"."modified_at" DESC, "latest"."recorded_at" DESC"#), "{sql}");
     }
 
@@ -795,11 +778,7 @@ mod tests {
     #[test]
     fn an_observed_page_reads_each_stream_in_one_recorded_part() {
         let sql = recorded_sql_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, one_day());
-        assert_eq!(
-            sql.matches(r#"ORDER BY COALESCE("ah"."observed_at", "ah"."deleted_at") ASC LIMIT 100"#).count(),
-            1,
-            "{sql}"
-        );
+        assert_eq!(sql.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#).count(), 1, "{sql}");
         assert!(!sql.contains("DISTINCT FROM"), "{sql}");
     }
 
