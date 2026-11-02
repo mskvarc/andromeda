@@ -50,6 +50,7 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
+    generic_plan_stretch::GenericPlanStretch,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     returning_image::{New, Old},
@@ -344,10 +345,13 @@ impl EntityRepository {
         }
         types_present(entities)?;
 
+        // The statement reads the written entities through `UNNEST` of bound arrays.
+        let stretch = GenericPlanStretch::begin(tx).await.map_err(entity_write_failure)?;
         let rows = entity_update_statement(target, entities, rows, grains, expected, accepted_at)?
             .into_query_as::<(String, DateTime<Utc>)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ObservedStatement::EntityUpdate, rows).await.map_err(entity_write_failure)?;
+        stretch.end(tx).await.map_err(entity_write_failure)?;
 
         rows.iter()
             .map(|(id, committed_at)| {

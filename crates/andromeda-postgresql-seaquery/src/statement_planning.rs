@@ -31,6 +31,11 @@ pub enum StatementPlanning {
     /// Planned with its bound values, and run without parallel workers: a
     /// `UNION ALL` of branches each gated by a one-time filter.
     GatedBranches,
+    /// Planned once per connection without its values: its one access path
+    /// serves every value it is given, while the custom plans' exact count of
+    /// a bound array makes the generic plan, which counts ten elements, look
+    /// dearer than it is and keeps the plan cache from adopting it.
+    Generic,
 }
 
 impl StatementPlanning {
@@ -44,6 +49,7 @@ impl StatementPlanning {
             StatementPlanning::Cached => None,
             StatementPlanning::BoundValues => Some(custom_plans()),
             StatementPlanning::GatedBranches => Some(custom_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
+            StatementPlanning::Generic => Some(TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_generic_plan")),
         }
     }
 }
@@ -63,6 +69,14 @@ mod tests {
         assert_eq!(
             StatementPlanning::BoundValues.transaction().map(|start| start.rendered()).as_deref(),
             Some("BEGIN; SET LOCAL plan_cache_mode = 'force_custom_plan'")
+        );
+    }
+
+    #[test]
+    fn generic_planning_forces_the_generic_plan_for_its_transaction_alone() {
+        assert_eq!(
+            StatementPlanning::Generic.transaction().map(|start| start.rendered()).as_deref(),
+            Some("BEGIN; SET LOCAL plan_cache_mode = 'force_generic_plan'")
         );
     }
 

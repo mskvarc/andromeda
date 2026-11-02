@@ -55,7 +55,7 @@ impl TemporalRepository {
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
         let rows = self
-            .execute_temporal_query(ObservedStatement::TemporalHistory, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalHistory, &statement, StatementPlanning::Generic)
             .await?;
         let mut answers = self.read_entities_scope_history(branch, entity_ids, compiled).await?;
         let histories = assembled_entity_histories(by_entity(&rows)?, self.attribute_names.as_ref(), self.entity_type_names.as_ref()).await?;
@@ -102,7 +102,7 @@ impl TemporalRepository {
         }
         let statement = build_scope_history_query(branch, entity_ids, compiled);
         let rows = self
-            .execute_temporal_query(ObservedStatement::TemporalScopeHistory, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalScopeHistory, &statement, StatementPlanning::Generic)
             .await?;
         Ok(by_entity(&rows)?
             .into_iter()
@@ -125,7 +125,7 @@ impl TemporalRepository {
         let names = self.resolve_query_names(compiled).await?;
         let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
         let rows = self
-            .execute_temporal_query(ObservedStatement::TemporalAggregation, &statement, StatementPlanning::Cached)
+            .execute_temporal_query(ObservedStatement::TemporalAggregation, &statement, StatementPlanning::Generic)
             .await?;
         Ok(by_entity(&rows)?
             .into_iter()

@@ -61,6 +61,7 @@ use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
+    generic_plan_stretch::GenericPlanStretch,
     statement::Statement,
     unnest::UnnestAliased,
 };
@@ -255,6 +256,8 @@ fn application_steps() -> Vec<Step> {
 /// one fails.
 pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentSource<'_>, target: &ContextTarget) -> Result<(), TemporalStoreError> {
     let schema = schema_iden(target);
+    // Every step reads the intents through `UNNEST` of one bound array.
+    let stretch = GenericPlanStretch::begin(&mut *connection).await?;
     let mut created = Vec::new();
     for step in application_steps() {
         if step.need.is_none_or(|need| source.may_meet(need))
@@ -264,6 +267,7 @@ pub async fn apply_intents_in_tx(connection: &mut PgConnection, source: &IntentS
             created = evolutions.created;
         }
     }
+    stretch.end(connection).await?;
     Ok(())
 }
 
@@ -296,7 +300,9 @@ pub(crate) async fn record_history_in_tx(connection: &mut PgConnection, source: 
         EntryReads::Everything,
         |source, schema| history_statement(source, schema).map(StepStatement::from),
     );
+    let stretch = GenericPlanStretch::begin(&mut *connection).await?;
     run(connection, source, Some(schema), &[], step).await?;
+    stretch.end(connection).await?;
     Ok(())
 }
 
