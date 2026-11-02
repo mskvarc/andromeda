@@ -298,7 +298,14 @@ mod tests {
             server_requirements_statement,
         },
     };
+    use andromeda_postgresql_schema::tenancy::EXTENSION_VERSION_BYTE_LIMIT;
     use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_longest_extension_version_fits_the_stored_version_bound() {
+        let longest = ExtensionVersion::new(u32::MAX, u32::MAX, u32::MAX).to_string();
+        assert!(longest.len() <= EXTENSION_VERSION_BYTE_LIMIT, "{longest}");
+    }
 
     #[test]
     fn the_requirements_query_casts_the_server_version_and_reads_both_extensions() {

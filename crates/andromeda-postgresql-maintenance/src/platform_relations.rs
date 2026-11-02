@@ -3,8 +3,8 @@
 //!
 //! The platform database is also the default tenant's database, so its
 //! `pg_stat_database` counters count the writes to the tenant registry, the
-//! wake schedule, the forwarded subscription routes and the maintenance
-//! controller's own state beside the tenant's. None of those is a change to
+//! wake schedule, the tenants' extension versions, the forwarded subscription
+//! routes and the maintenance controller's own state beside the tenant's. None of those is a change to
 //! the tenant's context, and the controller writes its state on every pass, so
 //! the fleet observation takes the platform tables' counters back out of that
 //! database's. Subtracting keeps the database's own counters as the base, so a
@@ -14,7 +14,7 @@
 use andromeda_postgresql_schema::{
     maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants},
     subscription_forwarding::ForwardedSubscriptionRoutes,
-    tenancy::{TenantWakeSchedule, Tenants},
+    tenancy::{TenantExtensionVersions, TenantWakeSchedule, Tenants},
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -26,10 +26,11 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, Query, SimpleExpr};
 
 /// The name of every table the platform migrations create.
-fn platform_tables() -> [String; 6] {
+fn platform_tables() -> [String; 7] {
     [
         Tenants::Table.to_string(),
         TenantWakeSchedule::Table.to_string(),
+        TenantExtensionVersions::Table.to_string(),
         ForwardedSubscriptionRoutes::Table.to_string(),
         PostgresqlMaintenanceTenants::Table.to_string(),
         PostgresqlMaintenanceTargets::Table.to_string(),

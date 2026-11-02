@@ -47,8 +47,16 @@ impl VersionedExtension {
 #[cfg(test)]
 mod tests {
     use crate::schema_contract::versioned_extension::VersionedExtension;
+    use andromeda_postgresql_schema::tenancy::EXTENSION_NAME_BYTE_LIMIT;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
+
+    #[test]
+    fn every_extension_name_fits_the_stored_name_bound() {
+        for extension in VersionedExtension::iter() {
+            assert!(extension.catalog_name().len() <= EXTENSION_NAME_BYTE_LIMIT, "{extension}");
+        }
+    }
 
     #[test]
     fn each_extension_is_named_as_the_extension_catalogue_names_it() {

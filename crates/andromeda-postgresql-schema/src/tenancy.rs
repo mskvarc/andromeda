@@ -14,6 +14,16 @@ use sea_query::Iden;
 /// name the broker generates fits within it.
 pub const DATABASE_NAME_BYTE_LIMIT: usize = 63;
 
+/// The longest extension name PostgreSQL keeps, in bytes (`NAMEDATALEN - 1` in
+/// a default build): `pg_extension.extname` is a `name`.
+/// `tenant_extension_versions.extension` is held to it by a check.
+pub const EXTENSION_NAME_BYTE_LIMIT: usize = 63;
+
+/// The longest extension version `tenant_extension_versions` keeps, in bytes.
+/// A version is written as `major.minor.patch` of three 32-bit numbers, at
+/// most 32 bytes, so every version the broker reads fits with room to spare.
+pub const EXTENSION_VERSION_BYTE_LIMIT: usize = 64;
+
 /// The `tenants` table - the platform registry of tenant to database mappings.
 #[derive(Iden, Clone, Copy)]
 pub enum Tenants {

@@ -11,7 +11,7 @@ use crate::repository::{PinError, constraint, schema};
 use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, tenant::TENANT_NAME_BYTE_LIMIT};
 use andromeda_postgresql_schema::{
     string_value_column::INDEXED_STRING_BYTE_LIMIT,
-    tenancy::DATABASE_NAME_BYTE_LIMIT,
+    tenancy::{DATABASE_NAME_BYTE_LIMIT, EXTENSION_NAME_BYTE_LIMIT, EXTENSION_VERSION_BYTE_LIMIT},
     uri_value_column::INDEXED_URI_BYTE_LIMIT,
 };
 use andromeda_sql::declared_schema::{
@@ -36,6 +36,10 @@ const PROJECTED_URI_COLUMNS: [&str; 2] = ["value_uri", "value_long_uri"];
 /// The constraints that place a Relationship object in exactly one of
 /// [`PROJECTED_URI_COLUMNS`].
 const PROJECTED_URI_CONSTRAINTS: [&str; 2] = ["chk_ca_value_uri_length", "chk_ca_value_long_uri_length"];
+
+/// The version columns of `tenant_extension_versions`, held to
+/// [`EXTENSION_VERSION_BYTE_LIMIT`].
+const EXTENSION_VERSION_COLUMNS: [&str; 2] = ["installed_version", "shipped_version"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
 const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 31] = [
@@ -99,6 +103,10 @@ fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() -> Resu
             TENANT_NAME_BYTE_LIMIT
         } else if (*table, column) == ("tenants", "database_name") {
             DATABASE_NAME_BYTE_LIMIT
+        } else if (*table, column) == ("tenant_extension_versions", "extension") {
+            EXTENSION_NAME_BYTE_LIMIT
+        } else if *table == "tenant_extension_versions" && EXTENSION_VERSION_COLUMNS.contains(&column) {
+            EXTENSION_VERSION_BYTE_LIMIT
         } else if PROJECTED_STRING_COLUMNS.contains(&column) {
             INDEXED_STRING_BYTE_LIMIT
         } else if PROJECTED_URI_COLUMNS.contains(&column) {
