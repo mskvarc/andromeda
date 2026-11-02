@@ -47,6 +47,7 @@ pub mod tenant_usage;
 pub mod tenant_view;
 pub mod usage_probe;
 pub mod wake_alarm;
+pub mod wake_backlog;
 pub mod wake_schedule;
 pub mod waker;
 

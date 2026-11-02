@@ -6,6 +6,7 @@ mod admission;
 mod cached_runtime;
 mod eviction;
 mod eviction_rank;
+mod overdue_report;
 mod provisional_sweep;
 mod shed_report;
 mod teardown;
@@ -27,7 +28,7 @@ use crate::{
     provisional::Establishment,
     registered_tenant::RegisteredTenant,
     residency::TenantResidency,
-    runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin, shed_report::report_shed},
+    runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin, overdue_report::OverdueReport, shed_report::report_shed},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_listing::TenantListing,
@@ -36,6 +37,7 @@ use crate::{
     tenant_ref::TenantRef,
     tenant_view::TenantView,
     wake_alarm::WakeAlarm,
+    wake_backlog::WakeBacklog,
     wake_schedule::TenantWakeSchedule,
     waker::WakerPolicy,
 };
@@ -115,6 +117,11 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// Rung when this process records a wake due before the waker's sleep
     /// ends.
     alarm: Arc<WakeAlarm>,
+    /// The wakes this process deferred and has not since served.
+    backlog: WakeBacklog,
+    /// The gauges and the warning the overdue wakes of each pass are reported
+    /// by.
+    overdue_report: OverdueReport,
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
@@ -151,6 +158,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             schedule,
             waker,
             alarm: Arc::new(WakeAlarm::new()),
+            backlog: WakeBacklog::default(),
+            overdue_report: OverdueReport::default(),
         })
     }
 

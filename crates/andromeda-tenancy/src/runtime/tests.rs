@@ -19,6 +19,7 @@ use crate::{
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
+    wake_backlog::OverdueWakes,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_configuration::{
@@ -47,6 +48,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+mod overdue_wakes;
 mod periodic_eviction;
 mod wake_pass;
 mod wake_timing;
@@ -206,6 +208,10 @@ impl TenantWakeSchedule for FakeSchedule {
 
     async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
         Ok(self.earliest.lock().map(|earliest| *earliest).unwrap_or_default())
+    }
+
+    async fn overdue(&self, _now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError> {
+        Ok(None)
     }
 
     async fn settle(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {

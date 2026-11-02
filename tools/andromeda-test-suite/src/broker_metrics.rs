@@ -43,6 +43,12 @@ pub enum BrokerMetric {
     /// The largest history chunk of a tenant still in the rowstore, by tenant and hypertable.
     #[strum(serialize = "andromeda_postgresql_history_largest_rowstore_chunk_bytes")]
     HistoryLargestRowstoreChunkBytes,
+    /// The tenant wakes overdue as the broker's last wake pass ended.
+    #[strum(serialize = "andromeda_tenant_overdue_wakes")]
+    OverdueWakes,
+    /// The seconds since the oldest overdue tenant wake fell due, as the broker's last wake pass ended.
+    #[strum(serialize = "andromeda_tenant_overdue_wake_max_age_seconds")]
+    OverdueWakeMaxAgeSeconds,
 }
 
 /// A label a test selects samples by.

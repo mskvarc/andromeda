@@ -30,6 +30,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     pub async fn wake(&self, tenant: &TenantName) -> WakeOutcome {
         let outcome = self.wake_inner(tenant).await;
         record_wake(outcome);
+        match outcome {
+            WakeOutcome::AlreadyCached | WakeOutcome::Loaded | WakeOutcome::NothingDue | WakeOutcome::Unregistered => self.backlog.served(tenant),
+            WakeOutcome::Deferred | WakeOutcome::BuildFailed => {}
+        }
         outcome
     }
 
@@ -70,7 +74,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // statement, which is later than `now`, so the deadline is compared
         // with the instant the answer arrived.
         match self.probe.earliest_pending_work(&database, existence).await {
-            Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, existence, tenant).await,
+            Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, existence, tenant, due).await,
             // Not due yet: woken again at its due instant. The hold-off after
             // an eviction was applied when the eviction recorded the wake; a
             // re-probe, such as the reconciliation sweep's, must not push a
@@ -98,7 +102,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 }
                 // Building the runtime migrates the database, and the runtime
                 // then runs whatever its obligations hold due.
-                TenantExistence::Established => self.load_woken(&tenant_ref, database, existence, tenant).await,
+                TenantExistence::Established => self.load_woken(&tenant_ref, database, existence, tenant, now).await,
             },
             // Transient: the probe could not read this pass. Re-arm a retry
             // rather than treating the tenant as having nothing due.
@@ -119,12 +123,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// is rescheduled as it goes) so the connection budget stays flat while the
     /// due work is admitted. Only genuine backpressure, every cached runtime held
     /// by an in-flight request or within its woken lifetime so no slot can be
-    /// freed, defers the wake, until the first of those lifetimes ends.
-    async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: TenantExistence, tenant: &TenantName) -> WakeOutcome {
+    /// freed, defers the wake, until the first of those lifetimes ends. A
+    /// deferred wake is overdue since `due`, the instant its work fell due.
+    async fn load_woken(
+        &self,
+        tenant_ref: &TenantRef,
+        database: TenantDatabaseName,
+        existence: TenantExistence,
+        tenant: &TenantName,
+        due: SystemTime,
+    ) -> WakeOutcome {
         let now = SystemTime::now();
         if self.runtimes.len() >= self.config.residency.max_resident.get() && !self.evict_one_for_wake(tenant_ref).await {
             let retry = self.waker.deferred_wake(now, self.room_for_wake_in(tenant_ref));
             self.settle_schedule(tenant, now, Some(retry)).await;
+            self.backlog.deferred(tenant, due, retry);
             return WakeOutcome::Deferred;
         }
         self.build_woken(tenant_ref, database, existence, tenant).await
@@ -150,7 +163,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
         let Ok((state, runtime)) = built else {
             self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
-            return WakeOutcome::Deferred;
+            return WakeOutcome::BuildFailed;
         };
 
         match self.runtimes.entry(tenant_ref.clone()) {

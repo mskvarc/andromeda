@@ -12,6 +12,7 @@ use crate::{
         wake_pass::NextWakePass,
     },
     tenant_ref::TenantRef,
+    wake_backlog::OverdueWakes,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_configuration::human_duration::HumanDuration;
@@ -20,6 +21,7 @@ use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use std::{
     collections::HashMap,
+    num::NonZeroUsize,
     sync::{Arc, Mutex as StdMutex, atomic::AtomicUsize},
     time::{Duration, SystemTime},
 };
@@ -34,14 +36,14 @@ const LEASE: Duration = Duration::from_mins(1);
 /// A wake schedule holding each tenant's wake instant, claimed by time as the
 /// platform table is.
 #[derive(Default)]
-struct TimedSchedule {
+pub(super) struct TimedSchedule {
     /// Each tenant's next wake, `None` when it has none.
     wakes: StdMutex<HashMap<String, Option<SystemTime>>>,
 }
 
 impl TimedSchedule {
     /// Write `tenant`'s next wake.
-    fn write(&self, tenant: &TenantName, wake_at: Option<SystemTime>) {
+    pub(super) fn write(&self, tenant: &TenantName, wake_at: Option<SystemTime>) {
         if let Ok(mut wakes) = self.wakes.lock() {
             wakes.insert(tenant.as_str().to_string(), wake_at);
         }
@@ -73,6 +75,16 @@ impl TenantWakeSchedule for TimedSchedule {
 
     async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
         Ok(self.wakes.lock().ok().and_then(|wakes| wakes.values().flatten().min().copied()))
+    }
+
+    async fn overdue(&self, now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError> {
+        let Ok(wakes) = self.wakes.lock() else {
+            return Ok(None);
+        };
+        let due: Vec<SystemTime> = wakes.values().flatten().copied().filter(|at| *at <= now).collect();
+        Ok(NonZeroUsize::new(due.len())
+            .zip(due.iter().min().copied())
+            .map(|(count, oldest)| OverdueWakes::new(count, oldest)))
     }
 
     async fn settle(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {

@@ -79,8 +79,14 @@ pub struct ResidencyConfig {
     /// those lifetimes end. Room is made from the least recently used of the
     /// others, taking a runtime whose periodic notification falls due within
     /// `min_wake_interval` only once no runtime without one is left.
+    ///
+    /// A tenant woken for a periodic notification takes a place for
+    /// `woken_lifetime` once per `timeInterval`. While those shares add up to
+    /// more places than this leaves beside the default tenant and the tenants
+    /// requests hold, wakes are deferred and fall behind without bound, which
+    /// the waker reports as overdue wakes.
     #[schemars(
-        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too."
+        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too. A tenant loaded for a periodic notification takes a place for `tenancy.residency.woken_lifetime` once per `timeInterval`. While those shares add up to more places than this leaves beside the default tenant and the tenants requests use, the broker cannot load tenants as fast as their work falls due: their notifications fall behind without bound, and the broker logs a warning and reports the overdue wakes in `andromeda_tenant_overdue_wakes`."
     )]
     pub max_resident: NonZeroUsize,
     /// How often idle and orphaned runtimes are swept, in human-readable form
@@ -97,8 +103,10 @@ pub struct ResidencyConfig {
     /// with a periodic notification due within this interval is the last to
     /// be unloaded to make room; one unloaded all the same notifies up to this
     /// interval late, as long as the waker keeps up with the tenants due.
+    /// When it does not (see `max_resident`), notifications fall behind
+    /// without bound.
     #[schemars(
-        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, as long as the broker loads tenants as fast as their work falls due. While more tenants are due than it can load, notifications fall further behind."
+        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, as long as the broker loads tenants as fast as their work falls due. When the tenants with periodic notifications need more places than `tenancy.residency.max_resident` leaves (see there), notifications fall behind without bound instead, and the broker reports it in its log and in `andromeda_tenant_overdue_wakes`."
     )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in

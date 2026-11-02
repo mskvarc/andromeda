@@ -114,6 +114,7 @@ pub mod paged_federation;
 pub mod paged_history;
 pub mod partial_outcome;
 pub mod period_grid;
+pub mod periodic_tenants;
 pub mod pool_hold;
 pub mod pool_outage;
 pub mod pooled_setting;

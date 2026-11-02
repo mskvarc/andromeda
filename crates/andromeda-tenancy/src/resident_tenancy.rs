@@ -25,6 +25,7 @@ use crate::{
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
+    wake_backlog::OverdueWakes,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use andromeda_configuration::schema::tenancy::TenancyConfig;
@@ -191,6 +192,10 @@ impl TenantWakeSchedule for NoWakes {
     }
 
     async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
+        Ok(None)
+    }
+
+    async fn overdue(&self, _now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError> {
         Ok(None)
     }
 

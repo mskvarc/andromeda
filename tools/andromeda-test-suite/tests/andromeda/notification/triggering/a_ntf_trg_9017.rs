@@ -1,13 +1,15 @@
 //! Periodic Subscriptions of more tenants than stay loaded keep within the wake bound.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, notification_sink::NotificationSink, outcome::Done};
+use andromeda_test_suite::{
+    broker,
+    config::BrokerRole,
+    namespace::Namespace,
+    notification_sink::NotificationSink,
+    periodic_tenants::subscribe_periodic_tenants,
+};
 use chrono::{DateTime, TimeDelta, Utc};
 use googletest::prelude::*;
-use ngsi_ld::{
-    model::{Entity, Lossless, NgsiLdMediaType},
-    query::{EntitySelector, builders::SelectorTypeBuilder},
-    subscription::{Endpoint, NotificationParams, Subscription},
-};
+use ngsi_ld::model::Lossless;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -35,27 +37,7 @@ async fn a_ntf_trg_9017_periodic_subscriptions_of_more_tenants_than_stay_loaded_
     let namespace = Namespace::fresh();
     let broker = broker::client(BrokerRole::Waker)?;
     let sink = NotificationSink::start().await?;
-    let vehicle_type = namespace.entity_type("Vehicle")?;
-    let mut cleanups = Vec::with_capacity(TENANTS);
-    for index in 0..TENANTS {
-        let tenant = broker.with_tenant(namespace.numbered_tenant(index)?);
-        let vehicle_id = namespace.urn("Vehicle", index)?;
-        let subscription_id = namespace.subscription_id(index)?;
-        let vehicle = Entity::builder()
-            .id(vehicle_id.clone())
-            .entity_type(vehicle_type.clone())
-            .property("speed", 1)
-            .build()?;
-        tenant.entities().create(&vehicle).send().await?.done()?;
-        let subscription = Subscription::builder()
-            .id(subscription_id.clone())
-            .entities([EntitySelector::new(SelectorTypeBuilder::from(&vehicle_type).build()?).with_ids(vehicle_id)])
-            .time_interval(INTERVAL_SECONDS)
-            .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(index)?).accept(NgsiLdMediaType::Json).build()?).build()?)
-            .build()?;
-        tenant.subscriptions().create(&subscription).send().await?;
-        cleanups.push(Cleanup::of(&tenant).subscription(&subscription_id));
-    }
+    let periodic = subscribe_periodic_tenants(&broker, &namespace, &sink, TENANTS, INTERVAL_SECONDS).await?;
     sleep(OBSERVED).await;
     let bound = TimeDelta::seconds(i64::from(INTERVAL_SECONDS) + MIN_WAKE_SECONDS + 1);
     for index in 0..TENANTS {
@@ -70,6 +52,6 @@ async fn a_ntf_trg_9017_periodic_subscriptions_of_more_tenants_than_stay_loaded_
         expect_that!(gaps.len(), ge(6), "Subscription {index}");
         expect_that!(gaps.iter().max(), some(le(&bound)), "Subscription {index}, gaps {gaps:?}");
     }
-    drop(cleanups);
+    drop(periodic);
     Ok(())
 }

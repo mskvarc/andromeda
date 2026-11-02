@@ -101,6 +101,7 @@ async fn the_catch_up_loads_only_what_the_scheduled_wakes_leave_of_the_pass_budg
         WakePassReport {
             scheduled: 3,
             caught_up: 1,
+            overdue: None,
             next: NextWakePass::WhenRecorded,
         }
     );
@@ -124,6 +125,7 @@ async fn a_pass_whose_scheduled_wakes_fill_the_budget_reads_no_catch_up_candidat
         WakePassReport {
             scheduled: 4,
             caught_up: 0,
+            overdue: None,
             next: NextWakePass::Immediately,
         }
     );
@@ -143,6 +145,7 @@ async fn the_catch_up_loads_the_candidates_in_the_order_they_are_listed() {
         WakePassReport {
             scheduled: 2,
             caught_up: 2,
+            overdue: None,
             next: NextWakePass::WhenRecorded,
         }
     );
@@ -168,6 +171,7 @@ async fn the_catch_up_passes_over_a_resident_tenant_without_spending_budget() {
         WakePassReport {
             scheduled: 0,
             caught_up: 1,
+            overdue: None,
             next: NextWakePass::WhenRecorded,
         }
     );
@@ -193,6 +197,7 @@ async fn the_catch_up_unloads_no_tenant_to_make_room() {
         WakePassReport {
             scheduled: 0,
             caught_up: 0,
+            overdue: None,
             next: NextWakePass::WhenRecorded,
         }
     );
@@ -214,6 +219,7 @@ async fn the_catch_up_passes_over_a_suspended_tenant() {
         WakePassReport {
             scheduled: 0,
             caught_up: 1,
+            overdue: None,
             next: NextWakePass::WhenRecorded,
         }
     );

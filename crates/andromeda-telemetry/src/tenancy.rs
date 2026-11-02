@@ -2,7 +2,8 @@
 //!
 //! How many runtimes are held, how cold builds fare and how long they wait for
 //! admission, which waits shed requests as saturated, why runtimes are
-//! evicted, and how dormant-tenant wake attempts resolve. None of these series carries a tenant label: a broker holding
+//! evicted, how dormant-tenant wake attempts resolve, and how many wakes are
+//! overdue. None of these series carries a tenant label: a broker holding
 //! thousands of tenants would otherwise grow one series per tenant per metric.
 //! The per-tenant pool and storage series that do carry a tenant label
 //! ([`crate::pool`], [`crate::storage`]) are bounded instead by the recorder's
@@ -18,6 +19,8 @@ use crate::{
         TENANT_COLD_BUILD_DURATION_SECONDS,
         TENANT_COLD_BUILDS_TOTAL,
         TENANT_EVICTIONS_TOTAL,
+        TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS,
+        TENANT_OVERDUE_WAKES,
         TENANT_REQUESTS_SHED_TOTAL,
         TENANT_RUNTIMES_CACHED,
         TENANT_WAKES_TOTAL,
@@ -60,8 +63,13 @@ pub enum WakeOutcome {
     Loaded,
     /// Nothing was due, so no runtime was loaded.
     NothingDue,
-    /// The cache was full of fresher runtimes, so the wake was deferred.
+    /// The cache was full and no loaded tenant could be unloaded, each one in use
+    /// by a request or still within its woken lifetime, so the wake was put off
+    /// until the first of those lifetimes ends.
     Deferred,
+    /// The tenant's runtime could not be built, so the wake is retried one
+    /// minimum wake interval later.
+    BuildFailed,
     /// The named tenant is not registered.
     Unregistered,
 }
@@ -98,6 +106,13 @@ pub fn record_eviction(reason: EvictionReason) {
     counter!(TENANT_EVICTIONS_TOTAL, LABEL_REASON => reason).increment(1);
 }
 
+/// Set the gauges of overdue tenant wakes: how many there are, and the seconds
+/// since the oldest of them fell due.
+pub fn set_overdue_wakes(count: usize, oldest_seconds: f64) {
+    gauge!(TENANT_OVERDUE_WAKES).set(SampleValue::from(count));
+    gauge!(TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS).set(oldest_seconds);
+}
+
 /// Count one dormant-tenant wake attempt with its outcome.
 pub fn record_wake(outcome: WakeOutcome) {
     let outcome: &'static str = outcome.into();
@@ -108,10 +123,18 @@ pub fn record_wake(outcome: WakeOutcome) {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{TENANT_COLD_BUILDS_TOTAL, TENANT_EVICTIONS_TOTAL, TENANT_REQUESTS_SHED_TOTAL, TENANT_RUNTIMES_CACHED, TENANT_WAKES_TOTAL},
+        names::{
+            TENANT_COLD_BUILDS_TOTAL,
+            TENANT_EVICTIONS_TOTAL,
+            TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS,
+            TENANT_OVERDUE_WAKES,
+            TENANT_REQUESTS_SHED_TOTAL,
+            TENANT_RUNTIMES_CACHED,
+            TENANT_WAKES_TOTAL,
+        },
         operation::Outcome,
         recorder::TelemetryRecorder,
-        tenancy::{EvictionReason, WakeOutcome, record_cold_build, record_eviction, record_shed_request, record_wake, set_runtimes_cached},
+        tenancy::{EvictionReason, WakeOutcome, record_cold_build, record_eviction, record_shed_request, record_wake, set_overdue_wakes, set_runtimes_cached},
     };
 
     #[test]
@@ -135,6 +158,7 @@ mod tests {
             (WakeOutcome::Loaded, "loaded"),
             (WakeOutcome::NothingDue, "nothing-due"),
             (WakeOutcome::Deferred, "deferred"),
+            (WakeOutcome::BuildFailed, "build-failed"),
             (WakeOutcome::Unregistered, "unregistered"),
         ] {
             let rendered: &'static str = outcome.into();
@@ -152,6 +176,7 @@ mod tests {
             record_wake(WakeOutcome::Loaded);
             record_shed_request("migration-pool");
             record_shed_request("migration-pool");
+            set_overdue_wakes(7, 42.5);
         });
         let rendered = recorder.render();
         assert!(rendered.contains(&format!("{TENANT_RUNTIMES_CACHED} 12")), "{rendered}");
@@ -162,6 +187,8 @@ mod tests {
             rendered.contains(&format!("{TENANT_REQUESTS_SHED_TOTAL}{{wait=\"migration-pool\"}} 2")),
             "{rendered}"
         );
+        assert!(rendered.contains(&format!("{TENANT_OVERDUE_WAKES} 7")), "{rendered}");
+        assert!(rendered.contains(&format!("{TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS} 42.5")), "{rendered}");
         Ok(())
     }
 }

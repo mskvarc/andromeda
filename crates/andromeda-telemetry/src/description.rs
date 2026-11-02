@@ -51,6 +51,8 @@ use crate::names::{
     TENANT_COLD_BUILD_DURATION_SECONDS,
     TENANT_COLD_BUILDS_TOTAL,
     TENANT_EVICTIONS_TOTAL,
+    TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS,
+    TENANT_OVERDUE_WAKES,
     TENANT_REQUESTS_SHED_TOTAL,
     TENANT_RUNTIMES_CACHED,
     TENANT_WAKES_TOTAL,
@@ -125,7 +127,7 @@ impl MetricDescription {
 }
 
 /// Every metric the broker emits.
-const DESCRIPTIONS: [MetricDescription; 49] = [
+const DESCRIPTIONS: [MetricDescription; 51] = [
     MetricDescription::gauge(BUILD_INFO, None, "Always 1, labelled by the version of the running broker."),
     MetricDescription::counter(HTTP_REQUESTS_TOTAL, "HTTP requests answered, by method, matched endpoint and status code."),
     MetricDescription::histogram(
@@ -273,6 +275,16 @@ const DESCRIPTIONS: [MetricDescription; 49] = [
     ),
     MetricDescription::counter(TENANT_EVICTIONS_TOTAL, "Tenants unloaded, by reason."),
     MetricDescription::counter(TENANT_WAKES_TOTAL, "Attempts to load a tenant for its scheduled work, by outcome."),
+    MetricDescription::gauge(
+        TENANT_OVERDUE_WAKES,
+        None,
+        "Tenant wakes overdue as the last wake pass ended: deferred, or due and left for the next pass.",
+    ),
+    MetricDescription::gauge(
+        TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS,
+        Some(Unit::Seconds),
+        "Time since the oldest overdue tenant wake fell due, as the last wake pass ended; 0 with none overdue.",
+    ),
     MetricDescription::counter(
         NAME_DICTIONARY_LOOKUPS_TOTAL,
         "Names looked up in a name dictionary cache, by dictionary and outcome.",

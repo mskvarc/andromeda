@@ -90,6 +90,13 @@ pub enum BrokerRole {
     /// The andromeda stack broker keeping four tenants loaded, the default tenant among them, waking a tenant no
     /// earlier than five seconds after it was unloaded and keeping a woken tenant loaded for one second.
     Waker,
+    /// The andromeda stack broker keeping four tenants loaded, the default tenant among them, waking a tenant no
+    /// earlier than five seconds after it was unloaded and keeping a woken tenant loaded for five seconds, only the
+    /// test of a wake load it cannot serve uses.
+    Backlog,
+    /// The andromeda stack broker keeping 41 tenants loaded, the default tenant among them, with the backlog broker's
+    /// wake timings, only the test of a wake load it can serve uses.
+    Roomy,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,

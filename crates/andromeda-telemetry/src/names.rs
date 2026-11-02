@@ -104,6 +104,11 @@ pub const TENANT_REQUESTS_SHED_TOTAL: &str = "andromeda_tenant_requests_shed_tot
 pub const TENANT_EVICTIONS_TOTAL: &str = "andromeda_tenant_evictions_total";
 /// Counter of dormant-tenant wake attempts, labelled by outcome.
 pub const TENANT_WAKES_TOTAL: &str = "andromeda_tenant_wakes_total";
+/// Gauge of tenant wakes overdue when the last wake pass ended: deferred for want of a tenant that may be unloaded, or
+/// due and left unclaimed by a pass that spent its whole budget.
+pub const TENANT_OVERDUE_WAKES: &str = "andromeda_tenant_overdue_wakes";
+/// Gauge of the seconds since the oldest overdue tenant wake fell due, when the last wake pass ended; zero with none.
+pub const TENANT_OVERDUE_WAKE_MAX_AGE_SECONDS: &str = "andromeda_tenant_overdue_wake_max_age_seconds";
 /// Counter of names asked of a name dictionary cache, labelled by dictionary and outcome.
 pub const NAME_DICTIONARY_LOOKUPS_TOTAL: &str = "andromeda_name_dictionary_lookups_total";
 /// Counter of names evicted from a name dictionary cache, labelled by dictionary and cause.

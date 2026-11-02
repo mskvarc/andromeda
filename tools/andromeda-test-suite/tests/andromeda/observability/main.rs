@@ -8,3 +8,4 @@
 
 mod metrics;
 mod readiness;
+mod wake_backlog;

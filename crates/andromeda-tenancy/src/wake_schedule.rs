@@ -9,6 +9,7 @@
 //! and a replica that crashes mid-wake leaves a leased row that re-fires once
 //! the lease lapses.
 
+use crate::wake_backlog::OverdueWakes;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
@@ -67,6 +68,15 @@ pub trait TenantWakeSchedule: Send + Sync + 'static {
     /// Returns [`WakeScheduleError::Store`] when the read fails.
     #[must_use = "reading the earliest wake must be awaited"]
     async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError>;
+
+    /// The wakes due at or before `now` that no claim holds, with the instant
+    /// the earliest of them fell due, or `None` when there are none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WakeScheduleError::Store`] when the read fails.
+    #[must_use = "reading the overdue wakes must be awaited"]
+    async fn overdue(&self, now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError>;
 
     /// Settle a claimed tenant after its wake attempt: record the new probe
     /// instant and the next `wake_at`, clearing the claim lease.

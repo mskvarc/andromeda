@@ -12,6 +12,9 @@
 //! next pass runs at once and a backlog is worked off as fast as tenants are
 //! built. Any other pass leaves nothing due, and the next runs at the earliest
 //! wake the schedule holds.
+//!
+//! Every pass reports the wakes it leaves overdue: those it left unclaimed and
+//! those deferred because no loaded tenant could be unloaded.
 
 use crate::{
     catch_up::{CatchUpCandidates, CatchUpError},
@@ -22,6 +25,7 @@ use crate::{
     status::TenantStatus,
     tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
+    wake_backlog::OverdueWakes,
     wake_schedule::WakeScheduleError,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
@@ -47,6 +51,9 @@ pub struct WakePassReport {
     pub scheduled: usize,
     /// Tenants loaded to bring their extensions up to date.
     pub caught_up: usize,
+    /// The wakes overdue as the pass ended, `None` when every due wake was
+    /// served.
+    pub overdue: Option<OverdueWakes>,
     /// When the next pass is to run.
     pub next: NextWakePass,
 }
@@ -60,6 +67,15 @@ pub enum NextWakePass {
     At(SystemTime),
     /// When a wake is recorded: the schedule holds none.
     WhenRecorded,
+}
+
+/// Whether a pass claimed as many due wakes as its budget allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BudgetUse {
+    /// It claimed its whole budget, so more wakes may be due.
+    Spent,
+    /// It claimed fewer, so it claimed every wake that was due.
+    LeftOver,
 }
 
 /// What one catch-up candidate came to.
@@ -80,9 +96,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// # Errors
     ///
     /// Returns [`WakePassError::Schedule`] when the claim fails, before any
-    /// tenant is loaded, or when the earliest wake cannot be read after them,
-    /// and [`WakePassError::CatchUp`] when the catch-up read fails, after the
-    /// scheduled wakes ran.
+    /// tenant is loaded, or when the overdue or the earliest wake cannot be
+    /// read after them, and [`WakePassError::CatchUp`] when the catch-up read
+    /// fails, after the scheduled wakes ran and the overdue ones were reported.
     pub async fn run_wake_pass(&self, catch_up: &dyn CatchUpCandidates, now: SystemTime, lease_until: SystemTime) -> Result<WakePassReport, WakePassError> {
         self.alarm.begin_pass();
         let budget = self.waker.max_wakes_per_pass();
@@ -90,25 +106,40 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         for tenant in &due {
             self.wake(tenant).await;
         }
+        let budget_use = if due.len() == budget { BudgetUse::Spent } else { BudgetUse::LeftOver };
+        let overdue = self.overdue_after_pass(now, budget_use).await?;
+        self.overdue_report.publish(now, overdue);
         let remaining = budget.saturating_sub(due.len());
         let caught_up = if remaining == 0 {
             0
         } else {
             self.catch_up(catch_up.lagging_tenants().await?, remaining).await
         };
-        let next = if due.len() == budget {
-            NextWakePass::Immediately
-        } else {
-            match self.alarm.sleep_until(self.schedule.earliest_wake().await?) {
+        let next = match budget_use {
+            BudgetUse::Spent => NextWakePass::Immediately,
+            BudgetUse::LeftOver => match self.alarm.sleep_until(self.schedule.earliest_wake().await?) {
                 Some(at) => NextWakePass::At(at),
                 None => NextWakePass::WhenRecorded,
-            }
+            },
         };
         Ok(WakePassReport {
             scheduled: due.len(),
             caught_up,
+            overdue,
             next,
         })
+    }
+
+    /// The wakes overdue after a pass that ran at `now`: those this process
+    /// deferred, and, when the pass claimed its whole budget, the due wakes it
+    /// left unclaimed. A pass that claimed less than its budget claimed every
+    /// wake due at `now`.
+    async fn overdue_after_pass(&self, now: SystemTime, claimed: BudgetUse) -> Result<Option<OverdueWakes>, WakeScheduleError> {
+        let unclaimed = match claimed {
+            BudgetUse::Spent => self.schedule.overdue(now).await?,
+            BudgetUse::LeftOver => None,
+        };
+        Ok(self.backlog.pending_at(now).into_iter().chain(unclaimed).reduce(OverdueWakes::and))
     }
 
     /// Load `candidates` in order until `budget` loads were attempted or the

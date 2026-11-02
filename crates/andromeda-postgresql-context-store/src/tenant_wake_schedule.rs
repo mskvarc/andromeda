@@ -13,7 +13,10 @@ use crate::store_fault::{persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
 use andromeda_postgresql_seaquery::{queue::is_claimed_from, statement::Statement};
-use andromeda_tenancy::wake_schedule::{TenantWakeSchedule, WakeScheduleError};
+use andromeda_tenancy::{
+    wake_backlog::OverdueWakes,
+    wake_schedule::{TenantWakeSchedule, WakeScheduleError},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{
@@ -33,7 +36,7 @@ use sea_query::{
     error::Error as SeaQueryError,
 };
 use sqlx::PgPool;
-use std::time::SystemTime;
+use std::{num::NonZeroUsize, time::SystemTime};
 
 /// The tenant wake schedule, backed by the platform database.
 pub struct PostgresTenantWakeSchedule {
@@ -88,6 +91,16 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
             .await
             .map_err(|error| store_error(&error))?;
         Ok(earliest.map(SystemTime::from))
+    }
+
+    async fn overdue(&self, now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError> {
+        let (count, oldest): (i64, Option<DateTime<Utc>>) = overdue_query(now)
+            .to_query_as()
+            .fetch_one(&self.main_pool)
+            .await
+            .map_err(|error| store_error(&error))?;
+        let count = usize::try_from(count).ok().and_then(NonZeroUsize::new);
+        Ok(count.zip(oldest).map(|(count, oldest)| OverdueWakes::new(count, SystemTime::from(oldest))))
     }
 
     async fn settle(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
@@ -188,6 +201,19 @@ fn earliest_wake_query() -> SelectStatement {
         .to_owned()
 }
 
+/// How many rows are due at or before `now`, and the earliest of their
+/// `wake_at`. A claimed row's `wake_at` is its lease, ahead of `now`, so only
+/// unclaimed wakes are counted; the range is read from the `wake_at` index.
+fn overdue_query(now: SystemTime) -> SelectStatement {
+    Query::select()
+        .expr(Expr::col(WakeScheduleTable::TenantKey).count())
+        .expr(Expr::col(WakeScheduleTable::WakeAt).min())
+        .from(WakeScheduleTable::Table)
+        .and_where(Expr::col(WakeScheduleTable::WakeAt).is_not_null())
+        .and_where(Expr::col(WakeScheduleTable::WakeAt).lte(DateTime::<Utc>::from(now)))
+        .to_owned()
+}
+
 /// The names of the tenants whose surrogate keys are in `keys`, skipping the
 /// unnamed default (whose name is NULL).
 fn names_for_keys_query(keys: Vec<i64>) -> SelectStatement {
@@ -221,7 +247,7 @@ fn next_unprobed_query(limit: usize) -> SelectStatement {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::tenant_wake_schedule::{claim_statement, earliest_wake_query, next_unprobed_query, upsert_statement};
+    use crate::tenant_wake_schedule::{claim_statement, earliest_wake_query, next_unprobed_query, overdue_query, upsert_statement};
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use sea_query::PostgresQueryBuilder;
     use std::time::{Duration, SystemTime};
@@ -269,6 +295,16 @@ mod tests {
     fn the_earliest_wake_is_the_minimum_over_every_row() {
         let sql = earliest_wake_query().to_string(PostgresQueryBuilder);
         pretty_assertions::assert_eq!(sql, r#"SELECT MIN("wake_at") FROM "tenant_wake_schedule""#);
+    }
+
+    #[test]
+    fn the_overdue_wakes_are_the_rows_due_by_now_counted_with_the_earliest() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let sql = overdue_query(now).to_string(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(
+            sql,
+            r#"SELECT COUNT("tenant_key"), MIN("wake_at") FROM "tenant_wake_schedule" WHERE "wake_at" IS NOT NULL AND "wake_at" <= '1970-01-01 00:16:40.000000 +00:00'"#
+        );
     }
 
     #[test]
