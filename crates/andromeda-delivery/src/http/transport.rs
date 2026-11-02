@@ -6,6 +6,7 @@ use crate::{
     error::TransportError,
     http::config::HttpTransportConfig,
     outcome::{DeliveryOutcome, EndpointRejection, delivery_metric_outcome},
+    oversized_notification::OversizedNotification,
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
@@ -160,7 +161,7 @@ impl HttpTransport {
         let body = req.body.text();
         let limit = self.config.max_body.octets();
         if body.len() > limit {
-            return Err(TransportError::PayloadTooLarge { size: body.len(), limit });
+            return Err(OversizedNotification::MaxHttpBody { size: body.len(), limit }.into());
         }
 
         self.check_private_ip(&req.endpoint_uri).await?;
@@ -275,6 +276,7 @@ mod tests {
         notification_body::NotificationBody,
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
+        oversized_notification::OversizedNotification,
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
@@ -533,7 +535,7 @@ mod tests {
         let refused = transport.deliver(&request).await.map(drop).expect_err("the notification is too large");
 
         assert!(
-            matches!(refused, TransportError::PayloadTooLarge { size, limit: 1024 } if size == request.body.text().len()),
+            matches!(refused, TransportError::Oversized(OversizedNotification::MaxHttpBody { size, limit: 1024 }) if size == request.body.text().len()),
             "{refused:?}"
         );
         assert!(!refused.is_retryable(), "every attempt would send the same body");

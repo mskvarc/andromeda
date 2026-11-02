@@ -161,7 +161,7 @@ impl SnapshotStatusDeliveryDrain {
         }
         let acknowledgement = match self.transport.deliver_status(&entry).await {
             DeliveryResult::Delivered => self.outbox.acknowledge(&entry, self.worker).await?,
-            failure @ (DeliveryResult::RetryableFailure | DeliveryResult::TerminalFailure) => {
+            failure @ DeliveryResult::Failed(_) => {
                 let retryable = failure.should_retry();
                 let failure = if retryable {
                     SnapshotDeliveryFailure::Retryable

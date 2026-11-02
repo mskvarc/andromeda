@@ -7,7 +7,9 @@
 //! should have been given.
 
 use crate::{
+    budget::Budget,
     config_error::{ConfigError, ConfigKey},
+    front_route::local_host_towards,
     host_name::HostName,
     mqtt_settings::MqttSettings,
     pooling_settings::PoolingSettings,
@@ -16,9 +18,8 @@ use figment2::{Figment, providers::Env};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
-    net::{IpAddr, UdpSocket},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::Duration,
 };
 use strum::IntoStaticStr;
@@ -97,6 +98,9 @@ pub enum BrokerRole {
     /// The andromeda stack broker keeping 41 tenants loaded, the default tenant among them, with the backlog broker's
     /// wake timings, only the test of a wake load it can serve uses.
     Roomy,
+    /// The andromeda stack broker serving its Prometheus metrics, only the test of notifications refused for their
+    /// size uses, so the oversized-notification counter moves only with what that test sends.
+    Oversized,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,
@@ -149,23 +153,6 @@ pub enum PeerRole {
     F,
 }
 
-/// A limit the stack configures its brokers with, which a test reaches or crosses on purpose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, IntoStaticStr)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-pub enum Budget {
-    /// The bytes of attribute values one request may carry.
-    RequestValue,
-    /// The bytes of attribute values one entity may hold.
-    EntityValue,
-    /// The positions one geometry may hold on the front broker.
-    Position,
-    /// The positions one geometry may hold on the not-recorded broker, the broker default.
-    LargePosition,
-    /// The bytes of the largest request body a broker reads.
-    MaxRequestBody,
-}
-
 /// The configuration of the stack the tests run against.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SuiteConfig {
@@ -180,6 +167,9 @@ pub struct SuiteConfig {
     callback_host: Option<HostName>,
     /// The MQTT brokers, on a stack that runs them.
     mqtt: Option<MqttSettings>,
+    /// The anonymous Mosquitto broker announcing a maximum packet size below the brokers' `max_mqtt_packet`, on the
+    /// andromeda stack.
+    capped_mqtt_host: Option<HostName>,
     /// The servers and poolers behind the brokers, on the pgbouncer stack.
     pooling: Option<PoolingSettings>,
     /// The Prometheus exposition each broker that serves one serves on its management listener, by role.
@@ -284,6 +274,18 @@ impl SuiteConfig {
         self.mqtt.as_ref().ok_or(ConfigError::Missing(ConfigKey::Mqtt))
     }
 
+    /// The anonymous Mosquitto broker announcing a maximum packet size below the brokers' `max_mqtt_packet`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] on a stack that runs none.
+    pub fn capped_mqtt_host(&self) -> Result<&Host<String>, ConfigError> {
+        self.capped_mqtt_host
+            .as_ref()
+            .map(HostName::host)
+            .ok_or(ConfigError::Missing(ConfigKey::CappedMqttHost))
+    }
+
     /// The servers and poolers behind the brokers.
     ///
     /// # Errors
@@ -361,34 +363,18 @@ impl SuiteConfig {
     pub fn callback_host(&self) -> Result<Host<String>, ConfigError> {
         match &self.callback_host {
             Some(host) => Ok(host.host().clone()),
-            None => DISCOVERED_CALLBACK_HOST.get_or_init(|| self.discover_callback_host()).clone(),
+            None => DISCOVERED_CALLBACK_HOST
+                .get_or_init(|| self.broker(BrokerRole::Front).and_then(local_host_towards))
+                .clone(),
         }
-    }
-
-    /// The local address of the route to the front broker.
-    fn discover_callback_host(&self) -> Result<Host<String>, ConfigError> {
-        let front = self.broker(BrokerRole::Front)?;
-        // clone: the error names the front broker the configuration keeps
-        let host = front.host_str().ok_or_else(|| ConfigError::FrontWithoutHost(front.clone()))?;
-        let port = front.port_or_known_default().unwrap_or(80);
-        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|error| ConfigError::RouteSocket(Arc::new(error)))?;
-        socket.connect((host, port)).map_err(|error| ConfigError::NoRoute {
-            // clone: the error names the front broker the configuration keeps
-            front: front.clone(),
-            source: Arc::new(error),
-        })?;
-        let local = socket.local_addr().map_err(|error| ConfigError::RouteSocket(Arc::new(error)))?;
-        Ok(match local.ip() {
-            IpAddr::V4(address) => Host::Ipv4(address),
-            IpAddr::V6(address) => Host::Ipv6(address),
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{BrokerRole, Budget, PeerRole, SuiteConfig},
+        budget::Budget,
+        config::{BrokerRole, PeerRole, SuiteConfig},
         config_error::{ConfigError, ConfigKey},
     };
     use figment2::{Figment, providers::Serialized, value::Value};
@@ -532,5 +518,15 @@ mod tests {
         expect_that!(mqtt.non_default_port(), eq(8085));
         expect_that!(mqtt.observer_port(), eq(1880));
         Ok(())
+    }
+
+    #[gtest]
+    fn the_capped_mqtt_host_is_read_on_its_own_and_a_missing_one_names_its_key() -> Result<()> {
+        let mut pairs = REQUIRED.to_vec();
+        pairs.push(("CAPPED_MQTT_HOST", "mosquitto-capped"));
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        expect_that!(config.capped_mqtt_host()?, eq(&Host::Domain("mosquitto-capped".to_owned())));
+        let error = SuiteConfig::read(&figment(&REQUIRED))?.capped_mqtt_host().err().or_fail()?;
+        verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__CAPPED_MQTT_HOST"))
     }
 }

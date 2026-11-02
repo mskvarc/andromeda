@@ -1,6 +1,6 @@
 //! What can go wrong between this broker and a notification endpoint.
 
-use crate::{connection_failure::ConnectionFailure, http::transport::error_chain_text};
+use crate::{connection_failure::ConnectionFailure, http::transport::error_chain_text, oversized_notification::OversizedNotification};
 use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use humantime::format_duration;
 use std::{io, net::IpAddr, sync::Arc, time::Duration};
@@ -44,14 +44,9 @@ pub enum TransportError {
     },
 
     /// The serialised notification, or the MQTT packet carrying it, exceeds
-    /// the transport's limit.
-    #[error("payload size {size} exceeds limit {limit}")]
-    PayloadTooLarge {
-        /// Size of the payload that was refused, in bytes.
-        size: usize,
-        /// The configured limit, in bytes.
-        limit: usize,
-    },
+    /// the limit of the transport carrying it.
+    #[error(transparent)]
+    Oversized(#[from] OversizedNotification),
 
     /// The endpoint host resolves into address space the broker will not
     /// deliver to.
@@ -120,7 +115,7 @@ impl TransportError {
             | TransportError::Timeout { .. }
             | TransportError::TlsError { .. }
             | TransportError::DnsResolutionFailed { .. } => true,
-            TransportError::PayloadTooLarge { .. }
+            TransportError::Oversized(_)
             | TransportError::PrivateIpBlocked { .. }
             | TransportError::PayloadSerialization { .. }
             | TransportError::ClientInitializationFailed(_) => false,

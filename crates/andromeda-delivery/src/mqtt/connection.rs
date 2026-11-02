@@ -4,6 +4,7 @@ use crate::mqtt::{
     ack::AckTracker,
     connection_key::MqttConnectionKey,
     health::{ConnectionHealth, HealthCell},
+    packet_ceiling::MqttPacketCeiling,
     sys_topics::SysTopicData,
 };
 use andromeda_retry::cursor::BackoffCursor;
@@ -26,14 +27,14 @@ pub enum MqttClientVariant {
         client: AsyncClient,
         /// The largest packet the client writes: the configured limit, or the
         /// server's announced maximum when that is smaller.
-        max_packet_size: u32,
+        packet_ceiling: MqttPacketCeiling,
     },
     /// An MQTT 3.1.1 client.
     V311 {
         /// The client publishes go out on.
         client: rumqttc::AsyncClient,
         /// The largest packet the client writes, the configured limit.
-        max_packet_size: u32,
+        packet_ceiling: MqttPacketCeiling,
     },
 }
 

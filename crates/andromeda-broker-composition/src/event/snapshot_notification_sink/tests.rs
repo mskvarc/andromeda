@@ -7,7 +7,7 @@ use andromeda_configuration::{
     schema::notifications::delivery::{DeliveryConfig, DeliveryMode},
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_delivery::dispatch::DeliveryResult;
+use andromeda_delivery::{dispatch::DeliveryResult, endpoint_failure::EndpointFailure, outcome::EndpointRejection};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
 use andromeda_snapshot::error::SnapshotError;
 use async_trait::async_trait;
@@ -134,7 +134,10 @@ impl SnapshotStatusTransport for SlowReceiver {
         }
         match self.answer {
             Answer::Accepts => DeliveryResult::Delivered,
-            Answer::FailsTransiently => DeliveryResult::RetryableFailure,
+            Answer::FailsTransiently => DeliveryResult::Failed(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 503 },
+                retryable: true,
+            }),
         }
     }
 }

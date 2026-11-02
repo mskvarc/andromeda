@@ -62,6 +62,8 @@ pub const FEDERATION_UPSTREAM_STATUS_TOTAL: &str = "andromeda_federation_upstrea
 pub const NOTIFICATION_DELIVERIES_TOTAL: &str = "andromeda_notification_deliveries_total";
 /// Histogram of notification delivery durations in seconds.
 pub const NOTIFICATION_DELIVERY_DURATION_SECONDS: &str = "andromeda_notification_delivery_duration_seconds";
+/// Counter of notifications refused for their size, labelled by the limit that refused them.
+pub const NOTIFICATION_OVERSIZED_TOTAL: &str = "andromeda_notification_oversized_total";
 /// Counter of background task failures, labelled by failure class and criticality.
 pub const TASK_FAILURES_TOTAL: &str = "andromeda_task_failures_total";
 /// Histogram of subscription candidates surviving each funnel stage per event.
@@ -159,3 +161,5 @@ pub const LABEL_DICTIONARY: &str = "dictionary";
 pub const LABEL_CAUSE: &str = "cause";
 /// The `wait` label naming the wait a saturated tenant request was shed at.
 pub const LABEL_WAIT: &str = "wait";
+/// The `limit` label naming the size limit a notification was refused under.
+pub const LABEL_LIMIT: &str = "limit";

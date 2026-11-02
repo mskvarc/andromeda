@@ -17,5 +17,6 @@ pub mod health;
 pub mod indicator;
 pub mod metadata;
 pub mod outgoing_publish;
+pub mod packet_ceiling;
 pub mod pool;
 pub mod sys_topics;

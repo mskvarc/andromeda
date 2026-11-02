@@ -10,6 +10,7 @@ use crate::{
     notification_outcome::notification_outcome,
     processor::{
         NotificationProcessor,
+        attempt_failure::NotificationAttemptFailure,
         compiled_transport,
         payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
     },
@@ -58,7 +59,11 @@ impl NotificationProcessor {
     /// slot was refused because the subscription's clause 5.2.12 `throttling`
     /// window or its endpoint's Table 5.2.15-1 `cooldown` window swallowed the
     /// notification.
-    pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> Option<DeliveryResult> {
+    pub(super) async fn notify_subscription(
+        &self,
+        compiled_sub: &CompiledSubscription,
+        change: &NotifiedChange<'_>,
+    ) -> Option<Result<(), NotificationAttemptFailure>> {
         let subscription_id = &compiled_sub.id;
         // Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
         // The match judged the subscription in force when the change was
@@ -83,7 +88,7 @@ impl NotificationProcessor {
         .await
         {
             UnclaimedContext::Resolved(context) => context,
-            UnclaimedContext::Failed => return Some(DeliveryResult::RetryableFailure),
+            UnclaimedContext::Failed => return Some(Err(NotificationAttemptFailure::ContextUnloadable)),
             UnclaimedContext::Suppressed => return None,
         };
         let record = match self.sub_repo.claim_notification_slot(change.target, subscription_id, gate).await {
@@ -91,15 +96,16 @@ impl NotificationProcessor {
             Ok(NotificationSlot::Suppressed) => return None,
             Err(error) => {
                 debug!("Failed to claim notification slot for {}: {}", subscription_id, error);
-                return Some(DeliveryResult::RetryableFailure);
+                return Some(Err(NotificationAttemptFailure::SlotUnclaimed(error)));
             }
         };
 
         let Some(notified) = change.notified else {
-            return Some(DeliveryResult::TerminalFailure);
+            return Some(Err(NotificationAttemptFailure::NothingToNotify));
         };
-        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
-            return Some(DeliveryResult::TerminalFailure);
+        let endpoint_transport = match compiled_transport(compiled_sub) {
+            Ok(transport) => transport,
+            Err(error) => return Some(Err(NotificationAttemptFailure::EndpointUndeliverable(error))),
         };
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(&compiled_sub.endpoint_uri)
@@ -134,13 +140,13 @@ impl NotificationProcessor {
         };
         let Some(data) = build_notification_data(&build, shape).await else {
             debug!("Subscription {} produced no notification data for entity {}", subscription_id, event.entity_id);
-            return Some(DeliveryResult::TerminalFailure);
+            return Some(Err(NotificationAttemptFailure::NoData));
         };
         let request = match delivery.notification(data, generated_at) {
             Ok(request) => request,
             Err(error) => {
                 error!("Failed to write the notification for {}: {}", subscription_id, error);
-                return Some(DeliveryResult::TerminalFailure);
+                return Some(Err(NotificationAttemptFailure::Unwritten(error)));
             }
         };
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
@@ -152,7 +158,10 @@ impl NotificationProcessor {
         {
             debug!("Failed to record the notification outcome for {}: {}", subscription_id, error);
         }
-        Some(delivery)
+        Some(match delivery {
+            DeliveryResult::Delivered => Ok(()),
+            DeliveryResult::Failed(failure) => Err(NotificationAttemptFailure::Endpoint(failure)),
+        })
     }
 }
 

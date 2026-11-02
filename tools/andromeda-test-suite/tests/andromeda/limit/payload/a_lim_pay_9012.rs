@@ -1,7 +1,8 @@
 //! Over http2 the refusal carries no connection header.
 
 use andromeda_test_suite::{
-    config::{BrokerRole, Budget, SuiteConfig},
+    budget::Budget,
+    config::{BrokerRole, SuiteConfig},
     generated_payload::spaces,
     problem::{problem, request_entity_too_large},
     tls_connection::{Connection, HttpVersion},

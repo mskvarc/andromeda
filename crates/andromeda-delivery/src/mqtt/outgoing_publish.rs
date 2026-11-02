@@ -88,8 +88,8 @@ impl<'a> OutgoingPublish<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::PayloadTooLarge`] when the whole packet is
-    /// larger than the connection writes.
+    /// Returns [`TransportError::Oversized`] when the whole packet is larger
+    /// than the connection writes, naming the limit that refuses it.
     pub fn admitted(
         client: &'a MqttClientVariant,
         topic: &MqttTopic,
@@ -98,7 +98,7 @@ impl<'a> OutgoingPublish<'a> {
         envelope: Vec<u8>,
     ) -> Result<OutgoingPublish<'a>, TransportError> {
         match client {
-            MqttClientVariant::V5 { client, max_packet_size } => {
+            MqttClientVariant::V5 { client, packet_ceiling } => {
                 let properties = PublishProperties {
                     content_type: Some(request.content_type.as_str().to_string()),
                     user_properties: transported_headers(request),
@@ -106,13 +106,13 @@ impl<'a> OutgoingPublish<'a> {
                 };
                 let mut packet = PublishV5::new(topic.as_str(), qos.as_v5(), envelope, Some(properties));
                 packet.pkid = qos.measured_packet_id();
-                admit(packet.size(), *max_packet_size)?;
+                packet_ceiling.admit(packet.size())?;
                 Ok(OutgoingPublish::V5 { client, packet })
             }
-            MqttClientVariant::V311 { client, max_packet_size } => {
+            MqttClientVariant::V311 { client, packet_ceiling } => {
                 let mut packet = Publish::new(topic.as_str(), qos.as_v311(), envelope);
                 packet.pkid = qos.measured_packet_id();
-                admit(packet.size(), *max_packet_size)?;
+                packet_ceiling.admit(packet.size())?;
                 Ok(OutgoingPublish::V311 { client, packet })
             }
         }
@@ -146,17 +146,6 @@ impl<'a> OutgoingPublish<'a> {
     }
 }
 
-/// Admit a packet of `size` bytes on a connection writing at most
-/// `max_packet_size`.
-const fn admit(size: usize, max_packet_size: u32) -> Result<(), TransportError> {
-    let limit = max_packet_size as usize;
-    if size > limit {
-        Err(TransportError::PayloadTooLarge { size, limit })
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -167,11 +156,13 @@ mod tests {
     use crate::{
         endpoint::{mqtt::MqttQoS, topic::MqttTopic},
         error::TransportError,
-        mqtt::{connection::MqttClientVariant, envelope::build_envelope, outgoing_publish::OutgoingPublish},
+        mqtt::{connection::MqttClientVariant, envelope::build_envelope, outgoing_publish::OutgoingPublish, packet_ceiling::MqttPacketCeiling},
         notification_body::NotificationBody,
         notification_context::NotificationContext,
+        oversized_notification::OversizedNotification,
         request::{DeliveryRequest, NotificationDelivery},
     };
+    use andromeda_configuration::{human_byte_size::HumanByteSize, mqtt_packet_limit::MqttPacketLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::notification_media_type::NotificationMediaType;
     use rumqttc::{
@@ -207,14 +198,20 @@ mod tests {
             .assemble(NotificationBody::written(&payload).expect("a written notification"))
     }
 
-    fn v311(max_packet_size: u32) -> MqttClientVariant {
-        let (client, _eventloop) = AsyncClient::new(MqttOptions::new("measured", "127.0.0.1", 1883), 8);
-        MqttClientVariant::V311 { client, max_packet_size }
+    /// A connection bound by `max_mqtt_packet` of `octets`, its server having announced no smaller maximum.
+    fn configured(octets: usize) -> MqttPacketCeiling {
+        let octets = u64::try_from(octets).expect("a limit within u64");
+        MqttPacketCeiling::Configured(MqttPacketLimit::try_from(HumanByteSize::b(octets)).expect("a limit within the protocol"))
     }
 
-    fn v5(max_packet_size: u32) -> MqttClientVariant {
+    fn v311(packet_ceiling: MqttPacketCeiling) -> MqttClientVariant {
+        let (client, _eventloop) = AsyncClient::new(MqttOptions::new("measured", "127.0.0.1", 1883), 8);
+        MqttClientVariant::V311 { client, packet_ceiling }
+    }
+
+    fn v5(packet_ceiling: MqttPacketCeiling) -> MqttClientVariant {
         let (client, _eventloop) = AsyncClientV5::new(MqttOptionsV5::new("measured", "127.0.0.1", 1883), 8);
-        MqttClientVariant::V5 { client, max_packet_size }
+        MqttClientVariant::V5 { client, packet_ceiling }
     }
 
     fn admitted(client: &MqttClientVariant, qos: MqttQoS, request: &DeliveryRequest) -> Result<(), TransportError> {
@@ -225,7 +222,7 @@ mod tests {
     #[tokio::test]
     async fn a_20_mib_notification_is_admitted_under_the_default_limit_on_either_version() {
         let request = notification(20 * MIB);
-        let limit = 128 * 1024 * 1024;
+        let limit = configured(128 * MIB);
         for qos in [MqttQoS::AtMost, MqttQoS::AtLeast, MqttQoS::Exactly] {
             assert!(admitted(&v311(limit), qos, &request).is_ok());
             assert!(admitted(&v5(limit), qos, &request).is_ok());
@@ -233,17 +230,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_notification_over_the_packet_limit_is_too_large() {
+    async fn a_notification_over_the_configured_packet_limit_is_refused_naming_max_mqtt_packet() {
         let request = notification(2 * MIB);
-        let limit = 1024 * 1024;
+        let limit = configured(MIB);
         for client in [v311(limit), v5(limit)] {
             match admitted(&client, MqttQoS::AtLeast, &request) {
-                Err(TransportError::PayloadTooLarge { size, limit: refused_at }) => {
+                Err(TransportError::Oversized(OversizedNotification::MaxMqttPacket { size, limit: refused_at })) => {
                     assert!(size > 2 * MIB, "the whole packet is measured: {size}");
                     assert_eq!(refused_at, 1024 * 1024);
                 }
-                other => panic!("expected PayloadTooLarge, got {other:?}"),
+                other => panic!("expected a refusal under max_mqtt_packet, got {other:?}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_notification_over_the_maximum_the_server_announced_is_refused_naming_the_server() {
+        let request = notification(2 * MIB);
+        let announced = u32::try_from(MIB).expect("a small limit");
+        let ceiling = MqttPacketCeiling::negotiated(MqttPacketLimit::DEFAULT, Some(announced));
+        match admitted(&v5(ceiling), MqttQoS::AtLeast, &request) {
+            Err(TransportError::Oversized(OversizedNotification::MqttServerAnnounced {
+                size,
+                announced: refused_at,
+                configured,
+            })) => {
+                assert!(size > 2 * MIB, "the whole packet is measured: {size}");
+                assert_eq!(refused_at, announced);
+                assert_eq!(configured, 128 * 1024 * 1024);
+            }
+            other => panic!("expected a refusal under the announced maximum, got {other:?}"),
         }
     }
 
@@ -256,11 +272,11 @@ mod tests {
         let envelope = build_envelope(&request).expect("the envelope is written");
         // 1 fixed header byte, 2 remaining-length bytes, 2 topic length bytes.
         let qos0_size = 1 + 2 + 2 + "notifications".len() + envelope.len();
-        let limit = u32::try_from(qos0_size).expect("a small packet");
+        let limit = configured(qos0_size);
         assert!(admitted(&v311(limit), MqttQoS::AtMost, &request).is_ok());
         assert!(matches!(
             admitted(&v311(limit), MqttQoS::AtLeast, &request),
-            Err(TransportError::PayloadTooLarge { .. })
+            Err(TransportError::Oversized(OversizedNotification::MaxMqttPacket { .. }))
         ));
     }
 }

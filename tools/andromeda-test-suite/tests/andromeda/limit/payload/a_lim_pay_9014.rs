@@ -3,7 +3,8 @@
 use andromeda_test_suite::{
     answered_status::AnsweredStatus,
     broker,
-    config::{Budget, SuiteConfig},
+    budget::Budget,
+    config::SuiteConfig,
     generated_payload::spaces,
     written_json::json_request_to,
 };

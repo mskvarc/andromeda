@@ -151,6 +151,7 @@ mod tests {
         notification_body::NotificationBody,
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
+        oversized_notification::OversizedNotification,
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
     };
@@ -320,7 +321,13 @@ mod tests {
             .await
             .map(drop)
             .expect_err("the notification is too large");
-        assert!(matches!(refused, TransportError::PayloadTooLarge { limit: MIB, .. }), "{refused:?}");
+        assert!(
+            matches!(
+                refused,
+                TransportError::Oversized(OversizedNotification::MaxMqttPacket { limit: 1_048_576, .. })
+            ),
+            "{refused:?}"
+        );
         assert!(!refused.is_retryable(), "every attempt would publish the same packet");
 
         let small = notification(&endpoint, 64);

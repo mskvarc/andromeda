@@ -3,7 +3,8 @@
 use andromeda_test_suite::{
     body_json::{json_count, json_equals},
     broker,
-    config::{BrokerRole, Budget, SuiteConfig},
+    budget::Budget,
+    config::{BrokerRole, SuiteConfig},
     eventually::retried,
     generated_payload::polygon,
     namespace::Namespace,

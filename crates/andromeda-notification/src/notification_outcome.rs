@@ -11,21 +11,26 @@ use andromeda_subscription::notification_slot::NotificationOutcome;
 pub(crate) const fn notification_outcome(delivery: &DeliveryResult) -> NotificationOutcome {
     match delivery {
         DeliveryResult::Delivered => NotificationOutcome::Success,
-        DeliveryResult::RetryableFailure | DeliveryResult::TerminalFailure => NotificationOutcome::Failure,
+        DeliveryResult::Failed(_) => NotificationOutcome::Failure,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::notification_outcome::notification_outcome;
-    use andromeda_delivery::dispatch::DeliveryResult;
+    use andromeda_delivery::{dispatch::DeliveryResult, endpoint_failure::EndpointFailure, outcome::EndpointRejection};
     use andromeda_subscription::notification_slot::NotificationOutcome;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn only_an_accepted_notification_is_recorded_as_a_success() {
         assert_eq!(notification_outcome(&DeliveryResult::Delivered), NotificationOutcome::Success);
-        assert_eq!(notification_outcome(&DeliveryResult::RetryableFailure), NotificationOutcome::Failure);
-        assert_eq!(notification_outcome(&DeliveryResult::TerminalFailure), NotificationOutcome::Failure);
+        for retryable in [true, false] {
+            let failed = DeliveryResult::Failed(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 503 },
+                retryable,
+            });
+            assert_eq!(notification_outcome(&failed), NotificationOutcome::Failure);
+        }
     }
 }

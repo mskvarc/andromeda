@@ -49,6 +49,8 @@ pub enum ConfigKey {
     },
     /// Every key of the MQTT section.
     Mqtt,
+    /// The Mosquitto broker announcing a maximum packet size below the brokers' `max_mqtt_packet`.
+    CappedMqttHost,
     /// Every key of the pooling section.
     Pooling,
     /// The apiRoot of the prefixed broker.
@@ -63,6 +65,7 @@ impl fmt::Display for ConfigKey {
         match self {
             ConfigKey::Entry { section, name } => write!(formatter, "{PREFIX}{section}__{name}"),
             ConfigKey::Mqtt => write!(formatter, "{PREFIX}MQTT__*"),
+            ConfigKey::CappedMqttHost => write!(formatter, "{PREFIX}CAPPED_MQTT_HOST"),
             ConfigKey::Pooling => write!(formatter, "{PREFIX}POOLING__*"),
             ConfigKey::ApiRootPrefixed => write!(formatter, "{PREFIX}API_ROOT_PREFIXED"),
             ConfigKey::StackDir => write!(formatter, "{PREFIX}STACK_DIR"),

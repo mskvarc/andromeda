@@ -448,6 +448,44 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "5s"
       ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "5s"
 
+  # Announces a 1 MiB maximum packet in its CONNACK, below the brokers' 128 MiB max_mqtt_packet. Only the test of an
+  # MQTT notification over that maximum publishes to it.
+  mosquitto-capped:
+    image: eclipse-mosquitto:2.1.2-alpine
+    command: ["mosquitto", "-c", "/mosquitto/config/capped.conf"]
+    volumes:
+      - ../mosquitto:/mosquitto/config:ro
+    healthcheck:
+      # Any $SYS message proves the broker accepts clients.
+      test: ["CMD", "mosquitto_sub", "-p", "1883", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  postgres-oversized:
+    extends:
+      <<: *template
+      service: postgres
+
+  # Serves its Prometheus metrics, and only the test of notifications refused for their size talks to it, so the
+  # oversized-notification counter it exposes moves only with what that test sends.
+  broker-oversized:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-oversized:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1087"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-oversized:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-oversized"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-oversized"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-oversized:1087"
+      ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
+
   runner:
     extends:
       <<: *template
@@ -482,6 +520,10 @@ services:
       broker-backlog:
         condition: service_healthy
       broker-roomy:
+        condition: service_healthy
+      broker-oversized:
+        condition: service_healthy
+      mosquitto-capped:
         condition: service_healthy
     volumes:
       - mutual-identity:/identities/mutual

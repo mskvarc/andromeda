@@ -3,7 +3,8 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    config::{Budget, SuiteConfig},
+    budget::Budget,
+    config::SuiteConfig,
     evolution_matcher::{has_evolution, instance_id_at},
     generated_payload::ring_polygon,
     namespace::Namespace,

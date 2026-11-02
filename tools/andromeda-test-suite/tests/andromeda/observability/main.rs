@@ -7,5 +7,6 @@
 #![forbid(unsafe_code)]
 
 mod metrics;
+mod notification_size;
 mod readiness;
 mod wake_backlog;

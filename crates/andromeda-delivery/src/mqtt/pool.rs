@@ -308,6 +308,7 @@ mod tests {
             connection::{ConnectionState, MqttClientVariant, MqttConnection},
             connection_key::MqttConnectionKey,
             dial::{DialFuture, MqttDialer, RumqttcDialer},
+            packet_ceiling::MqttPacketCeiling,
             pool::MqttTransportPool,
         },
     };
@@ -378,7 +379,7 @@ mod tests {
                 Ok((
                     MqttClientVariant::V311 {
                         client,
-                        max_packet_size: MqttPoolConfig::default().max_packet_size.octets(),
+                        packet_ceiling: MqttPacketCeiling::Configured(MqttPoolConfig::default().max_packet_size),
                     },
                     tokio::spawn(pending()),
                 ))
@@ -445,7 +446,7 @@ mod tests {
         let connection = MqttConnection {
             client: MqttClientVariant::V311 {
                 client,
-                max_packet_size: MqttPoolConfig::default().max_packet_size.octets(),
+                packet_ceiling: MqttPacketCeiling::Configured(MqttPoolConfig::default().max_packet_size),
             },
             state: Arc::clone(&state),
             key: test_key(),

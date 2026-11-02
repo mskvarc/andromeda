@@ -15,6 +15,7 @@ use crate::{
         config::MqttPoolConfig,
         connection::{ConnectionState, MqttClientVariant},
         connection_key::MqttConnectionKey,
+        packet_ceiling::MqttPacketCeiling,
         sys_topics::SysTopic,
     },
 };
@@ -167,7 +168,7 @@ async fn dial_v5(
 
     let (client, mut eventloop) = AsyncClientV5::new(options, EVENT_LOOP_CAPACITY);
 
-    let announced_max_packet_size = match timeout(pool.connect_timeout, eventloop.poll()).await {
+    let announced = match timeout(pool.connect_timeout, eventloop.poll()).await {
         Ok(Ok(connected)) => {
             info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected");
             announced_max_packet_size(&connected)
@@ -175,8 +176,15 @@ async fn dial_v5(
         Ok(Err(error)) => return Err(connect_failed(&label, ConnectionFailure::MqttV5Connect(Box::new(error)))),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     };
-    let configured = pool.max_packet_size.octets();
-    let max_packet_size = announced_max_packet_size.map_or(configured, |announced| announced.min(configured));
+    let packet_ceiling = MqttPacketCeiling::negotiated(pool.max_packet_size, announced);
+    if let MqttPacketCeiling::ServerAnnounced { announced, configured } = packet_ceiling {
+        info!(
+            endpoint = %label.endpoint_uri,
+            announced,
+            max_mqtt_packet = configured.octets(),
+            "the MQTT server announced a maximum packet size below notifications.delivery.max_mqtt_packet, which bounds the notifications this connection publishes"
+        );
+    }
 
     for sys in SysTopic::iter() {
         if let Err(error) = client.subscribe(sys.topic(), QoSV5::AtMostOnce).await {
@@ -224,7 +232,7 @@ async fn dial_v5(
         }
     });
 
-    Ok((MqttClientVariant::V5 { client, max_packet_size }, task))
+    Ok((MqttClientVariant::V5 { client, packet_ceiling }, task))
 }
 
 /// Open an MQTT 3.1.1 connection.
@@ -238,8 +246,9 @@ async fn dial_v311(
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let mut options = MqttOptions::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
-    let max_packet_size = pool.max_packet_size.octets();
-    options.set_max_packet_size(max_packet_size as usize, max_packet_size as usize);
+    let packet_ceiling = MqttPacketCeiling::Configured(pool.max_packet_size);
+    let max_packet_size = pool.max_packet_size.octets() as usize;
+    options.set_max_packet_size(max_packet_size, max_packet_size);
     if key.use_tls {
         options.set_transport(Transport::tls_with_default_config());
     }
@@ -301,5 +310,5 @@ async fn dial_v311(
         }
     });
 
-    Ok((MqttClientVariant::V311 { client, max_packet_size }, task))
+    Ok((MqttClientVariant::V311 { client, packet_ceiling }, task))
 }

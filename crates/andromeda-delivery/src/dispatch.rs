@@ -2,6 +2,7 @@
 
 use crate::{
     endpoint::transport::EndpointTransport,
+    endpoint_failure::EndpointFailure,
     error::TransportError,
     http::{config::HttpTransportConfig, transport::HttpTransport},
     mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
@@ -9,6 +10,7 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
+use andromeda_telemetry::delivery_ops::count_oversized_notification;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -23,22 +25,15 @@ pub struct TransportDispatcher {
 
 /// Result of a notification delivery attempt.
 ///
-/// Coarser than [`DeliveryOutcome`] (the dispatcher has already logged why)
-/// but it keeps the one distinction a retrying caller needs: whether a failure
-/// is worth another attempt. Collapsing every failure to one variant would retry
+/// A failure keeps why it failed, which is also what decides whether it is
+/// worth another attempt. Collapsing every failure to one answer would retry
 /// a permanently-rejecting `400` through its whole budget exactly like a
 /// transient `503`.
 pub enum DeliveryResult {
     /// The endpoint accepted the notification.
     Delivered,
-    /// Delivery failed but a later attempt could succeed: a `5xx` or `429`
-    /// rejection, a timeout, a lost connection, a DNS failure, or an
-    /// unacknowledged MQTT publish.
-    RetryableFailure,
-    /// Delivery failed in a way a retry cannot fix: a `4xx` rejection (other than
-    /// `429`), a payload over the limit, a blocked endpoint, or a serialisation
-    /// failure.
-    TerminalFailure,
+    /// The endpoint refused the notification or was not reached.
+    Failed(EndpointFailure),
 }
 
 impl DeliveryResult {
@@ -48,24 +43,27 @@ impl DeliveryResult {
         matches!(self, DeliveryResult::Delivered)
     }
 
-    /// Whether a failed delivery should be retried. A terminal failure must not
-    /// be, or the delivery queue burns its whole attempt budget on a delivery that can
-    /// never succeed.
+    /// Whether a failed delivery should be retried: after a `5xx` or `429`
+    /// rejection, a timeout, a lost connection, a DNS failure or an
+    /// unacknowledged MQTT publish. A `4xx` rejection (other than `429`), a
+    /// payload over the limit, a blocked endpoint or a serialisation failure
+    /// must not be, or the delivery queue burns its whole attempt budget on a
+    /// delivery that can never succeed.
     #[must_use]
     pub const fn should_retry(&self) -> bool {
-        matches!(self, DeliveryResult::RetryableFailure)
+        match self {
+            DeliveryResult::Delivered => false,
+            DeliveryResult::Failed(failure) => failure.is_retryable(),
+        }
     }
 }
 
-/// Classify a transport's answer into the result the workers act on, preserving
-/// whether a failure is worth retrying.
+/// Turn a transport's answer into the result the workers act on.
 fn classify(outcome: Result<DeliveryOutcome, TransportError>) -> DeliveryResult {
     match outcome {
         Ok(DeliveryOutcome::Success { .. }) => DeliveryResult::Delivered,
-        Ok(DeliveryOutcome::Rejected { retryable: true, .. }) => DeliveryResult::RetryableFailure,
-        Ok(DeliveryOutcome::Rejected { retryable: false, .. }) => DeliveryResult::TerminalFailure,
-        Err(error) if error.is_retryable() => DeliveryResult::RetryableFailure,
-        Err(_terminal) => DeliveryResult::TerminalFailure,
+        Ok(DeliveryOutcome::Rejected { reason, retryable }) => DeliveryResult::Failed(EndpointFailure::Rejected { reason, retryable }),
+        Err(error) => DeliveryResult::Failed(EndpointFailure::Transport(error)),
     }
 }
 
@@ -89,7 +87,8 @@ impl TransportDispatcher {
     ///
     /// The payload limit is left to each transport: the HTTP transport bounds
     /// the notification body, and the MQTT transport the whole packet carrying
-    /// its envelope. Either answers `PayloadTooLarge`, which is not retried.
+    /// its envelope. Either answers `Oversized`, which is not retried and is
+    /// counted under the limit that refused it.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let handle = match endpoint {
             EndpointTransport::Http => TransportHandle::Http(&self.http),
@@ -112,12 +111,17 @@ impl TransportDispatcher {
                 retryable,
                 "notification rejected by endpoint"
             ),
-            Err(error) => warn!(
-                subscription_id = %request.subscription_id,
-                endpoint = %request.endpoint_uri,
-                error = %error,
-                "notification delivery failed"
-            ),
+            Err(error) => {
+                if let TransportError::Oversized(refusal) = error {
+                    count_oversized_notification(refusal.limit());
+                }
+                warn!(
+                    subscription_id = %request.subscription_id,
+                    endpoint = %request.endpoint_uri,
+                    error = %error,
+                    "notification delivery failed"
+                );
+            }
         }
         classify(outcome)
     }
@@ -164,6 +168,7 @@ mod tests {
         dispatch::classify,
         error::TransportError,
         outcome::{DeliveryOutcome, EndpointRejection},
+        oversized_notification::OversizedNotification,
     };
     use std::{
         net::{IpAddr, Ipv4Addr},
@@ -216,7 +221,7 @@ mod tests {
         }));
         assert!(!blocked.should_retry());
 
-        let too_large = classify(Err(TransportError::PayloadTooLarge { size: 100, limit: 10 }));
+        let too_large = classify(Err(TransportError::Oversized(OversizedNotification::MaxHttpBody { size: 100, limit: 10 })));
         assert!(!too_large.should_retry());
     }
 }

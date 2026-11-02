@@ -49,6 +49,9 @@ pub enum BrokerMetric {
     /// The seconds since the oldest overdue tenant wake fell due, as the broker's last wake pass ended.
     #[strum(serialize = "andromeda_tenant_overdue_wake_max_age_seconds")]
     OverdueWakeMaxAgeSeconds,
+    /// The notifications refused before sending because they exceed a size limit, by the limit that refused them.
+    #[strum(serialize = "andromeda_notification_oversized_total")]
+    NotificationsOversized,
 }
 
 /// A label a test selects samples by.
@@ -59,6 +62,8 @@ pub enum MetricLabel {
     Tenant,
     /// The route template an HTTP series describes, such as `/ngsi-ld/v1/entities`.
     Endpoint,
+    /// The size limit a refused notification exceeded: `max-http-body`, `max-mqtt-packet` or `mqtt-server-announced`.
+    Limit,
 }
 
 /// The `tenant` label value of the default tenant's series.

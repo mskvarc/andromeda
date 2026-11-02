@@ -29,6 +29,7 @@ pub mod connection_failure;
 pub mod delivery_deadline;
 pub mod dispatch;
 pub mod endpoint;
+pub mod endpoint_failure;
 pub mod error;
 pub mod host_port;
 pub mod http;
@@ -37,6 +38,7 @@ pub mod notification_body;
 pub mod notification_context;
 pub mod notification_context_placement;
 pub mod outcome;
+pub mod oversized_notification;
 pub mod request;
 pub mod transport;
 

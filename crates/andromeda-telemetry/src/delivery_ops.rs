@@ -1,11 +1,34 @@
 //! Outcome accounting for notification deliveries.
 
 use crate::{
-    names::{LABEL_OUTCOME, NOTIFICATION_DELIVERIES_TOTAL, NOTIFICATION_DELIVERY_DURATION_SECONDS},
+    names::{LABEL_LIMIT, LABEL_OUTCOME, NOTIFICATION_DELIVERIES_TOTAL, NOTIFICATION_DELIVERY_DURATION_SECONDS, NOTIFICATION_OVERSIZED_TOTAL},
     operation::Outcome,
 };
 use metrics::{counter, histogram};
 use std::time::Instant;
+use strum::IntoStaticStr;
+
+/// The size limit a notification was refused under.
+///
+/// Rendered as the kebab-case `limit` label value. It names where the limit
+/// came from, so an operator reads off the series which setting to change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
+pub enum NotificationSizeLimit {
+    /// `notifications.delivery.max_http_body`, the largest HTTP notification body.
+    MaxHttpBody,
+    /// `notifications.delivery.max_mqtt_packet`, the largest MQTT packet, where
+    /// the MQTT server announced no smaller maximum.
+    MaxMqttPacket,
+    /// The maximum packet size an MQTT 5 server announced on connecting, below
+    /// `notifications.delivery.max_mqtt_packet`.
+    MqttServerAnnounced,
+}
+
+/// Count one notification refused for its size under `limit`.
+pub fn count_oversized_notification(limit: NotificationSizeLimit) {
+    counter!(NOTIFICATION_OVERSIZED_TOTAL, LABEL_LIMIT => <&'static str>::from(limit)).increment(1);
+}
 
 /// A running measurement of one notification delivery.
 ///
@@ -38,7 +61,13 @@ impl DeliveryTimer {
 
 #[cfg(test)]
 mod tests {
-    use crate::{delivery_ops::DeliveryTimer, error::TelemetryError, names::NOTIFICATION_DELIVERIES_TOTAL, operation::Outcome, recorder::TelemetryRecorder};
+    use crate::{
+        delivery_ops::{DeliveryTimer, NotificationSizeLimit, count_oversized_notification},
+        error::TelemetryError,
+        names::{NOTIFICATION_DELIVERIES_TOTAL, NOTIFICATION_OVERSIZED_TOTAL},
+        operation::Outcome,
+        recorder::TelemetryRecorder,
+    };
 
     #[test]
     fn a_delivery_is_counted_under_its_outcome() -> Result<(), TelemetryError> {
@@ -53,6 +82,23 @@ mod tests {
             rendered.contains(&format!("{NOTIFICATION_DELIVERIES_TOTAL}{{outcome=\"error\"}} 1")),
             "{rendered}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn an_oversized_notification_is_counted_under_the_limit_that_refused_it() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            count_oversized_notification(NotificationSizeLimit::MqttServerAnnounced);
+            count_oversized_notification(NotificationSizeLimit::MqttServerAnnounced);
+            count_oversized_notification(NotificationSizeLimit::MaxHttpBody);
+        });
+        let rendered = recorder.render();
+        for (limit, count) in [("mqtt-server-announced", 2), ("max-http-body", 1)] {
+            let sample = format!("{NOTIFICATION_OVERSIZED_TOTAL}{{limit=\"{limit}\"}} {count}");
+            assert!(rendered.contains(&sample), "{rendered}");
+        }
+        assert!(!rendered.contains("max-mqtt-packet"), "{rendered}");
         Ok(())
     }
 }

@@ -2,7 +2,8 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{Budget, SuiteConfig},
+    budget::Budget,
+    config::SuiteConfig,
     generated_payload::ring_polygon,
     identity_matcher::has_id,
     namespace::Namespace,

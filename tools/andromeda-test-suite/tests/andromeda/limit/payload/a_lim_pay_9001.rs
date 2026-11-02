@@ -2,7 +2,8 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{Budget, SuiteConfig},
+    budget::Budget,
+    config::SuiteConfig,
     namespace::Namespace,
     problem::{answered, problem},
     wire::request_to,

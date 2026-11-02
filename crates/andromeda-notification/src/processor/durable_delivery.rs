@@ -10,6 +10,7 @@ use crate::{
     delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
     notification_event::NotificationEvent,
     processor::{
+        NotificationEvaluationOutcome,
         NotificationProcessor,
         change_audience::{ChangeAudience, CommitFilters},
         delivery_failure::DeliveryFailure,
@@ -33,27 +34,22 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 subscription: &entry.subscription_id,
                 filters: commit_filters(&entry.event),
             };
-            let outcome = self
+            let NotificationEvaluationOutcome {
+                delivered,
+                retryable,
+                terminal,
+            } = self
                 .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience)
                 .await;
-            if outcome.delivered > 0 {
-                DeliveryDisposition::Delivered
-            } else if outcome.retryable_failures > 0 {
-                DeliveryDisposition::RetryableFailure {
-                    detail: DeliveryFailure::TransientEndpoints {
-                        attempts: outcome.retryable_failures,
-                    }
-                    .to_string(),
-                }
-            } else if outcome.terminal_failures > 0 {
-                DeliveryDisposition::TerminalFailure {
-                    detail: DeliveryFailure::PermanentEndpoints {
-                        attempts: outcome.terminal_failures,
-                    }
-                    .to_string(),
-                }
-            } else {
-                DeliveryDisposition::Obsolete
+            match (delivered, retryable, terminal) {
+                (1.., _, _) => DeliveryDisposition::Delivered,
+                (0, Some(failed), _) => DeliveryDisposition::RetryableFailure {
+                    detail: DeliveryFailure::TransientEndpoints(failed).to_string(),
+                },
+                (0, None, Some(failed)) => DeliveryDisposition::TerminalFailure {
+                    detail: DeliveryFailure::PermanentEndpoints(failed).to_string(),
+                },
+                (0, None, None) => DeliveryDisposition::Obsolete,
             }
         })
     }

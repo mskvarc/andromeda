@@ -20,6 +20,7 @@ use crate::names::{
     NAME_DICTIONARY_LOOKUPS_TOTAL,
     NOTIFICATION_DELIVERIES_TOTAL,
     NOTIFICATION_DELIVERY_DURATION_SECONDS,
+    NOTIFICATION_OVERSIZED_TOTAL,
     POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
     POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
     POSTGRESQL_FREEZE_AGE_MAX,
@@ -127,7 +128,7 @@ impl MetricDescription {
 }
 
 /// Every metric the broker emits.
-const DESCRIPTIONS: [MetricDescription; 51] = [
+const DESCRIPTIONS: [MetricDescription; 52] = [
     MetricDescription::gauge(BUILD_INFO, None, "Always 1, labelled by the version of the running broker."),
     MetricDescription::counter(HTTP_REQUESTS_TOTAL, "HTTP requests answered, by method, matched endpoint and status code."),
     MetricDescription::histogram(
@@ -197,6 +198,10 @@ const DESCRIPTIONS: [MetricDescription; 51] = [
         NOTIFICATION_DELIVERY_DURATION_SECONDS,
         Some(Unit::Seconds),
         "Time taken by a notification delivery attempt.",
+    ),
+    MetricDescription::counter(
+        NOTIFICATION_OVERSIZED_TOTAL,
+        "Notifications refused before sending because they exceed a size limit, by the limit that refused them.",
     ),
     MetricDescription::counter(TASK_FAILURES_TOTAL, "Background tasks that failed for good, by failure class and criticality."),
     MetricDescription::counter(

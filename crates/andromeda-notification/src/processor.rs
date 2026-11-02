@@ -1,6 +1,8 @@
 //! Entity event notification evaluation: which compiled subscriptions a
 //! committed change reaches, and the delivery of one notification to each.
 
+/// Why notifying one subscription failed, and the failed attempts of one change.
+pub mod attempt_failure;
 /// Who one committed change is evaluated for, and what its filters admit.
 mod change_audience;
 /// The entity state a change event is notified with.
@@ -17,6 +19,7 @@ use crate::{
     error::NotificationError,
     pending_change::{PendingChange, PendingCommits},
     processor::{
+        attempt_failure::{FailedAttempts, NotificationAttemptFailure},
         change_audience::{ChangeAudience, addressed, admitted_by_entity_filters, changed_states, in_force_versions, owed_since_commit},
         change_payload::notified_state,
         payload::cache::NotificationCompactionCache,
@@ -26,8 +29,11 @@ use crate::{
 use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    dispatch::TransportDispatcher,
+    endpoint::{
+        error::EndpointParseError,
+        transport::{EndpointTransport, parse_endpoint_transport},
+    },
 };
 use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -50,30 +56,23 @@ use tracing::{debug, warn};
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
-fn compiled_transport(subscription: &CompiledSubscription) -> Option<EndpointTransport> {
-    match parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref()) {
-        Ok(transport) => Some(transport),
-        Err(error) => {
-            debug!(subscription = %subscription.id, %error, "Compiled subscription endpoint is no longer deliverable");
-            None
-        }
-    }
+fn compiled_transport(subscription: &CompiledSubscription) -> Result<EndpointTransport, EndpointParseError> {
+    parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref())
+        .inspect_err(|error| debug!(subscription = %subscription.id, %error, "Compiled subscription endpoint is no longer deliverable"))
 }
 
-/// Fold the endpoint results of one committed change into its aggregate
-/// outcome; a subscription whose throttling window swallowed the notification
+/// Fold the attempts of one committed change into its aggregate outcome; a
+/// subscription whose throttling window swallowed the notification
 /// contributes nothing.
-fn aggregate_delivery_outcomes(deliveries: Vec<Option<DeliveryResult>>) -> NotificationEvaluationOutcome {
-    deliveries
+fn aggregate_delivery_outcomes(attempts: Vec<Option<Result<(), NotificationAttemptFailure>>>) -> NotificationEvaluationOutcome {
+    attempts
         .into_iter()
         .flatten()
-        .fold(NotificationEvaluationOutcome::default(), |mut outcome, delivery| {
-            if delivery.is_delivered() {
-                outcome.delivered += 1;
-            } else if delivery.should_retry() {
-                outcome.retryable_failures += 1;
-            } else {
-                outcome.terminal_failures += 1;
+        .fold(NotificationEvaluationOutcome::default(), |mut outcome, attempt| {
+            match attempt {
+                Ok(()) => outcome.delivered += 1,
+                Err(failure) if failure.is_retryable() => FailedAttempts::count(&mut outcome.retryable, failure),
+                Err(failure) => FailedAttempts::count(&mut outcome.terminal, failure),
             }
             outcome
         })
@@ -117,14 +116,15 @@ pub struct NotificationProcessorDeps {
 }
 
 /// Aggregate endpoint outcomes from evaluating one committed entity change.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
 pub struct NotificationEvaluationOutcome {
     /// Endpoints that accepted a notification.
     pub delivered: usize,
-    /// Endpoint failures worth retrying.
-    pub retryable_failures: usize,
-    /// Endpoint or payload failures that retry cannot repair.
-    pub terminal_failures: usize,
+    /// Failures worth retrying, `None` when there were none.
+    pub retryable: Option<FailedAttempts>,
+    /// Endpoint or payload failures that retry cannot repair, `None` when
+    /// there were none.
+    pub terminal: Option<FailedAttempts>,
 }
 
 impl NotificationProcessor {
@@ -201,14 +201,17 @@ impl NotificationProcessor {
         // The entity is read once and shared by every notification the change produces.
         let notified = notified_state(self.entity_reader.as_ref(), &target, &event).await;
         let states = changed_states(&event, notified.as_deref());
-        let Ok(linked) = self.linked_states_for(&target, &event, &candidates, states).await else {
+        let linked = match self.linked_states_for(&target, &event, &candidates, states).await {
+            Ok(linked) => linked,
             // The hops cannot be decided without their linked entities; a
             // queued delivery is retried, as for any read that may answer the
             // next attempt.
-            return NotificationEvaluationOutcome {
-                retryable_failures: 1,
-                ..NotificationEvaluationOutcome::default()
-            };
+            Err(error) => {
+                return NotificationEvaluationOutcome {
+                    retryable: Some(FailedAttempts::new(NotificationAttemptFailure::LinkedEntitiesUnread(error))),
+                    ..NotificationEvaluationOutcome::default()
+                };
+            }
         };
         let matching = in_force_versions(
             &self.cache,
@@ -227,7 +230,7 @@ impl NotificationProcessor {
             now: Utc::now(),
             compaction_cache: &compaction_cache,
         };
-        let deliveries: Vec<Option<DeliveryResult>> = stream::iter(matching)
+        let attempts: Vec<Option<Result<(), NotificationAttemptFailure>>> = stream::iter(matching)
             .map(|compiled_sub| {
                 let change = &change;
                 async move { self.notify_subscription(&compiled_sub, change).await }
@@ -235,7 +238,7 @@ impl NotificationProcessor {
             .buffer_unordered(NOTIFICATION_CONCURRENCY)
             .collect()
             .await;
-        aggregate_delivery_outcomes(deliveries)
+        aggregate_delivery_outcomes(attempts)
     }
 
     /// Re-read one subscription from the store before the change is matched
