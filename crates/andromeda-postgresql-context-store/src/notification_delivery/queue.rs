@@ -6,7 +6,13 @@
 //! delivery worker above it knows nothing of the two reads.
 
 use crate::{
-    notification_delivery::{acknowledge, claim, claimed_event_read::ClaimDictionaries, cleanup, rows::UnreadableClaimedDelivery},
+    notification_delivery::{
+        acknowledge,
+        claim::{self, ClaimTerms},
+        claimed_event_read::ClaimDictionaries,
+        cleanup,
+        rows::UnreadableClaimedDelivery,
+    },
     store_fault::persistence_failure,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
@@ -14,6 +20,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
+    delivery_claim_order::DeliveryClaimOrder,
     delivery_entry::{DeliveryEntry, DeliveryKey},
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     delivery_store::DeliveryStore,
@@ -63,15 +70,26 @@ impl DeliveryStore for NotificationDeliveryQueue {
         worker_id: &LeaseHolder,
         lease: LeaseTerm,
         batch_size: NonZeroU32,
+        order: DeliveryClaimOrder,
         held: &HeldEvents,
     ) -> Result<Vec<DeliveryClaim>, NotificationError> {
         let dictionaries = ClaimDictionaries {
             attribute_names: self.attribute_names.as_ref(),
             entity_type_names: self.entity_type_names.as_ref(),
         };
-        let claimed = claim::claim_due(&self.pool, dictionaries, *worker_id, lease, batch_size, held)
-            .await
-            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
+        let claimed = claim::claim_due(
+            &self.pool,
+            dictionaries,
+            ClaimTerms {
+                worker_id: *worker_id,
+                lease,
+                order,
+            },
+            batch_size,
+            held,
+        )
+        .await
+        .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
         Ok(claimed.into_iter().map(delivery_claim).collect())
     }
 

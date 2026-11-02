@@ -56,6 +56,9 @@ pub enum IndexTarget {
     UqNotificationDeliveriesEventSubscription,
     /// Deliveries by their subscription.
     IdxNotificationDeliveriesSubscription,
+    /// Deliveries still in the queue by their subscription, then in claim
+    /// order, partial like the claim index.
+    IdxNotificationDeliveriesSubscriptionClaim,
     /// The deliveries' primary key.
     PkNotificationDeliveries,
     /// Identifier trigram GIN, measured by its density: a pending list
@@ -113,7 +116,7 @@ impl DensityColumn {
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
-    pub const ALL: [IndexTarget; 22] = [
+    pub const ALL: [IndexTarget; 23] = [
         IndexTarget::PkCaGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -129,6 +132,7 @@ impl IndexTarget {
         IndexTarget::IdxNotificationDeliveriesClaim,
         IndexTarget::UqNotificationDeliveriesEventSubscription,
         IndexTarget::IdxNotificationDeliveriesSubscription,
+        IndexTarget::IdxNotificationDeliveriesSubscriptionClaim,
         IndexTarget::PkNotificationDeliveries,
         IndexTarget::IdxEntitiesIdTrgm,
         IndexTarget::PkTemporalAttributeStreams,
@@ -139,7 +143,7 @@ impl IndexTarget {
     ];
 
     /// Indexes eligible for direct physical bloat probing.
-    pub const PROBEABLE: [IndexTarget; 17] = [
+    pub const PROBEABLE: [IndexTarget; 18] = [
         IndexTarget::PkCaGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -151,6 +155,7 @@ impl IndexTarget {
         IndexTarget::IdxNotificationDeliveriesClaim,
         IndexTarget::UqNotificationDeliveriesEventSubscription,
         IndexTarget::IdxNotificationDeliveriesSubscription,
+        IndexTarget::IdxNotificationDeliveriesSubscriptionClaim,
         IndexTarget::PkNotificationDeliveries,
         IndexTarget::PkTemporalAttributeStreams,
         IndexTarget::UqTemporalAttributeStreamsGrain,
@@ -185,6 +190,7 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::IdxNotificationDeliveriesSubscriptionClaim
             | IndexTarget::PkNotificationDeliveries
             | IndexTarget::IdxEntitiesIdTrgm
             | IndexTarget::PkTemporalAttributeStreams
@@ -215,6 +221,7 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::IdxNotificationDeliveriesSubscriptionClaim
             | IndexTarget::PkNotificationDeliveries
             | IndexTarget::IdxEntitiesIdTrgm
             | IndexTarget::PkTemporalAttributeStreams
@@ -246,6 +253,7 @@ impl IndexTarget {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::IdxNotificationDeliveriesSubscriptionClaim
             | IndexTarget::PkNotificationDeliveries
             | IndexTarget::PkTemporalAttributeStreams
             | IndexTarget::UqTemporalAttributeStreamsGrain
@@ -275,6 +283,7 @@ impl IndexTarget {
             IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::IdxNotificationDeliveriesSubscriptionClaim
             | IndexTarget::PkNotificationDeliveries => HeapTarget::NotificationDeliveries,
             IndexTarget::IdxEntitiesIdTrgm => HeapTarget::Entities,
             IndexTarget::PkTemporalAttributeStreams
@@ -304,6 +313,7 @@ impl IndexTarget {
             IndexTarget::IdxNotificationDeliveriesClaim => "idx_notification_deliveries_claim",
             IndexTarget::UqNotificationDeliveriesEventSubscription => "uq_notification_deliveries_event_subscription",
             IndexTarget::IdxNotificationDeliveriesSubscription => "idx_notification_deliveries_subscription",
+            IndexTarget::IdxNotificationDeliveriesSubscriptionClaim => "idx_notification_deliveries_subscription_claim",
             IndexTarget::PkNotificationDeliveries => "pk_notification_deliveries",
             IndexTarget::IdxEntitiesIdTrgm => "idx_entities_id_trgm",
             IndexTarget::PkTemporalAttributeStreams => "pk_temporal_attribute_streams",
@@ -433,6 +443,7 @@ mod tests {
                 "idx_notification_deliveries_claim",
                 "uq_notification_deliveries_event_subscription",
                 "idx_notification_deliveries_subscription",
+                "idx_notification_deliveries_subscription_claim",
                 "pk_notification_deliveries",
             ]
         );

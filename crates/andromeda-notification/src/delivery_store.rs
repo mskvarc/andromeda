@@ -30,6 +30,7 @@
 
 use crate::{
     delivery_claim::DeliveryClaim,
+    delivery_claim_order::DeliveryClaimOrder,
     delivery_entry::DeliveryKey,
     delivery_lease::{DeliveryLeaseError, LeaseTerm},
     error::NotificationError,
@@ -63,6 +64,12 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// other pending notification, and the worker must be able to acknowledge
     /// it so it is not claimed again at every lease expiry.
     ///
+    /// `order` decides which due deliveries are taken first:
+    /// [`DeliveryClaimOrder::Queue`] the ones that became claimable first,
+    /// [`DeliveryClaimOrder::FewestInFlight`] those of the Subscriptions with
+    /// the fewest deliveries leased to `worker_id` first, passing over those
+    /// its ceiling excludes.
+    ///
     /// # Errors
     ///
     /// An `Err` means the queue itself could not be claimed from -- the
@@ -72,6 +79,7 @@ pub trait DeliveryStore: Send + Sync + 'static {
         worker_id: &'life1 LeaseHolder,
         lease: LeaseTerm,
         batch_size: NonZeroU32,
+        order: DeliveryClaimOrder,
         held: &'life2 HeldEvents,
     ) -> BoxFuture<'async_trait, Result<Vec<DeliveryClaim>, NotificationError>>
     where

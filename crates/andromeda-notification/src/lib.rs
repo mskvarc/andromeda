@@ -25,6 +25,8 @@ pub mod delivery_attempt_ceiling;
 pub mod delivery_backoff;
 /// What a claim hands the delivery drain for each delivery it leased.
 pub mod delivery_claim;
+/// The order a claim takes due deliveries in.
+pub mod delivery_claim_order;
 /// In-flight bound for one notification delivery pass.
 pub mod delivery_concurrency;
 /// One bounded notification delivery pass.
@@ -39,8 +41,12 @@ pub mod delivery_lease;
 pub mod delivery_policy;
 /// Whether the queue may still supply due deliveries to a delivery pass.
 mod delivery_queue_supply;
+/// How the slots of a delivery pass are shared between Subscriptions.
+mod delivery_slot_share;
 /// Notification delivery queue persistence.
 pub mod delivery_store;
+/// Sending one claimed notification and classifying its outcome.
+pub mod delivery_transport;
 /// Focused notification failures.
 pub mod error;
 /// The events a delivery pass's in-flight deliveries already carry.

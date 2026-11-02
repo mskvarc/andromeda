@@ -109,7 +109,8 @@
 --     41 idx_temporal_attribute_streams_attribute_name_key_entity_key,
 --     42 idx_temporal_attribute_streams_value_extent,
 --     43 idx_temporal_attribute_streams_attribute_name_key_shape_mask,
---     44 attribute_history_rowstore
+--     44 attribute_history_rowstore,
+--     45 idx_notification_deliveries_subscription_claim
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 --   last_decision: 1 act, 2 queued, 3 would-act, 4 relation-too-small,
 --     5 reclaim-too-small, 6 below-threshold, 7 consecutive-samples,
@@ -158,7 +159,7 @@ create table postgresql_maintenance_targets (
     constraint pk_postgresql_maintenance_targets primary key (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_snapshot_key_non_negative check (snapshot_key >= 0),
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 44),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 45),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),

@@ -305,6 +305,7 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxNotificationDeliveriesClaim
             | IndexTarget::UqNotificationDeliveriesEventSubscription
             | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::IdxNotificationDeliveriesSubscriptionClaim
             | IndexTarget::PkNotificationDeliveries
             | IndexTarget::IdxEntitiesIdTrgm
             | IndexTarget::PkTemporalAttributeStreams

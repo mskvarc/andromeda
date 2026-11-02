@@ -5,7 +5,13 @@
 //! due deliveries, so the pass claims no further: a delivery that falls due
 //! later, a retry whose backoff ends or one a commit queues, is left to the
 //! next pass, which the commit's wake or the drain's fallback timer starts.
+//!
+//! A claim under an in-flight ceiling passes over the Subscriptions at it, so
+//! coming back short says only that the others have nothing due. The pass
+//! keeps claiming as its slots free, and once the Subscription at the ceiling
+//! falls below it, its deliveries are claimable again.
 
+use crate::delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling};
 use std::num::NonZeroUsize;
 
 /// Whether the queue may still hold due deliveries for the pass.
@@ -19,20 +25,27 @@ pub(crate) enum QueueSupply {
 }
 
 impl QueueSupply {
-    /// The supply once a claim that asked for `asked` deliveries got `got`.
-    pub(crate) const fn after_claim(self, asked: NonZeroUsize, got: usize) -> QueueSupply {
-        match self {
-            QueueSupply::MayHoldMore if got >= asked.get() => QueueSupply::MayHoldMore,
-            QueueSupply::MayHoldMore | QueueSupply::Drained => QueueSupply::Drained,
+    /// The supply once a claim that asked for `asked` deliveries in `order`
+    /// got `got`.
+    pub(crate) const fn after_claim(self, asked: NonZeroUsize, order: DeliveryClaimOrder, got: usize) -> QueueSupply {
+        match (self, order) {
+            (QueueSupply::MayHoldMore, DeliveryClaimOrder::FewestInFlight(InFlightCeiling::Below(_))) => QueueSupply::MayHoldMore,
+            (QueueSupply::MayHoldMore, DeliveryClaimOrder::Queue | DeliveryClaimOrder::FewestInFlight(InFlightCeiling::Lifted)) if got >= asked.get() => {
+                QueueSupply::MayHoldMore
+            }
+            (QueueSupply::MayHoldMore, DeliveryClaimOrder::Queue | DeliveryClaimOrder::FewestInFlight(_)) | (QueueSupply::Drained, _) => QueueSupply::Drained,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::delivery_queue_supply::QueueSupply;
+    use crate::{
+        delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling},
+        delivery_queue_supply::QueueSupply,
+    };
     use pretty_assertions::assert_eq;
-    use std::num::NonZeroUsize;
+    use std::num::{NonZeroU32, NonZeroUsize};
 
     /// A width of `count` deliveries, `count` being positive.
     const fn width(count: usize) -> NonZeroUsize {
@@ -41,19 +54,40 @@ mod tests {
 
     #[test]
     fn a_filled_claim_leaves_the_queue_able_to_supply_more() {
-        assert_eq!(QueueSupply::MayHoldMore.after_claim(width(4), 4), QueueSupply::MayHoldMore);
+        assert_eq!(
+            QueueSupply::MayHoldMore.after_claim(width(4), DeliveryClaimOrder::Queue, 4),
+            QueueSupply::MayHoldMore
+        );
     }
 
     #[test]
     fn a_short_claim_drains_the_supply() {
-        assert_eq!(QueueSupply::MayHoldMore.after_claim(width(4), 3), QueueSupply::Drained);
-        assert_eq!(QueueSupply::MayHoldMore.after_claim(width(1), 0), QueueSupply::Drained);
+        assert_eq!(
+            QueueSupply::MayHoldMore.after_claim(width(4), DeliveryClaimOrder::Queue, 3),
+            QueueSupply::Drained
+        );
+        assert_eq!(
+            QueueSupply::MayHoldMore.after_claim(width(1), DeliveryClaimOrder::Queue, 0),
+            QueueSupply::Drained
+        );
     }
 
     /// A refill already in flight when the queue ran out can still come back
     /// filled; the pass stays drained all the same.
     #[test]
     fn a_drained_supply_stays_drained_after_a_filled_claim() {
-        assert_eq!(QueueSupply::Drained.after_claim(width(1), 1), QueueSupply::Drained);
+        assert_eq!(QueueSupply::Drained.after_claim(width(1), DeliveryClaimOrder::Queue, 1), QueueSupply::Drained);
+    }
+
+    #[test]
+    fn a_short_claim_under_a_ceiling_leaves_the_queue_able_to_supply_more() {
+        let below = DeliveryClaimOrder::FewestInFlight(InFlightCeiling::Below(NonZeroU32::MIN.saturating_add(9)));
+        assert_eq!(QueueSupply::MayHoldMore.after_claim(width(1), below, 0), QueueSupply::MayHoldMore);
+    }
+
+    #[test]
+    fn a_short_claim_with_the_ceiling_lifted_drains_the_supply() {
+        let lifted = DeliveryClaimOrder::FewestInFlight(InFlightCeiling::Lifted);
+        assert_eq!(QueueSupply::MayHoldMore.after_claim(width(1), lifted, 0), QueueSupply::Drained);
     }
 }

@@ -6,8 +6,8 @@
 //! the event, which recorded them as the change left the Entity.
 
 use crate::{
-    delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
     delivery_entry::DeliveryEntry,
+    delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
     notification_event::NotificationEvent,
     processor::{
         NotificationProcessor,
@@ -136,7 +136,7 @@ fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
 )]
 mod tests {
     use crate::{
-        delivery_drain::DeliveryDisposition,
+        delivery_transport::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
             change_audience::CommitFilters,

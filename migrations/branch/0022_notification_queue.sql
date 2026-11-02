@@ -148,6 +148,16 @@ create index idx_notification_deliveries_claim on notification_deliveries (great
 where
     delivered_at is null and exhausted_at is null and held_at is null;
 
+-- The fair claim: the same rows as the claim index, one Subscription at a
+-- time. Once a Subscription holds half the slots of a pass, the claim walks
+-- the Subscriptions with queued rows by their keys and takes the head of each
+-- in claim order, so a backlog behind a slow endpoint costs one probe instead
+-- of a scan past every row of it, and the rows of a Subscription its pass
+-- leased are counted in the same range.
+create index idx_notification_deliveries_subscription_claim on notification_deliveries (subscription_key, greatest(next_attempt_at, coalesce(lease_until, '-infinity'::timestamptz)), delivery_key)
+where
+    delivered_at is null and exhausted_at is null and held_at is null;
+
 -- The reap of delivered rows.
 create index idx_notification_deliveries_delivered_at on notification_deliveries (delivered_at)
 where

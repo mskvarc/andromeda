@@ -107,6 +107,7 @@ mod tests {
             (IndexTarget::IdxNotificationDeliveriesClaim, HeapTarget::NotificationDeliveries),
             (IndexTarget::UqNotificationDeliveriesEventSubscription, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxNotificationDeliveriesSubscription, HeapTarget::NotificationDeliveries),
+            (IndexTarget::IdxNotificationDeliveriesSubscriptionClaim, HeapTarget::NotificationDeliveries),
             (IndexTarget::PkNotificationDeliveries, HeapTarget::NotificationDeliveries),
             (IndexTarget::IdxEntitiesIdTrgm, HeapTarget::Entities),
             (IndexTarget::PkTemporalAttributeStreams, HeapTarget::TemporalAttributeStreams),

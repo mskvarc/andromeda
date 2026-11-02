@@ -6,13 +6,16 @@ use crate::{
     delivery_attempt_ceiling::DeliveryAttemptCeiling,
     delivery_backoff::retry_due_at,
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
+    delivery_claim_order::DeliveryClaimOrder,
     delivery_concurrency::DeliveryConcurrency,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
     delivery_lease::LeaseTerm,
     delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
     delivery_queue_supply::QueueSupply,
+    delivery_slot_share::{SlotOccupant, SlotShare},
     delivery_store::DeliveryStore,
+    delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
     error::NotificationError,
     held_events::HeldEvents,
     notification_invariant::NotificationInvariant,
@@ -25,6 +28,7 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered}
 use std::{
     num::{NonZeroU32, NonZeroUsize},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -42,44 +46,6 @@ pub struct DeliveryDrainOutcome {
     pub lease_lost: usize,
 }
 
-/// Delivery classification that drives notification retry policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DeliveryDisposition {
-    /// The selected endpoint accepted the notification.
-    Delivered,
-    /// The subscription no longer exists or no longer matches, so the delivery
-    /// is obsolete.
-    Obsolete,
-    /// Delivery may succeed on a later attempt.
-    RetryableFailure {
-        /// Diagnostic recorded against the delivery, trimmed before it is stored.
-        detail: String,
-    },
-    /// Delivery cannot succeed without changing subscription configuration or
-    /// payload.
-    TerminalFailure {
-        /// Diagnostic recorded against the delivery, trimmed before it is stored.
-        detail: String,
-    },
-}
-
-/// Sends one persisted notification without exposing transport implementation
-/// to delivery policy.
-///
-/// Every outcome of one delivery is a [`DeliveryDisposition`], never an error:
-/// the transport is the one that knows whether a failure can pass, so it
-/// classifies it. A failure a later attempt may overcome, such as an endpoint
-/// that did not answer, is a
-/// [`DeliveryDisposition::RetryableFailure`]; one the stored delivery can never
-/// overcome, such as a payload that cannot be evaluated, is a
-/// [`DeliveryDisposition::TerminalFailure`]. Without an error channel no single
-/// delivery can end the pass its peers were claimed in, nor leave its own lease
-/// to run out unacknowledged.
-pub trait NotificationDeliveryTransport: Send + Sync + 'static {
-    /// Evaluate and send one claimed delivery.
-    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition>;
-}
-
 /// Policy operation that advances leased notification deliveries.
 pub struct NotificationDeliveryDrain {
     store: Arc<dyn DeliveryStore>,
@@ -90,6 +56,10 @@ pub struct NotificationDeliveryDrain {
     acknowledgement: DeliveryAcknowledgement,
     error_bound: DeliveryErrorBound,
     concurrency: DeliveryConcurrency,
+    /// How long a Subscription keeps a crowding one below half the slots
+    /// after its last delivery was answered: `request_timeout`, the longest a
+    /// slot taken meanwhile can stay taken.
+    slot_activity: Duration,
     attempt_ceiling: DeliveryAttemptCeiling,
     /// The wait before a failed delivery is due again.
     retry_schedule: BackoffSchedule,
@@ -97,15 +67,23 @@ pub struct NotificationDeliveryDrain {
 
 /// One thing that finished in a pass's in-flight set.
 enum SlotEvent {
-    /// A claim that asked for `asked` deliveries came back.
+    /// A claim that asked for `asked` deliveries in `order` came back.
     Claimed {
         /// Deliveries the claim asked for.
         asked: NonZeroUsize,
+        /// The order the claim took them in.
+        order: DeliveryClaimOrder,
         /// What the claim leased, or why it could not.
         claims: Result<Vec<DeliveryClaim>, NotificationError>,
     },
     /// A claimed delivery was attempted and its outcome acknowledged.
-    Acknowledged(Result<LeaseAcknowledgement, NotificationError>),
+    Acknowledged {
+        /// Whether the outcome was recorded under the lease.
+        acknowledgement: Result<LeaseAcknowledgement, NotificationError>,
+        /// The Subscription whose slot the delivery freed, `None` for a
+        /// delivery whose row could not be read back.
+        occupant: Option<SlotOccupant>,
+    },
 }
 
 /// Record what a claimed delivery carries before it is attempted.
@@ -157,6 +135,7 @@ impl NotificationDeliveryDrain {
             acknowledgement,
             error_bound,
             concurrency,
+            slot_activity: config.request_timeout.duration(),
             attempt_ceiling,
             retry_schedule,
         })
@@ -170,10 +149,17 @@ impl NotificationDeliveryDrain {
     /// each time a delivery is acknowledged it claims one more for the slot
     /// that freed. It stops claiming once a claim comes back short, once a
     /// claim or an acknowledgement fails, or once `cancellation` fires, and
-    /// returns when the last delivery in flight is acknowledged. A slow or
-    /// unreachable endpoint therefore holds only the slots its own attempts
-    /// occupy, and the slots wait on a last slow attempt only when nothing else
-    /// is due.
+    /// returns when the last delivery in flight is acknowledged.
+    ///
+    /// Once one Subscription holds half the slots, each slot that frees goes
+    /// to a due delivery of the Subscription with the fewest in flight, and
+    /// while more than one Subscription is active none gets more than half,
+    /// so an endpoint that answers late leaves the others at least half the
+    /// slots. A slot such a claim leaves empty, because the Subscriptions
+    /// below half had nothing due at that instant, is claimed again with the
+    /// next slot that frees, so a burst written meanwhile fills every slot
+    /// left to it. A lone Subscription still gets every slot, and the slots
+    /// wait on a last slow attempt only when nothing else is due.
     ///
     /// A delivery is claimed only when a slot is free to send it, so its lease
     /// starts as its attempt does and has to outlast that one attempt -- which
@@ -213,25 +199,41 @@ impl NotificationDeliveryDrain {
     pub async fn execute(&self, now: DateTime<Utc>, cancellation: &CancellationToken) -> Result<DeliveryDrainOutcome, NotificationError> {
         let clock = LeasePassClock::starting_at(now);
         let held = HeldEvents::default();
+        let mut share = SlotShare::new(self.concurrency, self.slot_activity);
         let mut supply = QueueSupply::MayHoldMore;
+        let mut idle = 0_usize;
         let mut claimed = 0_usize;
         let mut lease_lost = 0_usize;
         let mut failure: Option<NotificationError> = None;
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
         if !cancellation.is_cancelled() {
-            slots.push(self.claim(self.concurrency.get(), &clock, &held).boxed());
+            slots.push(self.claim(self.concurrency.get(), share.claim_order(Instant::now()), &clock, &held).boxed());
         }
         while let Some(event) = slots.next().await {
             match event {
-                SlotEvent::Claimed { asked, claims: Ok(claims) } => {
-                    supply = supply.after_claim(asked, claims.len());
+                SlotEvent::Claimed {
+                    asked,
+                    order,
+                    claims: Ok(claims),
+                } => {
+                    supply = supply.after_claim(asked, order, claims.len());
+                    idle += asked.get().saturating_sub(claims.len());
                     claimed += claims.len();
+                    for claim in &claims {
+                        match claim {
+                            DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
+                            DeliveryClaim::Unreadable(_) => {}
+                        }
+                    }
                     slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
                 }
                 SlotEvent::Claimed { claims: Err(error), .. } => {
                     failure.get_or_insert(error);
                 }
-                SlotEvent::Acknowledged(acknowledgement) => {
+                SlotEvent::Acknowledged { acknowledgement, occupant } => {
+                    if let Some(occupant) = occupant {
+                        share.release(occupant, Instant::now());
+                    }
                     match acknowledgement {
                         Ok(LeaseAcknowledgement::Applied) => {}
                         Ok(LeaseAcknowledgement::Lost) => lease_lost += 1,
@@ -239,9 +241,11 @@ impl NotificationDeliveryDrain {
                             failure.get_or_insert(error);
                         }
                     }
-                    // The acknowledged delivery freed its slot.
+                    // The acknowledged delivery freed its slot, beside those earlier claims left empty.
                     if failure.is_none() && supply == QueueSupply::MayHoldMore && !cancellation.is_cancelled() {
-                        slots.push(self.claim(NonZeroUsize::MIN, &clock, &held).boxed());
+                        let width = NonZeroUsize::MIN.saturating_add(idle);
+                        idle = 0;
+                        slots.push(self.claim(width, share.claim_order(Instant::now()), &clock, &held).boxed());
                     }
                 }
             }
@@ -252,37 +256,49 @@ impl NotificationDeliveryDrain {
         }
     }
 
-    /// Claim up to `width` deliveries under a lease that starts now, reusing
-    /// the events the pass's in-flight deliveries hold.
-    async fn claim(&self, width: NonZeroUsize, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
+    /// Claim up to `width` deliveries in `order` under a lease that starts
+    /// now, reusing the events the pass's in-flight deliveries hold.
+    async fn claim(&self, width: NonZeroUsize, order: DeliveryClaimOrder, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
         let claims = match NonZeroU32::try_from(width) {
-            Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width, held).await,
+            Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width, order, held).await,
             Err(error) => Err(NotificationInvariant::ClaimWidth(error).into()),
         };
         if let Ok(claimed) = &claims {
             debug!(
                 count = claimed.len(),
+                ?order,
                 worker_id = %self.worker_id,
                 lease_expires_at = ?self.lease_term.expires_at(clock.now()),
                 "Claimed notification deliveries"
             );
         }
-        SlotEvent::Claimed { asked: width, claims }
+        SlotEvent::Claimed { asked: width, order, claims }
     }
 
     /// Attempt one claimed delivery, acknowledge its outcome, and let go of
-    /// the event it carried.
+    /// the event it carried and the slot it held.
     async fn attempt(&self, claim: DeliveryClaim, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
-        SlotEvent::Acknowledged(match claim {
+        match claim {
             DeliveryClaim::Readable(entry) => {
                 trace_entry(&entry);
                 let acknowledgement = self.advance(&entry, clock).await;
-                let DeliveryEntry { target, event, .. } = *entry;
+                let DeliveryEntry {
+                    target,
+                    event,
+                    subscription_id,
+                    ..
+                } = *entry;
                 held.release(&target, event);
-                acknowledgement
+                SlotEvent::Acknowledged {
+                    acknowledgement,
+                    occupant: Some(SlotOccupant::new(target, subscription_id)),
+                }
             }
-            DeliveryClaim::Unreadable(unreadable) => self.retire_unreadable(&unreadable, clock).await,
-        })
+            DeliveryClaim::Unreadable(unreadable) => SlotEvent::Acknowledged {
+                acknowledgement: self.retire_unreadable(&unreadable, clock).await,
+                occupant: None,
+            },
+        }
     }
 
     /// Deliver one claimed entry and acknowledge whatever the transport reported.
@@ -379,11 +395,13 @@ mod tests {
     use crate::{
         delivery_acknowledgement::acknowledgement_retry,
         delivery_claim::{DeliveryClaim, UnreadableDelivery},
-        delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
+        delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling},
+        delivery_drain::NotificationDeliveryDrain,
         delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
         delivery_policy::retry_schedule,
         delivery_store::DeliveryStore,
+        delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
         error::NotificationError,
         held_events::HeldEvents,
         notification_event::{NotificationEvent, NotificationEventKey},
@@ -468,6 +486,8 @@ mod tests {
         /// The next probe instant each terminal acknowledgement carried.
         next_probes: Mutex<Vec<DateTime<Utc>>>,
         claimed_with: Mutex<Vec<LeaseTerm>>,
+        /// The order each claim asked for, in the order the claims were made.
+        orders: Mutex<Vec<DeliveryClaimOrder>>,
         calls: Mutex<Vec<StoreCall>>,
         lease_state: LeaseState,
         claim_state: ClaimState,
@@ -593,12 +613,14 @@ mod tests {
             _worker_id: &LeaseHolder,
             lease: LeaseTerm,
             batch_size: NonZeroU32,
+            order: DeliveryClaimOrder,
             held: &HeldEvents,
         ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             if self.claim_state == ClaimState::Refused {
                 return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
             }
             self.claimed_with.lock().expect("the test lock is not poisoned").push(lease);
+            self.orders.lock().expect("the test lock is not poisoned").push(order);
             let width = usize::try_from(batch_size.get()).expect("a claim width within the address width");
             let mut entries = self.entries.lock().expect("the test lock is not poisoned");
             let taken = width.min(entries.len());
@@ -1472,5 +1494,46 @@ mod tests {
                 }
             })
         }
+    }
+
+    /// Ten deliveries keyed from 1, each to the Subscription `subscription`
+    /// names for its key.
+    fn entries_to(subscription: impl Fn(i64) -> String) -> Result<Vec<DeliveryEntry>, NotificationError> {
+        (1..=10_i64)
+            .map(|id| {
+                let subscription_id = subscription(id).parse::<Identifier>().expect("a valid test identifier");
+                entry().map(|template| DeliveryEntry {
+                    key: DeliveryKey::from(id),
+                    subscription_id,
+                    ..template
+                })
+            })
+            .collect()
+    }
+
+    fn claim_orders(entries: Vec<DeliveryEntry>) -> Result<Vec<DeliveryClaimOrder>, NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(InFlightTransport::default()), waits(), &sized(4))?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
+            Ok(store.orders.lock().expect("the test lock is not poisoned").clone())
+        })
+    }
+
+    #[test]
+    fn a_subscription_holding_half_the_slots_turns_the_next_refill_to_fewest_in_flight() -> Result<(), NotificationError> {
+        let orders = claim_orders(entries_to(|_| "urn:ngsi-ld:Subscription:slow".to_owned())?)?;
+        pretty_assertions::assert_eq!(orders.first(), Some(&DeliveryClaimOrder::Queue));
+        // The first refill comes with three of the four slots still busy with the one Subscription, and no other.
+        pretty_assertions::assert_eq!(orders.get(1), Some(&DeliveryClaimOrder::FewestInFlight(InFlightCeiling::Lifted)));
+        Ok(())
+    }
+
+    #[test]
+    fn deliveries_spread_over_subscriptions_are_claimed_in_queue_order() -> Result<(), NotificationError> {
+        let orders = claim_orders(entries_to(|id| format!("urn:ngsi-ld:Subscription:s{id}"))?)?;
+        assert!(orders.iter().all(|order| *order == DeliveryClaimOrder::Queue), "{orders:?}");
+        Ok(())
     }
 }

@@ -104,6 +104,8 @@ compact_code_registry! {
             IdxTemporalAttributeStreamsAttributeNameKeyShapeMask = 43, "idx_temporal_attribute_streams_attribute_name_key_shape_mask";
             /// The attribute history hypertable's kept rowstore chunks.
             AttributeHistoryRowstore = 44, "attribute_history_rowstore";
+            /// The notification deliveries' per-subscription claim index.
+            IdxNotificationDeliveriesSubscriptionClaim = 45, "idx_notification_deliveries_subscription_claim";
         }
     }
 }
@@ -115,7 +117,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 44);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 45);
         assert_eq!(MaintenanceTargetCode::PkCaGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -133,11 +135,12 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::TemporalAttributeStreams.code(), 37);
         assert_eq!(MaintenanceTargetCode::IdxTemporalAttributeStreamsValueExtent.code(), 42);
         assert_eq!(MaintenanceTargetCode::AttributeHistoryRowstore.code(), 44);
+        assert_eq!(MaintenanceTargetCode::IdxNotificationDeliveriesSubscriptionClaim.code(), 45);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(45).is_err());
+        assert!(MaintenanceTargetCode::try_from(46).is_err());
     }
 }

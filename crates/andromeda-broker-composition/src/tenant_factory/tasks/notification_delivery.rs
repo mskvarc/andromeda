@@ -18,8 +18,9 @@ use crate::tenant_factory::{
 };
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_notification::{
-    delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
+    delivery_drain::NotificationDeliveryDrain,
     delivery_store::DeliveryStore,
+    delivery_transport::NotificationDeliveryTransport,
     error::NotificationError,
 };
 use andromeda_postgresql_context_store::notification_delivery::queue::NotificationDeliveryQueue;
@@ -247,10 +248,12 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
-        delivery_drain::{DeliveryDisposition, NotificationDeliveryDrain, NotificationDeliveryTransport},
+        delivery_claim_order::DeliveryClaimOrder,
+        delivery_drain::NotificationDeliveryDrain,
         delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::{DeliveryLeaseError, LeaseTerm},
         delivery_store::DeliveryStore,
+        delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
         error::NotificationError,
         held_events::HeldEvents,
     };
@@ -303,6 +306,7 @@ mod tests {
             _worker_id: &LeaseHolder,
             _lease: LeaseTerm,
             _batch_size: NonZeroU32,
+            _order: DeliveryClaimOrder,
             _held: &HeldEvents,
         ) -> Result<Vec<DeliveryClaim>, NotificationError> {
             Ok(Vec::new())
