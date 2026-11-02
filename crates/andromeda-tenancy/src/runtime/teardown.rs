@@ -183,13 +183,19 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let schedule = Arc::clone(&self.schedule);
         let probe_permits = Arc::clone(&self.wake_probe_permits);
         let waker = self.waker;
+        let alarm = Arc::clone(&self.alarm);
         self.eviction_set.lock().await.spawn(async move {
             Self::shutdown_holding(permit, runtime).await;
             let probe_permit = probe_permits.acquire_owned().await.ok();
             let now = SystemTime::now();
             let wake_at = next_wake_at(&waker, &probe.earliest_pending_work(&database, existence).await, now);
-            if let Err(error) = schedule.record(&tenant, now, wake_at).await {
-                debug!(%error, %tenant, "recording an excess-evicted tenant's wake failed");
+            match schedule.record(&tenant, now, wake_at).await {
+                Ok(()) => {
+                    if let Some(wake_at) = wake_at {
+                        alarm.recorded(wake_at);
+                    }
+                }
+                Err(error) => debug!(%error, %tenant, "recording an excess-evicted tenant's wake failed"),
             }
             drop(probe_permit);
         });

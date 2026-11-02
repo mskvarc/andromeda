@@ -190,6 +190,10 @@ impl TenantWakeSchedule for NoWakes {
         Ok(Vec::new())
     }
 
+    async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
+        Ok(None)
+    }
+
     async fn settle(&self, _tenant: &TenantName, _probed_at: SystemTime, _wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
         Ok(())
     }

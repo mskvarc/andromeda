@@ -71,8 +71,12 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // with the instant the answer arrived.
         match self.probe.earliest_pending_work(&database, existence).await {
             Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, existence, tenant).await,
+            // Not due yet: woken again at its due instant. The hold-off after
+            // an eviction was applied when the eviction recorded the wake; a
+            // re-probe, such as the reconciliation sweep's, must not push a
+            // wake already recorded past the instant its work falls due.
             Ok(PendingWork::DueAt(due)) => {
-                self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
+                self.settle_schedule(tenant, now, Some(due)).await;
                 WakeOutcome::NothingDue
             }
             // Nothing is due, or the tenant's database is gone (deprovisioned
@@ -114,11 +118,13 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// evicts one unleased runtime (the least recently used, whose own next wake
     /// is rescheduled as it goes) so the connection budget stays flat while the
     /// due work is admitted. Only genuine backpressure, every cached runtime held
-    /// by an in-flight request so no slot can be freed, defers the wake.
+    /// by an in-flight request or within its woken lifetime so no slot can be
+    /// freed, defers the wake, until the first of those lifetimes ends.
     async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, existence: TenantExistence, tenant: &TenantName) -> WakeOutcome {
         let now = SystemTime::now();
         if self.runtimes.len() >= self.config.residency.max_resident.get() && !self.evict_one_for_wake(tenant_ref).await {
-            self.settle_schedule(tenant, now, Some(self.waker.retry_wake(now))).await;
+            let retry = self.waker.deferred_wake(now, self.room_for_wake_in(tenant_ref));
+            self.settle_schedule(tenant, now, Some(retry)).await;
             return WakeOutcome::Deferred;
         }
         self.build_woken(tenant_ref, database, existence, tenant).await
@@ -173,16 +179,25 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Record a fresh eviction's next wake, logging a schedule write failure
     /// rather than failing the sweep: the leased claim re-fires regardless.
     pub(super) async fn record_schedule(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) {
-        if let Err(error) = self.schedule.record(tenant, probed_at, wake_at).await {
-            warn!(tenant = tenant.as_str(), error = %error, "failed to record the tenant wake schedule");
+        match self.schedule.record(tenant, probed_at, wake_at).await {
+            Ok(()) => self.raise_alarm(wake_at),
+            Err(error) => warn!(tenant = tenant.as_str(), error = %error, "failed to record the tenant wake schedule"),
         }
     }
 
     /// Settle a wake attempt's next schedule, logging a write failure rather
     /// than propagating it.
     async fn settle_schedule(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) {
-        if let Err(error) = self.schedule.settle(tenant, probed_at, wake_at).await {
-            warn!(tenant = tenant.as_str(), error = %error, "failed to settle the tenant wake schedule");
+        match self.schedule.settle(tenant, probed_at, wake_at).await {
+            Ok(()) => self.raise_alarm(wake_at),
+            Err(error) => warn!(tenant = tenant.as_str(), error = %error, "failed to settle the tenant wake schedule"),
+        }
+    }
+
+    /// Tell the waker of a wake this process just recorded.
+    fn raise_alarm(&self, wake_at: Option<SystemTime>) {
+        if let Some(wake_at) = wake_at {
+            self.alarm.recorded(wake_at);
         }
     }
 }

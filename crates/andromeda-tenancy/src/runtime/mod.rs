@@ -35,6 +35,7 @@ use crate::{
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
     tenant_view::TenantView,
+    wake_alarm::WakeAlarm,
     wake_schedule::TenantWakeSchedule,
     waker::WakerPolicy,
 };
@@ -111,6 +112,9 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     schedule: Arc<dyn TenantWakeSchedule>,
     /// The timing policy the janitor and the waker follow.
     waker: WakerPolicy,
+    /// Rung when this process records a wake due before the waker's sleep
+    /// ends.
+    alarm: Arc<WakeAlarm>,
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
@@ -146,7 +150,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             probe,
             schedule,
             waker,
+            alarm: Arc::new(WakeAlarm::new()),
         })
+    }
+
+    /// The alarm the waker waits on beside its sleep.
+    #[must_use]
+    pub fn wake_alarm(&self) -> &WakeAlarm {
+        &self.alarm
     }
 
     /// Start the background janitor, if this deployment serves named tenants.

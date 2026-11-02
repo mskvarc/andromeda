@@ -87,6 +87,19 @@ impl WakerPolicy {
         now + self.min_dormancy
     }
 
+    /// When a wake deferred for want of room is retried.
+    ///
+    /// `room_in` is how long until the first runtime that only its woken
+    /// lifetime protects may be unloaded, or `None` when every runtime is held
+    /// by a request. The retry comes when that room opens, and no later than
+    /// `min_dormancy`: retried a fixed interval later instead, a tenant whose
+    /// periodic work shares that interval meets the same crowded cache at every
+    /// attempt.
+    #[must_use]
+    pub fn deferred_wake(&self, now: SystemTime, room_in: Option<Duration>) -> SystemTime {
+        now + room_in.map_or(self.min_dormancy, |room_in| room_in.min(self.min_dormancy))
+    }
+
     /// The last-used stamp to give a freshly woken runtime so it is the first
     /// idle-eviction victim yet survives `wake_residency` to do its work.
     ///
@@ -145,6 +158,15 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
         // The retry is a real instant one min_dormancy out, never None.
         assert_eq!(policy.retry_wake(now), now + Duration::from_secs(30));
+    }
+
+    #[test]
+    fn a_deferred_wake_is_retried_when_a_woken_lifetime_ends_and_no_later_than_min_dormancy() {
+        let policy = policy();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
+        assert_eq!(policy.deferred_wake(now, Some(Duration::from_millis(400))), now + Duration::from_millis(400));
+        assert_eq!(policy.deferred_wake(now, Some(Duration::from_secs(45))), now + Duration::from_secs(30));
+        assert_eq!(policy.deferred_wake(now, None), now + Duration::from_secs(30), "only requests hold the cache");
     }
 
     #[test]

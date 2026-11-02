@@ -96,9 +96,9 @@ pub struct ResidencyConfig {
     /// cannot thrash. A failed probe records a retry this far out. A runtime
     /// with a periodic notification due within this interval is the last to
     /// be unloaded to make room; one unloaded all the same notifies up to this
-    /// interval plus the waker's 5 s pass late.
+    /// interval late, as long as the waker keeps up with the tenants due.
     #[schemars(
-        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval plus 5 seconds."
+        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, as long as the broker loads tenants as fast as their work falls due. While more tenants are due than it can load, notifications fall further behind."
     )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in
@@ -106,9 +106,10 @@ pub struct ResidencyConfig {
     /// idle nor unloaded to make room, so the work it was woken for runs; after
     /// it, it is the first idle-eviction candidate, so it never displaces a
     /// runtime a request touched. Below `idle_eviction_after` to have that
-    /// effect.
+    /// effect. A wake that finds every other runtime within this lifetime is
+    /// retried as the first of them ends.
     #[schemars(
-        description = "How long a tenant loaded for its due work stays loaded. For this long it is not unloaded, not even to make room for another tenant, so its due work runs. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
+        description = "How long a tenant loaded for its due work stays loaded. For this long it is not unloaded, not even to make room for another tenant, so its due work runs. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used. A tenant due while every tenant it could replace is still within this lifetime is loaded as the first of those lifetimes ends."
     )]
     pub woken_lifetime: HumanDuration,
     /// The most dormant tenants one wake pass opens, those with due work first

@@ -7,6 +7,11 @@
 //! more than `max_wakes_per_pass` tenants. A catch-up load is not due work: it
 //! takes only a free cache slot and never unloads another tenant to make room,
 //! so it cannot push out a tenant a request is using.
+//!
+//! A pass that claims its whole budget may leave due tenants unclaimed, so the
+//! next pass runs at once and a backlog is worked off as fast as tenants are
+//! built. Any other pass leaves nothing due, and the next runs at the earliest
+//! wake the schedule holds.
 
 use crate::{
     catch_up::{CatchUpCandidates, CatchUpError},
@@ -35,13 +40,26 @@ pub enum WakePassError {
     CatchUp(#[from] CatchUpError),
 }
 
-/// How many tenants one wake pass took up.
+/// How many tenants one wake pass took up, and when the next is to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakePassReport {
     /// Tenants claimed from the wake schedule and woken.
     pub scheduled: usize,
     /// Tenants loaded to bring their extensions up to date.
     pub caught_up: usize,
+    /// When the next pass is to run.
+    pub next: NextWakePass,
+}
+
+/// When the next wake pass is to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextWakePass {
+    /// At once: the pass claimed its whole budget, so more tenants may be due.
+    Immediately,
+    /// At the earliest wake the schedule holds.
+    At(SystemTime),
+    /// When a wake is recorded: the schedule holds none.
+    WhenRecorded,
 }
 
 /// What one catch-up candidate came to.
@@ -62,9 +80,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// # Errors
     ///
     /// Returns [`WakePassError::Schedule`] when the claim fails, before any
-    /// tenant is loaded, and [`WakePassError::CatchUp`] when the catch-up read
-    /// fails, after the scheduled wakes ran.
+    /// tenant is loaded, or when the earliest wake cannot be read after them,
+    /// and [`WakePassError::CatchUp`] when the catch-up read fails, after the
+    /// scheduled wakes ran.
     pub async fn run_wake_pass(&self, catch_up: &dyn CatchUpCandidates, now: SystemTime, lease_until: SystemTime) -> Result<WakePassReport, WakePassError> {
+        self.alarm.begin_pass();
         let budget = self.waker.max_wakes_per_pass();
         let due = self.schedule.claim_due(now, lease_until, budget).await?;
         for tenant in &due {
@@ -76,9 +96,18 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         } else {
             self.catch_up(catch_up.lagging_tenants().await?, remaining).await
         };
+        let next = if due.len() == budget {
+            NextWakePass::Immediately
+        } else {
+            match self.alarm.sleep_until(self.schedule.earliest_wake().await?) {
+                Some(at) => NextWakePass::At(at),
+                None => NextWakePass::WhenRecorded,
+            }
+        };
         Ok(WakePassReport {
             scheduled: due.len(),
             caught_up,
+            next,
         })
     }
 

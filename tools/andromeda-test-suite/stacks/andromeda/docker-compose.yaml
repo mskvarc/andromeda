@@ -369,6 +369,32 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-observed"
       ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
 
+  postgres-waker:
+    extends:
+      <<: *template
+      service: postgres
+
+  # Four tenants loaded at once, the default tenant among them, so ten tenants with periodic work keep the waker
+  # loading one about every 0.7 s. A woken tenant is protected for one second, so the slots it holds free again in
+  # time; at the template's woken lifetime the protected tenants alone would outnumber the slots and wakes would be
+  # deferred. The front broker's tests load tenants this residency would keep unloading.
+  broker-waker:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-waker:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1083"
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-waker:5432/postgres"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-waker"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-waker"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-waker:1083"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "4"
+      ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "5s"
+      ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "1s"
+
   runner:
     extends:
       <<: *template
@@ -397,6 +423,8 @@ services:
       broker-prefixed:
         condition: service_healthy
       broker-observed:
+        condition: service_healthy
+      broker-waker:
         condition: service_healthy
     volumes:
       - mutual-identity:/identities/mutual

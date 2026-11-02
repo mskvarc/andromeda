@@ -87,6 +87,9 @@ pub enum BrokerRole {
     /// The andromeda stack broker serving its Prometheus metrics, which only the metrics tests talk to, so a series
     /// it exposes moves only with what those tests do.
     Observed,
+    /// The andromeda stack broker keeping four tenants loaded, the default tenant among them, waking a tenant no
+    /// earlier than five seconds after it was unloaded and keeping a woken tenant loaded for one second.
+    Waker,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,

@@ -49,6 +49,7 @@ use tokio::{
 
 mod periodic_eviction;
 mod wake_pass;
+mod wake_timing;
 
 /// What a [`FakeProbe`] answers with for every database.
 enum FakeProbeOutcome {
@@ -144,6 +145,8 @@ struct FakeSchedule {
     settled: StdMutex<Vec<(String, Option<SystemTime>)>>,
     /// The tenants held due, handed out by `claim_due` up to its limit.
     due: StdMutex<Vec<String>>,
+    /// What `earliest_wake` answers.
+    earliest: StdMutex<Option<SystemTime>>,
 }
 
 impl FakeSchedule {
@@ -158,6 +161,14 @@ impl FakeSchedule {
             recorded: StdMutex::new(Vec::new()),
             settled: StdMutex::new(Vec::new()),
             due: StdMutex::new(due.iter().map(|name| (*name).to_string()).collect()),
+            earliest: StdMutex::new(None),
+        }
+    }
+
+    /// Hold `earliest` as the earliest wake of any tenant.
+    fn hold_earliest(&self, earliest: Option<SystemTime>) {
+        if let Ok(mut held) = self.earliest.lock() {
+            *held = earliest;
         }
     }
 
@@ -191,6 +202,10 @@ impl TenantWakeSchedule for FakeSchedule {
             })
             .unwrap_or_default();
         Ok(claimed.into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
+    }
+
+    async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
+        Ok(self.earliest.lock().map(|earliest| *earliest).unwrap_or_default())
     }
 
     async fn settle(&self, tenant: &TenantName, _probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
@@ -1696,6 +1711,44 @@ async fn a_due_wake_does_not_displace_a_woken_runtime_within_its_wake_residency(
     );
 }
 
+/// The deferred wake is retried as the woken lifetime that blocked it ends,
+/// well before the default `min_wake_interval` of 30 s.
+#[tokio::test]
+async fn a_wake_deferred_by_a_woken_runtime_is_retried_when_its_woken_lifetime_ends() {
+    let base = config(true, 1);
+    let tenancy = TenancyConfig {
+        residency: ResidencyConfig {
+            woken_lifetime: HumanDuration::from_secs(2),
+            ..base.residency
+        },
+        ..base
+    };
+    let schedule = Arc::new(FakeSchedule::inert());
+    let manager = TenantRuntimeManager::new(
+        tenancy,
+        Arc::new(FakeRegistry::new(&["first", "second"])),
+        Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
+        Arc::new(FakeProbe::due_at(SystemTime::now())),
+        Arc::clone(&schedule) as Arc<dyn TenantWakeSchedule>,
+    );
+    pretty_assertions::assert_eq!(manager.wake(&named("first")).await, WakeOutcome::Loaded);
+    let deferred_at = SystemTime::now();
+
+    pretty_assertions::assert_eq!(manager.wake(&named("second")).await, WakeOutcome::Deferred);
+
+    let settled = schedule.settled.lock().expect("settled lock").clone();
+    let retry = settled
+        .iter()
+        .find_map(|(tenant, wake_at)| (tenant == "second").then_some(*wake_at))
+        .flatten()
+        .expect("the deferred wake is re-armed");
+    let wait = retry.duration_since(deferred_at).expect("the retry is ahead");
+    assert!(
+        wait > Duration::from_secs(1) && wait <= Duration::from_secs(2),
+        "retried as the first runtime's woken lifetime ends, got {wait:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_woken_runtime_is_the_first_lru_victim() {
     // A woken runtime is inserted backdated, so it sorts older than any
@@ -1779,6 +1832,21 @@ async fn an_unmigrated_provisional_tenant_is_not_loaded_and_its_schedule_is_clea
         settled.iter().all(|(_, wake_at)| wake_at.is_none()),
         "the schedule is cleared, never re-armed with a retry instant, got {settled:?}"
     );
+}
+
+#[tokio::test]
+async fn a_dormant_tenant_whose_work_is_not_due_yet_is_rescheduled_for_its_due_instant_however_soon() {
+    // Well within the default `min_wake_interval` of 30 s, which holds off only
+    // the wake an eviction records.
+    let due = SystemTime::now() + Duration::from_secs(2);
+    let schedule = Arc::new(FakeSchedule::inert());
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::due_at(due)), Arc::clone(&schedule));
+
+    pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::NothingDue);
+
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 0);
+    let settled = schedule.settled.lock().expect("settled lock").clone();
+    pretty_assertions::assert_eq!(settled, vec![("acme".to_string(), Some(due))]);
 }
 
 #[tokio::test]

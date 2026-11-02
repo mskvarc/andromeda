@@ -244,6 +244,18 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .map(|(tenant, rank)| (tenant, rank.last_used))
     }
 
+    /// How long until a runtime that only its woken lifetime keeps from being
+    /// unloaded may be unloaded to make room for `woken`, or `None` when no
+    /// runtime is waiting out a woken lifetime.
+    pub(super) fn room_for_wake_in(&self, woken: &TenantRef) -> Option<Duration> {
+        let now = Instant::now();
+        self.runtimes
+            .iter()
+            .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != woken && !entry.value().is_leased())
+            .filter_map(|entry| entry.value().wake_residency_left(now))
+            .min()
+    }
+
     /// The instant before which a tenant unloaded now would not be woken
     /// again: `min_wake_interval` from now.
     fn eviction_horizon(&self) -> SystemTime {

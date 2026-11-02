@@ -59,6 +59,15 @@ pub trait TenantWakeSchedule: Send + Sync + 'static {
     #[must_use = "claiming due wakes must be awaited"]
     async fn claim_due(&self, now: SystemTime, lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError>;
 
+    /// The earliest wake any tenant holds, a leased claim's re-fire included,
+    /// or `None` when no tenant is to be woken.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WakeScheduleError::Store`] when the read fails.
+    #[must_use = "reading the earliest wake must be awaited"]
+    async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError>;
+
     /// Settle a claimed tenant after its wake attempt: record the new probe
     /// instant and the next `wake_at`, clearing the claim lease.
     ///

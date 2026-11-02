@@ -9,7 +9,7 @@ use crate::{
     runtime::{
         TenantRuntimeManager,
         tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, config, named},
-        wake_pass::WakePassReport,
+        wake_pass::{NextWakePass, WakePassReport},
     },
     tenant_ref::TenantRef,
 };
@@ -25,7 +25,7 @@ use std::{
 };
 
 /// A catch-up source listing fixed tenants, which counts its reads.
-struct FakeCatchUp {
+pub(super) struct FakeCatchUp {
     /// The tenants listed, furthest behind first.
     lagging: Vec<String>,
     /// How many times the list was read.
@@ -34,7 +34,7 @@ struct FakeCatchUp {
 
 impl FakeCatchUp {
     /// A source listing `lagging` in that order.
-    fn listing(lagging: &[&str]) -> FakeCatchUp {
+    pub(super) fn listing(lagging: &[&str]) -> FakeCatchUp {
         FakeCatchUp {
             lagging: lagging.iter().map(|name| (*name).to_string()).collect(),
             reads: AtomicUsize::new(0),
@@ -96,7 +96,14 @@ async fn the_catch_up_loads_only_what_the_scheduled_wakes_leave_of_the_pass_budg
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 3, caught_up: 1 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 3,
+            caught_up: 1,
+            next: NextWakePass::WhenRecorded,
+        }
+    );
     assert!(
         ["due1", "due2", "due3"].iter().all(|name| resident(&manager, name)),
         "every due tenant is woken"
@@ -112,7 +119,14 @@ async fn a_pass_whose_scheduled_wakes_fill_the_budget_reads_no_catch_up_candidat
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 4, caught_up: 0 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 4,
+            caught_up: 0,
+            next: NextWakePass::Immediately,
+        }
+    );
     assert_eq!(catch_up.reads.load(Ordering::Relaxed), 0);
     assert!(!resident(&manager, "lag1"));
 }
@@ -124,7 +138,14 @@ async fn the_catch_up_loads_the_candidates_in_the_order_they_are_listed() {
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 2, caught_up: 2 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 2,
+            caught_up: 2,
+            next: NextWakePass::WhenRecorded,
+        }
+    );
     assert!(resident(&manager, "c") && resident(&manager, "a"));
     assert!(!resident(&manager, "b"), "the third candidate waits for a later pass");
 }
@@ -142,7 +163,14 @@ async fn the_catch_up_passes_over_a_resident_tenant_without_spending_budget() {
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 0, caught_up: 1 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 0,
+            caught_up: 1,
+            next: NextWakePass::WhenRecorded,
+        }
+    );
     assert!(resident(&manager, "lag2"));
     assert_eq!(factory.built.load(Ordering::Relaxed), 2, "the resident tenant is not built again");
 }
@@ -160,7 +188,14 @@ async fn the_catch_up_unloads_no_tenant_to_make_room() {
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 0, caught_up: 0 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 0,
+            caught_up: 0,
+            next: NextWakePass::WhenRecorded,
+        }
+    );
     assert!(resident(&manager, "busy"), "the request-loaded tenant keeps its slot");
     assert!(!resident(&manager, "lag1"));
     assert_eq!(factory.built.load(Ordering::Relaxed), 1);
@@ -174,7 +209,14 @@ async fn the_catch_up_passes_over_a_suspended_tenant() {
 
     let report = run(&manager, &catch_up).await;
 
-    assert_eq!(report, WakePassReport { scheduled: 0, caught_up: 1 });
+    assert_eq!(
+        report,
+        WakePassReport {
+            scheduled: 0,
+            caught_up: 1,
+            next: NextWakePass::WhenRecorded,
+        }
+    );
     assert!(!resident(&manager, "lag1"), "a suspended tenant is never woken");
     assert!(resident(&manager, "lag2"));
 }

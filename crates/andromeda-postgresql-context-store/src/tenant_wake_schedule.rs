@@ -81,6 +81,15 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
         self.names_for_keys(keys).await
     }
 
+    async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
+        let earliest: Option<DateTime<Utc>> = earliest_wake_query()
+            .to_query_scalar()
+            .fetch_one(&self.main_pool)
+            .await
+            .map_err(|error| store_error(&error))?;
+        Ok(earliest.map(SystemTime::from))
+    }
+
     async fn settle(&self, tenant: &TenantName, probed_at: SystemTime, wake_at: Option<SystemTime>) -> Result<(), WakeScheduleError> {
         // Settling a claimed row is the same upsert as recording: it overwrites
         // the lease `wake_at` the claim installed with the next real due instant
@@ -170,6 +179,15 @@ fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> Up
         .to_owned()
 }
 
+/// The earliest `wake_at` of any row, NULL when none holds one. The minimum
+/// is read from the `wake_at` index.
+fn earliest_wake_query() -> SelectStatement {
+    Query::select()
+        .expr(Expr::col(WakeScheduleTable::WakeAt).min())
+        .from(WakeScheduleTable::Table)
+        .to_owned()
+}
+
 /// The names of the tenants whose surrogate keys are in `keys`, skipping the
 /// unnamed default (whose name is NULL).
 fn names_for_keys_query(keys: Vec<i64>) -> SelectStatement {
@@ -203,7 +221,7 @@ fn next_unprobed_query(limit: usize) -> SelectStatement {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::tenant_wake_schedule::{claim_statement, next_unprobed_query, upsert_statement};
+    use crate::tenant_wake_schedule::{claim_statement, earliest_wake_query, next_unprobed_query, upsert_statement};
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use sea_query::PostgresQueryBuilder;
     use std::time::{Duration, SystemTime};
@@ -245,6 +263,12 @@ mod tests {
         );
         assert!(sql.contains("LIMIT 4 FOR UPDATE SKIP LOCKED))"), "{sql}");
         assert!(!sql.contains(" IN (SELECT"), "{sql}");
+    }
+
+    #[test]
+    fn the_earliest_wake_is_the_minimum_over_every_row() {
+        let sql = earliest_wake_query().to_string(PostgresQueryBuilder);
+        pretty_assertions::assert_eq!(sql, r#"SELECT MIN("wake_at") FROM "tenant_wake_schedule""#);
     }
 
     #[test]

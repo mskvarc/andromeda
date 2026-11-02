@@ -132,6 +132,14 @@ impl<S, R> CachedRuntime<S, R> {
         self.wake_residency_end.is_some_and(|end| now < end)
     }
 
+    /// How long until this runtime's woken lifetime ends, or `None` when it has
+    /// none left at `now`.
+    pub(super) fn wake_residency_left(&self, now: Instant) -> Option<Duration> {
+        self.wake_residency_end
+            .and_then(|end| end.checked_duration_since(now))
+            .filter(|left| !left.is_zero())
+    }
+
     /// Whether the tenant this runtime serves was seen to exist.
     pub(super) fn existence(&self) -> TenantExistence {
         if self.established.load(Ordering::Acquire) {

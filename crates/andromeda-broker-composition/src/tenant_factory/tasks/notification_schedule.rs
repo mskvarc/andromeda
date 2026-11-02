@@ -117,6 +117,13 @@ where
 /// The wake coalesces, so a burst of changes costs the sweep one prompt pass; a
 /// lagged stream still means the subscription set changed, so it wakes too.
 ///
+/// The sweep is also woken once as the task starts, so a tenant loaded with a
+/// grid point already owed is notified at once, not after the drain's floor. A
+/// tenant woken for its periodic work is protected from unloading only for
+/// `tenancy.residency.woken_lifetime`, which can be shorter than that floor.
+/// The first pass also publishes the tenant's next grid point, which decides
+/// how late the tenant is unloaded to make room.
+///
 /// # Errors
 ///
 /// Returns [`TenantAssemblyError`] when the task name is rejected or the
@@ -144,6 +151,7 @@ where
         let mut changes = changes.subscribe();
         async move {
             execution.mark_running();
+            let _ = wake.wake();
             loop {
                 tokio::select! {
                     () = execution.cancellation().cancelled() => return Ok(()),
@@ -187,7 +195,11 @@ mod tests {
         background_pacer::{BackgroundPacer, ObligationSource},
         error::TenantAssemblyError,
         periodic_due::{PeriodicDue, PeriodicSweep},
-        tasks::{PeriodicPacing, notification_schedule::register_notification_schedule},
+        tasks::{
+            PeriodicPacing,
+            notification_schedule::{register_notification_schedule, register_periodic_wake},
+            notification_worker_failure::ChangeChannel,
+        },
     };
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
@@ -199,6 +211,7 @@ mod tests {
     };
     use tokio::{
         runtime::Handle,
+        sync::broadcast,
         time::{sleep, timeout},
     };
 
@@ -264,6 +277,40 @@ mod tests {
         let due = Arc::new(PeriodicDue::default());
         due.publish(PeriodicSweep::ContextSource, Some(SystemTime::now()));
         assert!(run_one_pass(&due, None, None).await?, "the pass clears its published instant");
+        Ok(())
+    }
+
+    /// The drain's floor is a second; the first pass comes well before it.
+    #[tokio::test]
+    async fn a_periodic_sweep_runs_its_first_pass_as_it_starts_without_waiting_out_the_floor() -> Result<(), TenantAssemblyError> {
+        let supervisor = TaskSupervisor::process(Handle::current());
+        let due = Arc::new(PeriodicDue::default());
+        let next_due = SystemTime::now() + Duration::from_mins(1);
+        let (wake, receiver) = wake_channel();
+        let (changes, _) = broadcast::channel::<()>(1);
+        register_periodic_wake(&supervisor, "periodic-first-pass-wake", wake, ChangeChannel::Subscription, changes)?;
+        let pacing = PeriodicPacing {
+            ceiling: Duration::from_mins(1),
+            pacer: Arc::new(BackgroundPacer::new(Duration::from_secs(30), Arc::new(NothingOutstanding))),
+            due: Arc::clone(&due), // clone: the test reads the cell the sweep publishes into
+        };
+        register_notification_schedule(
+            &supervisor,
+            "periodic-first-pass",
+            PeriodicSweep::ContextSource,
+            receiver,
+            pacing,
+            move |_cutoff| async move { Ok(Some(DateTime::<Utc>::from(next_due))) },
+        )?;
+        let published = timeout(Duration::from_millis(500), async {
+            while due.earliest().is_none() {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+        supervisor.shutdown().await;
+        assert!(published, "the first pass runs before the floor");
         Ok(())
     }
 }
