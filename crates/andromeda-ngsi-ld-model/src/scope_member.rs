@@ -7,6 +7,7 @@
 //! request decoded into this model meets exactly the grammar, bounds, Null rule
 //! and de-duplication every other reader applies.
 
+use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_entity::{
     document::slot::Slot,
     scope_refusal::ScopeRefusal,
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize, Serializer};
 /// The `scope` member as a compact request or response writes it: the Scopes
 /// it states, or their deletion.
 #[derive(Clone, Debug, Deserialize, Eq, From, PartialEq)]
-#[serde(try_from = "WrittenScope")]
+#[serde(try_from = "OneOrMany<String>")]
 pub struct ScopeMember(Slot<Scopes>);
 
 impl ScopeMember {
@@ -32,23 +33,15 @@ impl ScopeMember {
     }
 }
 
-/// The JSON shapes clause 4.18 writes the member in, before its items are read.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum WrittenScope {
-    /// One string.
-    One(String),
-    /// An array of strings.
-    Several(Vec<String>),
-}
-
-impl TryFrom<WrittenScope> for ScopeMember {
+// Clause 4.18 writes one Scope as a string and several as an array of
+// strings; each item is then read as every other reader reads it.
+impl TryFrom<OneOrMany<String>> for ScopeMember {
     type Error = ScopeRefusal;
 
-    fn try_from(written: WrittenScope) -> Result<ScopeMember, ScopeRefusal> {
+    fn try_from(written: OneOrMany<String>) -> Result<ScopeMember, ScopeRefusal> {
         match written {
-            WrittenScope::One(item) => scope_slot([ScopeItem::Text(&item)]),
-            WrittenScope::Several(items) => scope_slot(items.iter().map(|item| ScopeItem::Text(item))),
+            OneOrMany::One(item) => scope_slot([ScopeItem::Text(&item)]),
+            OneOrMany::Many(items) => scope_slot(items.iter().map(|item| ScopeItem::Text(item))),
         }
         .map(ScopeMember)
     }

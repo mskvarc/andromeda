@@ -1,13 +1,30 @@
 //! The single-or-array shape NGSI-LD uses for `String` / `String[]` members.
+//!
+//! The member is read by the kind of JSON it is: a string is one element, an
+//! array is the elements, and anything else is refused as neither. Each
+//! element's own refusal (a name outside its grammar, a tag that is no
+//! language tag) is the refusal of the member.
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    de::{
+        Error as DeserializeError,
+        Expected,
+        SeqAccess,
+        Visitor,
+        value::{SeqAccessDeserializer, StrDeserializer},
+    },
+};
 use std::{
     fmt,
+    marker::PhantomData,
     slice::{Iter, from_ref},
 };
 
 /// A value that can appear in `String` or `String[]` NGSI-LD fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     /// A single value.
@@ -45,6 +62,65 @@ impl<T> OneOrMany<T> {
     }
 }
 
+impl<'de, T: Deserialize<'de>> OneOrMany<T> {
+    /// Read a string or an array of elements, refusing any other JSON kind
+    /// with `expected` as what was asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's refusal of a member that is neither a string
+    /// nor an array, and the element's own refusal otherwise.
+    pub fn deserialize_expecting<D: Deserializer<'de>, X: Expected>(deserializer: D, expected: X) -> Result<OneOrMany<T>, D::Error> {
+        deserializer.deserialize_any(OneOrManyVisitor {
+            expected,
+            element: PhantomData,
+        })
+    }
+}
+
+// Hand-written: a derived untagged union discards each variant's error and
+// reports only that none matched, so an element's refusal would never reach
+// the member's. The visitor dispatches on the JSON kind instead.
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<OneOrMany<T>, D::Error> {
+        OneOrMany::deserialize_expecting(deserializer, StringOrStrings)
+    }
+}
+
+/// What a `String` or `String[]` member asks for.
+struct StringOrStrings;
+
+// `Expected` has no derive: it is the text a kind refusal names.
+impl Expected for StringOrStrings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string or an array of strings")
+    }
+}
+
+/// Reads one element from a string and the elements from an array.
+struct OneOrManyVisitor<T, X> {
+    /// What a refusal of any other JSON kind says was expected.
+    expected: X,
+    /// The element type.
+    element: PhantomData<T>,
+}
+
+impl<'de, T: Deserialize<'de>, X: Expected> Visitor<'de> for OneOrManyVisitor<T, X> {
+    type Value = OneOrMany<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.expected.fmt(formatter)
+    }
+
+    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<OneOrMany<T>, E> {
+        T::deserialize(StrDeserializer::<E>::new(text)).map(OneOrMany::One)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, elements: A) -> Result<OneOrMany<T>, A::Error> {
+        Vec::<T>::deserialize(SeqAccessDeserializer::new(elements)).map(OneOrMany::Many)
+    }
+}
+
 // Borrowed iteration goes through the inherent `iter`; the impl is what lets a
 // `&OneOrMany<T>` be used directly in a `for` loop or an iterator adapter.
 impl<'a, T> IntoIterator for &'a OneOrMany<T> {
@@ -74,8 +150,13 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
 mod tests {
     use crate::attribute::one_or_many::OneOrMany;
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 
     #[test]
     fn one_or_many_iterates_single_and_many() {
@@ -83,5 +164,36 @@ mod tests {
         let many = OneOrMany::Many(vec![1_u8, 2_u8]);
         pretty_assertions::assert_eq!(single.iter().count(), 1);
         pretty_assertions::assert_eq!(many.iter().count(), 2);
+    }
+
+    #[test]
+    fn a_string_reads_as_one_element_and_an_array_as_the_elements() {
+        pretty_assertions::assert_eq!(
+            serde_json::from_str::<OneOrMany<String>>(r#""a""#).expect("a string"),
+            OneOrMany::One("a".to_owned())
+        );
+        pretty_assertions::assert_eq!(
+            serde_json::from_str::<OneOrMany<String>>(r#"["a", "b"]"#).expect("an array"),
+            OneOrMany::Many(vec!["a".to_owned(), "b".to_owned()])
+        );
+    }
+
+    #[test]
+    fn an_element_refusal_is_the_refusal_of_the_member_in_both_forms() {
+        for written in [r#""Bio-geographicalRegion""#, r#"["Building", "Bio-geographicalRegion"]"#] {
+            let refused = serde_json::from_str::<OneOrMany<EntityTypeName>>(written).expect_err(written);
+            assert!(
+                refused.to_string().starts_with("a name must be a term, a compact IRI or an absolute IRI"),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_member_of_another_kind_is_refused_as_neither_a_string_nor_an_array() {
+        for written in ["42", "true", "null", r#"{"a": "b"}"#] {
+            let refused = serde_json::from_str::<OneOrMany<String>>(written).expect_err(written);
+            assert!(refused.to_string().contains("expected a string or an array of strings"), "{refused}");
+        }
     }
 }

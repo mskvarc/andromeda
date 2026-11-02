@@ -1,5 +1,6 @@
 //! Entity selection within a clause-5.2.23 query body.
 
+use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -50,19 +51,5 @@ fn deserialize_optional_ids<'de, D>(deserializer: D) -> Result<Option<Vec<Identi
 where
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum OneOrMany {
-        /// One URI.
-        One(Identifier),
-        /// Several URIs.
-        Many(Vec<Identifier>),
-    }
-
-    Option::<OneOrMany>::deserialize(deserializer).map(|value| {
-        value.map(|ids| match ids {
-            OneOrMany::One(id) => vec![id],
-            OneOrMany::Many(ids) => ids,
-        })
-    })
+    Option::<OneOrMany<Identifier>>::deserialize(deserializer).map(|ids| ids.map(OneOrMany::into_vec))
 }

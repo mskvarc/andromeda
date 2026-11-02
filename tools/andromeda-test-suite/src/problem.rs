@@ -46,6 +46,8 @@ pub struct AnsweredMatcher {
     detail: Option<String>,
     /// Texts the `detail` must contain.
     detail_contains: Vec<String>,
+    /// Texts the `detail` must not contain.
+    detail_lacks: Vec<String>,
     /// Texts the body must contain, as received.
     body_contains: Vec<String>,
     /// Requirements on the answer's header fields.
@@ -86,6 +88,7 @@ pub const fn answered(status: StatusCode) -> AnsweredMatcher {
         title: TitleCheck::Unchecked,
         detail: None,
         detail_contains: Vec::new(),
+        detail_lacks: Vec::new(),
         body_contains: Vec::new(),
         headers: Vec::new(),
         without_body: false,
@@ -143,6 +146,13 @@ impl AnsweredMatcher {
         self
     }
 
+    /// Also requires a `detail` that does not contain `text`.
+    #[must_use]
+    pub fn with_detail_lacking(mut self, text: &str) -> AnsweredMatcher {
+        self.detail_lacks.push(text.to_owned());
+        self
+    }
+
     /// Also requires the body, as received, to contain `text`.
     #[must_use]
     pub fn with_body_containing(mut self, text: &str) -> AnsweredMatcher {
@@ -196,6 +206,10 @@ impl AnsweredMatcher {
                 .detail_contains
                 .iter()
                 .all(|text| detail.is_some_and(|detail| detail.contains(text.as_str())))
+            && self
+                .detail_lacks
+                .iter()
+                .all(|text| detail.is_some_and(|detail| !detail.contains(text.as_str())))
             && self
                 .body_contains
                 .iter()

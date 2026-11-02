@@ -1,5 +1,6 @@
 //! The entities a context source registers (ETSI GS CIM 009 clause 5.2.8).
 
+use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use thiserror::Error;
 /// the name back, one made with an array gives the array back. An entity
 /// matches the selection when it carries any of the names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged, try_from = "EntityTypeSelectionWire")]
+#[serde(untagged, try_from = "OneOrMany<EntityTypeName>")]
 pub enum EntityTypeSelection {
     /// One entity type.
     Single(EntityTypeName),
@@ -49,25 +50,16 @@ pub enum EntityTypeSelectionError {
     Empty,
 }
 
-/// The two wire shapes of Table 5.2.8-1 `type`, before the non-empty rule is
-/// checked on the array form.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum EntityTypeSelectionWire {
-    /// One name.
-    Single(EntityTypeName),
-    /// An array of names.
-    Several(Vec<EntityTypeName>),
-}
-
-impl TryFrom<EntityTypeSelectionWire> for EntityTypeSelection {
+// Table 5.2.8-1 `type` is read as a `String` or `String[]` member; the array
+// form is then held to name at least one type.
+impl TryFrom<OneOrMany<EntityTypeName>> for EntityTypeSelection {
     type Error = EntityTypeSelectionError;
 
-    fn try_from(wire: EntityTypeSelectionWire) -> Result<EntityTypeSelection, EntityTypeSelectionError> {
-        match wire {
-            EntityTypeSelectionWire::Single(name) => Ok(EntityTypeSelection::Single(name)),
-            EntityTypeSelectionWire::Several(names) if names.is_empty() => Err(EntityTypeSelectionError::Empty),
-            EntityTypeSelectionWire::Several(names) => Ok(EntityTypeSelection::Several(names)),
+    fn try_from(written: OneOrMany<EntityTypeName>) -> Result<EntityTypeSelection, EntityTypeSelectionError> {
+        match written {
+            OneOrMany::One(name) => Ok(EntityTypeSelection::Single(name)),
+            OneOrMany::Many(names) if names.is_empty() => Err(EntityTypeSelectionError::Empty),
+            OneOrMany::Many(names) => Ok(EntityTypeSelection::Several(names)),
         }
     }
 }

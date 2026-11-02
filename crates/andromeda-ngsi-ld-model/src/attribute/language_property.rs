@@ -1,12 +1,18 @@
 //! The `LanguageProperty` attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
 
-use crate::attribute::common_fields::CommonAttributeFields;
+use crate::attribute::{common_fields::CommonAttributeFields, one_or_many::OneOrMany};
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use langtag::{InvalidLangTag, LangTagBuf};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
+    de::{DeserializeSeed, Error as DeserializeError, Expected, MapAccess, Visitor},
+};
 use serde_with::skip_serializing_none;
 use std::fmt;
 use thiserror::Error;
@@ -55,9 +61,10 @@ impl<'de> Deserialize<'de> for LanguageMapKey {
 #[error("invalid BCP47 language tag: {0}")]
 struct InvalidLanguageMapKey(#[source] InvalidLangTag<String>);
 
-/// Value in an NGSI-LD language map.
+/// Value in an NGSI-LD language map: a string or an array of strings
+/// (clause 4.5.18).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, from = "OneOrMany<String>")]
 pub enum LanguageMapValue {
     /// A single localized string.
     Single(String),
@@ -65,11 +72,69 @@ pub enum LanguageMapValue {
     Multiple(Vec<String>),
 }
 
+// Hand-written: the two enums carry the same payloads under different variant
+// names, and no derive maps one enum onto another.
+impl From<OneOrMany<String>> for LanguageMapValue {
+    fn from(written: OneOrMany<String>) -> LanguageMapValue {
+        match written {
+            OneOrMany::One(text) => LanguageMapValue::Single(text),
+            OneOrMany::Many(texts) => LanguageMapValue::Multiple(texts),
+        }
+    }
+}
+
 /// The language-tagged strings of a `LanguageProperty`, keyed by tag and
 /// compared by content rather than insertion order.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, From, Deref, DerefMut)]
+#[derive(Debug, Clone, Default, Serialize, From, Deref, DerefMut)]
 #[serde(transparent)]
 pub struct LanguageMap(pub IndexMap<LanguageMapKey, LanguageMapValue>);
+
+// Hand-written: a refused entry names its language tag, which a derived map
+// reading never passes to the value it reads.
+impl<'de> Deserialize<'de> for LanguageMap {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<LanguageMap, D::Error> {
+        deserializer.deserialize_map(LanguageMapVisitor)
+    }
+}
+
+/// Reads a language map entry by entry.
+struct LanguageMapVisitor;
+
+impl<'de> Visitor<'de> for LanguageMapVisitor {
+    type Value = LanguageMap;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a language map, an object keyed by language tag")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut entries: A) -> Result<LanguageMap, A::Error> {
+        let mut map = IndexMap::new();
+        while let Some(key) = entries.next_key::<LanguageMapKey>()? {
+            let value = entries.next_value_seed(LanguageMapEntry(&key))?;
+            map.insert(key, value);
+        }
+        Ok(LanguageMap(map))
+    }
+}
+
+/// The value of the language map entry under one key, refused with the key it
+/// stands under.
+struct LanguageMapEntry<'k>(&'k LanguageMapKey);
+
+impl<'de> DeserializeSeed<'de> for LanguageMapEntry<'_> {
+    type Value = LanguageMapValue;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<LanguageMapValue, D::Error> {
+        OneOrMany::deserialize_expecting(deserializer, self).map(LanguageMapValue::from)
+    }
+}
+
+// `Expected` has no derive: it is the text a refusal of the entry names.
+impl Expected for LanguageMapEntry<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "a string or an array of strings under the language tag '{}'", self.0)
+    }
+}
 
 // `#[derive(PartialEq)]` would forward to `IndexMap`, whose equality is
 // insertion-order sensitive. Two language maps carrying the same tags with the
@@ -108,7 +173,10 @@ pub struct LanguageProperty {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::attribute::{instance::Attribute, language_property::LanguageProperty};
+    use crate::attribute::{
+        instance::Attribute,
+        language_property::{LanguageMap, LanguageMapKey, LanguageMapValue, LanguageProperty},
+    };
     use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 
     #[test]
@@ -134,5 +202,31 @@ mod tests {
         assert!(actual.value_type.is_none() && actual.previous_language_map.is_none());
         assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
+    }
+
+    #[test]
+    fn a_language_map_reads_each_entry_as_a_string_or_an_array_of_strings() {
+        let map: LanguageMap = serde_json::from_str(r#"{"en": "hello", "@none": ["a", "b"]}"#).expect("a language map");
+        pretty_assertions::assert_eq!(
+            map.get(&LanguageMapKey::Tag("en".parse().expect("a tag"))),
+            Some(&LanguageMapValue::Single("hello".to_owned()))
+        );
+        pretty_assertions::assert_eq!(
+            map.get(&LanguageMapKey::None),
+            Some(&LanguageMapValue::Multiple(vec!["a".to_owned(), "b".to_owned()]))
+        );
+    }
+
+    #[test]
+    fn a_language_map_entry_of_another_kind_is_refused_naming_its_tag() {
+        for written in [r#"{"en": 42}"#, r#"{"en": {"text": "hello"}}"#, r#"{"en": null}"#] {
+            let refused = serde_json::from_str::<LanguageMap>(written).expect_err(written);
+            assert!(
+                refused
+                    .to_string()
+                    .contains("expected a string or an array of strings under the language tag 'en'"),
+                "{refused}"
+            );
+        }
     }
 }
