@@ -1,6 +1,7 @@
 //! Broker composition and process-lifecycle coordination.
 
 use crate::{
+    broker_health::broker_health,
     component_report::{ComponentReportError, collect as collect_component_reports},
     configuration::{
         section_admission::{database_defaults, expected_deployment, machine_host_name},
@@ -30,9 +31,7 @@ use crate::{
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration, schema::feature_mode::FeatureMode};
-use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
-use andromeda_health::aggregate::Health;
 use andromeda_http_api::{api::HttpApi, management::ManagementApi, routes::ApiRoutes};
 use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
@@ -52,7 +51,6 @@ use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
-    health::DatabaseHealthIndicator,
     tenant_extension_versions::PostgresTenantExtensionVersions,
     tenant_registry::PostgresTenantRegistry,
     tenant_usage::PostgresTenantUsageProbe,
@@ -204,17 +202,6 @@ fn install_telemetry(prometheus: FeatureMode) -> Result<Option<Arc<TelemetryReco
     }
 }
 
-/// The health the probes report: the main database and, when the default
-/// tenant delivers over MQTT, its MQTT pool.
-fn broker_health(registry: &PostgresTenantRegistry, factory: &BrokerTenantFactory) -> Health {
-    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone()); // clone: PgPool is a shared handle
-    let mut health = Health::builder().with_indicator(database_indicator);
-    if let Some(mqtt_pool) = factory.default_mqtt_pool() {
-        health = health.with_indicator(MqttHealthIndicator::new(mqtt_pool));
-    }
-    health.build()
-}
-
 /// The manager as the HTTP tenant-administration capability.
 ///
 /// A focused coercion helper: the HTTP tenant routes and process shutdown share
@@ -337,7 +324,7 @@ async fn construct(
     // evicted, so it needs no hold to stay resident.
     drop(tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?);
 
-    let health = broker_health(&registry, &factory);
+    let health = broker_health(&registry, &factory, &process_tasks, &tenants);
     let component_reports = collect_component_reports(registry.main_pool(), &config).await?;
 
     let enabled_extensions = EnabledExtensions::from(&config.extensions);

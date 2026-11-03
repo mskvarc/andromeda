@@ -2,7 +2,7 @@ use crate::{
     control::{DrainCause, DrainExecution, RunNowRequest},
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
-    failure::TaskFailure,
+    failure::{FailureClass, TaskFailure},
     lifecycle_event::LifecycleEventKind,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule, PeriodicScheduleError},
     registration::{TaskRegistration, TaskRegistrationError},
@@ -411,6 +411,44 @@ async fn permanent_failure_does_not_restart() -> Result<(), TestError> {
     settle().await;
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     supervisor.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_task_stopped_for_good_is_listed_with_its_criticality_and_failure() -> Result<(), TestError> {
+    let process = TaskSupervisor::process(Handle::current());
+    let supervisor = process.tenant(1);
+    let degrading = TaskRegistration::new(
+        TaskName::try_from("degrading")?,
+        TaskCriticality::TenantDegrading,
+        RestartPolicy::Never,
+        ShutdownPolicy::new(Duration::from_secs(1)),
+    );
+    supervisor.register_resident(ResidentTask::new(degrading, |_| async {
+        Err(TaskFailure::permanent(ScriptedFailure::OperatorActionRequired))
+    }))?;
+    supervisor.register_resident(ResidentTask::new(
+        registration("healthy", RestartPolicy::Never, Duration::from_secs(1))?,
+        |execution| async move {
+            execution.cancellation().cancelled().await;
+            Scripted::Ok(())
+        },
+    ))?;
+    settle().await;
+    advance(Duration::from_secs(1)).await;
+    settle().await;
+    let failed = supervisor.failed_tasks().await;
+    assert_eq!(failed.len(), 1);
+    let task = &failed[0];
+    assert_eq!(task.name.as_str(), "degrading");
+    assert_eq!(task.state, TaskHealthState::Failed);
+    assert_eq!(task.criticality, TaskCriticality::TenantDegrading);
+    assert_eq!(task.last_failure_class, Some(FailureClass::Permanent));
+    assert_eq!(task.last_failure_summary.as_deref(), Some("operator action required"));
+    assert!(!supervisor.cancellation_token().is_cancelled());
+    supervisor.shutdown().await;
+    assert_eq!(supervisor.failed_tasks().await.len(), 1);
+    drop(process);
     Ok(())
 }
 

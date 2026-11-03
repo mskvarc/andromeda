@@ -1722,6 +1722,34 @@ async fn a_cold_build_does_not_unload_a_woken_runtime_within_its_wake_residency(
     pretty_assertions::assert_eq!(manager.runtimes.len(), 2);
 }
 
+/// The runtimes read are the ones the cache holds, so an evicted tenant drops
+/// out of the reading.
+#[tokio::test]
+async fn reading_the_resident_runtimes_covers_each_held_tenant_and_not_an_evicted_one() {
+    let (manager, _shutdowns) = wake_manager_with_lifetime(&["first", "second"], 2, HumanDuration::from_secs(60));
+    let first = TenantRef::Named(named("first"));
+    let second = TenantRef::Named(named("second"));
+    drop(manager.resolve_state(&first, TenantCreationPolicy::MustExist).await.expect("resolves"));
+    drop(manager.resolve_state(&second, TenantCreationPolicy::MustExist).await.expect("resolves"));
+
+    let mut held: Vec<String> = manager
+        .read_resident(FakeRuntime::undelivered_changes)
+        .into_iter()
+        .map(|(tenant, backlog)| format!("{tenant}:{backlog}"))
+        .collect();
+    held.sort();
+    pretty_assertions::assert_eq!(held, ["first:0", "second:0"]);
+
+    manager.evict_named(&first).await;
+
+    let remaining: Vec<TenantRef> = manager
+        .read_resident(FakeRuntime::undelivered_changes)
+        .into_iter()
+        .map(|(tenant, _)| tenant)
+        .collect();
+    pretty_assertions::assert_eq!(remaining, [second]);
+}
+
 /// Once its wake residency has passed, a woken runtime is again the first
 /// runtime unloaded to make room.
 #[tokio::test]

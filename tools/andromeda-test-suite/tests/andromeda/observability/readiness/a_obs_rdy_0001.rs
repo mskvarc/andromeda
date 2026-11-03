@@ -9,7 +9,7 @@ use googletest::prelude::*;
 use http::{Method, StatusCode, header::CONTENT_TYPE};
 
 /// Pins: GET /ngsi-ld/v1/health answers a plain JSON `HealthCheck` with no @context, an aggregate status of up or
-/// degraded, and only the active indicators, the `PostgreSQL` one up with numeric pool details
+/// degraded, and only the active indicators, the `PostgreSQL` one up with numeric pool details and the background tasks one up with no stopped task
 /// Clause: -
 /// Recorded: Andromeda extension, not v1.9.1: the health endpoint and its `HealthCheck` body
 #[gtest]
@@ -24,7 +24,7 @@ async fn a_obs_rdy_0001_health_reports_the_aggregate_and_each_active_component()
         some(eq("application/json"))
     );
     // The document type refuses a member beside id, type and healthCheck, `@context` included, and an indicator
-    // of any component but mqtt and postgresql.
+    // of any component but background-tasks, mqtt and postgresql.
     let health: HealthDocument = serde_json::from_slice(answer.body())?;
     expect_that!(health.id.as_str(), contains_regex("^urn:ngsi-ld:HealthCheck:."));
     expect_that!(health.health_type, eq(HealthType::HealthCheck));
@@ -32,5 +32,8 @@ async fn a_obs_rdy_0001_health_reports_the_aggregate_and_each_active_component()
     let postgresql = health.health_check.components.get(&IndicatorName::Postgresql).or_fail()?;
     expect_that!(postgresql.status, eq("up"));
     expect_that!(postgresql.postgresql_details(), ok(anything()));
+    let tasks = health.health_check.components.get(&IndicatorName::BackgroundTasks).or_fail()?;
+    expect_that!(tasks.status, eq("up"));
+    expect_that!(tasks.background_task_details().map(|details| details.stopped_tasks), ok(is_empty()));
     Ok(())
 }

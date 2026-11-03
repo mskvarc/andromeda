@@ -27,6 +27,9 @@ pub enum AggregateStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorName {
+    /// The background tasks of the broker and of its loaded tenants.
+    #[serde(rename = "background-tasks")]
+    BackgroundTasks,
     /// The MQTT connections of the notification endpoints.
     Mqtt,
     /// The database pool.
@@ -45,6 +48,30 @@ pub struct PostgresqlDetails {
     pub ping_latency_ms: Number,
 }
 
+/// A background task that stopped for good, as the background tasks indicator lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoppedTask {
+    /// `name`: the task's registered name.
+    pub name: String,
+    /// `tenant`: the tenant's name, `@default` for the unnamed default tenant, absent for a task of the whole broker.
+    pub tenant: Option<String>,
+    /// `criticality`: `observed` or `tenant-degrading`.
+    pub criticality: String,
+    /// `failureClass`: `transient`, `permanent` or `invariant-violation`.
+    pub failure_class: String,
+    /// `failureSummary`.
+    pub failure_summary: String,
+}
+
+/// What the background tasks indicator reports; no other member is allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackgroundTaskDetails {
+    /// `stoppedTasks`: empty while every task runs.
+    pub stopped_tasks: Vec<StoppedTask>,
+}
+
 /// One component's indicator.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Indicator {
@@ -55,6 +82,15 @@ pub struct Indicator {
 }
 
 impl Indicator {
+    /// The details read as the background tasks indicator's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`serde_json::Error`] when `stoppedTasks` is missing or a task lacks a member, or when another member is present.
+    pub fn background_task_details(&self) -> Result<BackgroundTaskDetails, serde_json::Error> {
+        BackgroundTaskDetails::deserialize(Value::Object(self.details.clone()))
+    }
+
     /// The details read as the database indicator's.
     ///
     /// # Errors
@@ -92,7 +128,7 @@ mod tests {
     use crate::health_check::{AggregateStatus, HealthDocument, IndicatorName};
     use googletest::prelude::*;
 
-    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"pingLatencyMs":0,"poolSize":7}}}}}"#;
+    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"background-tasks":{"status":"up","details":{"stoppedTasks":[]}},"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"pingLatencyMs":0,"poolSize":7}}}}}"#;
 
     #[gtest]
     fn a_document_reads_its_aggregate_and_its_indicators() -> Result<()> {
@@ -104,6 +140,8 @@ mod tests {
             document.health_check.components.get(&IndicatorName::Mqtt).or_fail()?.postgresql_details(),
             err(anything())
         );
+        let tasks = document.health_check.components.get(&IndicatorName::BackgroundTasks).or_fail()?;
+        expect_that!(tasks.background_task_details().map(|details| details.stopped_tasks), ok(is_empty()));
         Ok(())
     }
 

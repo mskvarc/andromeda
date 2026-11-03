@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 /// business claiming a place in the report.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ComponentName {
+    /// The background tasks of the broker and of its loaded tenants.
+    #[serde(rename = "background-tasks")]
+    BackgroundTasks,
     /// MQTT notification transport.
     #[serde(rename = "mqtt")]
     Mqtt,
@@ -52,10 +55,15 @@ mod tests {
             Value::String("postgresql".to_owned())
         );
         pretty_assertions::assert_eq!(serde_json::to_value(ComponentName::Mqtt).expect("serialises"), Value::String("mqtt".to_owned()));
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(ComponentName::BackgroundTasks).expect("serialises"),
+            Value::String("background-tasks".to_owned())
+        );
     }
 
     #[test]
     fn component_names_sort_so_the_response_key_order_is_stable() {
+        assert!(ComponentName::BackgroundTasks < ComponentName::Mqtt);
         assert!(ComponentName::Mqtt < ComponentName::PostgreSql);
     }
 

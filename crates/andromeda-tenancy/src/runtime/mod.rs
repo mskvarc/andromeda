@@ -8,6 +8,7 @@ mod eviction;
 mod eviction_rank;
 mod overdue_report;
 mod provisional_sweep;
+mod resident_view;
 mod shed_report;
 mod teardown;
 #[cfg(test)]

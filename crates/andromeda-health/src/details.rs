@@ -1,6 +1,6 @@
 //! What a component reports about itself, one variant per component.
 
-use crate::{mqtt_details::MqttDetails, postgresql_details::PostgreSqlDetails};
+use crate::{background_task_details::BackgroundTaskDetails, mqtt_details::MqttDetails, postgresql_details::PostgreSqlDetails};
 use serde::{Deserialize, Serialize};
 
 /// The details of one component's health.
@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ComponentDetails {
+    /// What the background tasks report.
+    BackgroundTasks(BackgroundTaskDetails),
     /// What the MQTT transport reports.
     Mqtt(MqttDetails),
     /// What the PostgreSQL pool reports.

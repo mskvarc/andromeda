@@ -1,6 +1,6 @@
 //! Current health and execution history for one named task.
 
-use crate::{failure_report::FailureReport, task_name::TaskName};
+use crate::{criticality::TaskCriticality, failure::FailureClass, failure_report::FailureReport, task_name::TaskName};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
@@ -24,6 +24,12 @@ pub enum TaskHealthState {
 }
 
 impl TaskHealthState {
+    /// Whether the task stopped for good because its failures outlasted its restart policy.
+    #[must_use]
+    pub const fn is_failed(self) -> bool {
+        matches!(self, TaskHealthState::Failed)
+    }
+
     /// Whether no further execution is active for this registration.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
@@ -36,6 +42,8 @@ impl TaskHealthState {
 pub struct TaskHealthSnapshot {
     /// Registered task name.
     pub name: TaskName,
+    /// What the task's exhaustion does to its scope.
+    pub criticality: TaskCriticality,
     /// Current task state.
     pub state: TaskHealthState,
     /// Time at which the current task lifecycle started.
@@ -44,6 +52,8 @@ pub struct TaskHealthSnapshot {
     pub last_success_at: Option<SystemTime>,
     /// Last failed execution time.
     pub last_failure_at: Option<SystemTime>,
+    /// Class of the last failure.
+    pub last_failure_class: Option<FailureClass>,
     /// Last human-readable failure summary.
     pub last_failure_summary: Option<Arc<str>>,
     /// Failures since the most recent successful execution.
@@ -65,14 +75,16 @@ pub(crate) struct TaskHealth {
 
 impl TaskHealth {
     /// Construct registered health for one named task.
-    pub(crate) const fn registered(name: TaskName) -> TaskHealth {
+    pub(crate) const fn registered(name: TaskName, criticality: TaskCriticality) -> TaskHealth {
         TaskHealth {
             snapshot: TaskHealthSnapshot {
                 name,
+                criticality,
                 state: TaskHealthState::Registered,
                 started_at: None,
                 last_success_at: None,
                 last_failure_at: None,
+                last_failure_class: None,
                 last_failure_summary: None,
                 consecutive_failures: 0,
                 backoff_deadline: None,
@@ -109,6 +121,7 @@ impl TaskHealth {
     /// Record a failure before restart policy is evaluated.
     pub(crate) fn failed_attempt(&mut self, now: SystemTime, failure: &FailureReport) -> u32 {
         self.snapshot.last_failure_at = Some(now);
+        self.snapshot.last_failure_class = Some(failure.class());
         self.snapshot.last_failure_summary = Some(failure.shared_summary());
         self.snapshot.consecutive_failures = self.snapshot.consecutive_failures.saturating_add(1);
         self.snapshot.consecutive_failures

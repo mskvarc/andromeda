@@ -162,6 +162,23 @@ impl TaskSupervisor {
         Some(snapshot)
     }
 
+    /// Return every task that stopped for good, after its failures outlasted its restart policy.
+    ///
+    /// A task that observed cancellation or was aborted at its shutdown deadline did not fail
+    /// and is not listed. The snapshots sort by task name.
+    pub async fn failed_tasks(&self) -> Vec<TaskHealthSnapshot> {
+        let records: Vec<_> = self.inner.health.iter().map(|entry| Arc::clone(entry.value())).collect(); // collect: the locks are awaited without retaining DashMap guards.
+        let mut failed = Vec::new();
+        for record in records {
+            let snapshot = record.read().await.snapshot();
+            if snapshot.state.is_failed() {
+                failed.push(snapshot);
+            }
+        }
+        failed.sort_by(|left, right| left.name.cmp(&right.name));
+        failed
+    }
+
     /// Cooperatively stop every active task and forcibly terminate deadline violators.
     pub async fn shutdown(&self) {
         self.request_cancellation();
@@ -210,7 +227,7 @@ impl TaskSupervisor {
             Entry::Occupied(_) => Err(TaskRegistrationError { name }),
             Entry::Vacant(entry) => {
                 entry.insert(());
-                let health = Arc::new(RwLock::new(TaskHealth::registered(name.clone()))); // clone: the health record and lookup map both identify the task.
+                let health = Arc::new(RwLock::new(TaskHealth::registered(name.clone(), registration.criticality()))); // clone: the health record and lookup map both identify the task.
                 self.inner.health.insert(name, Arc::clone(&health)); // clone: task execution and health queries share the same record.
                 Ok(health)
             }

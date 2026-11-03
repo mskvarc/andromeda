@@ -65,6 +65,11 @@ impl BrokerTenantRuntime {
         self.transport.mqtt_pool()
     }
 
+    /// The supervisor of the tenant's background tasks.
+    pub(crate) const fn task_supervisor(&self) -> &TaskSupervisor {
+        &self.task_supervisor
+    }
+
     /// The tenant's serving pool.
     pub(super) const fn pool(&self) -> &PgPool {
         &self.pool

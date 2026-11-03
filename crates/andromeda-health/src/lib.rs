@@ -17,6 +17,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod aggregate;
+pub mod background_task_details;
 pub mod component;
 pub mod details;
 pub mod indicator;
