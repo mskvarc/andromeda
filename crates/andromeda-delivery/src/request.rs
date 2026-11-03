@@ -177,7 +177,24 @@ impl<'a> NotificationDelivery<'a> {
     /// Returns [`NotificationWriteError`] when the notification identifier
     /// cannot be minted or the notification cannot be written.
     pub fn notification(&self, data: NotificationData, notified_at: DateTime<Utc>) -> Result<DeliveryRequest, NotificationWriteError> {
-        let id = Identifier::from(NotificationId::mint()?);
+        self.notification_with_id(NotificationId::mint()?, data, notified_at)
+    }
+
+    /// [`notification`](Self::notification) under the identifier `id` instead of
+    /// a freshly minted one, for a notification every attempt of which carries
+    /// the same identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotificationWriteError`] when the notification cannot be
+    /// written.
+    pub fn notification_with_id(
+        &self,
+        id: NotificationId,
+        data: NotificationData,
+        notified_at: DateTime<Utc>,
+    ) -> Result<DeliveryRequest, NotificationWriteError> {
+        let id = Identifier::from(id);
         let notification = Notification::builder()
             .context(self.envelope_context())
             .id(&id)
@@ -547,6 +564,40 @@ mod tests {
             .expect("a written notification");
         let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("the notification is JSON");
         assert_eq!(written["notifiedAt"], json!("2026-10-30T12:00:00Z"));
+    }
+
+    fn id_of(request: &DeliveryRequest) -> String {
+        let written: serde_json::Value = serde_json::from_str(request.body.text()).expect("a JSON body");
+        written["id"].as_str().expect("id is a string").to_owned()
+    }
+
+    fn written_with(id: Option<&str>) -> DeliveryRequest {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let context = context_of(None);
+        let delivery = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(&subscription)
+            .build();
+        let data = NotificationData::written(RawValue::from_string("[]".to_owned()).expect("written JSON"));
+        match id {
+            Some(id) => delivery.notification_with_id(id.parse().expect("a Notification identifier"), data, Utc::now()),
+            None => delivery.notification(data, Utc::now()),
+        }
+        .expect("a written notification")
+    }
+
+    #[test]
+    fn a_notification_written_under_an_identifier_carries_it() {
+        let id = "urn:ngsi-ld:Notification:7a2f0c3e-5f6d-5a8e-9c11-2b6d4e8f1a03";
+        pretty_assertions::assert_eq!(id_of(&written_with(Some(id))), id);
+        pretty_assertions::assert_eq!(id_of(&written_with(Some(id))), id);
+    }
+
+    #[test]
+    fn a_notification_written_without_an_identifier_carries_a_new_one_each_time() {
+        assert_ne!(id_of(&written_with(None)), id_of(&written_with(None)));
     }
 
     #[test]

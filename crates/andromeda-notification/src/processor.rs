@@ -11,6 +11,8 @@ mod change_payload;
 mod delivery_failure;
 /// Delivery of a durably queued event through the processor.
 mod durable_delivery;
+/// Which identifier a notification carries.
+mod notification_identity;
 pub(crate) mod payload;
 /// Notifying one subscription of one committed entity change.
 mod subscription_notification;
@@ -23,6 +25,7 @@ use crate::{
         attempt_failure::{FailedAttempts, NotificationAttemptFailure},
         change_audience::{ChangeAudience, addressed, admitted_by_entity_filters, changed_states, in_force_versions, owed_since_commit},
         change_payload::notified_state,
+        notification_identity::NotificationIdentity,
         payload::cache::NotificationCompactionCache,
         subscription_notification::NotifiedChange,
     },
@@ -169,7 +172,9 @@ impl NotificationProcessor {
     pub async fn apply_entity_change(&self, pending: PendingChange) -> NotificationEvaluationOutcome {
         let PendingChange { change, hold } = pending;
         let ContextChangeEvent { target, event, committed_at } = change;
-        let outcome = self.apply_entity_change_for(target, event, committed_at, ChangeAudience::Live).await;
+        let outcome = self
+            .apply_entity_change_for(target, event, committed_at, ChangeAudience::Live, NotificationIdentity::Live)
+            .await;
         drop(hold);
         self.release_superseded();
         outcome
@@ -187,6 +192,7 @@ impl NotificationProcessor {
         event: ChangeEvent,
         committed_at: StoreInstant,
         audience: ChangeAudience<'_>,
+        identity: NotificationIdentity,
     ) -> NotificationEvaluationOutcome {
         debug!(
             entity = %event.entity_id,
@@ -233,6 +239,7 @@ impl NotificationProcessor {
             notified: notified.as_ref(),
             now: Utc::now(),
             compaction_cache: &compaction_cache,
+            identity,
         };
         let attempts: Vec<Option<Result<(), NotificationAttemptFailure>>> = stream::iter(matching)
             .map(|compiled_sub| {

@@ -14,6 +14,7 @@ use crate::{
         NotificationProcessor,
         change_audience::{ChangeAudience, CommitFilters},
         delivery_failure::DeliveryFailure,
+        notification_identity::NotificationIdentity,
     },
 };
 use andromeda_context_commit::change_event::ChangeEvent;
@@ -34,12 +35,16 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 subscription: &entry.subscription_id,
                 filters: commit_filters(&entry.event),
             };
+            let identity = NotificationIdentity::Queued {
+                write_id: entry.event.write_id,
+                event_ordinal: entry.event.event_ordinal,
+            };
             let NotificationEvaluationOutcome {
                 delivered,
                 retryable,
                 terminal,
             } = self
-                .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience)
+                .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience, identity)
                 .await;
             match (delivered, retryable, terminal) {
                 (1.., _, _) => DeliveryDisposition::Delivered,

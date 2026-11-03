@@ -107,6 +107,7 @@ pub mod nesting;
 pub mod ngsild_date;
 pub mod not_acceptable;
 pub mod notification_sink;
+pub mod notification_uuid;
 pub mod notified_since;
 pub mod nth;
 pub mod object_type;

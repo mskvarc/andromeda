@@ -12,6 +12,7 @@ use crate::{
         NotificationProcessor,
         attempt_failure::NotificationAttemptFailure,
         compiled_transport,
+        notification_identity::NotificationIdentity,
         payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache},
     },
     resolved_notification_context::{UnclaimedContext, unclaimed_notification_context},
@@ -48,6 +49,8 @@ pub(super) struct NotifiedChange<'a> {
     /// Compaction and linked-entity memoization shared by the notifications
     /// this change produces.
     pub(super) compaction_cache: &'a NotificationCompactionCache,
+    /// Which identifier the notifications of the change carry.
+    pub(super) identity: NotificationIdentity,
 }
 
 impl NotificationProcessor {
@@ -142,7 +145,7 @@ impl NotificationProcessor {
             debug!("Subscription {} produced no notification data for entity {}", subscription_id, event.entity_id);
             return Some(Err(NotificationAttemptFailure::NoData));
         };
-        let request = match delivery.notification(data, generated_at) {
+        let request = match change.identity.notification(&delivery, subscription_id, data, generated_at) {
             Ok(request) => request,
             Err(error) => {
                 error!("Failed to write the notification for {}: {}", subscription_id, error);
@@ -174,7 +177,13 @@ mod tests {
     use crate::{
         notifier_test_double::{ClaimRecordingStore, NoEntities, entity_query, offline_engine, transport},
         pending_change::PendingCommits,
-        processor::{NotificationProcessor, NotificationProcessorDeps, payload::cache::NotificationCompactionCache, subscription_notification::NotifiedChange},
+        processor::{
+            NotificationProcessor,
+            NotificationProcessorDeps,
+            notification_identity::NotificationIdentity,
+            payload::cache::NotificationCompactionCache,
+            subscription_notification::NotifiedChange,
+        },
     };
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
@@ -263,6 +272,7 @@ mod tests {
             notified: Some(&notified),
             now: evaluated_at,
             compaction_cache: &compaction_cache,
+            identity: NotificationIdentity::Live,
         };
         let sent = processor(&store).notify_subscription(subscription, &change).await;
         assert!(sent.is_none(), "the store refuses every slot, so no endpoint is addressed");

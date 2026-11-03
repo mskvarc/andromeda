@@ -11,7 +11,9 @@
 //!   random identifier publishes nothing, where a version 7 one would publish
 //!   its creation time and a version 1 or 6 one a node identifier;
 //! - version 5 for identifiers derived from content, so equal content shares
-//!   one identifier ([`JsonLdContextId::content_derived`]).
+//!   one identifier ([`JsonLdContextId::content_derived`]), and for the
+//!   notification a queued delivery owes, so every attempt carries the same
+//!   identifier ([`NotificationId::queued`]).
 //!
 //! Versions 1, 3 and 6 are never used: 1 and 6 embed a node identifier and 3
 //! hashes with MD5. The high-volume and ordered identities take version 7 and
@@ -197,6 +199,14 @@ ngsi_ld_urn_id!(JsonLdContextId, JsonLdContextIdParseError, "JsonLdContext");
 /// equal content would no longer share one entry until those entries are gone.
 const IMPLICIT_CONTEXT_NAMESPACE: Uuid = Uuid::from_u128(0x85e3_3eb6_38dc_40ec_8e0a_4fc1_7ba5_0889);
 
+/// The namespace every queued [`NotificationId`] is a version 5 UUID in (RFC 9562
+/// section 5.5).
+///
+/// Generated once and never to be changed: a different namespace would give a
+/// notification still queued across the change a new `id` on its next attempt,
+/// which is the repeat the derivation exists to let an endpoint recognise.
+const QUEUED_NOTIFICATION_NAMESPACE: Uuid = Uuid::from_u128(0x3b1f_8d52_6c47_4e9a_a1d3_5f20_9b7c_e648);
+
 /// The local-id marker of a subscription this broker hands to a peer.
 const FORWARDED_SUBSCRIPTION_MARKER: &str = "forwarded-";
 
@@ -221,6 +231,34 @@ impl SubscriptionId {
     /// The forwarded-subscription identifier whose local id carries `uuid`.
     fn forwarded_around(uuid: Uuid) -> Result<SubscriptionId, SubscriptionIdParseError> {
         SubscriptionId::try_from(format!("{}{FORWARDED_SUBSCRIPTION_MARKER}{}", SubscriptionId::PREFIX, uuid.hyphenated()))
+    }
+}
+
+impl NotificationId {
+    /// The identifier of the notification a queued delivery owes `subscription`
+    /// for the change at `ordinal` of the write `write`.
+    ///
+    /// Every attempt of one queued notification derives the same identifier, so
+    /// an endpoint that receives it twice can tell the second is a repeat. The
+    /// identifier is the version 5 UUID, in [`QUEUED_NOTIFICATION_NAMESPACE`],
+    /// of the 16 bytes of `write`, the 4 big-endian bytes of `ordinal` and the
+    /// text of `subscription`; the two fixed-width values come first, so no two
+    /// distinct triples share a name. Two Subscriptions matching one change, and
+    /// two changes of one write, therefore get different identifiers.
+    ///
+    /// A version 5 UUID hashes with SHA-1, which does not resist a deliberate
+    /// collision. The identifier names no secret and gates nothing: it only lets
+    /// an endpoint recognise a repeat.
+    ///
+    /// # Errors
+    ///
+    /// Never in practice, for the reason [`NotificationId::mint`] gives.
+    pub fn queued(write: Uuid, ordinal: u32, subscription: &Identifier) -> Result<NotificationId, NotificationIdParseError> {
+        let mut name = Vec::with_capacity(20 + subscription.as_str().len());
+        name.extend_from_slice(write.as_bytes());
+        name.extend_from_slice(&ordinal.to_be_bytes());
+        name.extend_from_slice(subscription.as_str().as_bytes());
+        NotificationId::around_uuid(Uuid::new_v5(&QUEUED_NOTIFICATION_NAMESPACE, &name))
     }
 }
 
@@ -466,6 +504,64 @@ mod tests {
             pretty_assertions::assert_eq!(embedded_uuid(&identifier, prefix).get_version(), Some(Version::Random), "{identifier}");
             assert!(identifier.parse::<Identifier>().is_ok(), "{identifier} converts into an identifier");
         }
+    }
+
+    fn subscription(local_id: &str) -> Identifier {
+        format!("urn:ngsi-ld:Subscription:{local_id}").parse().expect("a subscription identifier")
+    }
+
+    /// The same write, position and Subscription derive the same identifier on
+    /// every attempt, and it is a version 5 UUID under the Notification kind.
+    #[test]
+    fn a_queued_notification_derives_one_version_5_identifier_for_every_attempt() {
+        let write = Uuid::now_v7();
+        let first = NotificationId::queued(write, 3, &subscription("a")).expect("a derived identifier");
+        let again = NotificationId::queued(write, 3, &subscription("a")).expect("a derived identifier");
+
+        pretty_assertions::assert_eq!(first, again);
+        pretty_assertions::assert_eq!(embedded_uuid(first.as_ref(), "urn:ngsi-ld:Notification:").get_version(), Some(Version::Sha1));
+        let reparsed: NotificationId = first.to_string().parse().expect("a derived identifier parses back");
+        pretty_assertions::assert_eq!(reparsed, first);
+    }
+
+    #[test]
+    fn two_subscriptions_matching_one_change_derive_different_identifiers() {
+        let write = Uuid::now_v7();
+        let first = NotificationId::queued(write, 0, &subscription("a")).expect("a derived identifier");
+        let second = NotificationId::queued(write, 0, &subscription("b")).expect("a derived identifier");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn two_changes_of_one_write_derive_different_identifiers() {
+        let write = Uuid::now_v7();
+        let first = NotificationId::queued(write, 0, &subscription("a")).expect("a derived identifier");
+        let second = NotificationId::queued(write, 1, &subscription("a")).expect("a derived identifier");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn the_same_position_of_two_writes_derives_different_identifiers() {
+        let first = NotificationId::queued(Uuid::now_v7(), 0, &subscription("a")).expect("a derived identifier");
+        let second = NotificationId::queued(Uuid::now_v7(), 0, &subscription("a")).expect("a derived identifier");
+
+        assert_ne!(first, second);
+    }
+
+    /// The namespace is fixed: this pins the identifier one known triple
+    /// derives, so a change to the namespace constant fails here.
+    #[test]
+    fn the_queued_notification_namespace_is_stable() {
+        let write = Uuid::nil();
+        let id = NotificationId::queued(write, 7, &subscription("a")).expect("a derived identifier");
+        let mut name = write.as_bytes().to_vec();
+        name.extend_from_slice(&7_u32.to_be_bytes());
+        name.extend_from_slice(b"urn:ngsi-ld:Subscription:a");
+        let namespace = Uuid::parse_str("3b1f8d52-6c47-4e9a-a1d3-5f209b7ce648").expect("the namespace literal");
+
+        pretty_assertions::assert_eq!(id.to_string(), format!("urn:ngsi-ld:Notification:{}", Uuid::new_v5(&namespace, &name)));
     }
 
     /// The forwarded marker lives inside the one local id, so a forwarded
