@@ -47,6 +47,7 @@ pub mod previous_instance;
 pub mod property;
 pub mod recorded_elements;
 pub mod relationship;
+pub(crate) mod structure_budget;
 pub mod value;
 pub mod vocab_property;
 pub mod written_attribute;

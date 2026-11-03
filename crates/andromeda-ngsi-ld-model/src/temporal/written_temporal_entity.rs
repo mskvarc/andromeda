@@ -21,13 +21,14 @@ use crate::{
         instance_member::{ReadError, present_member},
         key_screening::{member_segment, screen_keys_in_instances},
         member_decoding::refusal,
+        structure_budget,
     },
     attribute_strip::AttributeStrip,
     entity::EntityPatch,
     entity_type::EntityTypeValue,
     node_refusal::{NodeRefusal, RefusedMember},
-    request_body::RequestBody,
-    request_node::{NodeRead, read_request_node},
+    request_body::{DecodeBounds, RequestBody},
+    request_node::{NodeRead, read_bounded_request_node, read_request_node},
     scope_member::ScopeMember,
     temporal::simplified_unfold::instances_of,
 };
@@ -41,12 +42,13 @@ use andromeda_ngsi_ld_representation::{
     compact_key_admission::CompactKeyError,
     compact_node::{CompactNode, NodeShape, context_reading::ContextReading, produced_node::ProducedNode},
     embedded_context_admission::is_native_json_member,
+    value_budget::Spent,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned, ser::SerializeMap};
-use std::{convert::Infallible, str::FromStr};
+use std::{collections::HashMap, convert::Infallible, str::FromStr};
 
 /// The Scope of a written Temporal Evolution.
 #[derive(Clone, Debug)]
@@ -105,6 +107,7 @@ impl WrittenTemporalEntity {
             attrs: IndexMap::new(),
             unarrayed: Vec::new(),
         };
+        let mut costs: HashMap<AttributeName, Spent> = HashMap::new();
         for (name, member) in members {
             let at = |error: ReadError<'n, N>| error.within_member(&name);
             match name.as_ref() {
@@ -114,12 +117,24 @@ impl WrittenTemporalEntity {
                 compact_properties::EXPIRES_AT => written.expires_at = optional(member, RefusedMember::ExpiresAt).map_err(at)?.map(NgsiLdDateTime::get),
                 compact_properties::SCOPE => written.scope = written_scope(member).map_err(at)?,
                 attribute => {
+                    if structure_budget::is_spent(member) {
+                        continue;
+                    }
                     let attribute_name = AttributeName::from_str(attribute).map_err(|source| at(NodeRefusal::AttributeName(source).into()))?;
+                    let before = structure_budget::mark(member);
+                    structure_budget::spend(member);
                     let instances = instances_of(attribute, member).map_err(at)?;
                     if !matches!(member.shape(), NodeShape::Array(_)) && !written.unarrayed.contains(&attribute_name) {
                         written.unarrayed.push(attribute_name.clone()); // clone: the list names the attribute the map is keyed by
                     }
-                    written.attrs.shift_remove(&attribute_name);
+                    // The member a later one of the same name replaces gives
+                    // back what it was recorded for.
+                    if written.attrs.shift_remove(&attribute_name).is_some() {
+                        structure_budget::refund(member, costs.remove(&attribute_name).unwrap_or_default());
+                    }
+                    if before.is_some() {
+                        costs.insert(attribute_name.clone(), structure_budget::spent_since(member, before)); // clone: the cost is kept by the name the attribute map is keyed by
+                    }
                     written.attrs.insert(attribute_name, instances);
                 }
             }
@@ -234,6 +249,14 @@ impl RequestBody for WrittenTemporalEntity {
     /// in place as a Context Producer wrote it.
     fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<WrittenTemporalEntity, serde_json::Error> {
         read_request_node(text, reading)
+    }
+
+    /// Decode a Temporal Evolution as [`WrittenTemporalEntity::from_request_text`]
+    /// does, each geometry and each growing member recorded within `bounds`.
+    /// The evolution document is held to the entity value limit as a whole
+    /// (clause 6.3.2), so the same budget bounds the instances it carries.
+    fn from_bounded_request_text(text: &[u8], reading: ContextReading<'_>, bounds: DecodeBounds) -> Result<WrittenTemporalEntity, serde_json::Error> {
+        read_bounded_request_node(text, reading, bounds)
     }
 }
 

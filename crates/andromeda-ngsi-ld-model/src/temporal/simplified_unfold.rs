@@ -18,7 +18,7 @@
 //! read from the text of its own, never from a tree of the pairs.
 
 use crate::{
-    attribute::{instance::Attribute, instance_member::ReadError},
+    attribute::{instance::Attribute, instance_member::ReadError, structure_budget},
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
     temporal::plural_member_refusal::PluralMemberRefusal,
 };
@@ -86,8 +86,11 @@ pub(crate) fn unfold<'n, N: CompactNode<'n>>(
     if let Some(member) = &beside {
         return Err(refused(PairFault::MemberBesidePairs(member)));
     }
-    out.reserve(pair_nodes.len());
     for (index, pair) in pair_nodes.into_iter().enumerate() {
+        if structure_budget::is_spent(pair) {
+            break;
+        }
+        structure_budget::spend(pair);
         let within = |error: ReadError<'n, N>| error.within_member(plural).within_element(index);
         let text = pair_text(attribute, family, pair).map_err(within)?;
         let raw = RawValue::from_string(text).map_err(|source| {
@@ -117,8 +120,12 @@ pub(crate) fn instances_of<'n, N: CompactNode<'n>>(name: &str, node: N) -> Resul
         NodeShape::Array(items) => items,
         NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => vec![node],
     };
-    let mut instances = Vec::with_capacity(items.len());
+    let mut instances = Vec::new();
     for (index, item) in items.into_iter().enumerate() {
+        if structure_budget::is_spent(item) {
+            break;
+        }
+        structure_budget::spend(item);
         let within = |error: ReadError<'n, N>| error.within_element(index);
         match item.shape() {
             NodeShape::Object(members) => match plural_family(&members) {

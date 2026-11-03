@@ -11,6 +11,7 @@ use crate::{
     attribute::{
         instance_member::{ReadError, optional_instant_member, present_member, present_member_within},
         member_reading::MemberReading,
+        structure_budget,
     },
     compact_member::decoded,
     entity::{Entity, EntityPatch},
@@ -18,9 +19,14 @@ use crate::{
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
     scope_member::ScopeMember,
 };
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_representation::{
+    compact_node::{CompactNode, NodeShape},
+    value_budget::Spent,
+};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 impl<M: MemberReading> Entity<M> {
     /// The entity a compact node is.
@@ -90,6 +96,7 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
         return Err(NodeRefusal::NotAnObject.into());
     };
     let mut read = SharedMembers::default();
+    let mut costs: HashMap<AttributeName, Spent> = HashMap::new();
     for (name, member) in members {
         // Clause 6.3.5: the `@context` of an `application/ld+json` document is
         // the document's, not a member of the entity it holds.
@@ -109,8 +116,20 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
             EntityMember::ObservationSpace => read.observation_space = optional_attribute(&name, member, reading).map_err(at)?,
             EntityMember::OperationSpace => read.operation_space = optional_attribute(&name, member, reading).map_err(at)?,
             EntityMember::Attribute(attribute) => {
+                if structure_budget::is_spent(member) {
+                    continue;
+                }
+                let before = structure_budget::mark(member);
+                structure_budget::spend(member);
                 let value = reading.read(&name, member).map_err(at)?;
-                read.attrs.shift_remove(&attribute);
+                // The member a later one of the same name replaces gives back
+                // what it was recorded for.
+                if read.attrs.shift_remove(&attribute).is_some() {
+                    structure_budget::refund(member, costs.remove(&attribute).unwrap_or_default());
+                }
+                if before.is_some() {
+                    costs.insert(attribute.clone(), structure_budget::spent_since(member, before)); // clone: the cost is kept by the name the attribute map is keyed by
+                }
                 read.attrs.insert(attribute, value);
             }
         }

@@ -14,7 +14,7 @@
 //! exactly as the family's own members are in a decoded document.
 
 use crate::{
-    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, instance_node::required, member_reading::MemberReading},
+    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, instance_node::required, member_reading::MemberReading, structure_budget},
     compact_member::decoded,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
@@ -150,7 +150,7 @@ pub(crate) struct InstanceMembers<'n, N> {
     /// The system members, by kind.
     pub(crate) system: SystemMembers<N>,
     /// The sub-attributes, by name, in written order.
-    pub(crate) sub_attributes: Vec<(Cow<'n, str>, N)>,
+    pub(crate) sub_attributes: IndexMap<Cow<'n, str>, N>,
 }
 
 /// The system members every family carries.
@@ -202,7 +202,7 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
                 modified_at: None,
                 observed_at: None,
             },
-            sub_attributes: Vec::new(),
+            sub_attributes: IndexMap::new(),
         };
         for (name, member) in members {
             if name == compact_properties::UNIT_CODE && unit_code_admission(family) == UnitCodeAdmission::Forbidden {
@@ -231,8 +231,8 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
                 InstanceMember::ModifiedAt => &mut sorted.system.modified_at,
                 InstanceMember::ObservedAt => &mut sorted.system.observed_at,
                 InstanceMember::SubAttribute => {
-                    sorted.sub_attributes.retain(|(written, _)| *written != name);
-                    sorted.sub_attributes.push((name, member));
+                    sorted.sub_attributes.shift_remove(&name);
+                    sorted.sub_attributes.insert(name, member);
                     continue;
                 }
             };
@@ -254,6 +254,10 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
         let system = &self.system;
         let mut sub_attributes = IndexMap::with_capacity(self.sub_attributes.len());
         for (name, member) in &self.sub_attributes {
+            if structure_budget::is_spent(*member) {
+                break;
+            }
+            structure_budget::spend(*member);
             let attribute_name =
                 AttributeName::from_str(name).map_err(|source| ReadError::<N>::from(NodeRefusal::AttributeName(source)).within_member(name))?;
             let value = AttributeValue::from_node(name, *member).map_err(|error| error.within_member(name))?;

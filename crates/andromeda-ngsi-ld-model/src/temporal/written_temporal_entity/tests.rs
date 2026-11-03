@@ -1,15 +1,18 @@
 use crate::{
     attribute_strip::AttributeStrip,
     node_refusal::{NodeReadError, NodeRefusal, RefusedNode},
-    request_body::RequestBody,
+    request_body::{DecodeBounds, RequestBody},
     temporal::{
         plural_member_refusal::PluralMemberRefusal,
         written_temporal_entity::{WrittenScope, WrittenTemporalEntity},
     },
 };
 use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use serde_json::{Value, json, value::RawValue};
+use std::num::NonZeroUsize;
 
 /// The body decoded as a client's Temporal Evolution.
 fn written(body: &Value) -> Result<WrittenTemporalEntity, serde_json::Error> {
@@ -221,4 +224,46 @@ fn a_json_null_on_an_optional_member_is_refused() {
     }
     let observed_null = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": [{"type": "Property", "value": 1, "observedAt": null}]});
     assert!(written(&observed_null).is_err());
+}
+
+/// The body decoded as a client's Temporal Evolution within an entity value
+/// limit of `entity_values`.
+fn written_within(body: &Value, entity_values: usize) -> WrittenTemporalEntity {
+    let bounds = DecodeBounds::new(
+        GeometryPositionLimit::new(NonZeroUsize::new(1_000_000).expect("a positive limit")),
+        JsonValueLimit::new(NonZeroUsize::new(entity_values).expect("a positive limit")),
+    );
+    WrittenTemporalEntity::from_bounded_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings(), bounds).expect("the body decodes")
+}
+
+fn instances(count: usize) -> Value {
+    Value::Array(vec![json!({"type": "Property", "value": 1, "observedAt": "2030-01-01T00:00:00Z"}); count])
+}
+
+/// Clause 6.3.2: an evolution past the entity value limit is cut one value
+/// past it, which the count of the evolution then refuses.
+#[test]
+fn the_instances_of_an_evolution_past_the_limit_are_cut() {
+    let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": instances(80)});
+    assert!(written_within(&body, 10).attrs["speed"].len() < 80);
+    pretty_assertions::assert_eq!(written_within(&body, 1_000).attrs["speed"].len(), 80);
+    pretty_assertions::assert_eq!(written(&body).expect("the body decodes").attrs["speed"].len(), 80);
+}
+
+#[test]
+fn the_pairs_of_a_simplified_attribute_past_the_limit_are_cut() {
+    let pairs = Value::Array(vec![json!([1, "2030-01-01T00:00:00Z"]); 80]);
+    let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "values": pairs}});
+    assert!(written_within(&body, 10).attrs["speed"].len() < 80);
+    pretty_assertions::assert_eq!(written_within(&body, 1_000).attrs["speed"].len(), 80);
+}
+
+#[test]
+fn the_attributes_of_an_evolution_past_the_limit_are_cut() {
+    let mut body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"});
+    for index in 0..80 {
+        body[format!("a{index}")] = instances(1);
+    }
+    assert!(written_within(&body, 10).attrs.len() < 80);
+    pretty_assertions::assert_eq!(written_within(&body, 1_000).attrs.len(), 80);
 }

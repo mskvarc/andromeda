@@ -22,6 +22,7 @@ use crate::{
         instance::{Attribute, AttributeValue},
         instance_member::ReadError,
         member_reading::MemberReading,
+        structure_budget,
     },
     node_refusal::{NodeRefusal, RefusedMember},
 };
@@ -79,7 +80,11 @@ fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<Attribu
             ArrayReading::Instances => items
                 .into_iter()
                 .enumerate()
-                .map(|(index, item)| instance(name, item).map_err(|error| error.within_element(index)))
+                .take_while(|(_, item)| !structure_budget::is_spent(*item))
+                .map(|(index, item)| {
+                    structure_budget::spend(item);
+                    instance(name, item).map_err(|error| error.within_element(index))
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map(AttributeValue::Multiple),
             ArrayReading::PropertyValue => Attribute::concise_property(member).map(single),

@@ -24,6 +24,7 @@ use crate::{
         nested_null::NestedMergeMember,
         one_or_many::OneOrMany,
         patched::{Patched, patched_instant_member, patched_member},
+        structure_budget,
         value::NgsiLdValue,
     },
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember, RefusedNode},
@@ -124,6 +125,10 @@ impl MergeInstance {
         let system = &members.system;
         let mut sub_attributes = IndexMap::with_capacity(members.sub_attributes.len());
         for (member, node) in &members.sub_attributes {
+            if structure_budget::is_spent(*node) {
+                break;
+            }
+            structure_budget::spend(*node);
             let attribute_name =
                 AttributeName::from_str(member).map_err(|source| ReadError::<N>::from(NodeRefusal::AttributeName(source)).within_member(member))?;
             let value = MergeMember::from_node(member, *node).map_err(|error| error.within_member(member))?;
