@@ -3,17 +3,17 @@
 
 use crate::{
     delivery_acknowledgement::DeliveryAcknowledgement,
-    delivery_acknowledgement_group::AcknowledgementGroups,
     delivery_attempt::DeliveryAttempt,
     delivery_claim::DeliveryClaim,
-    delivery_claim_order::DeliveryClaimOrder,
     delivery_concurrency::DeliveryConcurrency,
     delivery_entry::DeliveryEntry,
     delivery_lease::LeaseTerm,
     delivery_policy::{delivery_concurrency, lease_term},
     delivery_queue_supply::QueueSupply,
+    delivery_round::{ClaimRequest, SettledRound},
+    delivery_round_plan::{Refill, Round, RoundPlan},
     delivery_settlement::DeliverySettlement,
-    delivery_slot_refill::SlotRefill,
+    delivery_slot_event::{AttemptEnded, AwaitingAcknowledgement, ClaimAsked, RoundEnded, SlotEvent},
     delivery_slot_share::{SlotOccupant, SlotShare},
     delivery_store::DeliveryStore,
     delivery_transport::NotificationDeliveryTransport,
@@ -27,7 +27,7 @@ use andromeda_retry::retry_delay::RetryDelay;
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use std::{
-    num::{NonZeroU32, NonZeroUsize},
+    num::NonZeroU32,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -54,7 +54,8 @@ pub struct NotificationDeliveryDrain {
     attempts: DeliveryAttempt,
     worker_id: LeaseHolder,
     lease_term: LeaseTerm,
-    /// Where the outcome of each delivery the pass leased is recorded.
+    /// Where the outcome of each delivery the pass leased is recorded, and
+    /// its slot refilled.
     acknowledgement: DeliveryAcknowledgement,
     concurrency: DeliveryConcurrency,
     /// How long a Subscription keeps a crowding one below half the slots
@@ -63,56 +64,12 @@ pub struct NotificationDeliveryDrain {
     slot_activity: Duration,
 }
 
-/// One thing that finished in a pass's in-flight set.
-enum SlotEvent {
-    /// A claim that asked for `asked` deliveries in `order` came back.
-    Claimed {
-        /// Deliveries the claim asked for.
-        asked: NonZeroUsize,
-        /// The order the claim took them in.
-        order: DeliveryClaimOrder,
-        /// What the claim leased, or why it could not.
-        claims: Result<Vec<DeliveryClaim>, NotificationError>,
-    },
-    /// A claimed delivery was attempted, and waits to be acknowledged.
-    Attempted(Box<AttemptEnded>),
-    /// A group of settlements was acknowledged.
-    Acknowledged {
-        /// Whether each settlement was recorded under its lease, in the
-        /// group's order.
-        answers: Result<Vec<LeaseAcknowledgement>, NotificationError>,
-        /// The Subscriptions whose slots the group's deliveries free.
-        occupants: Vec<Option<SlotOccupant>>,
-    },
-}
-
-/// How the attempt at one claimed delivery ended, and the slot it holds
-/// until its outcome is acknowledged.
-struct AttemptEnded {
-    /// How the attempt ended, or why it could not be settled.
-    settlement: Result<DeliverySettlement, NotificationError>,
-    /// The Subscription whose slot the delivery holds, `None` for a delivery
-    /// whose row could not be read back.
-    occupant: Option<SlotOccupant>,
-}
-
-/// A settled delivery waiting to be acknowledged, and the slot it holds
-/// until it is.
-struct AwaitingAcknowledgement {
-    /// What the queue records of it.
-    settlement: DeliverySettlement,
-    /// The Subscription whose slot it holds, `None` for a delivery whose row
-    /// could not be read back.
-    occupant: Option<SlotOccupant>,
-}
-
-/// Free the slot a delivery held: its Subscription's share, when it was
-/// read back, and a slot to refill.
-fn free_slot(share: &mut SlotShare, refill: &mut SlotRefill, occupant: Option<SlotOccupant>) {
+/// Release the slot of a delivery that left flight from its Subscription's
+/// share, when it was read back.
+fn release_share(share: &mut SlotShare, occupant: Option<SlotOccupant>) {
     if let Some(occupant) = occupant {
         share.release(occupant, Instant::now());
     }
-    refill.free();
 }
 
 impl NotificationDeliveryDrain {
@@ -151,14 +108,18 @@ impl NotificationDeliveryDrain {
     /// holds no more due deliveries or `cancellation` fires.
     ///
     /// A pass keeps every one of its slots busy for as long as the queue
-    /// supplies due deliveries. It opens by claiming one delivery per slot, and
-    /// each time a delivery is acknowledged it claims one more for the slot
-    /// that freed. It has at most one claim in flight: the slots that free
-    /// while a claim is in flight are claimed together once it comes back, so
-    /// endpoints that answer at once cost a claim per batch of acknowledgements,
-    /// not one per delivery. It stops claiming once a claim comes back short,
-    /// once a claim or an acknowledgement fails, or once `cancellation` fires,
-    /// and returns when the last delivery in flight is acknowledged.
+    /// supplies due deliveries. It goes to the queue in rounds, and has at
+    /// most one round in flight: a round records the outcomes of the
+    /// deliveries whose attempts ended, together or while the previous round
+    /// was in flight, and claims every slot free once they are recorded, their
+    /// own slots included, in one transaction. The pass opens with a round
+    /// that only claims, one delivery per slot. Endpoints that answer at once
+    /// cost one round per batch of attempts, not an acknowledgement and a
+    /// claim per delivery, and a lone outcome with no round in flight is still
+    /// recorded at once. The pass stops claiming once a claim comes back
+    /// short, once a round fails, or once `cancellation` fires, then only
+    /// acknowledges, and returns when the last delivery in flight is
+    /// acknowledged.
     ///
     /// Once one Subscription holds half the slots, each slot that frees goes
     /// to a due delivery of the Subscription with the fewest in flight, and
@@ -180,16 +141,9 @@ impl NotificationDeliveryDrain {
     /// The claims of one pass share the events they read: a claim hands over
     /// the event a delivery still in flight already carries instead of reading
     /// it again, so the deliveries of one event, claimed one slot at a time,
-    /// cost one event read between them. The acknowledgement of an event's last
+    /// cost one event read between them. The attempt at an event's last
     /// delivery in flight lets go of it, so the pass holds no more events than
     /// it has slots, however long it runs.
-    ///
-    /// A delivery holds its slot until its outcome is acknowledged. The pass
-    /// has at most one acknowledgement in flight: the deliveries whose
-    /// attempts end together, or while one is in flight, are acknowledged
-    /// together once it comes back, so endpoints that answer at once cost one
-    /// acknowledgement per batch of attempts, not one per delivery, and a lone
-    /// outcome with no acknowledgement in flight is still recorded at once.
     ///
     /// Every claimed delivery is driven to its acknowledgement even when
     /// another one fails or the pass is cancelled, so no lease this worker
@@ -217,77 +171,72 @@ impl NotificationDeliveryDrain {
         let held = HeldEvents::default();
         let mut share = SlotShare::new(self.concurrency, self.slot_activity);
         let mut supply = QueueSupply::MayHoldMore;
-        let mut refill = SlotRefill::new(self.concurrency.get());
-        let mut acknowledgements = AcknowledgementGroups::new();
+        let mut plan = RoundPlan::new(self.concurrency.get());
         let mut claimed = 0_usize;
         let mut lease_lost = 0_usize;
         let mut failure: Option<NotificationError> = None;
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
         loop {
-            if failure.is_none()
-                && supply == QueueSupply::MayHoldMore
-                && !cancellation.is_cancelled()
-                && let Some(width) = refill.next_claim()
-            {
-                slots.push(self.claim(width, share.claim_order(Instant::now()), &clock, &held).boxed());
-            }
-            if let Some(group) = acknowledgements.next_group() {
-                slots.push(self.acknowledge(group).boxed());
+            let refill = match (&failure, supply, cancellation.is_cancelled()) {
+                (None, QueueSupply::MayHoldMore, false) => Refill::Allowed,
+                (Some(_), _, _) | (None, QueueSupply::Drained, _) | (None, QueueSupply::MayHoldMore, true) => Refill::Withheld,
+            };
+            if let Some(round) = plan.next_round(refill) {
+                slots.push(self.issue(round, &mut share, &clock, &held).boxed());
             }
             let Some(mut event) = slots.next().await else {
                 break;
             };
             loop {
                 match event {
-                    SlotEvent::Claimed {
-                        asked,
-                        order,
-                        claims: Ok(claims),
-                    } => {
-                        supply = supply.after_claim(asked, order, claims.len());
-                        refill.settle(asked, claims.len());
-                        claimed += claims.len();
-                        for claim in &claims {
-                            match claim {
-                                DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
-                                DeliveryClaim::Unreadable(_) => {}
-                            }
-                        }
-                        slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
-                    }
-                    SlotEvent::Claimed { asked, claims: Err(error), .. } => {
-                        refill.settle(asked, 0);
-                        failure.get_or_insert(error);
-                    }
                     SlotEvent::Attempted(ended) => match *ended {
                         AttemptEnded {
                             settlement: Ok(settlement),
                             occupant,
-                        } => acknowledgements.wait(AwaitingAcknowledgement { settlement, occupant }),
+                        } => plan.wait(AwaitingAcknowledgement { settlement, occupant }),
                         AttemptEnded {
                             settlement: Err(error),
                             occupant,
                         } => {
-                            free_slot(&mut share, &mut refill, occupant);
+                            release_share(&mut share, occupant);
+                            plan.free();
                             failure.get_or_insert(error);
                         }
                     },
-                    SlotEvent::Acknowledged { answers, occupants } => {
-                        acknowledgements.settle();
-                        for occupant in occupants {
-                            free_slot(&mut share, &mut refill, occupant);
-                        }
-                        match answers {
-                            Ok(answers) => lease_lost += answers.iter().filter(|answer| **answer == LeaseAcknowledgement::Lost).count(),
+                    SlotEvent::RoundEnded(ended) => {
+                        let RoundEnded { claim, answer } = *ended;
+                        let claims = match answer {
+                            Ok(SettledRound { answers, claims }) => {
+                                lease_lost += answers.iter().filter(|answer| **answer == LeaseAcknowledgement::Lost).count();
+                                claims
+                            }
+                            Err(error) => Err(error),
+                        };
+                        match claims {
+                            Ok(claims) => {
+                                if let Some(asked) = claim {
+                                    supply = supply.after_claim(asked.width, asked.order, claims.len());
+                                }
+                                plan.settle(claim.map(|asked| asked.width), claims.len());
+                                claimed += claims.len();
+                                for claim in &claims {
+                                    match claim {
+                                        DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
+                                        DeliveryClaim::Unreadable(_) => {}
+                                    }
+                                }
+                                slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
+                            }
                             Err(error) => {
+                                plan.settle(claim.map(|asked| asked.width), 0);
                                 failure.get_or_insert(error);
                             }
                         }
                     }
                 }
                 // Every event already finished is taken in before the next
-                // claim or acknowledgement goes out, so attempts that end
-                // together share one acknowledgement.
+                // round goes out, so attempts that end together share one
+                // round.
                 match slots.next().now_or_never() {
                     Some(Some(ready)) => event = ready,
                     Some(None) | None => break,
@@ -300,28 +249,64 @@ impl NotificationDeliveryDrain {
         }
     }
 
-    /// Claim up to `width` deliveries in `order` under a lease that starts
-    /// now, reusing the events the pass's in-flight deliveries hold.
-    async fn claim(&self, width: NonZeroUsize, order: DeliveryClaimOrder, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
-        let claims = match NonZeroU32::try_from(width) {
-            Ok(claim_width) => self.store.claim_pending(&self.worker_id, self.lease_term, claim_width, order, held).await,
-            Err(error) => Err(NotificationInvariant::ClaimWidth(error).into()),
+    /// Issue one round: the deliveries it settles leave flight now, their
+    /// attempts having ended, so the order its claim takes counts them out.
+    fn issue<'pass>(
+        &'pass self,
+        round: Round<AwaitingAcknowledgement>,
+        share: &mut SlotShare,
+        clock: &'pass LeasePassClock,
+        held: &'pass HeldEvents,
+    ) -> impl Future<Output = SlotEvent> + Send + 'pass {
+        let settlements = round
+            .group
+            .into_iter()
+            .map(|AwaitingAcknowledgement { settlement, occupant }| {
+                release_share(share, occupant);
+                settlement
+            })
+            .collect();
+        let claim = round.width.map(|width| ClaimAsked {
+            width,
+            order: share.claim_order(Instant::now()),
+        });
+        self.settle_and_claim(settlements, claim, clock, held)
+    }
+
+    /// Record `settlements` and claim what `claim` asks for under a lease that
+    /// starts now, reusing the events the pass's in-flight deliveries hold.
+    async fn settle_and_claim(&self, settlements: Vec<DeliverySettlement>, claim: Option<ClaimAsked>, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
+        let request = claim.map(|asked| {
+            NonZeroU32::try_from(asked.width).map(|width| ClaimRequest {
+                lease: self.lease_term,
+                width,
+                order: asked.order,
+                held,
+            })
+        });
+        let answer = match request {
+            Some(Ok(request)) => self.acknowledgement.settle_and_claim(&settlements, Some(request)).await,
+            Some(Err(error)) => self.acknowledgement.settle_and_claim(&settlements, None).await.map(|round| SettledRound {
+                claims: Err(NotificationInvariant::ClaimWidth(error).into()),
+                ..round
+            }),
+            None => self.acknowledgement.settle_and_claim(&settlements, None).await,
         };
-        if let Ok(claimed) = &claims {
+        if let (Some(asked), Ok(SettledRound { claims: Ok(claimed), .. })) = (claim, &answer) {
             debug!(
                 count = claimed.len(),
-                ?order,
+                order = ?asked.order,
                 worker_id = %self.worker_id,
                 lease_expires_at = ?self.lease_term.expires_at(clock.now()),
                 "Claimed notification deliveries"
             );
         }
-        SlotEvent::Claimed { asked: width, order, claims }
+        SlotEvent::RoundEnded(Box::new(RoundEnded { claim, answer }))
     }
 
     /// Attempt one claimed delivery, settle its outcome, and let go of the
-    /// event it carried; its slot stays held until the settlement is
-    /// acknowledged.
+    /// event it carried; its slot stays held until the settlement goes out
+    /// in a round.
     async fn attempt(&self, claim: DeliveryClaim, clock: &LeasePassClock, held: &HeldEvents) -> SlotEvent {
         match claim {
             DeliveryClaim::Readable(entry) => {
@@ -352,19 +337,6 @@ impl NotificationDeliveryDrain {
                 }),
                 occupant: None,
             })),
-        }
-    }
-
-    /// Acknowledge one group of settlements, freeing their slots once the
-    /// queue answers.
-    async fn acknowledge(&self, group: Vec<AwaitingAcknowledgement>) -> SlotEvent {
-        let (settlements, occupants): (Vec<_>, Vec<_>) = group
-            .into_iter()
-            .map(|AwaitingAcknowledgement { settlement, occupant }| (settlement, occupant))
-            .unzip();
-        SlotEvent::Acknowledged {
-            answers: self.acknowledgement.record(&settlements).await,
-            occupants,
         }
     }
 
@@ -414,6 +386,7 @@ mod tests {
         delivery_entry::{DeliveryEntry, DeliveryKey},
         delivery_lease::LeaseTerm,
         delivery_policy::retry_schedule,
+        delivery_round::{ClaimRequest, SettledRound},
         delivery_settlement::{DeliverySettlement, DeliveryVerdict},
         delivery_store::DeliveryStore,
         delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
@@ -493,6 +466,9 @@ mod tests {
         #[default]
         Served,
         Refused,
+        /// The first claim is served and every later one fails, the
+        /// settlements beside it still recorded.
+        ServedOnce,
     }
 
     #[derive(Default)]
@@ -517,22 +493,18 @@ mod tests {
         refused_once: AtomicBool,
         /// The most events the pass held at the end of any claim.
         peak_held: AtomicUsize,
-        /// The polls each claim stays unanswered for, as a claim's round trip
-        /// to the queue would.
-        claim_polls: u32,
-        /// Claims issued and not yet answered.
-        claims_in_flight: AtomicUsize,
-        /// The most claims in flight at once.
-        peak_claims_in_flight: AtomicUsize,
-        /// The polls each acknowledgement stays unanswered for, as its round
-        /// trip to the queue would.
-        acknowledgement_polls: u32,
-        /// Acknowledgements issued and not yet answered.
-        acknowledgements_in_flight: AtomicUsize,
-        /// The most acknowledgements in flight at once.
-        peak_acknowledgements_in_flight: AtomicUsize,
-        /// The size of each acknowledgement, in the order they were made.
-        groups: Mutex<Vec<usize>>,
+        /// Claims served so far.
+        served_claims: AtomicUsize,
+        /// The polls each round stays unanswered for, as its round trip to
+        /// the queue would.
+        round_polls: u32,
+        /// Rounds issued and not yet answered.
+        rounds_in_flight: AtomicUsize,
+        /// The most rounds in flight at once.
+        peak_rounds_in_flight: AtomicUsize,
+        /// Each round as the settlements it carried and the width it claimed,
+        /// in the order they were made.
+        rounds: Mutex<Vec<(usize, Option<u32>)>>,
         /// Deliveries whose leases another worker took, answered lost.
         lost: BTreeSet<DeliveryKey>,
     }
@@ -553,15 +525,6 @@ mod tests {
             }
         }
 
-        /// A store whose every claim stays unanswered for [`SLOW_CLAIM_POLLS`]
-        /// polls.
-        fn with_slow_claims(entries: impl IntoIterator<Item = DeliveryEntry>) -> RecordingStore {
-            RecordingStore {
-                claim_polls: SLOW_CLAIM_POLLS,
-                ..RecordingStore::with_entries(entries)
-            }
-        }
-
         fn refusing_claims() -> RecordingStore {
             RecordingStore {
                 claim_state: ClaimState::Refused,
@@ -569,12 +532,12 @@ mod tests {
             }
         }
 
-        /// A store whose every acknowledgement stays unanswered for
-        /// [`SLOW_ACKNOWLEDGEMENT_POLLS`] polls, and which answers the leases
-        /// of `lost` lost.
-        fn with_slow_acknowledgements(entries: impl IntoIterator<Item = DeliveryEntry>, lost: impl IntoIterator<Item = DeliveryKey>) -> RecordingStore {
+        /// A store whose every round stays unanswered for
+        /// [`SLOW_ROUND_POLLS`] polls, and which answers the leases of `lost`
+        /// lost.
+        fn with_slow_rounds(entries: impl IntoIterator<Item = DeliveryEntry>, lost: impl IntoIterator<Item = DeliveryKey>) -> RecordingStore {
             RecordingStore {
-                acknowledgement_polls: SLOW_ACKNOWLEDGEMENT_POLLS,
+                round_polls: SLOW_ROUND_POLLS,
                 lost: lost.into_iter().collect(),
                 ..RecordingStore::with_entries(entries)
             }
@@ -634,8 +597,52 @@ mod tests {
             LeaseAcknowledgement::Applied
         }
 
+        /// The sizes of the rounds that carried settlements.
         fn group_sizes(&self) -> Vec<usize> {
-            self.groups.lock().expect("the test lock is not poisoned").clone()
+            self.recorded_rounds().into_iter().map(|(group, _)| group).filter(|group| *group > 0).collect()
+        }
+
+        fn recorded_rounds(&self) -> Vec<(usize, Option<u32>)> {
+            self.rounds.lock().expect("the test lock is not poisoned").clone()
+        }
+
+        /// Record one round's settlements, or refuse them whole as an
+        /// unreachable queue would.
+        fn acknowledge(&self, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
+            if settlements.is_empty() {
+                return Ok(Vec::new());
+            }
+            self.calls
+                .lock()
+                .expect("the test lock is not poisoned")
+                .extend(settlements.iter().map(|settlement| StoreCall::Acknowledge(settlement.key)));
+            if self.refuses_group() {
+                return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
+            }
+            Ok(settlements.iter().map(|settlement| self.settle(settlement)).collect())
+        }
+
+        /// Claim what `request` asks for, or fail as an unreachable queue
+        /// would.
+        fn claim(&self, request: ClaimRequest<'_>) -> Result<Vec<DeliveryClaim>, NotificationError> {
+            let served_before = self.served_claims.fetch_add(1, Ordering::SeqCst);
+            match (self.claim_state, served_before) {
+                (ClaimState::Refused, _) => return Err(NotificationError::Persistence(PersistenceFailure::Unavailable)),
+                (ClaimState::ServedOnce, served) if served > 0 => return Err(NotificationError::Persistence(PersistenceFailure::Unavailable)),
+                (ClaimState::Served | ClaimState::ServedOnce, _) => {}
+            }
+            self.claimed_with.lock().expect("the test lock is not poisoned").push(request.lease);
+            self.orders.lock().expect("the test lock is not poisoned").push(request.order);
+            let width = usize::try_from(request.width.get()).expect("a claim width within the address width");
+            let mut entries = self.entries.lock().expect("the test lock is not poisoned");
+            let taken = width.min(entries.len());
+            self.calls.lock().expect("the test lock is not poisoned").push(StoreCall::Claim {
+                asked: request.width.get(),
+                granted: u32::try_from(taken).expect("a granted count within the claim width"),
+            });
+            let claims = entries.drain(..taken).map(|claim| self.hand_over(claim, request.held)).collect();
+            self.peak_held.fetch_max(request.held.len(), Ordering::SeqCst);
+            Ok(claims)
         }
 
         /// Hand a claimed delivery over with the event the pass already holds,
@@ -702,49 +709,23 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for RecordingStore {
-        async fn claim_pending(
+        async fn settle_and_claim(
             &self,
             _worker_id: &LeaseHolder,
-            lease: LeaseTerm,
-            batch_size: NonZeroU32,
-            order: DeliveryClaimOrder,
-            held: &HeldEvents,
-        ) -> Result<Vec<DeliveryClaim>, NotificationError> {
-            if self.claim_state == ClaimState::Refused {
-                return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
-            }
-            let in_flight = self.claims_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            self.peak_claims_in_flight.fetch_max(in_flight, Ordering::SeqCst);
-            round_trip(self.claim_polls).await;
-            self.claims_in_flight.fetch_sub(1, Ordering::SeqCst);
-            self.claimed_with.lock().expect("the test lock is not poisoned").push(lease);
-            self.orders.lock().expect("the test lock is not poisoned").push(order);
-            let width = usize::try_from(batch_size.get()).expect("a claim width within the address width");
-            let mut entries = self.entries.lock().expect("the test lock is not poisoned");
-            let taken = width.min(entries.len());
-            self.calls.lock().expect("the test lock is not poisoned").push(StoreCall::Claim {
-                asked: batch_size.get(),
-                granted: u32::try_from(taken).expect("a granted count within the claim width"),
-            });
-            let claims = entries.drain(..taken).map(|claim| self.hand_over(claim, held)).collect();
-            self.peak_held.fetch_max(held.len(), Ordering::SeqCst);
-            Ok(claims)
-        }
-
-        async fn acknowledge(&self, _worker_id: &LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
-            let in_flight = self.acknowledgements_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            self.peak_acknowledgements_in_flight.fetch_max(in_flight, Ordering::SeqCst);
-            round_trip(self.acknowledgement_polls).await;
-            self.acknowledgements_in_flight.fetch_sub(1, Ordering::SeqCst);
-            self.groups.lock().expect("the test lock is not poisoned").push(settlements.len());
-            self.calls
+            settlements: &[DeliverySettlement],
+            refill: Option<ClaimRequest<'_>>,
+        ) -> Result<SettledRound, NotificationError> {
+            let in_flight = self.rounds_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak_rounds_in_flight.fetch_max(in_flight, Ordering::SeqCst);
+            round_trip(self.round_polls).await;
+            self.rounds_in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.rounds
                 .lock()
                 .expect("the test lock is not poisoned")
-                .extend(settlements.iter().map(|settlement| StoreCall::Acknowledge(settlement.key)));
-            if self.refuses_group() {
-                return Err(NotificationError::Persistence(PersistenceFailure::Unavailable));
-            }
-            Ok(settlements.iter().map(|settlement| self.settle(settlement)).collect())
+                .push((settlements.len(), refill.map(|request| request.width.get())));
+            let answers = self.acknowledge(settlements)?;
+            let claims = refill.map_or_else(|| Ok(Vec::new()), |request| self.claim(request));
+            Ok(SettledRound { answers, claims })
         }
 
         async fn delete_delivered_before(&self, _cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
@@ -1159,13 +1140,9 @@ mod tests {
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
     }
 
-    /// The polls a slow claim stays unanswered for: far more than the
-    /// deliveries it was issued beside take to be sent and acknowledged.
-    const SLOW_CLAIM_POLLS: u32 = 64;
-
-    /// The polls a slow acknowledgement stays unanswered for: far more than
-    /// the attempts in flight beside it take to end.
-    const SLOW_ACKNOWLEDGEMENT_POLLS: u32 = 64;
+    /// The polls a slow round stays unanswered for: far more than the
+    /// attempts in flight beside it take to end.
+    const SLOW_ROUND_POLLS: u32 = 64;
 
     /// A pass opens by claiming one delivery per slot and claims again only
     /// for slots that freed, never more than are free, until a claim finds
@@ -1189,33 +1166,34 @@ mod tests {
         })
     }
 
-    /// The first acknowledgement claims its slot at once. The five that land
-    /// while that claim is in flight wait for it and share one claim of width
-    /// five, issued when it comes back.
+    /// The opening round claims every slot. Delivery 1 ends first and goes
+    /// out alone, claiming its own slot; the five that end while that round is
+    /// in flight go out together and claim their five. The queue runs out
+    /// with the fourth round, so the last one only acknowledges.
     #[test]
-    fn five_acknowledgements_during_a_claim_produce_one_further_claim_of_width_five() -> Result<(), NotificationError> {
+    fn a_round_claims_the_slots_its_own_group_frees() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=12_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_claims(entries));
+            let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 12);
-            pretty_assertions::assert_eq!(store.claim_widths().get(..3), Some([6, 1, 5].as_slice()));
+            pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(6)), (1, Some(1)), (5, Some(5)), (1, Some(1)), (5, None)]);
             pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 12);
             Ok(())
         })
     }
 
     /// The first attempt to end is acknowledged at once. The five that end
-    /// while that acknowledgement is in flight wait for it and share one
-    /// acknowledgement, issued when it comes back.
+    /// while that round is in flight wait for it and share one round, issued
+    /// when it comes back.
     #[test]
-    fn five_settlements_during_an_acknowledgement_produce_one_further_acknowledgement_of_five() -> Result<(), NotificationError> {
+    fn five_settlements_during_a_round_produce_one_further_round_of_five() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, []));
+            let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
                 .execute(Utc::now(), &CancellationToken::new())
@@ -1231,7 +1209,7 @@ mod tests {
     fn attempts_that_end_together_share_the_first_acknowledgement() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, []));
+            let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(6))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
@@ -1242,9 +1220,8 @@ mod tests {
     }
 
     /// The polls every delivery but the first waits before its transport
-    /// answers: fewer than an acknowledgement or a claim stays in flight, so
-    /// the first attempt ends alone and the rest end while its
-    /// acknowledgement is in flight.
+    /// answers: fewer than a round stays in flight, so the first attempt ends
+    /// alone and the rest end while its round is in flight.
     const STAGGER_POLLS: u32 = 8;
 
     /// A transport that answers delivery 1 at once and every other one
@@ -1263,18 +1240,18 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_never_has_two_acknowledgements_in_flight() -> Result<(), NotificationError> {
+    fn a_pass_never_has_two_rounds_in_flight() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=200_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, []));
+            let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(InFlightTransport::default()), waits(), &sized(20))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 200);
-            pretty_assertions::assert_eq!(store.peak_acknowledgements_in_flight.load(Ordering::SeqCst), 1);
+            pretty_assertions::assert_eq!(store.peak_rounds_in_flight.load(Ordering::SeqCst), 1);
             pretty_assertions::assert_eq!(store.group_sizes().iter().sum::<usize>(), 200);
-            let acknowledgements = store.group_sizes().len();
-            assert!(acknowledgements * 4 < 200, "{acknowledgements} acknowledgements for 200 deliveries");
+            let rounds = store.recorded_rounds().len();
+            assert!(rounds * 4 < 200, "{rounds} rounds for 200 deliveries");
             Ok(())
         })
     }
@@ -1306,7 +1283,7 @@ mod tests {
     fn a_group_mixing_every_outcome_records_each_as_it_would_alone() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, [DeliveryKey::from(5_i64)]));
+            let store = Arc::new(RecordingStore::with_slow_rounds(entries, [DeliveryKey::from(5_i64)]));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(Staggered(MixedTransport)), waits(), &sized(5))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
@@ -1328,41 +1305,27 @@ mod tests {
         })
     }
 
-    /// A group the queue failed to record is asked again whole, so none of
-    /// its deliveries is recorded twice and every one is recorded once.
+    /// A round the queue failed to record claimed nothing either, so it is
+    /// asked again whole with its claim: none of its deliveries is recorded
+    /// twice and every one is recorded once.
     #[test]
-    fn a_group_the_queue_failed_to_record_is_asked_again_whole_and_recorded_once() -> Result<(), NotificationError> {
+    fn a_round_the_queue_failed_to_record_is_asked_again_whole_with_its_claim() -> Result<(), NotificationError> {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore {
                 lease_state: LeaseState::UnrecordableOnce,
-                ..RecordingStore::with_slow_acknowledgements(entries, [])
+                ..RecordingStore::with_slow_rounds(entries, [])
             });
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(5))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (5, 0));
-            pretty_assertions::assert_eq!(store.group_sizes(), vec![1, 1, 4]);
+            pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(5)), (1, Some(1)), (1, Some(1)), (4, None)]);
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![5, 1]);
             let mut delivered = store.delivered.lock().expect("the delivered result lock is not poisoned").clone();
             delivered.sort();
             pretty_assertions::assert_eq!(delivered, (1..=5_i64).map(DeliveryKey::from).collect::<Vec<_>>());
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn a_pass_never_has_two_claims_in_flight() -> Result<(), NotificationError> {
-        block_on(async {
-            let entries = (1..=200_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
-            let store = Arc::new(RecordingStore::with_slow_claims(entries));
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(InFlightTransport::default()), waits(), &sized(20))?
-                .execute(Utc::now(), &CancellationToken::new())
-                .await?;
-            pretty_assertions::assert_eq!(outcome.claimed, 200);
-            pretty_assertions::assert_eq!(store.peak_claims_in_flight.load(Ordering::SeqCst), 1);
-            let claims = store.claim_widths().len();
-            assert!(claims * 4 < 200, "{claims} claims for 200 deliveries");
             Ok(())
         })
     }
@@ -1450,7 +1413,8 @@ mod tests {
 
     /// A claim that comes back short means the queue ran out of due
     /// deliveries: the pass claims no more and ends once the deliveries in
-    /// flight are acknowledged.
+    /// flight are acknowledged. It opens with a round that only claims and
+    /// ends with one that only acknowledges.
     #[test]
     fn a_short_claim_ends_the_pass() -> Result<(), NotificationError> {
         block_on(async {
@@ -1461,10 +1425,31 @@ mod tests {
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
-            // Both deliveries end together, so the second claim asks for both slots and comes back with the last one.
-            pretty_assertions::assert_eq!(store.claim_widths(), vec![2, 2]);
+            // Both deliveries end together, so the second round claims both their slots and comes back with the last delivery.
+            pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(2)), (2, Some(2)), (1, None)]);
             Ok(())
         })
+    }
+
+    /// A claim the queue cannot serve once the settlements beside it are
+    /// recorded ends the pass with them recorded, and no later round claims.
+    #[test]
+    fn a_claim_that_fails_after_its_group_is_recorded_ends_the_pass_with_the_group_recorded() -> Result<(), NotificationError> {
+        let store = Arc::new(RecordingStore {
+            claim_state: ClaimState::ServedOnce,
+            ..RecordingStore::with_entries((1..=4_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?)
+        });
+        let outcome = block_on(async {
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(2))?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await
+        });
+        assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
+        pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(2)), (2, Some(2))]);
+        let mut delivered = store.delivered.lock().expect("the delivered result lock is not poisoned").clone();
+        delivered.sort();
+        pretty_assertions::assert_eq!(delivered, vec![DeliveryKey::from(1_i64), DeliveryKey::from(2_i64)]);
+        Ok(())
     }
 
     /// An acknowledgement the queue cannot record ends the pass once every

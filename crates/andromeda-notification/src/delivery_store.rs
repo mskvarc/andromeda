@@ -1,11 +1,11 @@
 //! The notification delivery store port.
 //!
-//! Draining is a lease, not a read: `claim_pending` marks the deliveries it
-//! returns with the claiming worker and a lease deadline, so a second worker
-//! cannot pick them up until that deadline passes. Every later update names the
-//! same worker, so an implementation refuses an acknowledgement from a worker
-//! whose lease has expired instead of letting it overwrite the state of the
-//! worker that reclaimed the delivery.
+//! Draining is a lease, not a read: a claim marks the deliveries it returns
+//! with the claiming worker and a lease deadline, so a second worker cannot
+//! pick them up until that deadline passes. Every later update names the same
+//! worker, so an implementation refuses an acknowledgement from a worker whose
+//! lease has expired instead of letting it overwrite the state of the worker
+//! that reclaimed the delivery.
 //!
 //! Claiming touches deliveries only; the event payload each claimed delivery
 //! carries is joined in afterwards, so the queue scan never reads a snapshot it
@@ -13,14 +13,15 @@
 //! not read at all.
 //!
 //! Deliveries live per context branch: the live branch and every Snapshot
-//! branch keep their own delivery queue. `claim_pending` drains across branches
-//! and reaping sweeps every branch, so neither names one; but a settlement
+//! branch keep their own delivery queue. A claim drains across branches and
+//! reaping sweeps every branch, so neither names one; but a settlement
 //! addresses one delivery, whose identifier is unique only within its branch, so
 //! each [`DeliverySettlement`] names the branch its row lives in.
 //!
-//! The worker acknowledges its settlements in groups: `acknowledge` records a
-//! group in one transaction, so a group either lands whole or not at all, and
-//! a group asked again after a failure records no delivery twice.
+//! The worker goes to the queue in rounds: `settle_and_claim` records a group
+//! of settlements and claims the slots they free in one transaction. The group
+//! either lands whole or not at all, and a round asked again after a failure
+//! records no delivery twice and claims nothing twice.
 //!
 //! An endpoint that fails holds its Subscription's queue: a retryable failure
 //! makes the failed delivery the Subscription's probe, the one delivery of the
@@ -32,70 +33,27 @@
 //! every other Subscription keep the slots.
 
 use crate::{
-    delivery_claim::DeliveryClaim,
-    delivery_claim_order::DeliveryClaimOrder,
-    delivery_lease::LeaseTerm,
+    delivery_round::{ClaimRequest, SettledRound},
     delivery_settlement::DeliverySettlement,
     error::NotificationError,
-    held_events::HeldEvents,
 };
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use std::num::NonZeroU32;
 
 /// Leasing, completing and reaping notification deliveries.
 pub trait DeliveryStore: Send + Sync + 'static {
-    /// Claim up to `batch_size` deliveries that are still queued — neither
-    /// delivered nor exhausted — and claimable, meaning due and either unleased
-    /// or held under an expired lease; lease each claimed delivery to
-    /// `worker_id` for `lease`, and return it joined to its event.
+    /// Record every settlement of `settlements` that `worker_id` still holds
+    /// the lease of, then claim what `refill` asks for, in one transaction.
     ///
-    /// An event `held` already holds for the delivery's branch is handed over
-    /// as it is rather than read again, and every event the claim does read is
-    /// added to `held`, so the deliveries of one event share one payload across
-    /// the claims of a pass.
-    ///
-    /// A delivery whose stored row cannot be read back is returned as
-    /// [`DeliveryClaim::Unreadable`], still leased, rather than failing the
-    /// claim or being left out of it: one unreadable row must not stall every
-    /// other pending notification, and the worker must be able to acknowledge
-    /// it so it is not claimed again at every lease expiry.
-    ///
-    /// `order` decides which due deliveries are taken first:
-    /// [`DeliveryClaimOrder::Queue`] the ones that became claimable first,
-    /// [`DeliveryClaimOrder::FewestInFlight`] those of the Subscriptions with
-    /// the fewest deliveries leased to `worker_id` first, passing over those
-    /// its ceiling excludes.
-    ///
-    /// # Errors
-    ///
-    /// An `Err` means the queue itself could not be claimed from -- the
-    /// database unreachable, a statement refused -- and ends the worker's pass.
-    fn claim_pending<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        worker_id: &'life1 LeaseHolder,
-        lease: LeaseTerm,
-        batch_size: NonZeroU32,
-        order: DeliveryClaimOrder,
-        held: &'life2 HeldEvents,
-    ) -> BoxFuture<'async_trait, Result<Vec<DeliveryClaim>, NotificationError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait;
-
-    /// Record every settlement of `settlements` in one transaction, each
-    /// provided `worker_id` still holds the delivery's lease, and move the
-    /// holds of their Subscriptions with them: a delivered settlement releases
-    /// its Subscription's hold, a failed one takes it and sets the rest of the
-    /// Subscription's queue aside, and an exhausted probe hands the hold to
-    /// the delivery set aside first.
-    ///
-    /// The settlements of one group were in flight together, so no order
-    /// between them is owed: the queue may record them in any order that
-    /// gives each the effect it would have alone.
+    /// Each settlement moves the hold of its Subscription with it: a
+    /// delivered settlement releases its Subscription's hold, a failed one
+    /// takes it and sets the rest of the Subscription's queue aside, and an
+    /// exhausted probe hands the hold to the delivery set aside first. The
+    /// settlements of one group were in flight together, so no order between
+    /// them is owed: the queue may record them in any order that gives each
+    /// the effect it would have alone. The claim comes after them and sees
+    /// the holds as they left them.
     ///
     /// A failure diagnostic arrives already truncated to the bound the schema
     /// accepts, so an implementation stores it verbatim rather than trimming
@@ -104,23 +62,37 @@ pub trait DeliveryStore: Send + Sync + 'static {
     /// delivery out of the claimable set, so a claim need not know the
     /// ceiling either.
     ///
-    /// Returns one answer per settlement, in the order given:
-    /// [`LeaseAcknowledgement::Lost`] for a delivery whose lease lapsed or
-    /// another worker took, which is left as that worker has it.
+    /// The claim takes up to `refill.width` deliveries that are still queued,
+    /// neither delivered nor exhausted, and claimable, meaning due and either
+    /// unleased or held under an expired lease; it leases each to `worker_id`
+    /// for `refill.lease` and returns it joined to its event. A delivery
+    /// whose stored row cannot be read back is returned as
+    /// [`DeliveryClaim::Unreadable`](crate::delivery_claim::DeliveryClaim::Unreadable),
+    /// still leased, rather than failing the claim or being left out of it:
+    /// one unreadable row must not stall every other pending notification,
+    /// and the worker must be able to acknowledge it so it is not claimed
+    /// again at every lease expiry.
+    ///
+    /// A round that asks for no claim acknowledges only, and one with no
+    /// settlements claims only.
     ///
     /// # Errors
     ///
-    /// [`NotificationError::Persistence`] when the group could not be
-    /// recorded; none of it is then.
-    fn acknowledge<'life0, 'life1, 'life2, 'async_trait>(
+    /// [`NotificationError::Persistence`] when the settlements could not be
+    /// recorded; none of them is then, and nothing is claimed. A claim that
+    /// fails once the settlements are recorded is answered in
+    /// [`SettledRound::claims`], with the settlements kept.
+    fn settle_and_claim<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         worker_id: &'life1 LeaseHolder,
         settlements: &'life2 [DeliverySettlement],
-    ) -> BoxFuture<'async_trait, Result<Vec<LeaseAcknowledgement>, NotificationError>>
+        refill: Option<ClaimRequest<'life3>>,
+    ) -> BoxFuture<'async_trait, Result<SettledRound, NotificationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Reap deliveries acknowledged before `cutoff`, then the events no

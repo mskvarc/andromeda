@@ -25,13 +25,15 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::statement::Statement;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement};
-use sqlx::{Row, postgres::PgPool};
+use sqlx::{PgExecutor, Row};
 
 /// The branches a per-branch drain sweeps: the live branch, then every
 /// current Snapshot branch published under `snap_<snapshot_key>`.
 ///
 /// The pending-work probe reads the same branches, so a dormant tenant is woken
-/// for exactly the deliveries its drain would claim.
+/// for exactly the deliveries its drain would claim. A claim reads them inside
+/// the transaction of its round, the probe and the reapers straight from the
+/// pool.
 ///
 /// # Errors
 ///
@@ -39,8 +41,8 @@ use sqlx::{Row, postgres::PgPool};
 /// [`ContextStoreError::BranchVersion`] when the embedded branch migration set
 /// has no version, or [`ContextStoreError::StoredSnapshot`] when a stored Snapshot key or URI cannot
 /// be read back as its domain type.
-pub(crate) async fn drainable_targets(pool: &PgPool) -> Result<Vec<ContextTarget>, ContextStoreError> {
-    let rows = drainable_snapshots_statement(current_branch_version()?).to_query().fetch_all(pool).await?;
+pub(crate) async fn drainable_targets<'c>(executor: impl PgExecutor<'c>) -> Result<Vec<ContextTarget>, ContextStoreError> {
+    let rows = drainable_snapshots_statement(current_branch_version()?).to_query().fetch_all(executor).await?;
 
     let mut targets = Vec::with_capacity(rows.len() + 1);
     targets.push(ContextTarget::Live);

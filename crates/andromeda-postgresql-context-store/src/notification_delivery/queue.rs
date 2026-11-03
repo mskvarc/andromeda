@@ -2,36 +2,35 @@
 //!
 //! The port speaks one claimed delivery and the event it carries; storage keeps
 //! those as two rows, and a claim reads its deliveries and then, once each, the
-//! events they answer that the claiming pass does not already hold. The statements below it know nothing of the port, and the
-//! delivery worker above it knows nothing of the two reads.
+//! events they answer that the claiming pass does not already hold. The
+//! statements below it know nothing of the port, and the delivery worker above
+//! it knows nothing of the two reads.
 
 use crate::{
     notification_delivery::{
-        acknowledge,
-        claim::{self, ClaimTerms},
+        claim::ClaimTerms,
         claimed_event_read::ClaimDictionaries,
         cleanup,
+        round::{self, RoundClaim},
         rows::UnreadableClaimedDelivery,
     },
     store_fault::persistence_failure,
 };
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_notification::{
     delivery_claim::{DeliveryClaim, UnreadableDelivery},
-    delivery_claim_order::DeliveryClaimOrder,
     delivery_entry::DeliveryEntry,
-    delivery_lease::LeaseTerm,
+    delivery_round::{ClaimRequest, SettledRound},
     delivery_settlement::DeliverySettlement,
     delivery_store::DeliveryStore,
     error::NotificationError,
-    held_events::HeldEvents,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
-use std::{num::NonZeroU32, sync::Arc};
+use std::sync::Arc;
 
 /// One tenant's notification delivery queue.
 #[derive(Debug)]
@@ -65,38 +64,35 @@ impl NotificationDeliveryQueue {
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
-    async fn claim_pending(
+    async fn settle_and_claim(
         &self,
         worker_id: &LeaseHolder,
-        lease: LeaseTerm,
-        batch_size: NonZeroU32,
-        order: DeliveryClaimOrder,
-        held: &HeldEvents,
-    ) -> Result<Vec<DeliveryClaim>, NotificationError> {
+        settlements: &[DeliverySettlement],
+        refill: Option<ClaimRequest<'_>>,
+    ) -> Result<SettledRound, NotificationError> {
         let dictionaries = ClaimDictionaries {
             attribute_names: self.attribute_names.as_ref(),
             entity_type_names: self.entity_type_names.as_ref(),
         };
-        let claimed = claim::claim_due(
-            &self.pool,
-            dictionaries,
-            ClaimTerms {
+        let claim = refill.map(|request| RoundClaim {
+            terms: ClaimTerms {
                 worker_id: *worker_id,
-                lease,
-                order,
+                lease: request.lease,
+                order: request.order,
             },
-            batch_size,
-            held,
-        )
-        .await
-        .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
-        Ok(claimed.into_iter().map(delivery_claim).collect())
-    }
-
-    async fn acknowledge(&self, worker_id: &LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
-        acknowledge::acknowledge(&self.pool, *worker_id, settlements)
+            width: request.width,
+            held: request.held,
+        });
+        let round = round::settle_and_claim(&self.pool, dictionaries, *worker_id, settlements, claim)
             .await
-            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
+            .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))?;
+        Ok(SettledRound {
+            answers: round.answers,
+            claims: round
+                .claimed
+                .map(|claimed| claimed.into_iter().map(delivery_claim).collect())
+                .map_err(|error| NotificationError::Persistence(persistence_failure(&error))),
+        })
     }
 
     async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {

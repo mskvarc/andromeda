@@ -8,6 +8,9 @@
 //! cross-branch join to recover which Snapshot a delivery belongs to, because
 //! the branch being drained already names it.
 //!
+//! A claim runs inside the transaction of the round that records the
+//! settlements beside it, after them, so it sees the holds they left.
+//!
 //! A Snapshot branch is claimed only while its control record is key-share
 //! locked. Deleting, expiring or evicting a Snapshot locks that record `FOR
 //! UPDATE` before `DROP SCHEMA ... CASCADE` takes each branch relation in its
@@ -15,12 +18,15 @@
 //! would hold some of them while the drop held others, a cycle PostgreSQL
 //! breaks by aborting one side. Taking the record first orders the two
 //! instead: a claim waits out a drop in flight and then finds the record gone,
-//! and a drop waits out a claim in flight.
+//! and a drop waits out a claim in flight. Settlements recorded on a Snapshot
+//! branch earlier in the same round touched its relations before the record,
+//! so a drop in flight can abort that branch's claim; its savepoint rolls back
+//! alone and the pass ends with the settlements recorded.
 
 use crate::{
     error::ContextStoreError,
     notification_delivery::{
-        branches::{drainable_targets, is_reaped_branch},
+        branches::is_reaped_branch,
         claimed_event_read::{ClaimDictionaries, ClaimedEventRead},
         fewest_in_flight::fewest_in_flight_candidates,
         rows::{RawClaimedDeliveryRow, UnreadableClaimedDelivery},
@@ -43,47 +49,56 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use sea_query::{Condition, Expr, ExprTrait, Iden, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use sqlx::{Postgres, Transaction, postgres::PgPool};
+use sqlx::{Acquire, Postgres, Transaction};
 use std::num::NonZeroU32;
 
-/// Claim up to `batch_size` due deliveries under `terms`, sweeping the live
-/// branch and every Snapshot branch until the batch is filled.
+/// Claim up to `batch_size` due deliveries under `terms` inside the round's
+/// transaction `tx`, sweeping `targets` in turn until the batch is filled.
 ///
-/// An event the claiming pass already holds in `held` is handed over without
-/// being read, and every event the claim reads is added to `held`.
+/// Each branch is claimed under a savepoint of its own, so a branch that
+/// fails rolls back its claim alone and leaves what the transaction recorded
+/// before it. A branch reaped between the enumeration and its claim (a
+/// Snapshot deleted concurrently) shows up as a missing schema and is skipped
+/// -- its notifications are moot once the branch is gone. Any other failure
+/// ends the claim, with the transaction still able to commit what it recorded.
 ///
-/// Each branch is drained in turn against the remaining budget. A branch reaped
-/// between the enumeration and its claim (a Snapshot deleted concurrently) shows
-/// up as a missing schema and is skipped -- its notifications are moot once the
-/// branch is gone.
+/// The events the claimed deliveries answer are read inside the transaction
+/// but assembled only once it commits, by [`ClaimedBranch::assemble`].
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
-/// other than a reaped branch, [`ContextStoreError::NameLookup`] when a
-/// dictionary cannot be read, or [`ContextStoreError::StoredSnapshot`] when the
-/// branch enumeration cannot read back a stored Snapshot identity. A single
-/// unreadable row is reported inside the returned vector, still leased and
-/// naming its branch and key, rather than as a failure of the claim.
-pub async fn claim_due(
-    pool: &PgPool,
-    dictionaries: ClaimDictionaries<'_>,
+/// other than a reaped branch.
+pub(crate) async fn claim_due(
+    tx: &mut Transaction<'_, Postgres>,
+    targets: Vec<ContextTarget>,
     terms: ClaimTerms,
     batch_size: NonZeroU32,
     held: &HeldEvents,
-) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
-    let mut results = Vec::new();
-    for target in drainable_targets(pool).await? {
-        let Some(remaining) = unclaimed(batch_size, results.len()) else {
+) -> Result<Vec<ClaimedBranch>, ContextStoreError> {
+    let mut branches = Vec::new();
+    let mut claimed = 0_usize;
+    for target in targets {
+        let Some(remaining) = unclaimed(batch_size, claimed) else {
             break;
         };
-        match claim_branch(pool, dictionaries, &target, terms, remaining, held).await {
-            Ok(claimed) => results.extend(claimed),
-            Err(error) if is_reaped_branch(&error) => {}
-            Err(error) => return Err(error),
+        let mut savepoint = Acquire::begin(&mut *tx).await?;
+        match claim_branch(&mut savepoint, target, terms, remaining, held).await {
+            Ok(branch) => {
+                savepoint.commit().await?;
+                if let Some(branch) = branch {
+                    claimed = claimed.saturating_add(branch.deliveries.len());
+                    branches.push(branch);
+                }
+            }
+            Err(error) if is_reaped_branch(&error) => savepoint.rollback().await?,
+            Err(error) => {
+                savepoint.rollback().await?;
+                return Err(error);
+            }
         }
     }
-    Ok(results)
+    Ok(branches)
 }
 
 /// Who a claim leases its deliveries to, for how long, and in which order it
@@ -98,6 +113,36 @@ pub struct ClaimTerms {
     pub order: DeliveryClaimOrder,
 }
 
+/// The deliveries one branch's claim leased and the events it read for them,
+/// waiting for the round's transaction to commit.
+pub(crate) struct ClaimedBranch {
+    /// The branch the deliveries live in.
+    target: ContextTarget,
+    /// The leased rows, in claim order.
+    deliveries: Vec<RawClaimedDeliveryRow>,
+    /// The events the rows answer that the pass did not already hold.
+    read: ClaimedEventRead,
+}
+
+impl ClaimedBranch {
+    /// Decode the events read, add them to `held`, and join each leased row
+    /// to its event, or report it unreadable, still leased.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError::NameLookup`] when a dictionary cannot be
+    /// read.
+    pub(crate) async fn assemble(
+        self,
+        dictionaries: ClaimDictionaries<'_>,
+        held: &HeldEvents,
+    ) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
+        let ClaimedBranch { target, deliveries, read } = self;
+        let events = read.assemble(dictionaries, held, &target).await?;
+        Ok(deliveries.into_iter().map(|delivery| delivery.into_entry(&events, &target)).collect())
+    }
+}
+
 /// The part of `batch_size` the `claimed` deliveries leave, or `None` once
 /// they fill it.
 fn unclaimed(batch_size: NonZeroU32, claimed: usize) -> Option<NonZeroU32> {
@@ -105,38 +150,32 @@ fn unclaimed(batch_size: NonZeroU32, claimed: usize) -> Option<NonZeroU32> {
     NonZeroU32::new(batch_size.get().saturating_sub(claimed))
 }
 
-/// Claim and read back up to `batch_size` due deliveries from one branch,
-/// reading only the events `held` does not already hold.
+/// Claim up to `batch_size` due deliveries from one branch under the
+/// savepoint `tx`, and read the events they answer that `held` does not
+/// already hold; `None` when the branch had none to give.
 async fn claim_branch(
-    pool: &PgPool,
-    dictionaries: ClaimDictionaries<'_>,
-    target: &ContextTarget,
+    tx: &mut Transaction<'_, Postgres>,
+    target: ContextTarget,
     terms: ClaimTerms,
     batch_size: NonZeroU32,
     held: &HeldEvents,
-) -> Result<Vec<Result<DeliveryEntry, Box<UnreadableClaimedDelivery>>>, ContextStoreError> {
-    let mut tx = pool.begin().await?;
+) -> Result<Option<ClaimedBranch>, ContextStoreError> {
     if let Some(snapshot) = target.snapshot()
-        && hold_snapshot_record(&mut tx, snapshot).await? == SnapshotRecord::Reaped
+        && hold_snapshot_record(tx, snapshot).await? == SnapshotRecord::Reaped
     {
-        tx.commit().await?;
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
-    let claim = claim_statement(target, terms.worker_id, batch_size, terms.order, f64::from(terms.lease.seconds()))
+    let claim = claim_statement(&target, terms.worker_id, batch_size, terms.order, f64::from(terms.lease.seconds()))
         .to_query_as()
-        .fetch_all(&mut *tx);
+        .fetch_all(&mut **tx);
     let deliveries: Vec<RawClaimedDeliveryRow> = observe_statement(ObservedStatement::NotificationDeliveryClaim, claim).await?;
     if deliveries.is_empty() {
-        tx.commit().await?;
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
-    let read = ClaimedEventRead::read(&mut tx, target, deliveries.iter().map(|delivery| delivery.event_key), held).await?;
-
-    tx.commit().await?;
-    let events = read.assemble(dictionaries, held, target).await?;
-    Ok(deliveries.into_iter().map(|delivery| delivery.into_entry(&events, target)).collect())
+    let read = ClaimedEventRead::read(tx, &target, deliveries.iter().map(|delivery| delivery.event_key), held).await?;
+    Ok(Some(ClaimedBranch { target, deliveries, read }))
 }
 
 /// Whether a Snapshot's control record still existed when a claim locked it.

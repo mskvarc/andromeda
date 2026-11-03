@@ -1,19 +1,21 @@
-//! Recording the outcomes of the deliveries the worker leased.
+//! Recording the outcomes of the deliveries the worker leased, beside the
+//! claim that refills their slots.
 //!
-//! A group the store failed to record leaves its deliveries leased and
+//! A round the store failed to record leaves its deliveries leased and
 //! unacknowledged, so once a lease lapses another worker claims the delivery
 //! and attempts it again: a notification the endpoint already accepted would
 //! be sent a second time, which clause 5.8.6 does not owe the subscriber. A
 //! transient store failure (an exhausted pool, a dropped connection) is
 //! therefore asked again while the leases can still hold. The store records a
-//! group whole or not at all, so asking again records no delivery twice, and
-//! its lease guard ends the retry by itself once a lease lapses, answering
-//! that the lease was lost; the bound on requests only stops a worker from
-//! asking a store that keeps failing for longer than any lease it holds could
-//! last.
+//! round whole or not at all, so asking again records no delivery twice and
+//! claims nothing twice, and its lease guard ends the retry by itself once a
+//! lease lapses, answering that the lease was lost; the bound on requests
+//! only stops a worker from asking a store that keeps failing for longer than
+//! any lease it holds could last.
 
 use crate::{
     delivery_lease::LeaseTerm,
+    delivery_round::{ClaimRequest, SettledRound},
     delivery_settlement::{DeliverySettlement, DeliveryVerdict},
     delivery_store::DeliveryStore,
     error::NotificationError,
@@ -24,7 +26,7 @@ use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use std::{iter::successors, num::NonZeroU32, sync::Arc, time::Duration};
 use tracing::warn;
 
-/// The wait before each further request to record a group: a tenth of a
+/// The wait before each further request to record a round: a tenth of a
 /// second, doubling up to two seconds.
 const ACKNOWLEDGEMENT_BACKOFF: BackoffSchedule = BackoffSchedule::new(Duration::from_millis(100), Duration::from_secs(2), Growth::Doubling);
 
@@ -35,9 +37,9 @@ pub(crate) struct DeliveryAcknowledgement {
     store: Arc<dyn DeliveryStore>,
     /// The worker every lease being acknowledged was taken by.
     worker_id: LeaseHolder,
-    /// The timer waited on between requests to record one group.
+    /// The timer waited on between requests to record one round.
     delay: Arc<dyn RetryDelay>,
-    /// How often one group is asked for, as many times as the lease term
+    /// How often one round is asked for, as many times as the lease term
     /// leaves room for.
     retry: RetryPolicy,
 }
@@ -54,17 +56,21 @@ impl DeliveryAcknowledgement {
         }
     }
 
-    /// Record `settlements` as one group, asking again after a transient
-    /// failure as often as the lease leaves room for, and count each once the
-    /// store answers.
+    /// Record `settlements` as one group and claim what `refill` asks for,
+    /// asking again with both after a transient failure as often as the lease
+    /// leaves room for, and count each settlement once the store answers.
     ///
-    /// Returns one answer per settlement, in order. A lost lease is the
+    /// The answers name one per settlement, in order. A lost lease is the
     /// store's answer rather than a failure: the delivery was reclaimed by
     /// another worker, which is now responsible for sending it, so the pass
     /// records the loss and moves on. The last failure of a store that fails
     /// every request is surfaced, for the task supervisor to see.
-    pub(crate) async fn record(&self, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
-        let answers = self
+    pub(crate) async fn settle_and_claim(
+        &self,
+        settlements: &[DeliverySettlement],
+        refill: Option<ClaimRequest<'_>>,
+    ) -> Result<SettledRound, NotificationError> {
+        let round = self
             .retry
             .run(
                 self.delay.as_ref(),
@@ -88,11 +94,11 @@ impl DeliveryAcknowledgement {
                     | NotificationError::Rendering(_)
                     | NotificationError::Invariant(_) => false,
                 },
-                async |_| self.store.acknowledge(&self.worker_id, settlements).await,
+                async |_| self.store.settle_and_claim(&self.worker_id, settlements, refill).await,
             )
             .await?;
-        self.count(settlements, &answers);
-        Ok(answers)
+        self.count(settlements, &round.answers);
+        Ok(round)
     }
 
     /// Report each lost lease and count every settlement under the queue
@@ -115,7 +121,7 @@ impl DeliveryAcknowledgement {
     }
 }
 
-/// The retry recording one group runs under, for deliveries leased for
+/// The retry recording one round runs under, for deliveries leased for
 /// `lease`: the first request, and one more after each backoff wait that still
 /// ends within the term.
 pub(crate) fn acknowledgement_retry(lease: LeaseTerm) -> RetryPolicy {

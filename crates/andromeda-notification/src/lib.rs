@@ -19,8 +19,6 @@ pub mod csource_processor;
 mod csource_transition;
 /// Recording the outcomes of leased deliveries, asked again while their leases can hold.
 mod delivery_acknowledgement;
-/// When a delivery pass acknowledges, and which settlements go together.
-mod delivery_acknowledgement_group;
 /// Sending one claimed delivery and deciding how the queue settles it.
 mod delivery_attempt;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
@@ -45,12 +43,16 @@ pub mod delivery_lease;
 pub mod delivery_policy;
 /// Whether the queue may still supply due deliveries to a delivery pass.
 mod delivery_queue_supply;
-/// Whether a delivery pass is waiting on one of its requests to the queue.
+/// What one round trip to the delivery queue asks for and answers.
+pub mod delivery_round;
+/// When a delivery pass goes to the queue, with which settlements and for how many slots.
+mod delivery_round_plan;
+/// Whether a delivery pass is waiting on its round trip to the queue.
 mod delivery_round_trip;
 /// What a worker records of one delivery it leased once the attempt ends.
 pub mod delivery_settlement;
-/// When a delivery pass claims again, and for how many of its slots.
-mod delivery_slot_refill;
+/// What finishes in the in-flight set of a delivery pass.
+mod delivery_slot_event;
 /// How the slots of a delivery pass are shared between Subscriptions.
 mod delivery_slot_share;
 /// Notification delivery queue persistence.

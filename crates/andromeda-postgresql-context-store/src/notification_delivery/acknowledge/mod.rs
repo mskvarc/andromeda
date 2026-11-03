@@ -2,11 +2,11 @@
 //! time.
 //!
 //! A worker hands over the settlements of the deliveries whose attempts ended
-//! while its previous acknowledgement was in flight, and the whole group is
-//! recorded in one transaction: per branch, one set-based statement for each
-//! kind of settlement the group holds, then the hold changes those
-//! statements call for. A group that fails is rolled back whole, so the
-//! worker can ask again without recording any delivery twice.
+//! while its previous round was in flight, and the whole group is recorded in
+//! the round's transaction: per branch, one set-based statement for each kind
+//! of settlement the group holds, then the hold changes those statements call
+//! for. A group that fails rolls the round back whole, so the worker can ask
+//! again without recording any delivery twice.
 //!
 //! Every statement is guarded by the claim each row was taken under (see
 //! [`statements`]): a row this worker no longer leases is left as the worker
@@ -43,7 +43,7 @@ use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use sqlx::postgres::{PgConnection, PgPool};
+use sqlx::postgres::PgConnection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The settlements of one group on one branch, by kind.
@@ -80,16 +80,21 @@ impl<'a> BranchSettlements<'a> {
 }
 
 /// Record every settlement of `settlements` that `worker_id` still holds the
-/// lease of, in one transaction, and move the holds of their Subscriptions.
+/// lease of, on `connection` inside the caller's transaction, and move the
+/// holds of their Subscriptions.
 ///
 /// Returns one answer per settlement, in order.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when a statement fails, and
-/// [`ContextStoreError::StatementBuild`] when one cannot be built; nothing of
-/// the group is recorded then.
-pub async fn acknowledge(pool: &PgPool, worker_id: LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, ContextStoreError> {
+/// [`ContextStoreError::StatementBuild`] when one cannot be built; the
+/// transaction is then left for the caller to roll back.
+pub(crate) async fn record_settlements(
+    connection: &mut PgConnection,
+    worker_id: LeaseHolder,
+    settlements: &[DeliverySettlement],
+) -> Result<Vec<LeaseAcknowledgement>, ContextStoreError> {
     let mut branches: IndexMap<&ContextTarget, BranchSettlements<'_>> = IndexMap::new();
     for settlement in settlements {
         branches
@@ -98,17 +103,15 @@ pub async fn acknowledge(pool: &PgPool, worker_id: LeaseHolder, settlements: &[D
             .add(settlement.key.into_inner(), &settlement.verdict);
     }
     let mut recorded: HashSet<(&ContextTarget, i64)> = HashSet::new();
-    let mut tx = pool.begin().await?;
     for (target, branch) in branches {
         let next_probes = branch.next_probes;
-        let keys = record_delivered(&mut tx, target, worker_id, branch.delivered).await?;
+        let keys = record_delivered(connection, target, worker_id, branch.delivered).await?;
         recorded.extend(keys.into_iter().map(|key| (target, key)));
-        let keys = record_failed(&mut tx, target, worker_id, branch.failed).await?;
+        let keys = record_failed(connection, target, worker_id, branch.failed).await?;
         recorded.extend(keys.into_iter().map(|key| (target, key)));
-        let keys = record_exhausted(&mut tx, target, worker_id, branch.exhausted, &next_probes).await?;
+        let keys = record_exhausted(connection, target, worker_id, branch.exhausted, &next_probes).await?;
         recorded.extend(keys.into_iter().map(|key| (target, key)));
     }
-    tx.commit().await?;
     Ok(settlements
         .iter()
         .map(|settlement| {

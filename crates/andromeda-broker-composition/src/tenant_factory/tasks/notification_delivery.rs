@@ -246,16 +246,13 @@ mod tests {
     use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
     use andromeda_notification::{
-        delivery_claim::DeliveryClaim,
-        delivery_claim_order::DeliveryClaimOrder,
         delivery_drain::NotificationDeliveryDrain,
         delivery_entry::DeliveryEntry,
-        delivery_lease::LeaseTerm,
+        delivery_round::{ClaimRequest, SettledRound},
         delivery_settlement::DeliverySettlement,
         delivery_store::DeliveryStore,
         delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
         error::NotificationError,
-        held_events::HeldEvents,
     };
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
@@ -264,7 +261,6 @@ mod tests {
     use chrono::{DateTime, Utc};
     use futures::future::BoxFuture;
     use std::{
-        num::NonZeroU32,
         sync::{
             Arc,
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -301,19 +297,16 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for CountingQueue {
-        async fn claim_pending(
+        async fn settle_and_claim(
             &self,
             _worker_id: &LeaseHolder,
-            _lease: LeaseTerm,
-            _batch_size: NonZeroU32,
-            _order: DeliveryClaimOrder,
-            _held: &HeldEvents,
-        ) -> Result<Vec<DeliveryClaim>, NotificationError> {
-            Ok(Vec::new())
-        }
-
-        async fn acknowledge(&self, _worker_id: &LeaseHolder, settlements: &[DeliverySettlement]) -> Result<Vec<LeaseAcknowledgement>, NotificationError> {
-            Ok(vec![LeaseAcknowledgement::Applied; settlements.len()])
+            settlements: &[DeliverySettlement],
+            _refill: Option<ClaimRequest<'_>>,
+        ) -> Result<SettledRound, NotificationError> {
+            Ok(SettledRound {
+                answers: vec![LeaseAcknowledgement::Applied; settlements.len()],
+                claims: Ok(Vec::new()),
+            })
         }
 
         async fn delete_delivered_before(&self, _cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {

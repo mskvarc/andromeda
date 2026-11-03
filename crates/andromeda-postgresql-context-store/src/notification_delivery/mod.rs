@@ -38,6 +38,8 @@ pub(crate) mod fewest_in_flight;
 pub(crate) mod hold;
 /// The queue behind the notification-owned store port.
 pub mod queue;
+/// One worker round: recording settlements and claiming the slots they free.
+pub(crate) mod round;
 /// Validated notification delivery records and their mapper errors.
 pub mod rows;
 /// Reading back one stored entity change.
