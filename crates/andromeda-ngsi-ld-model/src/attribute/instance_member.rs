@@ -321,14 +321,15 @@ pub(crate) fn refused_member<'n, N: CompactNode<'n>>(member: RefusedMember, refu
 /// when the member does not decode as a `T`, and the node's
 /// [`CompactNode::Unreadable`].
 pub(crate) fn present_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(member: N, name: RefusedMember) -> Result<T, ReadError<'n, N>> {
-    match member.shape() {
-        NodeShape::Null => Err(NodeRefusal::Null.into()),
-        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
-            decoded(member)
-                .map_err(NodeReadError::Unreadable)?
-                .map_err(|source| NodeRefusal::Member { member: name, source }.into())
-        }
+    // The shape of an array or an object holds a node per item, so it is
+    // dropped before the member is decoded: held across the decode, it would
+    // add the member's size to the decoded value's.
+    if matches!(member.shape(), NodeShape::Null) {
+        return Err(NodeRefusal::Null.into());
     }
+    decoded(member)
+        .map_err(NodeReadError::Unreadable)?
+        .map_err(|source| NodeRefusal::Member { member: name, source }.into())
 }
 
 /// Decode an optional member, located at it: absent is no value.

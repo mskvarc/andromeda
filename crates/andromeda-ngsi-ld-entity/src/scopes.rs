@@ -5,10 +5,12 @@
 //! or at least one path. The NGSI-LD Null is a deletion instruction, never a
 //! scope, and [`ScopePath`] already refuses it.
 
-use crate::non_empty::{EmptyCollection, NonEmpty};
+use crate::{
+    distinct_paths::DistinctPaths,
+    non_empty::{EmptyCollection, NonEmpty},
+};
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use derive_more::{AsRef, Deref};
-use indexmap::IndexSet;
 
 /// One or more scope paths, in order, each at most once.
 #[derive(AsRef, Clone, Debug, Deref, Eq, PartialEq)]
@@ -30,8 +32,18 @@ impl Scopes {
     ///
     /// Returns [`EmptyCollection`] when `paths` is empty.
     pub fn try_from_paths(paths: impl IntoIterator<Item = ScopePath>) -> Result<Scopes, EmptyCollection> {
-        let distinct: IndexSet<ScopePath> = paths.into_iter().collect();
-        NonEmpty::try_from_vec(distinct.into_iter().collect()).map(Scopes)
+        Scopes::try_from_distinct(paths.into_iter().collect())
+    }
+
+    /// Hold the paths of `distinct`, in the order they were first inserted. A
+    /// reader that de-duplicates as it reads hands its paths over here, so no
+    /// second copy of them is built to find the repeats.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyCollection`] when `distinct` is empty.
+    pub fn try_from_distinct(distinct: DistinctPaths) -> Result<Scopes, EmptyCollection> {
+        NonEmpty::try_from_vec(distinct.into_vec()).map(Scopes)
     }
 
     /// Add the paths this set lacks, in the order given (the clause 5.6.3.4

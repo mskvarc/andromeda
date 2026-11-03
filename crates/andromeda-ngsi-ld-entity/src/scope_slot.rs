@@ -9,7 +9,7 @@
 //! member (the expanded document, the stored entity, a reified Scope, the
 //! compact request model) hands its items here, so the rule is read once.
 
-use crate::{document::slot::Slot, scope_refusal::ScopeRefusal, scopes::Scopes};
+use crate::{distinct_paths::DistinctPaths, document::slot::Slot, scope_refusal::ScopeRefusal, scopes::Scopes};
 use andromeda_ngsi_ld_lexicon::scope::path::{ScopePath, ScopePathError};
 
 /// One item of a `scope` member, as its holder reads it.
@@ -32,29 +32,66 @@ pub enum ScopeItem<'a> {
 /// for the Null beside a path, [`ScopeRefusal::RepeatedNull`] for the Null
 /// stated twice, and [`ScopeRefusal::Empty`] for no item at all.
 pub fn scope_slot<'a>(items: impl IntoIterator<Item = ScopeItem<'a>>) -> Result<Slot<Scopes>, ScopeRefusal> {
-    let mut paths = Vec::new();
-    let mut deletions = 0_usize;
+    let mut reading = ScopeReading::default();
     for item in items {
+        reading.read(item)?;
+    }
+    reading.finish()
+}
+
+/// The items of a `scope` member read so far, each path held once.
+///
+/// A holder that meets its items one at a time (a deserializer) reads them
+/// here as they arrive, so the member is never staged whole before its paths
+/// are found.
+#[derive(Debug, Default)]
+pub struct ScopeReading {
+    /// The distinct paths, in the order they were first read.
+    paths: DistinctPaths,
+    /// The Null items read.
+    deletions: usize,
+}
+
+impl ScopeReading {
+    /// Read one more item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScopeRefusal::NotAString`] for an item that is not a string
+    /// and [`ScopeRefusal::NotAScopePath`] for a string outside the clause
+    /// 4.18 grammar.
+    pub fn read(&mut self, item: ScopeItem<'_>) -> Result<(), ScopeRefusal> {
         match item {
-            ScopeItem::Null => deletions += 1,
+            ScopeItem::Null => self.deletions += 1,
             // The one scope parser tells the Null spelled as text apart, so a
             // reader need not test for its spelling before handing the text
             // over.
             ScopeItem::Text(text) => match text.parse::<ScopePath>() {
-                Ok(path) => paths.push(path),
-                Err(ScopePathError::NullSentinel) => deletions += 1,
+                Ok(path) => self.paths.insert(path),
+                Err(ScopePathError::NullSentinel) => self.deletions += 1,
                 Err(source @ (ScopePathError::Malformed | ScopePathError::LevelTooLong(_) | ScopePathError::PathTooLong(_))) => {
                     return Err(ScopeRefusal::NotAScopePath { source });
                 }
             },
             ScopeItem::NotAString => return Err(ScopeRefusal::NotAString),
         }
+        Ok(())
     }
-    match (deletions, paths.is_empty()) {
-        (0, _) => Scopes::try_from_paths(paths).map(Slot::Set).map_err(|_| ScopeRefusal::Empty),
-        (_, false) => Err(ScopeRefusal::NullBesidePath),
-        (1, true) => Ok(Slot::Remove),
-        (_, true) => Err(ScopeRefusal::RepeatedNull),
+
+    /// The paths read, or the deletion the Null alone states.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScopeRefusal::NullBesidePath`] for the Null beside a path,
+    /// [`ScopeRefusal::RepeatedNull`] for the Null stated twice, and
+    /// [`ScopeRefusal::Empty`] for no item at all.
+    pub fn finish(self) -> Result<Slot<Scopes>, ScopeRefusal> {
+        match (self.deletions, self.paths.is_empty()) {
+            (0, _) => Scopes::try_from_distinct(self.paths).map(Slot::Set).map_err(|_| ScopeRefusal::Empty),
+            (_, false) => Err(ScopeRefusal::NullBesidePath),
+            (1, true) => Ok(Slot::Remove),
+            (_, true) => Err(ScopeRefusal::RepeatedNull),
+        }
     }
 }
 

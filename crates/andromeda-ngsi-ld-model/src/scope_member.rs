@@ -7,22 +7,26 @@
 //! request decoded into this model meets exactly the grammar, bounds, Null rule
 //! and de-duplication every other reader applies.
 
-use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_entity::{
     document::slot::Slot,
-    scope_refusal::ScopeRefusal,
-    scope_slot::{ScopeItem, scope_slot},
+    scope_slot::{ScopeItem, ScopeReading},
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use derive_more::From;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
+    de::{DeserializeSeed, Error as DeserializeError, SeqAccess, Visitor},
+};
+use std::fmt;
 
 /// The `scope` member as a compact request or response writes it: the Scopes
 /// it states, or their deletion.
-#[derive(Clone, Debug, Deserialize, Eq, From, PartialEq)]
-#[serde(try_from = "OneOrMany<String>")]
+#[derive(Clone, Debug, Eq, From, PartialEq)]
 pub struct ScopeMember(Slot<Scopes>);
 
 impl ScopeMember {
@@ -33,17 +37,59 @@ impl ScopeMember {
     }
 }
 
-// Clause 4.18 writes one Scope as a string and several as an array of
-// strings; each item is then read as every other reader reads it.
-impl TryFrom<OneOrMany<String>> for ScopeMember {
-    type Error = ScopeRefusal;
+// Hand-written: clause 4.18 writes one Scope as a string and several as an
+// array of strings, and each item is read as every other reader reads it the
+// moment it arrives. A derived reading stages the strings of the member whole
+// before any path is found, which costs the member's size again.
+impl<'de> Deserialize<'de> for ScopeMember {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ScopeMember, D::Error> {
+        deserializer.deserialize_any(ScopeMemberVisitor)
+    }
+}
 
-    fn try_from(written: OneOrMany<String>) -> Result<ScopeMember, ScopeRefusal> {
-        match written {
-            OneOrMany::One(item) => scope_slot([ScopeItem::Text(&item)]),
-            OneOrMany::Many(items) => scope_slot(items.iter().map(|item| ScopeItem::Text(item))),
-        }
-        .map(ScopeMember)
+/// Reads a string as one Scope and an array of strings as several.
+struct ScopeMemberVisitor;
+
+impl<'de> Visitor<'de> for ScopeMemberVisitor {
+    type Value = ScopeMember;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string or an array of strings")
+    }
+
+    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<ScopeMember, E> {
+        let mut reading = ScopeReading::default();
+        reading.read(ScopeItem::Text(text)).map_err(E::custom)?;
+        reading.finish().map(ScopeMember).map_err(E::custom)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<ScopeMember, A::Error> {
+        let mut reading = ScopeReading::default();
+        while items.next_element_seed(ScopeElement(&mut reading))?.is_some() {}
+        reading.finish().map(ScopeMember).map_err(A::Error::custom)
+    }
+}
+
+/// One string of a `scope` array, read into the member as it is met.
+struct ScopeElement<'r>(&'r mut ScopeReading);
+
+impl<'de> DeserializeSeed<'de> for ScopeElement<'_> {
+    type Value = ();
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_str(self)
+    }
+}
+
+impl Visitor<'_> for ScopeElement<'_> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string")
+    }
+
+    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<(), E> {
+        self.0.read(ScopeItem::Text(text)).map_err(E::custom)
     }
 }
 

@@ -29,6 +29,7 @@ pub mod attributes;
 pub mod codec;
 pub mod committed_values;
 pub mod conversion;
+pub mod distinct_paths;
 pub mod document;
 pub mod entity_state;
 pub mod entity_types;

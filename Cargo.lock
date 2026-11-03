@@ -1209,6 +1209,7 @@ dependencies = [
  "chrono",
  "compact_str",
  "derive_more",
+ "hashbrown 0.17.1",
  "indexmap 2.14.2",
  "iri-rs",
  "langtag",
