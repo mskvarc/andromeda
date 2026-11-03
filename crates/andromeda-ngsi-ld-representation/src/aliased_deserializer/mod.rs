@@ -16,6 +16,7 @@
 mod aliased_access;
 mod aliased_visitor;
 pub mod contained_members;
+mod piece_sequence;
 
 use crate::{
     aliased_deserializer::aliased_visitor::AliasedVisitor,

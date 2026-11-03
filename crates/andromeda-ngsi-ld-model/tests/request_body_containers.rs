@@ -57,8 +57,8 @@ fn written<T: Serialize>(value: &T) -> Value {
 
 #[test]
 fn an_entity_with_a_set_alias_of_type_reads_as_the_entity_without_the_container() {
-    let contained = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"tps": ["Property"], "value": 5}});
-    let plain = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 5}});
+    let contained = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "height": {"tps": ["Property"], "value": 5}});
+    let plain = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "height": {"type": "Property", "value": 5}});
     pretty_assertions::assert_eq!(written(&read::<Entity>(&contained)), written(&read_plain::<Entity>(&plain)));
 }
 
@@ -85,6 +85,28 @@ fn an_entity_with_members_under_a_nest_alias_reads_as_the_entity_with_them_besid
         "type": "Vehicle",
         "speed": {"type": "Property", "value": 5},
         "brand": {"type": "Property", "value": "x"},
+    });
+    pretty_assertions::assert_eq!(written(&read::<Entity>(&contained)), written(&read_plain::<Entity>(&plain)));
+}
+
+#[test]
+fn an_entity_with_a_map_of_several_keys_reads_as_the_entity_with_the_instances_the_map_holds() {
+    let contained = json!({
+        "id": "urn:ngsi-ld:Vehicle:1",
+        "type": "Vehicle",
+        "speed": {
+            "a": {"type": "Property", "value": 5, "datasetId": "urn:ngsi-ld:Dataset:a"},
+            "b": [{"type": "Property", "value": 6, "datasetId": "urn:ngsi-ld:Dataset:b"}, {"type": "Property", "value": 7, "datasetId": "urn:ngsi-ld:Dataset:c"}],
+        },
+    });
+    let plain = json!({
+        "id": "urn:ngsi-ld:Vehicle:1",
+        "type": "Vehicle",
+        "speed": [
+            {"type": "Property", "value": 5, "datasetId": "urn:ngsi-ld:Dataset:a"},
+            {"type": "Property", "value": 6, "datasetId": "urn:ngsi-ld:Dataset:b"},
+            {"type": "Property", "value": 7, "datasetId": "urn:ngsi-ld:Dataset:c"},
+        ],
     });
     pretty_assertions::assert_eq!(written(&read::<Entity>(&contained)), written(&read_plain::<Entity>(&plain)));
 }
@@ -154,6 +176,6 @@ fn a_temporal_evolution_reads_through_the_containers_of_its_context() {
 
 #[test]
 fn a_body_without_the_containers_of_its_context_reads_as_before() {
-    let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 5}});
+    let body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "height": {"type": "Property", "value": 5}});
     pretty_assertions::assert_eq!(written(&read::<Entity>(&body)), written(&read_plain::<Entity>(&body)));
 }

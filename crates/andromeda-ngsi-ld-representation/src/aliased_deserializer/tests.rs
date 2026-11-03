@@ -210,9 +210,28 @@ fn an_object_of_one_key_under_a_map_container_is_the_value_under_it() {
     pretty_assertions::assert_eq!(read.speed, Some(Speed { value: 5 }));
 }
 
+/// A node whose `speed` instances are read as an array.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+struct Instances {
+    speed: Vec<Speed>,
+}
+
 #[test]
-fn an_object_of_several_keys_under_a_map_container_is_read_as_written() {
-    assert!(read_contained::<Contained>(r#"{"id": "urn:x", "type": "Vehicle", "speed": {"a": {"value": 1}, "b": {"value": 2}}}"#).is_err());
+fn an_object_of_two_keys_under_a_map_container_is_the_array_of_its_values() {
+    let read = read_contained::<Instances>(r#"{"speed": {"a": {"value": 1}, "b": {"value": 2}}}"#).expect("the node decodes");
+    pretty_assertions::assert_eq!(read.speed, vec![Speed { value: 1 }, Speed { value: 2 }]);
+}
+
+#[test]
+fn a_map_key_holding_an_array_gives_its_elements_their_places_in_the_array() {
+    let read = read_contained::<Instances>(r#"{"speed": {"a": [{"value": 1}, {"value": 2}], "b": {"value": 3}}}"#).expect("the node decodes");
+    pretty_assertions::assert_eq!(read.speed, vec![Speed { value: 1 }, Speed { value: 2 }, Speed { value: 3 }]);
+}
+
+#[test]
+fn an_object_of_one_key_under_a_map_container_holding_an_array_is_that_array() {
+    let read = read_contained::<Instances>(r#"{"speed": {"a": [{"value": 1}, {"value": 2}]}}"#).expect("the node decodes");
+    pretty_assertions::assert_eq!(read.speed, vec![Speed { value: 1 }, Speed { value: 2 }]);
 }
 
 #[test]

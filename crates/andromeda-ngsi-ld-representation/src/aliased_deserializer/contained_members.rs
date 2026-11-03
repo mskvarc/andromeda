@@ -7,12 +7,13 @@
 //! wrote it: an array of one under a `@set` term is its one element, an object
 //! of one key under a map container is the value under that key, and the
 //! members under an alias of `@nest` belong to the object holding it. A map of
-//! several keys is read as written, since its values belong to one member. Only
-//! a member under such a term is held as the slice of text it is, so a document
-//! of a context without containers never reaches this reader.
+//! several keys is the array of its values in written order, the elements of a
+//! value that is an array taking its place. Only a member under such a term is
+//! held as the slice of text it is, so a document of a context without
+//! containers never reaches this reader.
 
 use crate::{
-    aliased_deserializer::{Place, aliased_visitor::AliasedSeed},
+    aliased_deserializer::{Place, aliased_visitor::AliasedSeed, piece_sequence::PieceSequence},
     compact_node::context_reading::ContextReading,
     container_terms::TermContainer,
     core_term_aliases::Standing,
@@ -29,6 +30,8 @@ enum Delivery<'de> {
     Streamed(Standing),
     /// A value already held as the slice of text it is.
     Held(JsonPiece<'de>, Standing),
+    /// The values of a map container, read as the elements of one array.
+    Values(Vec<JsonPiece<'de>>, Standing),
 }
 
 /// A member written under a term, with its value not yet read.
@@ -108,7 +111,7 @@ impl<'de, A: MapAccess<'de>> ContainedMembers<'_, 'de, A> {
                 None => Ok(Some(Delivered::Piece(piece))),
             },
             TermContainer::Set => Ok(Some(Delivered::Piece(single_element(piece).unwrap_or(piece)))),
-            TermContainer::Map => Ok(Some(Delivered::Piece(single_value(piece).unwrap_or(piece)))),
+            TermContainer::Map => Ok(Some(map_values(piece))),
         }
     }
 }
@@ -120,6 +123,8 @@ enum Delivered<'de> {
     Written(Written<'de>),
     /// The value, held as the slice of text it is.
     Piece(JsonPiece<'de>),
+    /// The values of a map of several keys, the elements of one array.
+    Values(Vec<JsonPiece<'de>>),
 }
 
 /// The one element of the array `piece` is, when it holds exactly one.
@@ -128,11 +133,23 @@ fn single_element(piece: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
     if elements.len() == 1 { elements.pop() } else { None }
 }
 
-/// The value under the one key of the object `piece` is, when it holds exactly
-/// one.
-fn single_value(piece: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
-    let mut members = piece.members()?;
-    if members.len() == 1 { members.pop().map(|(_, value)| value) } else { None }
+/// The value of a member under a map container: the value under the one key of
+/// a map of one, the values of a map of several, and any other value as
+/// written.
+fn map_values(piece: JsonPiece<'_>) -> Delivered<'_> {
+    let Some(mut members) = piece.members() else {
+        return Delivered::Piece(piece);
+    };
+    match members.len() {
+        0 => Delivered::Piece(piece),
+        1 => members.pop().map_or(Delivered::Piece(piece), |(_, value)| Delivered::Piece(value)),
+        _ => Delivered::Values(
+            members
+                .into_iter()
+                .flat_map(|(_, value)| value.elements().unwrap_or_else(|| vec![value]))
+                .collect(),
+        ),
+    }
 }
 
 impl<'de, A: MapAccess<'de>> MapAccess<'de> for ContainedMembers<'_, 'de, A> {
@@ -152,6 +169,7 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for ContainedMembers<'_, 'de, A> {
             self.delivery = match delivered {
                 Delivered::Written(Written::Streamed) => Delivery::Streamed(standing.get()),
                 Delivered::Written(Written::Held(piece)) | Delivered::Piece(piece) => Delivery::Held(piece, standing.get()),
+                Delivered::Values(pieces) => Delivery::Values(pieces, standing.get()),
             };
             return seed.deserialize(CowStrDeserializer::new(name)).map(Some);
         }
@@ -166,6 +184,9 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for ContainedMembers<'_, 'de, A> {
                     .deserialize(&mut reader)
                     .map_err(DeserializeError::custom)
             }
+            Delivery::Values(pieces, standing) => AliasedSeed::new(seed, self.reading, Place::Value(*standing))
+                .deserialize(PieceSequence::new(pieces))
+                .map_err(DeserializeError::custom),
         }
     }
 }
