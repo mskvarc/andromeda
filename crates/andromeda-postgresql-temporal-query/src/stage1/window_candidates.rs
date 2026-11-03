@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn a_window_over_a_type_walk_reads_the_horizons_at_or_after_its_start() {
         let stage1 = recorded_stage1(&modified_after());
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
@@ -227,7 +227,7 @@ mod tests {
             .select
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
-        assert!(branches.short.contains("LIMIT 200 OFFSET 0"), "{}", branches.short);
+        assert!(branches.short().contains("LIMIT 200 OFFSET 0"), "{}", branches.short());
         assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
     }
 
@@ -256,17 +256,21 @@ mod tests {
     }
 
     #[test]
-    fn a_page_beyond_the_short_walk_projects_nothing() {
+    fn a_page_beyond_the_short_walk_holds_no_short_walk_and_lets_the_candidates_decide() {
         let sql = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(20, 250))
             .select
             .to_string(PostgresQueryBuilder);
         let branches = PageBranches::of(&sql);
-        assert!(branches.short.contains("LIMIT 0 OFFSET 0"), "{}", branches.short);
+        assert_eq!(branches.short_walk, None, "{sql}");
+        assert!(!sql.contains("short_walk") && !sql.contains(r#"AS "answered""#), "{sql}");
         assert!(!branches.walk.contains("CASE"), "{}", branches.walk);
         assert!(
-            branches
-                .walk
-                .contains(r#"(SELECT COUNT(*) FROM "short_walk") < 270 AND (SELECT COUNT(*) FROM "candidates") > 10000"#),
+            branches.indexed.contains(r#"(SELECT COUNT(*) FROM "candidates") <= 10000 AND"#),
+            "{}",
+            branches.indexed
+        );
+        assert!(
+            branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000 AND"#),
             "{}",
             branches.walk
         );
@@ -281,7 +285,7 @@ mod tests {
             "{}",
             branches.indexed
         );
-        for residual in [branches.short, branches.indexed, branches.walk] {
+        for residual in [branches.short(), branches.indexed, branches.walk] {
             assert!(residual.contains(r#""ah"."modified_at" >= "#), "{residual}");
         }
     }

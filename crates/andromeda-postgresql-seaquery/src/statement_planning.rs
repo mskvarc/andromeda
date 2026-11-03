@@ -31,6 +31,11 @@ pub enum StatementPlanning {
     /// Planned with its bound values, and run without parallel workers: a
     /// `UNION ALL` of branches each gated by a one-time filter.
     GatedBranches,
+    /// Planned once per connection without its values, and run without
+    /// parallel workers: a `UNION ALL` of gated branches each of whose reads
+    /// takes one access path whatever values are bound, so a plan made with
+    /// them would cost its planning on every execution and buy nothing.
+    GenericGatedBranches,
     /// Planned once per connection without its values: its one access path
     /// serves every value it is given, while the custom plans' exact count of
     /// a bound array makes the generic plan, which counts ten elements, look
@@ -45,11 +50,13 @@ impl StatementPlanning {
     #[must_use]
     pub fn transaction(self) -> Option<TransactionStart> {
         let custom_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_custom_plan");
+        let generic_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_generic_plan");
         match self {
             StatementPlanning::Cached => None,
             StatementPlanning::BoundValues => Some(custom_plans()),
             StatementPlanning::GatedBranches => Some(custom_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
-            StatementPlanning::Generic => Some(TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_generic_plan")),
+            StatementPlanning::GenericGatedBranches => Some(generic_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
+            StatementPlanning::Generic => Some(generic_plans()),
         }
     }
 }
@@ -85,6 +92,14 @@ mod tests {
         assert_eq!(
             StatementPlanning::GatedBranches.transaction().map(|start| start.rendered()).as_deref(),
             Some("BEGIN; SET LOCAL plan_cache_mode = 'force_custom_plan'; SET LOCAL max_parallel_workers_per_gather = '0'")
+        );
+    }
+
+    #[test]
+    fn generic_gated_branches_keep_the_generic_plan_and_run_serially() {
+        assert_eq!(
+            StatementPlanning::GenericGatedBranches.transaction().map(|start| start.rendered()).as_deref(),
+            Some("BEGIN; SET LOCAL plan_cache_mode = 'force_generic_plan'; SET LOCAL max_parallel_workers_per_gather = '0'")
         );
     }
 }

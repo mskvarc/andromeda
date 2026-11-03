@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn a_scope_query_over_a_type_walk_reads_the_recorded_scope_paths() {
         let stage1 = recorded_stage1(&scope_query("/city/moved1"));
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
         let sql = stage1.select.to_string(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
@@ -158,7 +158,7 @@ mod tests {
     fn the_per_entity_scope_probe_never_states_the_partial_predicate() {
         let sql = type_page("/city/moved1");
         let branches = PageBranches::of(&sql);
-        for residual in [branches.short, branches.indexed, branches.walk] {
+        for residual in [branches.short(), branches.indexed, branches.walk] {
             assert!(residual.contains(r#"FROM "scope_history" AS "rsh""#), "{residual}");
             assert!(!compares_the_value_kind(residual), "{residual}");
         }
@@ -231,7 +231,7 @@ mod tests {
             "{}",
             branches.indexed
         );
-        assert!(branches.short.contains("LIMIT 200 OFFSET 0"), "{}", branches.short);
+        assert!(branches.short().contains("LIMIT 200 OFFSET 0"), "{}", branches.short());
     }
 
     #[test]

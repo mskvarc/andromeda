@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn a_near_query_over_a_type_walk_reads_the_stream_extents() {
         let stage1 = recorded_stage1(&near_query(4.5, "2000"));
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         let candidates = PageBranches::of(&sql).candidates;
         assert!(
@@ -258,7 +258,7 @@ mod tests {
     fn the_exact_relation_stays_the_residual() {
         let sql = type_page(&near_query(4.5, "2000"));
         let branches = PageBranches::of(&sql);
-        for residual in [branches.short, branches.indexed, branches.walk] {
+        for residual in [branches.short(), branches.indexed, branches.walk] {
             assert!(
                 residual.contains(r#" _ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography"#),
                 "{residual}"
@@ -295,7 +295,7 @@ mod tests {
     fn a_geo_page_walks_fifty_evolutions_first() {
         let sql = type_page(&near_query(4.5, "2000"));
         let branches = PageBranches::of(&sql);
-        assert!(branches.short.contains("LIMIT 50 OFFSET 0"), "{}", branches.short);
+        assert!(branches.short().contains("LIMIT 50 OFFSET 0"), "{}", branches.short());
         assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
     }
 

@@ -151,12 +151,19 @@ impl<'q> CandidateStep<'q> {
     }
 
     /// How PostgreSQL may plan the page.
+    ///
+    /// Every branch reads one access path whatever the request binds: the
+    /// short walk and the full walk probe each Evolution in identifier order,
+    /// and the generic plan reads the candidates from the step's own index
+    /// whatever the value selects. Planning the page with its values costs
+    /// several times the page's execution and at most trades that index for a
+    /// sequential read of a small table, so the page keeps the generic plan.
     pub(super) const fn page_planning(&self) -> StatementPlanning {
         match self {
             // A gated-off branch still launches the workers of a Gather under
             // it, so the index reads run serially.
             CandidateStep::IdPattern(_) | CandidateStep::ScopePaths(..) | CandidateStep::GeometryExtents(_) | CandidateStep::Window(_) => {
-                StatementPlanning::GatedBranches
+                StatementPlanning::GenericGatedBranches
             }
         }
     }
@@ -234,7 +241,7 @@ mod tests {
         assert!(branches.indexed.contains("value_number"), "{page}");
         let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
         assert!(!count.contains("candidates"), "{count}");
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
     }
 
     #[test]

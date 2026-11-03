@@ -9,7 +9,9 @@
 //! 1. the short walk: the first Evolutions of the walk in identifier order,
 //!    from where the page starts, each probed for every filter, at most as
 //!    many kept as the page needs. A term most Evolutions pass fills the page
-//!    here;
+//!    here. A page needing more matches than the short walk visits
+//!    Evolutions cannot fill there, so its statement holds no short walk and
+//!    its candidates decide alone;
 //! 2. the candidates: read up to one past the step's bound, and the page cut
 //!    from the walk narrowed to them when they number at most the bound, every
 //!    filter the step does not answer tested on what it yields;
@@ -73,22 +75,43 @@ pub(super) fn gated_walk(
 
     // A walk shorter than the page needs cannot fill it, so it visits none.
     let visited = if need > u64::from(step.short_walk()) { 0 } else { step.short_walk() };
-    let short = short_walk(
-        // clone: the full walk reads the same Evolutions
-        walked.paged.clone(),
-        // clone: the full walk tests the same filters
-        whole.clone(),
-        window_match(),
-        window,
-        ShortWalkLength { visited, need },
-    );
-    let gates = Gates::of(step, ShortWalkLength { visited, need });
+    let length = ShortWalkLength { visited, need };
+    let short = (visited > 0).then(|| {
+        short_walk(
+            // clone: the full walk reads the same Evolutions
+            walked.paged.clone(),
+            // clone: the full walk tests the same filters
+            whole.clone(),
+            window_match(),
+            window,
+            length,
+        )
+    });
+    let gates = Gates::of(step, length);
 
     let mut indexed = selected_ids(narrowed.paged, gates.indexed.into_iter().fold(residual, Condition::add), window_match());
     let read_order = apply_identifier_window(&mut indexed, Expr::col((E, Entities::Id)), window);
     let mut walk = selected_ids(walked.paged, gates.walk.into_iter().fold(whole, Condition::add), window_match());
     apply_identifier_window(&mut walk, Expr::col((E, Entities::Id)), window);
 
+    let mut ctes = WithClause::new();
+    let mut union = match short {
+        Some(short) => {
+            ctes.cte(materialized(short, ShortWalkMatches));
+            let mut union = wrapped(answered(window, read_order, need), "answered");
+            union.union(UnionType::All, wrapped(indexed, "indexed"));
+            union
+        }
+        None => wrapped(indexed, "indexed"),
+    };
+    ctes.cte(materialized(bounded(step.candidates(branch), step.bound()), Candidates));
+    union.union(UnionType::All, wrapped(walk, "walk")).with_cte(ctes);
+    Ok((union.take(), read_order))
+}
+
+/// The branch that returns the page from the short walk's matches, when
+/// they number at least the `need` the page has from where the walk starts.
+fn answered(window: &PageWindow, read_order: ReadOrder, need: u64) -> SelectStatement {
     let mut answered = Query::select();
     answered
         .column(Asterisk)
@@ -102,25 +125,15 @@ pub(super) fn gated_walk(
         PageStart::Cursor(_) => {}
     }
     answered.limit(u64::from(window.limit));
-
-    let mut union = wrapped(answered.take(), "answered");
-    union
-        .union(UnionType::All, wrapped(indexed, "indexed"))
-        .union(UnionType::All, wrapped(walk, "walk"))
-        .with_cte(
-            WithClause::new()
-                .cte(materialized(short, ShortWalkMatches))
-                .cte(materialized(bounded(step.candidates(branch), step.bound()), Candidates))
-                .to_owned(),
-        );
-    Ok((union.take(), read_order))
+    answered
 }
 
 /// How far a short walk goes.
 #[derive(Debug, Clone, Copy)]
 struct ShortWalkLength {
     /// How many Evolutions it visits: none when the page needs more matches
-    /// than the step's short walk visits Evolutions.
+    /// than the step's short walk visits Evolutions, and the statement then
+    /// holds no short walk.
     visited: u32,
     /// How many matches the page needs from where the walk starts.
     need: u64,
@@ -139,15 +152,22 @@ struct Gates {
 impl Gates {
     /// The gates of `step` behind a short walk of `length`.
     ///
-    /// Without a dense walk, the candidates decide once the short walk falls
-    /// short: at most the bound and the candidate branch runs, past it the
-    /// full walk. With one, a short walk whose matches project the page full
-    /// within the dense walk sends the page to the full walk unread, which
+    /// Without a short walk, the candidates decide alone: at most the bound
+    /// and the candidate branch runs, past it the full walk. Without a dense
+    /// walk, they decide the same way once the short walk falls short. With
+    /// one, a short walk whose matches project the page full within the
+    /// dense walk sends the page to the full walk unread, which
     /// stops at the page's last match. A `CASE` fixes the order: PostgreSQL
     /// orders a branch's one-time conditions by their cost, and only this
     /// order leaves the candidates unread.
     fn of(step: &CandidateStep<'_>, length: ShortWalkLength) -> Gates {
         let bound = step.bound();
+        if length.visited == 0 {
+            return Gates {
+                indexed: vec![within(Candidates, bound)],
+                walk: vec![count_of(Candidates).gt(bound)],
+            };
+        }
         let Some(least) = dense_matches(step.dense_walk(), length) else {
             let walked_short = count_of(ShortWalkMatches).lt(length.need);
             return Gates {
@@ -251,7 +271,8 @@ mod tests {
     #[test]
     fn the_short_walk_tests_the_first_five_thousand_evolutions() {
         let sql = catalogue_page();
-        let short = PageBranches::of(&sql).short;
+        let branches = PageBranches::of(&sql);
+        let short = branches.short();
         assert!(
             short.contains(r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" ORDER BY "e"."id" ASC LIMIT 5000 OFFSET 0) AS "e" WHERE"#),
             "{short}"
@@ -287,7 +308,7 @@ mod tests {
     #[test]
     fn an_index_read_page_runs_serially() {
         let stage1 = recorded_stage1(&id_pattern(None, ".*:0123.*"));
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
     }
 
     #[test]
@@ -302,12 +323,28 @@ mod tests {
     }
 
     #[test]
-    fn a_page_beyond_the_short_walk_never_walks_it_short() {
+    fn a_page_beyond_the_short_walk_holds_no_short_walk() {
         let sql = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20))
             .select
             .to_string(PostgresQueryBuilder);
-        let short = PageBranches::of(&sql).short;
-        assert!(short.contains(r#"ORDER BY "e"."id" ASC LIMIT 0 OFFSET 0) AS "e""#), "{short}");
-        assert!(short.ends_with("LIMIT 5010"), "the walk keeps what the page needs: {short}");
+        assert_eq!(PageBranches::of(&sql).short_walk, None, "{sql}");
+        assert!(sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED ("#), "{sql}");
+        assert!(!sql.contains("short_walk"), "{sql}");
+    }
+
+    #[test]
+    fn a_page_without_a_short_walk_keeps_one_candidate_branch_and_one_walk() {
+        let sql = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20))
+            .select
+            .to_string(PostgresQueryBuilder);
+        let branches = PageBranches::of(&sql);
+        assert_eq!(sql.matches("UNION ALL").count(), 1, "{sql}");
+        assert!(
+            branches.indexed.contains(r#"(SELECT COUNT(*) FROM "candidates") <= 1000 AND"#),
+            "{}",
+            branches.indexed
+        );
+        assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 1000 AND"#), "{}", branches.walk);
+        assert!(branches.walk.ends_with("LIMIT 4990 OFFSET 20) AS \"walk\")"), "{}", branches.walk);
     }
 }

@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn an_unanchored_pattern_over_the_catalogue_reads_the_identifier_trigrams() {
         let stage1 = catalogue();
-        assert_eq!(stage1.planning, StatementPlanning::GatedBranches);
+        assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
         let (sql, values) = stage1.select.build(PostgresQueryBuilder);
         assert!(
             sql.contains(r#""candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $"#),

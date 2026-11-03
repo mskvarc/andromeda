@@ -252,8 +252,8 @@ pub(super) fn recorded_stage1(compiled: &CompiledTemporalQuery) -> Stage1Query {
 
 /// The parts of a rendered gated page.
 pub(super) struct PageBranches<'s> {
-    /// The short walk's statement.
-    pub(super) short: &'s str,
+    /// The short walk's statement, `None` when the page holds no short walk.
+    pub(super) short_walk: Option<&'s str>,
     /// The candidate read, without its bound.
     pub(super) candidates: &'s str,
     /// The branch cut from the candidates.
@@ -266,20 +266,31 @@ impl PageBranches<'_> {
     /// The parts of the gated page `sql`.
     pub(super) fn of(sql: &str) -> PageBranches<'_> {
         let after = |text: &'_ str, marker: &str| -> usize { text.find(marker).map_or_else(|| panic!("{marker} in {sql}"), |at| at + marker.len()) };
-        let short_start = after(sql, r#""short_walk" AS  MATERIALIZED ("#);
-        let short_end = sql
-            .find(r#") , "candidates" AS  MATERIALIZED ("#)
-            .unwrap_or_else(|| panic!("the candidates follow the short walk: {sql}"));
+        let short_walk = sql.find(r#""short_walk" AS  MATERIALIZED ("#).map(|_| {
+            let short_start = after(sql, r#""short_walk" AS  MATERIALIZED ("#);
+            let short_end = sql
+                .find(r#") , "candidates" AS  MATERIALIZED ("#)
+                .unwrap_or_else(|| panic!("the candidates follow the short walk: {sql}"));
+            &sql[short_start..short_end]
+        });
         let candidates_start = after(sql, r#""candidates" AS  MATERIALIZED ("#);
         let candidates_end = candidates_start + sql[candidates_start..].find(" LIMIT ").unwrap_or_else(|| panic!("a bounded read: {sql}"));
-        let indexed_start = after(sql, r#"AS "answered""#);
+        let indexed_start = match short_walk {
+            Some(_) => after(sql, r#"AS "answered""#),
+            None => candidates_end,
+        };
         let indexed_end = sql.find(r#"AS "indexed""#).unwrap_or_else(|| panic!("the candidate branch: {sql}"));
         PageBranches {
-            short: &sql[short_start..short_end],
+            short_walk,
             candidates: &sql[candidates_start..candidates_end],
             indexed: &sql[indexed_start..indexed_end],
             walk: &sql[indexed_end..],
         }
+    }
+
+    /// The short walk's statement of a page that holds one.
+    pub(super) fn short(&self) -> &str {
+        self.short_walk.unwrap_or_else(|| panic!("a short walk beside {}", self.indexed))
     }
 }
 
