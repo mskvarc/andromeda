@@ -1,4 +1,4 @@
-//! A page that renders past the page byte ceiling is 403 TooManyResults, and one under it is served.
+//! A page that renders past the page byte ceiling is 403 `TooManyResults`, and one under it is served.
 
 use andromeda_test_suite::{
     broker,

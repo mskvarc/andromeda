@@ -14,10 +14,11 @@
 use crate::{
     compact_node::{CompactNode, NodeMembers, NodeShape},
     container_terms::{ContainerTerms, TermContainer},
+    value_budget::ValueBudget,
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
-use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
 use std::borrow::Cow;
 
 /// What a node is read as.
@@ -157,8 +158,16 @@ impl<'a: 'n, 'n, N: CompactNode<'n>> CompactNode<'n> for ContainedNode<'a, N> {
         self.node.literal()
     }
 
-    fn decoded<T: DeserializeOwned>(self) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
-        self.node.decoded()
+    fn decoded_by<T, S: for<'de> DeserializeSeed<'de, Value = T>>(self, seed: S) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
+        self.node.decoded_by(seed)
+    }
+
+    fn is_null(self) -> bool {
+        self.node.is_null()
+    }
+
+    fn value_budget(self) -> Option<&'n ValueBudget> {
+        self.node.value_budget()
     }
 
     fn read_geometry(self) -> Result<Result<WrittenGeometry, serde_json::Error>, N::Unreadable> {

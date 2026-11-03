@@ -10,10 +10,11 @@
 use crate::{
     compact_node::{CompactNode, NodeMembers, NodeShape},
     core_term_aliases::{CoreTermAliases, Standing},
+    value_budget::ValueBudget,
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
-use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
 
 /// A compact node whose members are read under the core terms their names
 /// alias.
@@ -77,8 +78,16 @@ impl<'a: 'n, 'n, N: CompactNode<'n>> CompactNode<'n> for AliasedNode<'a, N> {
         self.node.literal()
     }
 
-    fn decoded<T: DeserializeOwned>(self) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
-        self.node.decoded()
+    fn decoded_by<T, S: for<'de> DeserializeSeed<'de, Value = T>>(self, seed: S) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
+        self.node.decoded_by(seed)
+    }
+
+    fn is_null(self) -> bool {
+        self.node.is_null()
+    }
+
+    fn value_budget(self) -> Option<&'n ValueBudget> {
+        self.node.value_budget()
     }
 
     fn read_geometry(self) -> Result<Result<WrittenGeometry, serde_json::Error>, N::Unreadable> {

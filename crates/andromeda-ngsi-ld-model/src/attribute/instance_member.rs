@@ -28,16 +28,17 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
-    compact_node::{CompactNode, NodeMembers, NodeShape},
+    compact_node::{CompactNode, NodeMembers},
     family_member_admission::{MemberAdmission, prohibited_member},
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
+    value_budget::ValueBudget,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use serde::de::DeserializeOwned;
-use std::{borrow::Cow, str::FromStr};
+use serde::de::{DeserializeOwned, DeserializeSeed};
+use std::{borrow::Cow, marker::PhantomData, str::FromStr};
 
 /// The failure of reading a member of a node of type `N`.
 pub(crate) type ReadError<'n, N> = NodeReadError<<N as CompactNode<'n>>::Unreadable>;
@@ -321,15 +322,54 @@ pub(crate) fn refused_member<'n, N: CompactNode<'n>>(member: RefusedMember, refu
 /// when the member does not decode as a `T`, and the node's
 /// [`CompactNode::Unreadable`].
 pub(crate) fn present_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(member: N, name: RefusedMember) -> Result<T, ReadError<'n, N>> {
-    // The shape of an array or an object holds a node per item, so it is
-    // dropped before the member is decoded: held across the decode, it would
-    // add the member's size to the decoded value's.
-    if matches!(member.shape(), NodeShape::Null) {
+    present_member_within(member, name, |_| PhantomData::<T>)
+}
+
+/// Decode a member that is present by the seed `seed_for` builds from the
+/// budget of values the member's entity may still hold, the refusal left for
+/// the caller to locate: a JSON `null` is no value of any member (clause
+/// 5.2.1).
+///
+/// # Errors
+///
+/// As [`present_member`].
+pub(crate) fn present_member_within<'n, T, S, N>(
+    member: N,
+    name: RefusedMember,
+    seed_for: impl FnOnce(Option<&'n ValueBudget>) -> S,
+) -> Result<T, ReadError<'n, N>>
+where
+    S: for<'de> DeserializeSeed<'de, Value = T>,
+    N: CompactNode<'n>,
+{
+    if member.is_null() {
         return Err(NodeRefusal::Null.into());
     }
-    decoded(member)
+    member
+        .decoded_by(seed_for(member.value_budget()))
         .map_err(NodeReadError::Unreadable)?
         .map_err(|source| NodeRefusal::Member { member: name, source }.into())
+}
+
+/// Decode an optional member by the seed `seed_for` builds from the budget of
+/// values the member's entity may still hold, located at it: absent is no
+/// value.
+///
+/// # Errors
+///
+/// As [`present_member`].
+pub(crate) fn optional_member_within<'n, T, S, N>(
+    member: Option<N>,
+    name: RefusedMember,
+    seed_for: impl FnOnce(Option<&'n ValueBudget>) -> S,
+) -> Result<Option<T>, ReadError<'n, N>>
+where
+    S: for<'de> DeserializeSeed<'de, Value = T>,
+    N: CompactNode<'n>,
+{
+    member
+        .map(|member| present_member_within(member, name, seed_for).map_err(|error| error.within_member(&name.to_string())))
+        .transpose()
 }
 
 /// Decode an optional member, located at it: absent is no value.

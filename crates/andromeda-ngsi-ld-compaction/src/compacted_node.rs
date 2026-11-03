@@ -11,7 +11,7 @@ use crate::compacted::Compacted;
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
-use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
 use std::borrow::Cow;
 
 impl<'a: 'n, 'n> CompactNode<'n> for &'n Compacted<'a> {
@@ -35,8 +35,8 @@ impl<'a: 'n, 'n> CompactNode<'n> for &'n Compacted<'a> {
         serde_json::to_string(self).map(|text| JsonLiteral::admit(&text))
     }
 
-    fn decoded<T: DeserializeOwned>(self) -> Result<Result<T, serde_json::Error>, serde_json::Error> {
-        serde_json::to_string(self).map(|text| serde_json::from_str(&text))
+    fn decoded_by<T, S: for<'de> DeserializeSeed<'de, Value = T>>(self, seed: S) -> Result<Result<T, serde_json::Error>, serde_json::Error> {
+        serde_json::to_string(self).map(|text| seed.deserialize(&mut serde_json::Deserializer::from_str(&text)))
     }
 
     fn read_geometry(self) -> Result<Result<WrittenGeometry, serde_json::Error>, serde_json::Error> {

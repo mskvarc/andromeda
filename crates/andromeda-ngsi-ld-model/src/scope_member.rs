@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_entity::{
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+use andromeda_ngsi_ld_representation::value_budget::ValueBudget;
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::NULL_URI;
 use derive_more::From;
 use serde::{
@@ -20,7 +21,7 @@ use serde::{
     Deserializer,
     Serialize,
     Serializer,
-    de::{DeserializeSeed, Error as DeserializeError, SeqAccess, Visitor},
+    de::{DeserializeSeed, Error as DeserializeError, IgnoredAny, SeqAccess, Visitor},
 };
 use std::fmt;
 
@@ -35,6 +36,13 @@ impl ScopeMember {
     pub const fn slot(&self) -> &Slot<Scopes> {
         &self.0
     }
+
+    /// Read a `scope` member, its distinct Scopes recorded against `budget`
+    /// when there is one.
+    #[must_use]
+    pub const fn within(budget: Option<&ValueBudget>) -> ScopeMemberWithin<'_> {
+        ScopeMemberWithin(budget)
+    }
 }
 
 // Hand-written: clause 4.18 writes one Scope as a string and several as an
@@ -43,14 +51,27 @@ impl ScopeMember {
 // before any path is found, which costs the member's size again.
 impl<'de> Deserialize<'de> for ScopeMember {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ScopeMember, D::Error> {
-        deserializer.deserialize_any(ScopeMemberVisitor)
+        ScopeMember::within(None).deserialize(deserializer)
     }
 }
 
-/// Reads a string as one Scope and an array of strings as several.
-struct ScopeMemberVisitor;
+/// Reads a string as one Scope and an array of strings as several, each
+/// distinct Scope recorded against the budget of values the entity it belongs
+/// to may still hold. Once the budget is spent the Scopes that follow are
+/// skipped, so a member of millions of Scopes costs what the budget costs
+/// whatever its size.
+#[derive(Debug, Clone, Copy)]
+pub struct ScopeMemberWithin<'b>(Option<&'b ValueBudget>);
 
-impl<'de> Visitor<'de> for ScopeMemberVisitor {
+impl<'de> DeserializeSeed<'de> for ScopeMemberWithin<'_> {
+    type Value = ScopeMember;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<ScopeMember, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for ScopeMemberWithin<'_> {
     type Value = ScopeMember;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,6 +79,9 @@ impl<'de> Visitor<'de> for ScopeMemberVisitor {
     }
 
     fn visit_str<E: DeserializeError>(self, text: &str) -> Result<ScopeMember, E> {
+        if let Some(budget) = self.0 {
+            budget.spend();
+        }
         let mut reading = ScopeReading::default();
         reading.read(ScopeItem::Text(text)).map_err(E::custom)?;
         reading.finish().map(ScopeMember).map_err(E::custom)
@@ -65,7 +89,17 @@ impl<'de> Visitor<'de> for ScopeMemberVisitor {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<ScopeMember, A::Error> {
         let mut reading = ScopeReading::default();
-        while items.next_element_seed(ScopeElement(&mut reading))?.is_some() {}
+        while self.0.is_none_or(|budget| !budget.is_spent()) {
+            let held = reading.path_count();
+            if items.next_element_seed(ScopeElement(&mut reading))?.is_none() {
+                return reading.finish().map(ScopeMember).map_err(A::Error::custom);
+            }
+            // A repeated Scope is one Scope to the count.
+            if let Some(budget) = self.0.filter(|_| reading.path_count() > held) {
+                budget.spend();
+            }
+        }
+        while items.next_element::<IgnoredAny>()?.is_some() {}
         reading.finish().map(ScopeMember).map_err(A::Error::custom)
     }
 }

@@ -9,13 +9,14 @@
 
 use crate::{
     attribute::{
-        instance_member::{ReadError, optional_instant_member, present_member},
+        instance_member::{ReadError, optional_instant_member, present_member, present_member_within},
         member_reading::MemberReading,
     },
     compact_member::decoded,
     entity::{Entity, EntityPatch},
     entity_member::{EntityForm, EntityMember, SharedMembers},
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
+    scope_member::ScopeMember,
 };
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use andromeda_ngsi_ld_vocabulary::keyword;
@@ -99,7 +100,7 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
         match EntityMember::named(&name, form).map_err(|source| at(NodeRefusal::AttributeName(source).into()))? {
             EntityMember::Id => read.id = identity(member, form, RefusedMember::Id).map_err(at)?,
             EntityMember::Type => read.type_ = identity(member, form, RefusedMember::Type).map_err(at)?,
-            EntityMember::Scope => read.scope = optional(member, RefusedMember::Scope).map_err(at)?,
+            EntityMember::Scope => read.scope = present_member_within(member, RefusedMember::Scope, ScopeMember::within).map(Some).map_err(at)?,
             EntityMember::ExpiresAt => read.expires_at = optional_instant_member(Some(member), RefusedMember::ExpiresAt).map_err(at)?,
             EntityMember::CreatedAt => read.created_at = optional_instant_member(Some(member), RefusedMember::CreatedAt).map_err(at)?,
             EntityMember::ModifiedAt => read.modified_at = optional_instant_member(Some(member), RefusedMember::ModifiedAt).map_err(at)?,

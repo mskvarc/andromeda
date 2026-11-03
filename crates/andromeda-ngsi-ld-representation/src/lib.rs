@@ -76,6 +76,7 @@ pub mod payload_budget;
 pub mod proof_seal_admission;
 pub mod response_format;
 pub mod sys_attrs;
+pub mod value_budget;
 
 #[cfg(test)]
 #[expect(

@@ -5,17 +5,13 @@
 //! element's own refusal (a name outside its grammar, a tag that is no
 //! language tag) is the refusal of the member.
 
+use crate::attribute::recorded_elements::recorded_elements;
+use andromeda_ngsi_ld_representation::value_budget::ValueBudget;
 use serde::{
     Deserialize,
     Deserializer,
     Serialize,
-    de::{
-        Error as DeserializeError,
-        Expected,
-        SeqAccess,
-        Visitor,
-        value::{SeqAccessDeserializer, StrDeserializer},
-    },
+    de::{DeserializeSeed, Error as DeserializeError, Expected, SeqAccess, Visitor, value::StrDeserializer},
 };
 use std::{
     fmt,
@@ -71,10 +67,54 @@ impl<'de, T: Deserialize<'de>> OneOrMany<T> {
     /// Returns the deserializer's refusal of a member that is neither a string
     /// nor an array, and the element's own refusal otherwise.
     pub fn deserialize_expecting<D: Deserializer<'de>, X: Expected>(deserializer: D, expected: X) -> Result<OneOrMany<T>, D::Error> {
+        OneOrMany::deserialize_expecting_within(deserializer, expected, None)
+    }
+
+    /// Read a string or an array of elements as
+    /// [`OneOrMany::deserialize_expecting`] does, the elements recorded against
+    /// `budget` when there is one.
+    ///
+    /// # Errors
+    ///
+    /// As [`OneOrMany::deserialize_expecting`].
+    pub fn deserialize_expecting_within<D: Deserializer<'de>, X: Expected>(
+        deserializer: D,
+        expected: X,
+        budget: Option<&ValueBudget>,
+    ) -> Result<OneOrMany<T>, D::Error> {
         deserializer.deserialize_any(OneOrManyVisitor {
             expected,
+            budget,
             element: PhantomData,
         })
+    }
+}
+
+impl<T> OneOrMany<T> {
+    /// Read a member as a string or an array of strings, its elements recorded
+    /// against `budget` when there is one.
+    #[must_use]
+    pub const fn within(budget: Option<&ValueBudget>) -> OneOrManyWithin<'_, T> {
+        OneOrManyWithin { budget, element: PhantomData }
+    }
+}
+
+/// Reads a `String` or `String[]` member, its elements recorded against the
+/// budget of values the entity it belongs to may still hold.
+#[derive(Debug)]
+pub struct OneOrManyWithin<'b, T> {
+    /// What the elements are recorded against, when the entity is held to a
+    /// limit.
+    budget: Option<&'b ValueBudget>,
+    /// The element type.
+    element: PhantomData<T>,
+}
+
+impl<'de, T: Deserialize<'de>> DeserializeSeed<'de> for OneOrManyWithin<'_, T> {
+    type Value = OneOrMany<T>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<OneOrMany<T>, D::Error> {
+        OneOrMany::deserialize_expecting_within(deserializer, StringOrStrings, self.budget)
     }
 }
 
@@ -98,14 +138,17 @@ impl Expected for StringOrStrings {
 }
 
 /// Reads one element from a string and the elements from an array.
-struct OneOrManyVisitor<T, X> {
+struct OneOrManyVisitor<'b, T, X> {
     /// What a refusal of any other JSON kind says was expected.
     expected: X,
+    /// What the elements are recorded against, when the entity is held to a
+    /// limit.
+    budget: Option<&'b ValueBudget>,
     /// The element type.
     element: PhantomData<T>,
 }
 
-impl<'de, T: Deserialize<'de>, X: Expected> Visitor<'de> for OneOrManyVisitor<T, X> {
+impl<'de, T: Deserialize<'de>, X: Expected> Visitor<'de> for OneOrManyVisitor<'_, T, X> {
     type Value = OneOrMany<T>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -113,11 +156,14 @@ impl<'de, T: Deserialize<'de>, X: Expected> Visitor<'de> for OneOrManyVisitor<T,
     }
 
     fn visit_str<E: DeserializeError>(self, text: &str) -> Result<OneOrMany<T>, E> {
+        if let Some(budget) = self.budget {
+            budget.spend();
+        }
         T::deserialize(StrDeserializer::<E>::new(text)).map(OneOrMany::One)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, elements: A) -> Result<OneOrMany<T>, A::Error> {
-        Vec::<T>::deserialize(SeqAccessDeserializer::new(elements)).map(OneOrMany::Many)
+        recorded_elements(elements, self.budget).map(OneOrMany::Many)
     }
 }
 

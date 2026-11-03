@@ -3,9 +3,12 @@
 //! of entries cost the broker a bounded amount of memory (clause 6.3.2).
 //!
 //! Each body stays under the default request value limit of 4,000,000 and is
-//! far over the entity value limit of 1,000,000. The walk bounded by the entity
-//! limit counts the member by the census rule before it serializes and expands
-//! it, so the refusal peaks below 512 MiB above the entity it reads.
+//! far over the entity value limit of 1,000,000. The body is decoded within the
+//! entity value limit, which stops recording a member at the first value past
+//! it, so decoding peaks well under what the whole member would cost. The walk
+//! bounded by the entity limit then counts the member by the census rule before
+//! it serializes and expands it, so the refusal peaks below 512 MiB above the
+//! entity it reads.
 //!
 //! The measurement counts the allocations of the calling thread alone, so the
 //! other tests of the binary do not disturb it.
@@ -15,12 +18,16 @@
     clippy::panic,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
-use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::{error::ExpansionError, normalization::Normalization, typed_expander::TypedExpander};
-use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
+use andromeda_ngsi_ld_model::{
+    attribute::instance::AttributeValue,
+    entity::Entity,
+    request_body::{DecodeBounds, RequestBody},
+};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_representation::{compact_node::produced_node::ProducedNode, payload_budget::PayloadBudgetExceeded};
+use andromeda_ngsi_ld_representation::{compact_node::context_reading::ContextReading, payload_budget::PayloadBudgetExceeded};
 use serde_json::value::RawValue;
 use std::{
     fmt::{Error as FormatError, Write},
@@ -29,6 +36,9 @@ use std::{
 
 /// The default entity value limit.
 const ENTITY_VALUES: usize = 1_000_000;
+
+/// Decoding a body past the entity value limit may peak this far.
+const DECODE_PEAK_BUDGET: u64 = 400 * 1024 * 1024;
 
 /// Refusing the entity decoded from the body over the limit may peak this far
 /// above it.
@@ -64,7 +74,14 @@ async fn assert_refused_within_budget(body: &RawValue) {
     let mut walked = None;
 
     let decoding = allocation_counter::measure(|| {
-        decoded = Some(Entity::<AttributeValue>::from_node(ProducedNode::new(JsonPiece::new(body))).expect("the body is an Entity"));
+        decoded = Some(
+            Entity::<AttributeValue>::from_bounded_request_text(
+                body.get().as_bytes(),
+                ContextReading::keyword_spellings(),
+                DecodeBounds::new(GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)), entity_limit()),
+            )
+            .expect("the body is an Entity"),
+        );
     });
     let entity = decoded.expect("the body decoded");
     let refusal = allocation_counter::measure(|| {
@@ -81,6 +98,11 @@ async fn assert_refused_within_budget(body: &RawValue) {
         Err(ExpansionError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { limit })) => assert_eq!(limit, entity_limit()),
         other => panic!("the entity limit refuses the body, got {:?}", other.map(|_| ())),
     }
+    assert!(
+        decoding.bytes_max < DECODE_PEAK_BUDGET,
+        "decoding the body peaked at {} bytes, over the {DECODE_PEAK_BUDGET} byte budget",
+        decoding.bytes_max
+    );
     assert!(
         refusal.bytes_max < REFUSAL_PEAK_BUDGET,
         "refusing the body peaked at {} bytes above the entity, over the {REFUSAL_PEAK_BUDGET} byte budget",

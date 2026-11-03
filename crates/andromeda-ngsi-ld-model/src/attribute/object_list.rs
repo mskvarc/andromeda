@@ -1,6 +1,8 @@
 //! The `objectList` / `previousObjectList` member (ETSI GS CIM 009 clause 5.2.37).
 
+use crate::attribute::recorded_elements::recorded_elements;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_representation::value_budget::ValueBudget;
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 use derive_more::{AsRef, Deref, Display, From};
 use serde::{
@@ -8,7 +10,7 @@ use serde::{
     Deserializer,
     Serialize,
     Serializer,
-    de::{Error as DeserializeError, MapAccess, Visitor, value::StrDeserializer},
+    de::{DeserializeSeed, Error as DeserializeError, MapAccess, SeqAccess, Visitor, value::StrDeserializer},
 };
 use std::{fmt, slice::Iter, vec::IntoIter};
 use thiserror::Error;
@@ -100,7 +102,41 @@ impl Serialize for RelationshipObjectList {
 // it, and the list holds the targets alone.
 impl<'de> Deserialize<'de> for RelationshipObjectList {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RelationshipObjectList, D::Error> {
-        Vec::<ObjectListEntry>::deserialize(deserializer).map(|entries| RelationshipObjectList(entries.into_iter().map(|entry| entry.0).collect()))
+        RelationshipObjectList::within(None).deserialize(deserializer)
+    }
+}
+
+impl RelationshipObjectList {
+    /// Read an `objectList`, its entries recorded against `budget` when there is
+    /// one.
+    #[must_use]
+    pub const fn within(budget: Option<&ValueBudget>) -> ObjectListWithin<'_> {
+        ObjectListWithin(budget)
+    }
+}
+
+/// Reads an `objectList`, its entries recorded against the budget of values the
+/// entity it belongs to may still hold.
+#[derive(Debug, Clone, Copy)]
+pub struct ObjectListWithin<'b>(Option<&'b ValueBudget>);
+
+impl<'de> DeserializeSeed<'de> for ObjectListWithin<'_> {
+    type Value = RelationshipObjectList;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<RelationshipObjectList, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for ObjectListWithin<'_> {
+    type Value = RelationshipObjectList;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an array of objectList entries")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, entries: A) -> Result<RelationshipObjectList, A::Error> {
+        recorded_elements::<ObjectListEntry, A>(entries, self.0).map(|entries| RelationshipObjectList(entries.into_iter().map(|entry| entry.0).collect()))
     }
 }
 

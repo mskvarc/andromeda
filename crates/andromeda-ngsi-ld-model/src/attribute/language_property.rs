@@ -2,6 +2,7 @@
 
 use crate::attribute::{common_fields::CommonAttributeFields, one_or_many::OneOrMany};
 use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+use andromeda_ngsi_ld_representation::value_budget::ValueBudget;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
@@ -11,7 +12,7 @@ use serde::{
     Deserializer,
     Serialize,
     Serializer,
-    de::{DeserializeSeed, Error as DeserializeError, Expected, MapAccess, Visitor},
+    de::{DeserializeSeed, Error as DeserializeError, Expected, IgnoredAny, MapAccess, Visitor},
 };
 use serde_with::skip_serializing_none;
 use std::fmt;
@@ -113,14 +114,35 @@ impl LanguageMap {
 // reading never passes to the value it reads.
 impl<'de> Deserialize<'de> for LanguageMap {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<LanguageMap, D::Error> {
-        deserializer.deserialize_map(LanguageMapVisitor)
+        LanguageMap::within(None).deserialize(deserializer)
     }
 }
 
-/// Reads a language map entry by entry.
-struct LanguageMapVisitor;
+impl LanguageMap {
+    /// Read a language map, its strings recorded against `budget` when there is
+    /// one.
+    #[must_use]
+    pub const fn within(budget: Option<&ValueBudget>) -> LanguageMapWithin<'_> {
+        LanguageMapWithin(budget)
+    }
+}
 
-impl<'de> Visitor<'de> for LanguageMapVisitor {
+/// Reads a language map entry by entry, each string recorded against the
+/// budget of values the entity it belongs to may still hold. Once the budget is
+/// spent the entries that follow are skipped, so a map of millions of tags costs
+/// what the budget costs whatever its size.
+#[derive(Debug, Clone, Copy)]
+pub struct LanguageMapWithin<'b>(Option<&'b ValueBudget>);
+
+impl<'de> DeserializeSeed<'de> for LanguageMapWithin<'_> {
+    type Value = LanguageMap;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<LanguageMap, D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for LanguageMapWithin<'_> {
     type Value = LanguageMap;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -129,30 +151,44 @@ impl<'de> Visitor<'de> for LanguageMapVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut entries: A) -> Result<LanguageMap, A::Error> {
         let mut map = IndexMap::new();
-        while let Some(key) = entries.next_key::<LanguageMapKey>()? {
-            let value = entries.next_value_seed(LanguageMapEntry(&key))?;
-            map.insert(key, value);
+        while self.0.is_none_or(|budget| !budget.is_spent()) {
+            let Some(key) = entries.next_key::<LanguageMapKey>()? else {
+                return Ok(LanguageMap(map));
+            };
+            let value = entries.next_value_seed(LanguageMapEntry { key: &key, budget: self.0 })?;
+            // A tag written twice keeps its last strings, and the count makes
+            // only those.
+            if let (Some(budget), Some(replaced)) = (self.0, map.insert(key, value)) {
+                budget.refund(replaced.string_count());
+            }
         }
+        while entries.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
         Ok(LanguageMap(map))
     }
 }
 
 /// The value of the language map entry under one key, refused with the key it
 /// stands under.
-struct LanguageMapEntry<'k>(&'k LanguageMapKey);
+struct LanguageMapEntry<'k, 'b> {
+    /// The key the entry stands under.
+    key: &'k LanguageMapKey,
+    /// What the strings of the entry are recorded against.
+    budget: Option<&'b ValueBudget>,
+}
 
-impl<'de> DeserializeSeed<'de> for LanguageMapEntry<'_> {
+impl<'de> DeserializeSeed<'de> for LanguageMapEntry<'_, '_> {
     type Value = LanguageMapValue;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<LanguageMapValue, D::Error> {
-        OneOrMany::deserialize_expecting(deserializer, self).map(LanguageMapValue::from)
+        let budget = self.budget;
+        OneOrMany::deserialize_expecting_within(deserializer, self, budget).map(LanguageMapValue::from)
     }
 }
 
 // `Expected` has no derive: it is the text a refusal of the entry names.
-impl Expected for LanguageMapEntry<'_> {
+impl Expected for LanguageMapEntry<'_, '_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "a string or an array of strings under the language tag '{}'", self.0)
+        write!(formatter, "a string or an array of strings under the language tag '{}'", self.key)
     }
 }
 

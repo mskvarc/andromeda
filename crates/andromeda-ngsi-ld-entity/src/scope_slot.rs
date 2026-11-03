@@ -78,6 +78,12 @@ impl ScopeReading {
         Ok(())
     }
 
+    /// How many distinct paths have been read.
+    #[must_use]
+    pub const fn path_count(&self) -> usize {
+        self.paths.len()
+    }
+
     /// The paths read, or the deletion the Null alone states.
     ///
     /// # Errors

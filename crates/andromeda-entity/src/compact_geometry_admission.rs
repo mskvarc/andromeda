@@ -109,8 +109,9 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         attribute::merge_member::MergeMember,
         entity::{Entity, EntityPatch},
-        request_body::RequestBody,
+        request_body::{DecodeBounds, RequestBody},
     };
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_representation::{
         compact_node::context_reading::ContextReading,
         payload_budget::{GeometryOwner, PayloadBudgetExceeded},
@@ -120,6 +121,10 @@ mod tests {
 
     fn limit(positions: usize) -> GeometryPositionLimit {
         GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit"))
+    }
+
+    fn bounds(positions: usize) -> DecodeBounds {
+        DecodeBounds::new(limit(positions), JsonValueLimit::new(NonZeroUsize::new(1_000_000).expect("a positive limit")))
     }
 
     /// A Polygon of one closed ring of five positions.
@@ -223,7 +228,7 @@ mod tests {
         let written = json!({"id": "urn:ngsi-ld:Area:1", "type": "Area", "location": {"type": "GeoProperty", "value": square()}});
         let text = written.to_string();
         let located =
-            <Entity as RequestBody>::from_bounded_request_text(text.as_bytes(), ContextReading::keyword_spellings(), limit(1)).expect("the body decodes");
+            <Entity as RequestBody>::from_bounded_request_text(text.as_bytes(), ContextReading::keyword_spellings(), bounds(1)).expect("the body decodes");
         let refusal = admit_compact_geometries(limit(1), located.attribute_members()).expect_err("read past the limit");
         pretty_assertions::assert_eq!(owner(refusal), "location");
     }

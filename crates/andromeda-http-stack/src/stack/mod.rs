@@ -39,7 +39,7 @@ use andromeda_configuration::schema::{
 use andromeda_http_extraction::{
     blocking_decode::BlockingDecodePolicy,
     request_body_limit::RequestBodyLimit,
-    request_geometry_position_limit::RequestGeometryPositionLimit,
+    request_decode_bounds::RequestDecodeBounds,
     request_json_value_limit::RequestJsonValueLimit,
 };
 use andromeda_http_headers::{link::field_layout::apply_link_field_layout, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
@@ -104,7 +104,7 @@ pub struct HttpStack {
     /// API-wide limit on the JSON values one payload may hold.
     request_json_value_limit: RequestJsonValueLimit,
     /// API-wide limit on the positions one geometry of a payload may hold.
-    request_geometry_position_limit: RequestGeometryPositionLimit,
+    request_decode_bounds: RequestDecodeBounds,
     /// API-wide ceiling on the bytes one page of a collection may render to.
     page_byte_ceiling: PageByteCeiling,
     /// How a payload is decoded beside the executor.
@@ -149,7 +149,10 @@ impl HttpStack {
         Ok(HttpStack {
             request_body_limit,
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(limits.max_json_values)),
-            request_geometry_position_limit: RequestGeometryPositionLimit::new(GeometryPositionLimit::new(limits.max_geometry_positions)),
+            request_decode_bounds: RequestDecodeBounds::new(
+                GeometryPositionLimit::new(limits.max_geometry_positions),
+                JsonValueLimit::new(limits.max_entity_json_values),
+            ),
             page_byte_ceiling: PageByteCeiling::new(limits.max_page_ceiling_bytes()?),
             blocking_decode,
             forwarded_trust: ForwardedTrustPolicy::from(&config.forwarded),
@@ -185,7 +188,7 @@ impl HttpStack {
             // A geometry is recorded no further than this limit lets a
             // geometry be, so refusing one past it costs the same whatever its
             // size.
-            .layer(Extension(self.request_geometry_position_limit))
+            .layer(Extension(self.request_decode_bounds))
             .layer(Extension(self.blocking_decode.clone())) // clone: every request shares the stack's decode permits
             // A collection page is held to its byte ceiling once rendered,
             // whichever handler answered it.

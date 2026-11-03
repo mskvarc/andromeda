@@ -10,12 +10,15 @@
 //! never filtered inside, since what a node holds as JSON is taken from the
 //! node as written.
 
-use crate::compact_node::{CompactNode, NodeMembers, NodeShape};
+use crate::{
+    compact_node::{CompactNode, NodeMembers, NodeShape},
+    value_budget::ValueBudget,
+};
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
-use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
 
 /// The members clause 5.2.2 has the broker generate.
 const SYSTEM_GENERATED: [&str; 3] = [compact_properties::CREATED_AT, compact_properties::MODIFIED_AT, compact_properties::DELETED_AT];
@@ -103,8 +106,16 @@ impl<'n, N: CompactNode<'n>> CompactNode<'n> for ProducedNode<N> {
         self.node.literal()
     }
 
-    fn decoded<T: DeserializeOwned>(self) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
-        self.node.decoded()
+    fn decoded_by<T, S: for<'de> DeserializeSeed<'de, Value = T>>(self, seed: S) -> Result<Result<T, serde_json::Error>, N::Unreadable> {
+        self.node.decoded_by(seed)
+    }
+
+    fn is_null(self) -> bool {
+        self.node.is_null()
+    }
+
+    fn value_budget(self) -> Option<&'n ValueBudget> {
+        self.node.value_budget()
     }
 
     fn read_geometry(self) -> Result<Result<WrittenGeometry, serde_json::Error>, N::Unreadable> {

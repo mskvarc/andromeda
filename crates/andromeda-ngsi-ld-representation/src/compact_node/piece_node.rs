@@ -11,7 +11,8 @@ use andromeda_json_literal::{
     piece::{JsonKind, JsonPiece},
 };
 use andromeda_ngsi_ld_geometry::written_geometry::WrittenGeometry;
-use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
+use serde_json::Deserializer as JsonReader;
 use std::{borrow::Cow, convert::Infallible};
 
 impl<'n> CompactNode<'n> for JsonPiece<'n> {
@@ -31,15 +32,23 @@ impl<'n> CompactNode<'n> for JsonPiece<'n> {
         }
     }
 
+    fn is_null(self) -> bool {
+        self.kind() == JsonKind::Null
+    }
+
     fn literal(self) -> Result<Result<JsonLiteral, JsonLiteralError>, Infallible> {
         Ok(self.to_literal())
     }
 
-    fn decoded<T: DeserializeOwned>(self) -> Result<Result<T, serde_json::Error>, Infallible> {
-        Ok(match self.shape() {
-            NodeShape::String(text) => decoded_string(&text),
-            NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
-                serde_json::from_str(self.text())
+    fn decoded_by<T, S: for<'de> DeserializeSeed<'de, Value = T>>(self, seed: S) -> Result<Result<T, serde_json::Error>, Infallible> {
+        // Only the kind is looked at: the shape of an array or an object holds
+        // a node per item, and held across the decode it would add the size of
+        // the value to the size of what it decodes into.
+        Ok(match self.kind() {
+            JsonKind::String => decoded_string(&self.as_str().unwrap_or(Cow::Borrowed("")), seed),
+            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::Array | JsonKind::Object => {
+                let mut reader = JsonReader::from_str(self.text());
+                seed.deserialize(&mut reader).and_then(|read| reader.end().map(|()| read))
             }
         })
     }

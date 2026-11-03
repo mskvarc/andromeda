@@ -1,5 +1,11 @@
 //! The NGSI-LD attribute families and the members they share (ETSI GS CIM 009 clause 5.2).
 
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod budgeted_member_tests;
 pub mod common_fields;
 #[cfg(test)]
 #[expect(
@@ -39,6 +45,7 @@ pub mod one_or_many;
 pub mod patched;
 pub mod previous_instance;
 pub mod property;
+pub mod recorded_elements;
 pub mod relationship;
 pub mod value;
 pub mod vocab_property;

@@ -23,7 +23,7 @@ use crate::{
     batch_item_refusal::BatchItemRefusal,
     body_envelope::BodyEnvelope,
     not_json_document::NotJsonDocument,
-    request_geometry_position_limit::{RequestGeometryPositionLimit, read_within},
+    request_decode_bounds::{RequestDecodeBounds, read_within},
     undecodable_body::UndecodableBody,
 };
 use andromeda_jsonld::batch_contexts::{AdmittedBatchContext, BatchContext};
@@ -72,7 +72,7 @@ pub struct BatchItem {
     pub embedded: Option<EmbeddedContext>,
     /// The most positions a geometry of the item may hold, when the stack
     /// published it.
-    pub geometry_positions: Option<RequestGeometryPositionLimit>,
+    pub decode_bounds: Option<RequestDecodeBounds>,
 }
 
 /// Why a batch item whose context was admitted is not read.
@@ -125,7 +125,7 @@ impl BatchItem {
             entity_id,
             text: self.text,
             context,
-            geometry_positions: self.geometry_positions,
+            decode_bounds: self.decode_bounds,
         })
     }
 }
@@ -175,7 +175,7 @@ pub struct AdmittedItem {
     context: AdmittedBatchContext,
     /// The most positions a geometry of the item may hold, when the stack
     /// published it.
-    geometry_positions: Option<RequestGeometryPositionLimit>,
+    decode_bounds: Option<RequestDecodeBounds>,
 }
 
 impl AdmittedItem {
@@ -203,7 +203,7 @@ impl AdmittedItem {
     /// Decode the item as an entity through the terms of its context.
     #[must_use]
     pub fn decoded<M: MemberReading>(self) -> DecodedItem<M> {
-        let entity = entity_of(&self.text, self.context.terms().reading(), self.geometry_positions);
+        let entity = entity_of(&self.text, self.context.terms().reading(), self.decode_bounds);
         DecodedItem {
             entity_id: self.entity_id,
             context: self.context,
@@ -213,7 +213,7 @@ impl AdmittedItem {
 }
 
 /// The entity the item `text` is, read through `reading`, its geometries
-/// recorded within `geometry_positions`.
+/// recorded within `decode_bounds`.
 ///
 /// # Errors
 ///
@@ -222,9 +222,9 @@ impl AdmittedItem {
 pub(crate) fn entity_of<M: MemberReading>(
     text: &[u8],
     reading: ContextReading<'_>,
-    geometry_positions: Option<RequestGeometryPositionLimit>,
+    decode_bounds: Option<RequestDecodeBounds>,
 ) -> Result<Entity<M>, BatchItemRefusal> {
-    read_within::<Entity<M>>(geometry_positions, text, reading)
+    read_within::<Entity<M>>(decode_bounds, text, reading)
         .map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity<M>>(text, reading, source)))
 }
 
@@ -269,7 +269,7 @@ mod tests {
             text: Bytes::from(text),
             context: own,
             embedded: None,
-            geometry_positions: None,
+            decode_bounds: None,
         };
         item.admitted(admitted)
     }
@@ -360,7 +360,7 @@ mod tests {
             text: Bytes::from_static(b"{}"),
             context: BatchContexts::per_entity().context_of(None),
             embedded: None,
-            geometry_positions: None,
+            decode_bounds: None,
         };
         let written = item(ItemIdentifier::Written("urn:ngsi-ld:Vehicle:1".parse().expect("a valid URI")));
         pretty_assertions::assert_eq!(written.written_id().expect("a written id").as_str(), "urn:ngsi-ld:Vehicle:1");

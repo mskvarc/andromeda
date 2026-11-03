@@ -35,6 +35,12 @@ impl DistinctPaths {
         paths.push(path);
     }
 
+    /// How many paths are held.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.paths.len()
+    }
+
     /// Whether no path is held.
     #[must_use]
     pub const fn is_empty(&self) -> bool {

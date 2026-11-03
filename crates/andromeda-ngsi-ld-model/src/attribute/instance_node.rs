@@ -14,11 +14,12 @@ use crate::{
         geo_property_value::{GeoPropertyValue, GeoValueRefusal},
         inline_entity::InlineEntity,
         instance::Attribute,
-        instance_member::{InstanceMembers, ReadError, optional_member, refused_member, unit_code_member},
+        instance_member::{InstanceMembers, ReadError, optional_member, optional_member_within, refused_member, unit_code_member},
         json_property::JsonProperty,
-        language_property::LanguageProperty,
+        language_property::{LanguageMap, LanguageProperty},
         list_property::ListProperty,
         list_relationship::ListRelationship,
+        object_list::RelationshipObjectList,
         one_or_many::OneOrMany,
         property::Property,
         relationship::Relationship,
@@ -31,8 +32,11 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
-use serde::de::DeserializeOwned;
+use andromeda_ngsi_ld_representation::{
+    compact_node::{CompactNode, NodeMembers, NodeShape},
+    value_budget::ValueBudget,
+};
+use serde::de::{DeserializeOwned, DeserializeSeed};
 
 impl Attribute {
     /// The instance of `family` the members of a compact object written
@@ -69,16 +73,16 @@ impl Attribute {
                 common,
             }),
             AttributeType::Relationship => Attribute::Relationship(Relationship {
-                object: member(value?, value_member)?,
+                object: member_within(value?, value_member, OneOrMany::within)?,
                 object_type: optional_member(members.object_type, RefusedMember::ObjectType)?,
-                previous_object: optional_member(members.previous, previous_member)?,
+                previous_object: optional_member_within(members.previous, previous_member, OneOrMany::within)?,
                 entity: optional_present(members.inline, RefusedMember::Entity, |inline| inline_entities(inline, RefusedMember::Entity))?,
                 common,
             }),
             AttributeType::VocabProperty => Attribute::VocabProperty(VocabProperty {
-                vocab: member(value?, value_member)?,
+                vocab: member_within(value?, value_member, OneOrMany::within)?,
                 value_type,
-                previous_vocab: optional_member(members.previous, previous_member)?,
+                previous_vocab: optional_member_within(members.previous, previous_member, OneOrMany::within)?,
                 common,
             }),
             AttributeType::GeoProperty => Attribute::GeoProperty(GeoProperty {
@@ -89,9 +93,9 @@ impl Attribute {
                 common,
             }),
             AttributeType::LanguageProperty => Attribute::LanguageProperty(LanguageProperty {
-                language_map: member(value?, value_member)?,
+                language_map: member_within(value?, value_member, LanguageMap::within)?,
                 value_type,
-                previous_language_map: optional_member(members.previous, previous_member)?,
+                previous_language_map: optional_member_within(members.previous, previous_member, LanguageMap::within)?,
                 common,
             }),
             AttributeType::JsonProperty => Attribute::JsonProperty(JsonProperty {
@@ -108,12 +112,12 @@ impl Attribute {
                 common,
             }),
             AttributeType::ListRelationship => Attribute::ListRelationship(ListRelationship {
-                object_list: member(value?, value_member)?,
+                object_list: member_within(value?, value_member, RelationshipObjectList::within)?,
                 object_type: optional_member(members.object_type, RefusedMember::ObjectType)?,
                 entity_list: optional_present(members.inline, RefusedMember::EntityList, |inline| {
                     inline_entities(inline, RefusedMember::EntityList)
                 })?,
-                previous_object_list: optional_member(members.previous, previous_member)?,
+                previous_object_list: optional_member_within(members.previous, previous_member, RelationshipObjectList::within)?,
                 common,
             }),
         })
@@ -166,10 +170,23 @@ impl Attribute {
 
 /// A required member: present, and not JSON `null` (clause 5.2.1).
 pub(crate) fn required<'n, N: CompactNode<'n>>(node: N, name: RefusedMember) -> Result<N, ReadError<'n, N>> {
-    match node.shape() {
-        NodeShape::Null => Err(refused_member::<N>(name, NodeRefusal::Null)),
-        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => Ok(node),
+    if node.is_null() {
+        Err(refused_member::<N>(name, NodeRefusal::Null))
+    } else {
+        Ok(node)
     }
+}
+
+/// Decode a required member by the seed `seed_for` builds from the budget of
+/// values the member's entity may still hold.
+pub(crate) fn member_within<'n, T, S, N>(node: N, name: RefusedMember, seed_for: impl FnOnce(Option<&'n ValueBudget>) -> S) -> Result<T, ReadError<'n, N>>
+where
+    S: for<'de> DeserializeSeed<'de, Value = T>,
+    N: CompactNode<'n>,
+{
+    node.decoded_by(seed_for(node.value_budget()))
+        .map_err(NodeReadError::Unreadable)?
+        .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
 }
 
 /// Decode a required member as a `T`.

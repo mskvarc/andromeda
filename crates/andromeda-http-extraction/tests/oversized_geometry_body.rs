@@ -13,7 +13,7 @@
     clippy::panic,
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
-use andromeda_http_extraction::{jsonld::JsonLd, request_geometry_position_limit::RequestGeometryPositionLimit};
+use andromeda_http_extraction::{jsonld::JsonLd, request_decode_bounds::RequestDecodeBounds};
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_model::{
@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_model::{
     },
     entity::Entity,
 };
+use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, FromRequest},
@@ -99,9 +100,10 @@ fn peak_of_extracting(runtime: &Runtime, positions: usize) -> u64 {
         .header(CONTENT_LENGTH, body.len())
         .body(Body::from(body))
         .expect("the request builds");
-    request.extensions_mut().insert(RequestGeometryPositionLimit::new(GeometryPositionLimit::new(
-        NonZeroUsize::new(LIMIT).expect("a positive limit"),
-    )));
+    request.extensions_mut().insert(RequestDecodeBounds::new(
+        GeometryPositionLimit::new(NonZeroUsize::new(LIMIT).expect("a positive limit")),
+        JsonValueLimit::new(NonZeroUsize::new(1_000_000).expect("a positive limit")),
+    ));
     let extraction = DefaultBodyLimit::disable().layer(service_fn(|request: Request<Body>| async move {
         Ok::<_, Infallible>(JsonLd::<Entity>::from_request(request, &()).await)
     }));

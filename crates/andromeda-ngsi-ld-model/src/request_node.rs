@@ -6,9 +6,12 @@
 //! level of the document, and a context that gives its terms none has nothing
 //! to undo, so such a body is read through its aliases alone.
 
+use crate::request_body::DecodeBounds;
 use andromeda_json_literal::piece::JsonPiece;
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, aliased_node::AliasedNode, bounded_piece::BoundedPiece, context_reading::ContextReading};
+use andromeda_ngsi_ld_representation::{
+    compact_node::{CompactNode, aliased_node::AliasedNode, bounded_piece::BoundedPiece, context_reading::ContextReading},
+    value_budget::ValueBudget,
+};
 use serde_json::value::RawValue;
 use std::convert::Infallible;
 
@@ -35,20 +38,16 @@ pub(crate) fn read_request_node<T: NodeRead>(text: &[u8], reading: ContextReadin
     read_through(JsonPiece::new(raw), reading)
 }
 
-/// Read a `T` as [`read_request_node`] does, each geometry of the body
-/// recorded no further than a geometry of `positions` positions can hold
-/// (clause 6.3.2).
+/// Read a `T` as [`read_request_node`] does, each geometry and each growing
+/// member of the body recorded within `bounds` (clause 6.3.2).
 ///
 /// # Errors
 ///
 /// As [`read_request_node`].
-pub(crate) fn read_bounded_request_node<T: NodeRead>(
-    text: &[u8],
-    reading: ContextReading<'_>,
-    positions: GeometryPositionLimit,
-) -> Result<T, serde_json::Error> {
+pub(crate) fn read_bounded_request_node<T: NodeRead>(text: &[u8], reading: ContextReading<'_>, bounds: DecodeBounds) -> Result<T, serde_json::Error> {
     let raw: &RawValue = serde_json::from_slice(text)?;
-    read_through(BoundedPiece::new(JsonPiece::new(raw), positions), reading)
+    let values = ValueBudget::new(bounds.entity_values());
+    read_through(BoundedPiece::new(JsonPiece::new(raw), bounds.geometry_positions(), &values), reading)
 }
 
 /// Read a `T` from `node` through `reading`.
