@@ -24,7 +24,7 @@ use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
     temporal::StreamTypeCensus,
 };
-use andromeda_postgresql_seaquery::{aggregate::count_all, literal::int_literal, statement::Statement};
+use andromeda_postgresql_seaquery::{aggregate::count_all, hashed_membership::hashed_membership, literal::int_literal, statement::Statement};
 use derive_more::{Add, AddAssign};
 use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, WithClause, WithQuery};
 use sqlx::{PgPool, Row};
@@ -80,13 +80,17 @@ impl Ledger {
     /// The fold of this ledger in `target`'s branch:
     ///
     /// ```sql
-    /// WITH moved AS (DELETE FROM ledger WHERE (key…) IN
-    ///                  (SELECT key… FROM ledger GROUP BY key… HAVING COUNT(*) > 1)
+    /// WITH moved AS (DELETE FROM ledger WHERE ((key…) IN
+    ///                  (SELECT key… FROM ledger GROUP BY key… HAVING COUNT(*) > 1)) IS TRUE
     ///                RETURNING key…, delta)
     /// INSERT INTO ledger (key…, delta)
     /// SELECT key…, SUM(delta) FROM moved GROUP BY key… HAVING SUM(delta) <> 0
     /// RETURNING delta
     /// ```
+    ///
+    /// The key test is a hashed subplan ([`hashed_membership`]), so the grouped
+    /// keys are built once whatever the planner believes about the ledger's size.
+    /// Every key column is `NOT NULL`, which the wrapper requires.
     ///
     /// The summed rows come back so a sum below zero, which only a census that
     /// drifted from its Entities can hold, is reported rather than folded away
@@ -106,7 +110,7 @@ impl Ledger {
         let mut moved = Query::delete();
         moved
             .from_table(table_of(target, self.table.clone())) // clone: as above.
-            .and_where(key_tuple().in_subquery(crowded.take()))
+            .and_where(hashed_membership(key_tuple().in_subquery(crowded.take())))
             .returning(Query::returning().columns(self.keys.iter().cloned().chain([self.delta.clone()]))); // clone: the returning list owns its idens.
         let total = || Func::sum(Expr::col((Moved, self.delta.clone()))); // clone: the sum is written twice.
         let mut summed = Query::select();
@@ -200,7 +204,7 @@ mod tests {
         let [types, type_attributes, attributes, streams] = Ledger::all();
         let sql = type_attributes.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "moved" AS (DELETE FROM "entity_type_attribute_census" WHERE ("entity_type_name_key", "attribute_name_key", "attribute_kind") IN (SELECT "entity_type_name_key", "attribute_name_key", "attribute_kind" FROM "entity_type_attribute_census" GROUP BY "entity_type_name_key", "attribute_name_key", "attribute_kind" HAVING (COUNT(*)) > (1)) RETURNING "entity_type_name_key", "attribute_name_key", "attribute_kind", "instance_delta")"#),
+            sql.starts_with(r#"WITH "moved" AS (DELETE FROM "entity_type_attribute_census" WHERE (("entity_type_name_key", "attribute_name_key", "attribute_kind") IN (SELECT "entity_type_name_key", "attribute_name_key", "attribute_kind" FROM "entity_type_attribute_census" GROUP BY "entity_type_name_key", "attribute_name_key", "attribute_kind" HAVING (COUNT(*)) > (1))) IS TRUE RETURNING "entity_type_name_key", "attribute_name_key", "attribute_kind", "instance_delta")"#),
             "{sql}"
         );
         assert!(
@@ -209,7 +213,7 @@ mod tests {
         );
         for ledger in [types, attributes, streams] {
             let sql = ledger.fold(&ContextTarget::Live).expect("builds").to_string(PostgresQueryBuilder);
-            assert!(sql.contains("HAVING (COUNT(*)) > (1)"), "{sql}");
+            assert!(sql.contains("HAVING (COUNT(*)) > (1))) IS TRUE RETURNING"), "{sql}");
         }
     }
 
