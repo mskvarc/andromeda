@@ -8,6 +8,7 @@
 use crate::{
     attribute_fragment::AttributeFragment,
     error::ExpansionError,
+    model_census::ModelCensus,
     normalization::Normalization,
     processor_decoding::{decode_attribute_fragment, decode_entity, decode_temporal},
     processor_request::{attribute_text, entity_text, patch_text},
@@ -69,8 +70,10 @@ impl<'e> EntityExpansion<'e> {
     /// The same expansion, refusing a document whose Property values and
     /// `valueList` items expand to more than `limit` values before the rest of
     /// it is expanded (clause 6.3.2). The JSON-LD processor, which expands
-    /// what the typed walk declines, counts nothing; the payload budget of the
-    /// written document still decides what it expanded.
+    /// what the typed walk declines, counts nothing, so a request the walk
+    /// declines is counted from the typed model before the processor is handed
+    /// it ([`crate::model_census`]); the payload budget of the written document
+    /// still decides what it expanded.
     #[must_use]
     pub fn bounded_by(self, limit: JsonValueLimit) -> EntityExpansion<'e> {
         EntityExpansion {
@@ -105,7 +108,10 @@ impl<'e> EntityExpansion<'e> {
     pub async fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
         match self.expander().entity(entity, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
-            TypedExpansion::Declined(_) => self.processor_entity(&entity_text(entity, normalization)?).await,
+            TypedExpansion::Declined(_) => {
+                self.admit_declined(|census| census.entity(entity))?;
+                self.processor_entity(&entity_text(entity, normalization)?).await
+            }
         }
     }
 
@@ -117,7 +123,10 @@ impl<'e> EntityExpansion<'e> {
     pub async fn entity_patch<M: WrittenMember>(&self, patch: &EntityPatch<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
         match self.expander().entity_patch(patch, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
-            TypedExpansion::Declined(_) => self.processor_entity(&patch_text(patch, normalization)?).await,
+            TypedExpansion::Declined(_) => {
+                self.admit_declined(|census| census.entity_patch(patch))?;
+                self.processor_entity(&patch_text(patch, normalization)?).await
+            }
         }
     }
 
@@ -132,6 +141,7 @@ impl<'e> EntityExpansion<'e> {
         match self.expander().attribute(attribute, member)? {
             TypedExpansion::Expanded(expanded) => Ok(expanded),
             TypedExpansion::Declined(_) => {
+                self.admit_declined(|census| census.attribute(member))?;
                 let text = attribute_text(attribute, member)?;
                 Ok(decode_attribute_fragment(attribute, self.processor(&text).await?)?)
             }
@@ -152,10 +162,17 @@ impl<'e> EntityExpansion<'e> {
         match self.expander().temporal(&entity, system_times)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => {
+                self.admit_declined(|census| census.entity(&entity))?;
                 let text = entity_text(&entity, Normalization::Entity)?;
                 Ok(decode_temporal(self.processor(&text).await?, system_times)?)
             }
         }
+    }
+
+    /// Count a request the typed walk declined with `count`, when the
+    /// expansion is bounded, before the processor expands it.
+    fn admit_declined(&self, count: impl FnOnce(&ModelCensus) -> Result<(), ExpansionError>) -> Result<(), ExpansionError> {
+        self.value_limit.map(ModelCensus::new).map_or(Ok(()), |census| count(&census))
     }
 
     /// Expand an entity document with the processor and read it.

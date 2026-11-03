@@ -6,6 +6,8 @@ use strum::EnumIter;
 /// The member of an entity that holds the entries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
 pub enum ManyEntries {
+    /// The `value` of a `Property`, one number per entry.
+    Numbers,
     /// The `object` of a `Relationship`, one URN per entry.
     Targets,
     /// The `objectList` of a `ListRelationship`, one URN per entry.
@@ -25,6 +27,7 @@ impl ManyEntries {
     #[must_use]
     pub fn attribute(self, count: usize) -> Option<String> {
         match self {
+            ManyEntries::Numbers => Some(format!(r#"{{"type":"Property","value":[{}]}}"#, entries(count, |number| number.to_string()))),
             ManyEntries::Targets => Some(format!(r#"{{"type":"Relationship","object":[{}]}}"#, urns(count))),
             ManyEntries::ObjectList => Some(format!(r#"{{"type":"ListRelationship","objectList":[{}]}}"#, urns(count))),
             ManyEntries::Terms => Some(format!(
@@ -60,6 +63,29 @@ impl ManyEntries {
         let fragment = self.fragment(member, count);
         format!(r#"{{"id":"{id}","type":"{entity_type}",{}"#, fragment.trim_start_matches('{'))
     }
+
+    /// [`ManyEntries::entity`] under a body `@context` that makes the typed expansion decline the attribute `member`.
+    #[must_use]
+    pub fn declined_entity(self, id: &str, entity_type: &str, member: &str, count: usize) -> String {
+        declined(&self.entity(id, entity_type, member, count), member)
+    }
+
+    /// [`ManyEntries::fragment`] under a body `@context` that makes the typed expansion decline the attribute `member`.
+    #[must_use]
+    pub fn declined_fragment(self, member: &str, count: usize) -> String {
+        declined(&self.fragment(member, count), member)
+    }
+}
+
+/// The body `@context` that gives the attribute `member` a property-scoped context which does not propagate, which the
+/// typed expansion declines wherever the attribute is written, so the JSON-LD processor expands the request.
+fn declining_context(member: &str) -> String {
+    format!(r#"[{{"{member}":{{"@id":"https://example.org/declined/{member}","@context":{{"@propagate":false}}}}}}]"#)
+}
+
+/// `text`, a JSON object, with the body `@context` that makes the typed expansion decline the attribute `member`.
+fn declined(text: &str, member: &str) -> String {
+    format!(r#"{{"@context":{},{}"#, declining_context(member), text.trim_start_matches('{'))
 }
 
 /// `count` URNs written as the entries of a JSON array.
@@ -95,6 +121,15 @@ mod tests {
             expect_that!(fragment.as_object().map(serde_json::Map::len), some(eq(1)));
         }
         Ok(())
+    }
+
+    #[gtest]
+    fn a_declined_entity_names_the_context_that_makes_the_expansion_decline_its_attribute() -> Result<()> {
+        let entity: Value = serde_json::from_str(&ManyEntries::Numbers.declined_entity("urn:ngsi-ld:Probe:1", "Probe", "m", 3))?;
+        verify_that!(entity.pointer("/@context/0/m/@context/@propagate").and_then(Value::as_bool), some(eq(false)))?;
+        verify_that!(entity.pointer("/m/value").and_then(Value::as_array).map(Vec::len), some(eq(3)))?;
+        let fragment: Value = serde_json::from_str(&ManyEntries::Targets.declined_fragment("m", 2))?;
+        verify_that!(fragment.pointer("/m/object").and_then(Value::as_array).map(Vec::len), some(eq(2)))
     }
 
     #[gtest]

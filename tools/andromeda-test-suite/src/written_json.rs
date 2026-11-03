@@ -4,10 +4,11 @@
 use crate::wire::{WireError, content_type, request_to};
 use bytes::Bytes;
 use http::Method;
+use mediatype::MediaType;
 use ngsi_ld::{
     client::{Answering, Client, Transport},
     http::UncheckedRequest,
-    model::APPLICATION_JSON,
+    model::{APPLICATION_JSON, APPLICATION_LD_JSON},
 };
 
 /// A request with `method` to `path` (relative to the API root, with its query) carrying `body` byte for byte under
@@ -17,14 +18,38 @@ use ngsi_ld::{
 ///
 /// Returns [`WireError`] when the target is not a URI.
 pub fn json_request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Method, path: &str, body: &str) -> Result<UncheckedRequest, WireError> {
-    Ok(content_type(request_to(client, method, path)?, &APPLICATION_JSON)
+    request_of(client, method, path, body, &APPLICATION_JSON)
+}
+
+/// A request with `method` to `path` carrying `body` byte for byte under `Content-Type: application/ld+json`, the
+/// media type a body that names its own `@context` goes out under, and no `Accept`.
+///
+/// # Errors
+///
+/// Returns [`WireError`] when the target is not a URI.
+pub fn ld_json_request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Method, path: &str, body: &str) -> Result<UncheckedRequest, WireError> {
+    request_of(client, method, path, body, &APPLICATION_LD_JSON)
+}
+
+/// A request with `method` to `path` carrying `body` byte for byte under `media_type`.
+fn request_of<T: Transport, M: Answering>(
+    client: &Client<T, M>,
+    method: Method,
+    path: &str,
+    body: &str,
+    media_type: &MediaType<'_>,
+) -> Result<UncheckedRequest, WireError> {
+    Ok(content_type(request_to(client, method, path)?, media_type)
         .map_err(WireError::MediaType)?
         .body(Bytes::copy_from_slice(body.as_bytes())))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{broker::client_at, written_json::json_request_to};
+    use crate::{
+        broker::client_at,
+        written_json::{json_request_to, ld_json_request_to},
+    };
     use bytes::Bytes;
     use googletest::prelude::*;
     use http::{
@@ -46,6 +71,17 @@ mod tests {
         );
         expect_that!(request.headers().get(ACCEPT), none());
         expect_that!(request.body().as_ref(), eq(&Bytes::from_static(br#"{ "value":  1 }"#)));
+        Ok(())
+    }
+
+    #[gtest]
+    fn a_body_naming_its_context_goes_out_under_the_ld_json_media_type() -> Result<()> {
+        let client = client_at(Url::parse("http://broker.test/ngsi-ld/v1/")?)?;
+        let written = ld_json_request_to(&client, Method::POST, "entities", r#"{"@context":[]}"#)?;
+        expect_that!(
+            written.as_request().headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            some(eq("application/ld+json"))
+        );
         Ok(())
     }
 }

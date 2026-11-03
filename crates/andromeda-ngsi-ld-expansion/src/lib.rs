@@ -27,6 +27,8 @@ pub mod decline;
 pub mod entity_expansion;
 pub mod error;
 mod expanded_tree;
+mod literal_values;
+mod model_census;
 pub mod normalization;
 pub mod prefixed_names;
 pub mod processor_decoding;
@@ -46,6 +48,13 @@ pub mod written_member;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod context_tests;
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod declined_value_tests;
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
