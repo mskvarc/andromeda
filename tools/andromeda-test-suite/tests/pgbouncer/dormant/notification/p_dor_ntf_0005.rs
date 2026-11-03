@@ -1,4 +1,4 @@
-//! Every change a live Subscription is owed is notified although its tenant is evicted while changes still wait.
+//! A tenant with live changes still waiting is not unloaded to make room until they are notified.
 
 use andromeda_test_suite::{
     broker,
@@ -25,18 +25,17 @@ const ENTITIES_PER_WRITE: usize = 15;
 /// 32, so the writes wait for room, and the changes left when the tenant is evicted need several seconds to send.
 const ANSWER_DELAY: Duration = Duration::from_millis(250);
 
-/// Pins: a Subscription on a type whose endpoint answers each notification after 250 ms, in a tenant of a broker
-/// evaluating live through a queue of two changes and one lane, receives one notification for each of 45 entities
-/// upserted by three concurrent batches (all answered 2xx), although the tenant was evicted from the broker's cache
-/// of three right after the writes
+/// Pins: when the cache of three needs room right after three concurrent batches of 15 entities were answered 2xx, the
+/// tenant of a live Subscription whose endpoint answers each notification after 250 ms is unloaded only once all 45
+/// notifications have arrived, and no notification is lost
 /// Clause: 5.8.6
 /// Tenant: private (the subject is a whole tenant leaving the runtime cache)
 /// Recorded: Andromeda configuration, not v1.9.1: the broker evaluates live, buffers two changes beyond the 32 its
-/// lane holds, makes a write wait when both are full, and stops a tenant's evaluation within the delivery timeout
-/// plus a second
+/// lane holds, makes a write wait when both are full, and unloads a tenant holding changes only after every tenant
+/// holding none
 #[gtest]
 #[tokio::test]
-async fn p_dor_ntf_0005_every_change_of_a_live_subscription_is_notified_when_its_tenant_is_evicted_with_changes_waiting() -> Result<()> {
+async fn p_dor_ntf_0005_a_tenant_with_live_changes_waiting_is_unloaded_only_after_they_are_notified() -> Result<()> {
     let namespace = Namespace::fresh();
     let pressure = Namespace::fresh();
     let live = broker::client(BrokerRole::DormantLive)?;
@@ -72,6 +71,6 @@ async fn p_dor_ntf_0005_every_change_of_a_live_subscription_is_notified_when_its
         outcome?;
     }
     evict_by_reading(&live, &member.tenant, &others).await?;
-    let notified = sink.wait_for_at_least("slow", WRITES * ENTITIES_PER_WRITE).await?;
+    let notified = sink.received("slow").await?;
     verify_that!(notified.len(), eq(WRITES * ENTITIES_PER_WRITE))
 }

@@ -253,6 +253,29 @@ fn a_delivery_lease_is_refused_below_its_margin_over_the_request_timeout_and_loa
     assert_eq!(loaded, Some(Vec::new()));
 }
 
+/// A stopping tenant must be allowed at least one delivery deadline: a
+/// millisecond short of the request timeout refuses to load, the timeout
+/// exactly loads.
+#[test]
+#[serial]
+fn a_shutdown_drain_is_refused_below_the_request_timeout_and_loads_at_it() {
+    let refused = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\nshutdown_drain = \"9999ms\"\n");
+    assert_eq!(
+        refused,
+        Some(vec![ConfigurationViolation::OutOfRange {
+            key: ConfigKey::NotificationsEvaluationShutdownDrain,
+            value: Quantity::Duration(Duration::from_millis(9_999)),
+            relation: Relation::AtLeast,
+            bound: Bound::Setting {
+                key: ConfigKey::NotificationsDeliveryRequestTimeout,
+                value: Quantity::Duration(Duration::from_secs(10)),
+            },
+        }])
+    );
+    let loaded = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\nshutdown_drain = \"10s\"\n");
+    assert_eq!(loaded, Some(Vec::new()));
+}
+
 /// The side-effect lease must leave its margin over the connection acquire
 /// deadline: a millisecond short of it refuses to load, the margin exactly
 /// loads.

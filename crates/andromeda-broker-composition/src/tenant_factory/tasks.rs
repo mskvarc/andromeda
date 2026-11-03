@@ -1,5 +1,6 @@
 //! Construction and supervision of one tenant's background tasks.
 
+mod abandoned_drain;
 mod columnstore_conversion;
 mod csource_notification;
 mod discovery_census;
@@ -124,8 +125,32 @@ pub(super) struct TaskSupervision {
     /// The tasks finishing the hand-off of committed changes to notification
     /// evaluation, which the runtime waits for after its tasks stop.
     pub(super) handoffs: Vec<TaskTracker>,
+    /// The committed changes handed to live evaluation and not yet evaluated,
+    /// which the runtime cache reads to spare a tenant with a backlog.
+    pub(super) commits: Arc<PendingCommits>,
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
     pub(super) task_supervisor: TaskSupervisor,
+}
+
+impl TaskSupervision {
+    /// Gather what stops the tenant's tasks with the sinks they read from.
+    fn new(
+        handles: Vec<JoinHandle<()>>,
+        health_shutdown: Option<watch::Sender<bool>>,
+        task_supervisor: TaskSupervisor,
+        entity: &QueuedEntityChangeSink,
+        registration: &QueuedRegistrationChangeSink,
+    ) -> TaskSupervision {
+        TaskSupervision {
+            handles,
+            // clone: the runtime waits on the trackers the sinks spawn on.
+            handoffs: vec![entity.handoffs().clone(), registration.handoffs().clone()],
+            // clone: the runtime cache reads the count the sink and processor share.
+            commits: Arc::clone(entity.commits()),
+            health_shutdown,
+            task_supervisor,
+        }
+    }
 }
 
 /// The change signals and consequence-drain wake receivers a tenant's tasks
@@ -260,7 +285,8 @@ pub(super) fn supervise_tasks(
         notification_processor,
         EntityNotificationStreams {
             entity_changes: entity_receiver,
-            handoffs: entity.handoffs().clone(), // clone: the processor waits for the hand-offs the sink starts.
+            handoffs: entity.handoffs().clone(),   // clone: the processor waits for the hand-offs the sink starts.
+            commits: Arc::clone(entity.commits()), // clone: the processor reports the changes it gives up on.
             subscription_changes: subscription,
         },
         DeliveryDrainDrive {
@@ -293,7 +319,7 @@ pub(super) fn supervise_tasks(
             registrations: registration_receiver,
             handoffs: registration.handoffs().clone(), // clone: the worker waits for the hand-offs the sink starts.
             subscriptions: csource_subscription,
-            request_timeout: config.notifications.delivery.request_timeout(),
+            shutdown_drain: config.notifications.evaluation.shutdown_drain(),
         },
         periodic,
     )?;
@@ -314,12 +340,7 @@ pub(super) fn supervise_tasks(
         },
     )?;
     register_spatial_workers(&task_supervisor, config, storage)?;
-    Ok(TaskSupervision {
-        handles,
-        handoffs: vec![entity.handoffs().clone(), registration.handoffs().clone()], // clone: the runtime waits on the trackers the sinks spawn on.
-        health_shutdown,
-        task_supervisor,
-    })
+    Ok(TaskSupervision::new(handles, health_shutdown, task_supervisor, &entity, &registration))
 }
 
 /// Register the history sweeps, conversion and retention, under the horizons

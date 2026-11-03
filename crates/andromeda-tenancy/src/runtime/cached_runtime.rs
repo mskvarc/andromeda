@@ -3,7 +3,7 @@
 
 use crate::{
     runtime::{
-        eviction_rank::{EvictionRank, PeriodicWork},
+        eviction_rank::{Backlog, EvictionRank, PeriodicWork},
         lease::LeaseOrigin,
     },
     state_factory::TenantRuntime,
@@ -195,6 +195,7 @@ impl<S, R: TenantRuntime> CachedRuntime<S, R> {
     /// not woken again.
     pub(super) fn eviction_rank(&self, horizon: SystemTime) -> EvictionRank {
         EvictionRank {
+            backlog: Backlog::of(self.runtime.undelivered_changes()),
             work: PeriodicWork::of(self.runtime.next_periodic_due(), horizon),
             last_used: self.last_used_instant(),
         }

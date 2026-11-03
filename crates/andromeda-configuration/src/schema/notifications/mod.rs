@@ -6,7 +6,7 @@ pub mod delivery;
 use crate::{human_duration::HumanDuration, schema::notifications::delivery::DeliveryConfig};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 
 /// How live delivery evaluates committed entity changes.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,14 +17,14 @@ pub struct EvaluationConfig {
     /// evaluation.
     ///
     /// Only `live` delivery reads the buffer; `durable` delivery records every
-    /// notification in the commit that raised it. No change is ever dropped:
-    /// once the buffer is full, a write waits after its commit until
+    /// notification in the commit that raised it. While the broker runs no change is
+    /// dropped: once the buffer is full, a write waits after its commit until
     /// evaluation makes room, so a burst larger than the buffer slows the
     /// tenant's writes rather than losing notifications. At under half a
     /// kilobyte a slot, a full buffer at the default holds under 4 MB per
     /// tenant.
     #[schemars(
-        description = "The most committed entity changes each tenant buffers for live evaluation. No change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer."
+        description = "The most committed entity changes each tenant buffers for live evaluation. While the broker runs no change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. Changes still waiting when the broker stops or the tenant is unloaded are evaluated first, within `shutdown_drain`. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer."
     )]
     pub max_queued_changes: NonZeroUsize,
     /// The most committed entity changes evaluated at once.
@@ -37,6 +37,26 @@ pub struct EvaluationConfig {
         description = "The most committed entity changes evaluated at once. Changes to one entity are evaluated one at a time in commit order; changes to different entities run side by side, each reading its entity and recording a notification per matched subscription, so they share the tenant's database pool with request handling."
     )]
     pub max_concurrent_changes: NonZeroUsize,
+    /// The longest a stopping tenant spends evaluating the changes it already
+    /// holds, in human-readable form (`"30s"`).
+    ///
+    /// A broker that stops, and a tenant unloaded from the runtime cache,
+    /// first evaluate every change already committed to live evaluation,
+    /// including those writes still wait to hand over. A slow endpoint can
+    /// stretch that; past this bound the evaluation is abandoned and the
+    /// changes still waiting are dropped, counted and logged.
+    #[schemars(
+        description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. Must be at least `notifications.delivery.request_timeout`. Set it below the grace period your orchestrator gives the broker to stop, or the process is killed before the bound applies. `\"durable\"` delivery records notifications in the commit and is not affected."
+    )]
+    pub shutdown_drain: HumanDuration,
+}
+
+impl EvaluationConfig {
+    /// The longest a stopping tenant spends evaluating the changes it holds.
+    #[must_use]
+    pub const fn shutdown_drain(&self) -> Duration {
+        self.shutdown_drain.duration()
+    }
 }
 
 impl Default for EvaluationConfig {
@@ -44,6 +64,7 @@ impl Default for EvaluationConfig {
         EvaluationConfig {
             max_queued_changes: NonZeroUsize::MIN.saturating_add(8191),
             max_concurrent_changes: NonZeroUsize::MIN.saturating_add(31),
+            shutdown_drain: HumanDuration::from_secs(30),
         }
     }
 }
@@ -93,11 +114,17 @@ pub struct NotificationsConfig {
 mod tests {
     use crate::schema::notifications::NotificationsConfig;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[test]
     fn the_default_evaluation_buffers_8192_changes_and_evaluates_32_at_once() {
         let config = NotificationsConfig::default();
         assert_eq!(config.evaluation.max_queued_changes.get(), 8192);
         assert_eq!(config.evaluation.max_concurrent_changes.get(), 32);
+    }
+
+    #[test]
+    fn the_default_shutdown_drain_is_thirty_seconds() {
+        assert_eq!(NotificationsConfig::default().evaluation.shutdown_drain(), Duration::from_secs(30));
     }
 }

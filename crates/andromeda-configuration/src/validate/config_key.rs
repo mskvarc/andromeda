@@ -222,6 +222,9 @@ pub enum ConfigKey {
     /// `notifications.delivery.request_timeout`.
     #[display("notifications.delivery.request_timeout")]
     NotificationsDeliveryRequestTimeout,
+    /// `notifications.evaluation.shutdown_drain`.
+    #[display("notifications.evaluation.shutdown_drain")]
+    NotificationsEvaluationShutdownDrain,
     /// `notifications.delivery.max_http_body`.
     #[display("notifications.delivery.max_http_body")]
     NotificationsDeliveryMaxHttpBody,

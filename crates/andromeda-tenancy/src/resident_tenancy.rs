@@ -162,6 +162,10 @@ impl TenantRuntime for InertRuntime {
     fn next_periodic_due(&self) -> Option<SystemTime> {
         None
     }
+
+    fn undelivered_changes(&self) -> usize {
+        0
+    }
 }
 
 impl RuntimeActivity for InertRuntime {

@@ -5,7 +5,7 @@ use crate::{
     database::TenantDatabase,
     pending_work::PendingWork,
     runtime::{TenantRuntimeManager, eviction_rank::EvictionRank, teardown::next_wake_at},
-    state_factory::TenantStateFactory,
+    state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
@@ -90,8 +90,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             // Take the database to probe while the shard guard is briefly held,
             // then drop the guard before awaiting; a leased runtime is skipped.
             let (database, existence) = match self.runtimes.get(&tenant) {
-                Some(cached) if !cached.is_leased() => (cached.database().clone(), cached.existence()), // clone: the probe outlives the guard
-                Some(_) | None => continue,
+                Some(cached) if !cached.is_leased() && cached.runtime.undelivered_changes() == 0 => {
+                    (cached.database().clone(), cached.existence()) // clone: the probe outlives the guard
+                }
+                Some(cached) => {
+                    // A backlog is work in progress: the runtime is in use until it is acted on.
+                    if !cached.is_leased() {
+                        cached.touch();
+                    }
+                    continue;
+                }
+                None => continue,
             };
 
             let probe = self.probe.earliest_pending_work(&database, existence).await;

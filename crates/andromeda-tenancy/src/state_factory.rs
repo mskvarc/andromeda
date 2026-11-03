@@ -40,6 +40,14 @@ pub trait TenantRuntime: Send + Sync + 'static {
     /// earlier than that interval later (clause 5.8.6 notifies when the
     /// interval is reached).
     fn next_periodic_due(&self) -> Option<SystemTime>;
+
+    /// How many changes the runtime has accepted and not yet acted on, which
+    /// unloading it would drop or rush.
+    ///
+    /// Read whenever room is made for another tenant, so it answers from
+    /// memory. A runtime holding any is unloaded only after every runtime
+    /// holding none.
+    fn undelivered_changes(&self) -> usize;
 }
 
 /// Told when requests reach for, and let go of, one tenant runtime.

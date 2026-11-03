@@ -32,8 +32,8 @@ const ANSWER_DELAY: Duration = Duration::from_millis(250);
 /// Clause: 5.8.6
 /// Tenant: private (the subject is a whole broker process stopping with a tenant resident)
 /// Recorded: Andromeda configuration, not v1.9.1: the broker evaluates live, buffers two changes beyond the 32 its
-/// lane holds, makes a write wait when both are full, and stops a tenant's evaluation within the delivery timeout
-/// plus a second
+/// lane holds, makes a write wait when both are full, and stops a tenant's evaluation within
+/// `notifications.evaluation.shutdown_drain`
 #[gtest]
 #[tokio::test]
 async fn p_dor_ntf_0006_every_change_of_a_live_subscription_is_notified_when_the_broker_receives_sigterm_with_changes_waiting() -> Result<()> {

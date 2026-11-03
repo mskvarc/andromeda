@@ -87,6 +87,7 @@ impl ConfigKey {
             ConfigKey::TemporalStorageDeleteAfter => config.temporal.storage.retention.delete_after.map(span),
             ConfigKey::TemporalStorageRetentionSweepInterval => Some(span(config.temporal.storage.retention.sweep_interval)),
             ConfigKey::NotificationsDeliveryRequestTimeout => Some(span(config.notifications.delivery.request_timeout)),
+            ConfigKey::NotificationsEvaluationShutdownDrain => Some(span(config.notifications.evaluation.shutdown_drain)),
             ConfigKey::NotificationsDeliveryMaxHttpBody => Some(size(config.notifications.delivery.max_http_body.byte_size())),
             ConfigKey::NotificationsDeliveryMaxAttempts => Some(count(config.notifications.delivery.max_attempts.get())),
             ConfigKey::NotificationsDeliveryMaxMqttPacket => Some(Quantity::Bytes(u64::from(config.notifications.delivery.max_mqtt_packet.octets()))),

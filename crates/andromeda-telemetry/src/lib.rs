@@ -17,6 +17,7 @@ pub mod error;
 pub mod federation_ops;
 mod holding_recorder;
 pub mod http;
+pub mod live_evaluation;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod names;

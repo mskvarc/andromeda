@@ -25,6 +25,9 @@ const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// An outbound notification needs a positive deadline, the queue the queue
 /// rules, its lease the margin over one attempt, and every retention a
 /// positive age and cadence, as the periodic drain a positive sleep bound.
+/// A stopping tenant's evaluation gets at least one delivery deadline, or a
+/// notification in flight would be cut off by the stop it ought to finish
+/// before.
 /// The ceilings are what the delivery store and the MQTT protocol hold, and
 /// the most slots one delivery pass may keep in flight.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
@@ -36,6 +39,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
                 key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
                 relation: Relation::AtLeast,
                 limit: Limit::KeyPlusMargin(ConfigKey::NotificationsDeliveryRequestTimeout, DELIVERY_LEASE_MARGIN),
+            },
+            Rule::Ordered {
+                key: ConfigKey::NotificationsEvaluationShutdownDrain,
+                relation: Relation::AtLeast,
+                limit: Limit::Key(ConfigKey::NotificationsDeliveryRequestTimeout),
             },
             Rule::Positive(ConfigKey::NotificationsDeliveryAcknowledgedAfter),
             Rule::Positive(ConfigKey::NotificationsDeliveryDeadLetterAfter),

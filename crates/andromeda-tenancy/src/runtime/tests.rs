@@ -48,6 +48,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+mod backlog_eviction;
 mod overdue_wakes;
 mod periodic_eviction;
 mod wake_pass;
@@ -510,12 +511,18 @@ impl RuntimeActivity for Unobserved {
 /// settable after the runtime is built, as a periodic sweep publishes it.
 type PeriodicDueCell = Arc<StdMutex<Option<SystemTime>>>;
 
+/// How many changes a fake runtime reports holding, settable after the runtime
+/// is built, as its queue fills and drains.
+type BacklogCell = Arc<AtomicUsize>;
+
 /// A runtime that records the fact it was released.
 struct FakeRuntime {
     /// Incremented on shutdown.
     shutdowns: Arc<AtomicUsize>,
     /// What [`TenantRuntime::next_periodic_due`] answers.
     periodic_due: PeriodicDueCell,
+    /// What [`TenantRuntime::undelivered_changes`] answers.
+    backlog: BacklogCell,
 }
 
 impl FakeRuntime {
@@ -524,6 +531,7 @@ impl FakeRuntime {
         FakeRuntime {
             shutdowns: Arc::clone(shutdowns),
             periodic_due: PeriodicDueCell::default(),
+            backlog: BacklogCell::default(),
         }
     }
 }
@@ -541,6 +549,10 @@ impl TenantRuntime for FakeRuntime {
     fn next_periodic_due(&self) -> Option<SystemTime> {
         self.periodic_due.lock().ok().and_then(|due| *due)
     }
+
+    fn undelivered_changes(&self) -> usize {
+        self.backlog.load(Ordering::Relaxed)
+    }
 }
 
 /// A factory recording which database each runtime was built against.
@@ -552,6 +564,8 @@ struct FakeFactory {
     /// The periodic due cell of each tenant, shared with every runtime built
     /// for it.
     periodic_due: StdMutex<Vec<(TenantRef, PeriodicDueCell)>>,
+    /// The backlog cell of each tenant, shared with every runtime built for it.
+    backlogs: StdMutex<Vec<(TenantRef, BacklogCell)>>,
 }
 
 impl FakeFactory {
@@ -561,7 +575,24 @@ impl FakeFactory {
             shutdowns,
             built: AtomicUsize::new(0),
             periodic_due: StdMutex::new(Vec::new()),
+            backlogs: StdMutex::new(Vec::new()),
         }
+    }
+
+    /// The backlog cell of `tenant`, created on first use.
+    fn backlog_cell(&self, tenant: &TenantRef) -> BacklogCell {
+        let mut cells = self.backlogs.lock().expect("the backlog cells are readable");
+        if let Some((_, cell)) = cells.iter().find(|(held, _)| held == tenant) {
+            return Arc::clone(cell);
+        }
+        let cell = BacklogCell::default();
+        cells.push((tenant.clone(), Arc::clone(&cell)));
+        cell
+    }
+
+    /// Have `tenant`'s runtime report `held` changes it has yet to act on.
+    fn hold_changes(&self, tenant: &TenantRef, held: usize) {
+        self.backlog_cell(tenant).store(held, Ordering::Relaxed);
     }
 
     /// The periodic due cell of `tenant`, created on first use.
@@ -594,6 +625,7 @@ impl TenantStateFactory for FakeFactory {
             FakeRuntime {
                 shutdowns: Arc::clone(&self.shutdowns),
                 periodic_due: self.periodic_due_cell(tenant),
+                backlog: self.backlog_cell(tenant),
             },
         ))
     }
@@ -1323,6 +1355,10 @@ impl TenantRuntime for ShutdownConcurrencyProbe {
     fn next_periodic_due(&self) -> Option<SystemTime> {
         None
     }
+
+    fn undelivered_changes(&self) -> usize {
+        0
+    }
 }
 
 /// A factory that builds [`ShutdownConcurrencyProbe`] runtimes sharing one pair
@@ -1419,6 +1455,10 @@ impl TenantRuntime for GatedShutdownRuntime {
 
     fn next_periodic_due(&self) -> Option<SystemTime> {
         None
+    }
+
+    fn undelivered_changes(&self) -> usize {
+        0
     }
 }
 
@@ -1950,6 +1990,10 @@ impl TenantRuntime for CommitOnShutdownRuntime {
     fn next_periodic_due(&self) -> Option<SystemTime> {
         None
     }
+
+    fn undelivered_changes(&self) -> usize {
+        0
+    }
 }
 
 /// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
@@ -2072,6 +2116,10 @@ impl TenantRuntime for LatchedShutdownRuntime {
 
     fn next_periodic_due(&self) -> Option<SystemTime> {
         None
+    }
+
+    fn undelivered_changes(&self) -> usize {
+        0
     }
 }
 

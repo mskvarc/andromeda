@@ -19,6 +19,7 @@ use crate::{
         tasks::{
             EntityNotificationDelivery,
             PeriodicSweepDrive,
+            abandoned_drain::EntityDrain,
             notification_delivery::{DeliveryDrainDrive, register_notification_delivery},
             notification_schedule::{register_notification_schedule, register_periodic_wake},
             notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped, worker_notification_failure},
@@ -172,7 +173,7 @@ pub(super) fn register_notification_workers(
         delivery,
         EvaluationLimits {
             lanes: config.evaluation.max_concurrent_changes,
-            request_timeout: config.delivery.request_timeout(),
+            shutdown_drain: config.evaluation.shutdown_drain(),
         },
     )?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
@@ -278,6 +279,8 @@ pub(super) struct EntityNotificationStreams {
     /// The hand-offs of writes that found the entity queue full, which the
     /// processor waits for when it stops.
     pub(super) handoffs: TaskTracker,
+    /// The changes handed to evaluation and not yet evaluated.
+    pub(super) commits: Arc<PendingCommits>,
     /// Subscription changes keeping the evaluated set current.
     pub(super) subscription_changes: broadcast::Sender<SubscriptionChange>,
 }
@@ -287,9 +290,10 @@ pub(super) struct EntityNotificationStreams {
 struct EvaluationLimits {
     /// The evaluation lanes running concurrently.
     lanes: NonZeroUsize,
-    /// The longest one notification takes to send; the processor's shutdown
-    /// grace covers it, so a stop does not abort a lane mid-send.
-    request_timeout: Duration,
+    /// The longest a stop spends evaluating what the tenant holds; it is the
+    /// processor's shutdown grace, and the configuration holds it to at least
+    /// one notification's delivery deadline.
+    shutdown_drain: Duration,
 }
 
 fn register_notification_processor(
@@ -302,18 +306,20 @@ fn register_notification_processor(
     let EntityNotificationStreams {
         entity_changes,
         handoffs,
+        commits,
         subscription_changes,
     } = streams;
-    let EvaluationLimits { lanes, request_timeout } = limits;
+    let EvaluationLimits { lanes, shutdown_drain } = limits;
     let restart_delay = Duration::from_secs(1);
     let name = TaskName::try_from("notification-events").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
-        ShutdownPolicy::new(request_timeout.saturating_add(restart_delay)),
+        ShutdownPolicy::new(shutdown_drain),
     );
     let task = ResidentTask::new(registration, move |execution| {
+        let commits = Arc::clone(&commits); // clone: every resident attempt reports the changes it gives up on.
         let handoffs = handoffs.clone(); // clone: every resident attempt waits for the hand-offs the sink starts.
         let entity_changes = Arc::clone(&entity_changes); // clone: every resident attempt takes the one queue reader in turn.
         let mut subscription_receiver = subscription_changes.subscribe();
@@ -327,11 +333,13 @@ fn register_notification_processor(
                 tokio::select! {
                     () = execution.cancellation().cancelled() => {
                         if let Some(lanes) = evaluation {
+                            let drain = EntityDrain::begin(&commits);
                             settle(&handoffs, &mut entity_receiver, |change| async {
                                 lanes.lane(&change.change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)
                             })
                             .await?;
                             lanes.finish().await;
+                            drain.finish();
                         }
                         return Ok(());
                     }

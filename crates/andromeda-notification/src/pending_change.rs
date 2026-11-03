@@ -40,6 +40,12 @@ impl PendingCommits {
         self.held.lock().first_key_value().map(|(committed_at, _)| *committed_at)
     }
 
+    /// How many changes are held.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.held.lock().values().sum()
+    }
+
     /// Stop holding one change committed at `committed_at`.
     fn release(&self, committed_at: StoreInstant) {
         let mut held = self.held.lock();

@@ -102,6 +102,8 @@ pub const TENANT_COLD_BUILD_DURATION_SECONDS: &str = "andromeda_tenant_cold_buil
 pub const TENANT_BUILD_ADMISSION_WAIT_DURATION_SECONDS: &str = "andromeda_tenant_build_admission_wait_duration_seconds";
 /// Counter of requests shed as saturated while their tenant was reached or built, labelled by the wait that shed them.
 pub const TENANT_REQUESTS_SHED_TOTAL: &str = "andromeda_tenant_requests_shed_total";
+/// Counter of committed entity changes a stopping tenant abandoned before live evaluation finished them.
+pub const LIVE_CHANGES_ABANDONED_TOTAL: &str = "andromeda_live_changes_abandoned_total";
 /// Counter of tenant-runtime evictions, labelled by reason.
 pub const TENANT_EVICTIONS_TOTAL: &str = "andromeda_tenant_evictions_total";
 /// Counter of dormant-tenant wake attempts, labelled by outcome.

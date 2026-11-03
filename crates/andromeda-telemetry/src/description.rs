@@ -14,6 +14,7 @@ use crate::names::{
     HTTP_REQUEST_DURATION_SECONDS,
     HTTP_REQUESTS_PENDING,
     HTTP_REQUESTS_TOTAL,
+    LIVE_CHANGES_ABANDONED_TOTAL,
     NAME_DICTIONARY_ENTRIES,
     NAME_DICTIONARY_EVICTIONS_TOTAL,
     NAME_DICTIONARY_INSERTIONS_TOTAL,
@@ -128,7 +129,7 @@ impl MetricDescription {
 }
 
 /// Every metric the broker emits.
-const DESCRIPTIONS: [MetricDescription; 52] = [
+const DESCRIPTIONS: [MetricDescription; 53] = [
     MetricDescription::gauge(BUILD_INFO, None, "Always 1, labelled by the version of the running broker."),
     MetricDescription::counter(HTTP_REQUESTS_TOTAL, "HTTP requests answered, by method, matched endpoint and status code."),
     MetricDescription::histogram(
@@ -277,6 +278,10 @@ const DESCRIPTIONS: [MetricDescription; 52] = [
     MetricDescription::counter(
         TENANT_REQUESTS_SHED_TOTAL,
         "Requests answered 503 because their tenant could not be reached or loaded in time, by the wait that shed them.",
+    ),
+    MetricDescription::counter(
+        LIVE_CHANGES_ABANDONED_TOTAL,
+        "Committed entity changes dropped without a notification evaluation because a stopping tenant ran out of its shutdown drain.",
     ),
     MetricDescription::counter(TENANT_EVICTIONS_TOTAL, "Tenants unloaded, by reason."),
     MetricDescription::counter(TENANT_WAKES_TOTAL, "Attempts to load a tenant for its scheduled work, by outcome."),

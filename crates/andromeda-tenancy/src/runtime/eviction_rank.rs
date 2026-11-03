@@ -34,13 +34,36 @@ impl PeriodicWork {
     }
 }
 
+/// Whether a runtime holds changes it has accepted and not yet acted on.
+///
+/// Declared in eviction order: a runtime with nothing held is unloaded before
+/// one with a backlog, which would act on the backlog under a bounded drain
+/// while the tenant's own workers stop, and can lose what the drain cannot
+/// finish in time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Backlog {
+    /// The runtime holds no change it has yet to act on.
+    Clear,
+    /// The runtime holds at least one change it has yet to act on.
+    Held,
+}
+
+impl Backlog {
+    /// Classify the number of changes a runtime holds.
+    pub(super) const fn of(undelivered: usize) -> Backlog {
+        if undelivered == 0 { Backlog::Clear } else { Backlog::Held }
+    }
+}
+
 /// Where one runtime stands in the eviction order: lower ranks are unloaded
 /// first.
 ///
-/// Field order is the comparison order the derived `Ord` follows: the kind of
-/// periodic work first, then last use.
+/// Field order is the comparison order the derived `Ord` follows: whether a
+/// backlog is held first, then the kind of periodic work, then last use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct EvictionRank {
+    /// Whether the runtime holds changes it has yet to act on.
+    pub(super) backlog: Backlog,
     /// Whether the runtime has periodic work due before it could be woken.
     pub(super) work: PeriodicWork,
     /// When the runtime was last used.
@@ -49,7 +72,7 @@ pub(super) struct EvictionRank {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::eviction_rank::{EvictionRank, PeriodicWork};
+    use crate::runtime::eviction_rank::{Backlog, EvictionRank, PeriodicWork};
     use std::time::{Duration, Instant, SystemTime};
 
     #[test]
@@ -71,10 +94,12 @@ mod tests {
         let earlier = Instant::now();
         let later = earlier + Duration::from_secs(60);
         let imminent_and_cold = EvictionRank {
+            backlog: Backlog::Clear,
             work: PeriodicWork::Imminent,
             last_used: earlier,
         };
         let distant_and_warm = EvictionRank {
+            backlog: Backlog::Clear,
             work: PeriodicWork::Distant,
             last_used: later,
         };
@@ -86,7 +111,34 @@ mod tests {
         let earlier = Instant::now();
         let later = earlier + Duration::from_secs(60);
         for work in [PeriodicWork::Distant, PeriodicWork::Imminent] {
-            assert!(EvictionRank { work, last_used: earlier } < EvictionRank { work, last_used: later });
+            assert!(
+                EvictionRank {
+                    backlog: Backlog::Clear,
+                    work,
+                    last_used: earlier
+                } < EvictionRank {
+                    backlog: Backlog::Clear,
+                    work,
+                    last_used: later
+                }
+            );
         }
+    }
+
+    #[test]
+    fn a_runtime_holding_changes_ranks_after_one_holding_none_whatever_else_it_has() {
+        let earlier = Instant::now();
+        let later = earlier + Duration::from_secs(60);
+        let held_and_cold = EvictionRank {
+            backlog: Backlog::of(3),
+            work: PeriodicWork::Distant,
+            last_used: earlier,
+        };
+        let clear_and_imminent = EvictionRank {
+            backlog: Backlog::of(0),
+            work: PeriodicWork::Imminent,
+            last_used: later,
+        };
+        assert!(clear_and_imminent < held_and_cold);
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::tenant_factory::{background_pacer::BackgroundPacer, periodic_due::PeriodicDue, storage::TenantContextWorkers, tasks::TaskSupervision};
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
+use andromeda_notification::pending_change::PendingCommits;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::state_factory::{RuntimeActivity, TenantRuntime};
 use async_trait::async_trait;
@@ -17,6 +18,8 @@ pub struct BrokerTenantRuntime {
     background_handles: Vec<JoinHandle<()>>,
     /// The hand-offs of committed changes to notification evaluation.
     handoffs: Vec<TaskTracker>,
+    /// The committed changes handed to live evaluation and not yet evaluated.
+    commits: Arc<PendingCommits>,
     transport: Arc<TransportDispatcher>,
     pool: PgPool,
     health_shutdown: Option<watch::Sender<bool>>,
@@ -39,6 +42,7 @@ impl BrokerTenantRuntime {
         let TaskSupervision {
             handles,
             handoffs,
+            commits,
             health_shutdown,
             task_supervisor,
         } = supervision;
@@ -46,6 +50,7 @@ impl BrokerTenantRuntime {
             context_workers,
             background_handles: handles,
             handoffs,
+            commits,
             transport,
             pool,
             health_shutdown,
@@ -89,6 +94,10 @@ impl TenantRuntime for BrokerTenantRuntime {
 
     fn next_periodic_due(&self) -> Option<SystemTime> {
         self.periodic_due.earliest()
+    }
+
+    fn undelivered_changes(&self) -> usize {
+        self.commits.count()
     }
 }
 
