@@ -15,7 +15,7 @@
 
 use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, user_context_admission::screen_user_context};
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::context_terms::ContextTerms;
 use derive_more::Deref;
 use std::{sync::Arc, vec::IntoIter};
 
@@ -73,7 +73,7 @@ impl BatchContext {
     pub async fn admit(&self, engine: &JsonLdEngine) -> Result<EntityContextAdmission, JsonLdError> {
         screen_user_context(engine, &self.spec).await?;
         Ok(match engine.expansion_context(&self.spec).await {
-            Ok(processed) => EntityContextAdmission::Admitted(self.admitted(processed.aliases())),
+            Ok(processed) => EntityContextAdmission::Admitted(self.admitted(processed.terms())),
             Err(unprocessable) => EntityContextAdmission::Unprocessable(unprocessable),
         })
     }
@@ -95,14 +95,14 @@ impl BatchContext {
     pub async fn admit_for_request(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
         screen_user_context(engine, &self.spec).await?;
         let processed = engine.expansion_context(&self.spec).await?;
-        Ok(self.admitted(processed.aliases()))
+        Ok(self.admitted(processed.terms()))
     }
 
-    /// This context admitted, read through `aliases`.
-    fn admitted(&self, aliases: &Arc<CoreTermAliases>) -> AdmittedBatchContext {
+    /// This context admitted, read through `terms`.
+    fn admitted(&self, terms: &Arc<ContextTerms>) -> AdmittedBatchContext {
         AdmittedBatchContext {
             context: self.clone(), // clone: every entity naming the context holds the shared handle
-            aliases: Arc::clone(aliases),
+            terms: Arc::clone(terms),
         }
     }
 }
@@ -118,23 +118,24 @@ pub enum EntityContextAdmission {
     Unprocessable(JsonLdError),
 }
 
-/// A [`BatchContext`] admitted, with the terms it defines for core terms.
+/// A [`BatchContext`] admitted, with the aliases and containers it defines.
 #[derive(Debug, Clone, Deref)]
 pub struct AdmittedBatchContext {
     /// The admitted context.
     #[deref]
     context: BatchContext,
-    /// The terms the processed context defines for core terms, which every
-    /// entity naming it is read through.
-    aliases: Arc<CoreTermAliases>,
+    /// The terms the processed context defines for core terms and the terms
+    /// whose container reshapes what is written under them, which every entity
+    /// naming it is read through.
+    terms: Arc<ContextTerms>,
 }
 
 impl AdmittedBatchContext {
-    /// The terms the context defines for core terms, shared with the
-    /// processed context they were read from.
+    /// The aliases and containers of the context, shared with the processed
+    /// context they were read from.
     #[must_use]
-    pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
-        &self.aliases
+    pub const fn terms(&self) -> &Arc<ContextTerms> {
+        &self.terms
     }
 }
 
@@ -377,7 +378,7 @@ mod tests {
         let EntityContextAdmission::Admitted(admitted) = own.admit(&offline_engine()).await.expect("the context is admitted") else {
             panic!("the context processes");
         };
-        pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("kind")), "type");
+        pretty_assertions::assert_eq!(admitted.terms().aliases().core_name(Cow::Borrowed("kind")), "type");
         pretty_assertions::assert_eq!(admitted.id(), own.id());
     }
 

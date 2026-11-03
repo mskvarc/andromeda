@@ -10,23 +10,26 @@
 //! The body is read "according to the @context" (clause 5.5.4): a member
 //! written `@id` or `@type` (clause 4.4), or under a term the request's
 //! context defines for a core term (clause 5.5.7), is read as that core term.
-//! The decoding takes the [`CoreTermAliases`] of the admitted context and
-//! applies them through the one reader every compact document is read with.
+//! The decoding takes the [`ContextReading`] of the admitted context: a member
+//! written in the shape the container of its term gives (JSON-LD 1.1 section
+//! 4.6, clause 5.5.7) is read as the same member written without it. The
+//! reading is applied through the one reader every compact document is read
+//! with.
 
 use crate::{
     attribute::member_reading::MemberReading,
     entity::{Entity, EntityPatch},
     node_refusal::NodeReadError,
     query::body::Query,
+    request_node::{NodeRead, read_request_node},
     snapshot_clone::SnapshotCloneInput,
     snapshot_input::SnapshotInput,
     snapshot_patch::SnapshotPatch,
 };
-use andromeda_json_literal::piece::JsonPiece;
+use andromeda_json_literal::piece::JsonString;
 use andromeda_ngsi_ld_representation::{
     aliased_deserializer::AliasedDeserializer,
-    compact_node::{aliased_node::AliasedNode, produced_node::ProducedNode},
-    core_term_aliases::CoreTermAliases,
+    compact_node::{CompactNode, context_reading::ContextReading, produced_node::ProducedNode},
 };
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
@@ -42,24 +45,24 @@ use serde::{
         value::{BorrowedStrDeserializer, MapAccessDeserializer, StringDeserializer},
     },
 };
-use serde_json::{Deserializer as JsonReader, value::RawValue};
-use std::{convert::Infallible, fmt, marker::PhantomData};
+use serde_json::Deserializer as JsonReader;
+use std::{borrow::Cow, convert::Infallible, fmt, marker::PhantomData};
 
 /// A resource an NGSI-LD request body is decoded into.
 pub trait RequestBody: DeserializeOwned {
     /// Decode the resource from the JSON text of a request body, skipping its
     /// top-level `@context` member, each member read under the core term
-    /// `aliases` says it stands for.
+    /// `reading` says it stands for and without the container of its term.
     ///
     /// The result is the one the type's own decoding gives for the body with
-    /// that member removed and its core terms spelled as such, read as
-    /// `serde_json`'s streaming reader reads it.
+    /// that member removed, its core terms spelled as such and its containers
+    /// undone, read as `serde_json`'s streaming reader reads it.
     ///
     /// # Errors
     ///
     /// Returns the reader's failure, positioned in the text.
-    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<Self, serde_json::Error> {
-        read_context_free(text, aliases, DeserializedFromMembers::<Self>(PhantomData))
+    fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<Self, serde_json::Error> {
+        read_context_free(text, reading, DeserializedFromMembers::<Self>(PhantomData))
     }
 }
 
@@ -80,19 +83,42 @@ impl<M: MemberReading> RequestBody for Entity<M> {
     /// JSON is admitted with its numbers in their canonical spelling. The
     /// members a producer may not supply are left out once their names are
     /// read as core terms, so no alias reaches a system member.
-    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<Entity<M>, serde_json::Error> {
-        let raw: &RawValue = serde_json::from_slice(text)?;
-        Entity::<M>::from_node(ProducedNode::new(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refused)
+    fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<Entity<M>, serde_json::Error> {
+        read_request_node(text, reading)
+    }
+}
+
+impl<M: MemberReading> NodeRead for Entity<M> {
+    fn read_node<'n, N: CompactNode<'n, Unreadable = Infallible>>(node: N) -> Result<Entity<M>, serde_json::Error> {
+        Entity::<M>::from_node(ProducedNode::new(node)).map_err(refused)
     }
 }
 
 impl<M: MemberReading> RequestBody for EntityPatch<M> {
     /// Decode a partial Entity from the JSON text of a request body, as
     /// [`Entity`] is decoded.
-    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<EntityPatch<M>, serde_json::Error> {
-        let raw: &RawValue = serde_json::from_slice(text)?;
-        EntityPatch::<M>::from_node(ProducedNode::new(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refused)
+    fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<EntityPatch<M>, serde_json::Error> {
+        read_request_node(text, reading)
     }
+}
+
+impl<M: MemberReading> NodeRead for EntityPatch<M> {
+    fn read_node<'n, N: CompactNode<'n, Unreadable = Infallible>>(node: N) -> Result<EntityPatch<M>, serde_json::Error> {
+        EntityPatch::<M>::from_node(ProducedNode::new(node)).map_err(refused)
+    }
+}
+
+/// Decode a `T` from the JSON text of a request body, its top-level `@context`
+/// member skipped and no member read as a core term but `@id` and `@type`.
+///
+/// For a resource that holds the body as written and is read under the
+/// context later, so that the context is applied once.
+///
+/// # Errors
+///
+/// Returns the reader's failure, positioned in the text.
+pub(crate) fn read_as_written<T: DeserializeOwned>(text: &[u8]) -> Result<T, serde_json::Error> {
+    read_context_free(text, ContextReading::keyword_spellings(), DeserializedFromMembers::<T>(PhantomData))
 }
 
 /// The reader's error for a body the compact model's reading refuses.
@@ -103,15 +129,15 @@ fn refused(error: NodeReadError<Infallible>) -> serde_json::Error {
     }
 }
 
-/// Read the object `text` holds with `visitor` through `aliases`, its
+/// Read the object `text` holds with `visitor` through `reading`, its
 /// `@context` member skipped.
 ///
 /// # Errors
 ///
 /// Returns the reader's failure, trailing content included.
-fn read_context_free<'de, V: Visitor<'de>>(text: &'de [u8], aliases: &CoreTermAliases, visitor: V) -> Result<V::Value, serde_json::Error> {
+fn read_context_free<'de, V: Visitor<'de>>(text: &'de [u8], reading: ContextReading<'_>, visitor: V) -> Result<V::Value, serde_json::Error> {
     let mut reader = JsonReader::from_slice(text);
-    let read = AliasedDeserializer::new(&mut reader, aliases).deserialize_map(ContextFree(visitor))?;
+    let read = AliasedDeserializer::new(&mut reader, reading).deserialize_map(ContextFree(visitor))?;
     reader.end()?;
     Ok(read)
 }
@@ -145,64 +171,19 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for ContextFreeMembers<A> {
 
     fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, A::Error> {
         loop {
-            match self.members.next_key::<MemberName<'de>>()? {
+            match self.members.next_key::<JsonString<'de>>()? {
                 None => return Ok(None),
-                Some(MemberName::Borrowed(keyword::CONTEXT)) => {
+                Some(JsonString(name)) if name == keyword::CONTEXT => {
                     self.members.next_value::<IgnoredAny>()?;
                 }
-                Some(MemberName::Owned(name)) if name == keyword::CONTEXT => {
-                    self.members.next_value::<IgnoredAny>()?;
-                }
-                Some(MemberName::Borrowed(name)) => return seed.deserialize(BorrowedStrDeserializer::new(name)).map(Some),
-                Some(MemberName::Owned(name)) => return seed.deserialize(StringDeserializer::new(name)).map(Some),
+                Some(JsonString(Cow::Borrowed(name))) => return seed.deserialize(BorrowedStrDeserializer::new(name)).map(Some),
+                Some(JsonString(Cow::Owned(name))) => return seed.deserialize(StringDeserializer::new(name)).map(Some),
             }
         }
     }
 
     fn next_value_seed<S: DeserializeSeed<'de>>(&mut self, seed: S) -> Result<S::Value, A::Error> {
         self.members.next_value_seed(seed)
-    }
-}
-
-/// One member name as the reader handed it out: borrowed from the text where
-/// it could be, owned where an escape had to be decoded.
-#[derive(Debug)]
-enum MemberName<'de> {
-    /// A name borrowed from the text.
-    Borrowed(&'de str),
-    /// A name decoded into text of its own.
-    Owned(String),
-}
-
-// Hand-written: serde's borrowed-or-owned string decoding (`Cow`) always
-// takes ownership, and the borrowed name is what spares the copy.
-impl<'de> Deserialize<'de> for MemberName<'de> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<MemberName<'de>, D::Error> {
-        deserializer.deserialize_str(MemberNameVisitor)
-    }
-}
-
-/// Reads one member name.
-#[derive(Clone, Copy, Debug)]
-struct MemberNameVisitor;
-
-impl<'de> Visitor<'de> for MemberNameVisitor {
-    type Value = MemberName<'de>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a member name")
-    }
-
-    fn visit_borrowed_str<E: DeserializeError>(self, name: &'de str) -> Result<MemberName<'de>, E> {
-        Ok(MemberName::Borrowed(name))
-    }
-
-    fn visit_str<E: DeserializeError>(self, name: &str) -> Result<MemberName<'de>, E> {
-        Ok(MemberName::Owned(name.to_owned()))
-    }
-
-    fn visit_string<E: DeserializeError>(self, name: String) -> Result<MemberName<'de>, E> {
-        Ok(MemberName::Owned(name))
     }
 }
 

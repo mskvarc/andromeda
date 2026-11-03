@@ -44,7 +44,7 @@ async fn created(member: &str, terms: Option<&str>) -> Result<String, String> {
     let (service, _recorded) = recording_service().await;
     let context = admitted_context(&service, &context_of(terms)).await;
     let text = format!(r#"{{"id": "{ENTITY_ID}", "type": "Building", "attr": {member}}}"#);
-    let entity = <Entity>::from_request_text(text.as_bytes(), context.aliases()).map_err(|error| error.to_string())?;
+    let entity = <Entity>::from_request_text(text.as_bytes(), context.terms().reading()).map_err(|error| error.to_string())?;
     service
         .admit_entity_write::<CreateEntity>(&entity, &context)
         .await
@@ -58,7 +58,7 @@ async fn merged(member: &str, terms: Option<&str>) -> Result<String, String> {
     let (service, _recorded) = recording_service().await;
     let context = admitted_context(&service, &context_of(terms)).await;
     let text = format!(r#"{{"attr": {member}}}"#);
-    let patch = <EntityPatch<MergeMember>>::from_request_text(text.as_bytes(), context.aliases()).map_err(|error| error.to_string())?;
+    let patch = <EntityPatch<MergeMember>>::from_request_text(text.as_bytes(), context.terms().reading()).map_err(|error| error.to_string())?;
     service
         .admit_entity_write::<MergeEntity>(&patch, &context)
         .await

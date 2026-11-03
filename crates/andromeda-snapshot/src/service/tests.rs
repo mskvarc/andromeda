@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_input::SnapshotInput,
     snapshot_patch::SnapshotPatch,
 };
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::{sync::Arc, time::Duration};
 use url::Url;
@@ -145,7 +145,7 @@ async fn create_with(endpoint: &str, receiver_info: &str) -> Result<Snapshot, Sn
 }
 
 fn patch(body: &str) -> SnapshotPatch {
-    SnapshotPatch::from_request_text(body.as_bytes(), CoreTermAliases::keyword_spellings()).expect("a Snapshot fragment")
+    SnapshotPatch::from_request_text(body.as_bytes(), ContextReading::keyword_spellings()).expect("a Snapshot fragment")
 }
 
 #[tokio::test]

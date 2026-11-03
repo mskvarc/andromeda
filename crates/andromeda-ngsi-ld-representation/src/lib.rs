@@ -65,6 +65,7 @@ pub mod compact_key_admission;
 pub mod compact_node;
 pub mod concise_reading;
 pub mod container_terms;
+pub mod context_terms;
 pub mod core_term_aliases;
 pub mod embedded_context_admission;
 pub mod family_member_admission;

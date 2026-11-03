@@ -20,7 +20,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
 use andromeda_ngsi_ld_representation::{
-    compact_node::{aliased_node::AliasedNode, produced_node::ProducedNode},
+    compact_node::{context_reading::ContextReading, produced_node::ProducedNode},
+    container_terms::ContainerTerms,
+    context_terms::ContextTerms,
     core_term_aliases::CoreTermAliases,
 };
 use serde::{Deserialize, Serialize};
@@ -75,7 +77,7 @@ fn through_tree<T: ReadFromNode>(text: &str) -> Result<T, String> {
 /// transport checks them.
 fn through_text<T: RequestBody>(text: &str) -> Result<T, String> {
     admit_json_text(text.as_bytes()).map_err(|error| error.to_string())?;
-    T::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).map_err(|error| error.to_string())
+    T::from_request_text(text.as_bytes(), ContextReading::keyword_spellings()).map_err(|error| error.to_string())
 }
 
 /// What an attribute member decoded into: its variant, and the same of every
@@ -234,15 +236,16 @@ fn a_body_reads_alike_from_text_and_tree_under_aliases() {
     let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
     aliases.alias("kind", "type");
     aliases.alias("v", "value");
+    let terms = ContextTerms::new(aliases, ContainerTerms::none());
     let plain =
         r#"{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 5, "accuracy": {"type": "Property", "value": 0.5}}}"#;
     for spelled in [
         r#"{"@id": "urn:ngsi-ld:Vehicle:1", "@type": "Vehicle", "speed": {"@type": "Property", "value": 5, "accuracy": {"@type": "Property", "value": 0.5}}}"#,
         r#"{"id": "urn:ngsi-ld:Vehicle:1", "kind": "Vehicle", "speed": {"kind": "Property", "v": 5, "accuracy": {"kind": "Property", "v": 0.5}}}"#,
     ] {
-        let from_text = <Entity>::from_request_text(spelled.as_bytes(), &aliases).expect("the text reads");
+        let from_text = <Entity>::from_request_text(spelled.as_bytes(), terms.reading()).expect("the text reads");
         let tree = RawValue::from_string(spelled.to_owned()).expect("the fixture is JSON");
-        let from_tree = <Entity>::from_node(ProducedNode::new(AliasedNode::new(JsonPiece::new(&tree), &aliases))).expect("the tree reads");
+        let from_tree = <Entity>::from_node(ProducedNode::new(terms.reading().read(JsonPiece::new(&tree)))).expect("the tree reads");
         let expected = entity_shape(&through_text::<Entity>(plain).expect("the plain spelling reads"));
         pretty_assertions::assert_eq!(entity_shape(&from_text), entity_shape(&from_tree), "{spelled}");
         pretty_assertions::assert_eq!(entity_shape(&from_text), expected, "{spelled}");

@@ -115,7 +115,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use axum::http::{StatusCode, Uri as HttpUri};
     use serde_json::{Value, json};
 
@@ -136,7 +136,7 @@ mod tests {
     /// What the request is refused for, decoding included: a payload the decode
     /// refuses never reaches the admission.
     fn refused(payload: &Value, admit: impl FnOnce(&WrittenTemporalEntity) -> Result<(), ProblemResponse>) -> bool {
-        match WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings()) {
+        match WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), ContextReading::keyword_spellings()) {
             Ok(decoded) => admit(&decoded).is_err(),
             Err(_) => true,
         }
@@ -210,7 +210,7 @@ mod tests {
     }
 
     fn decoded(payload: &Value) -> WrittenTemporalEntity {
-        WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a decodable Temporal Evolution")
+        WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a decodable Temporal Evolution")
     }
 
     /// Clause 5.4: a Fragment's `id` "shall be equal to the id of the target

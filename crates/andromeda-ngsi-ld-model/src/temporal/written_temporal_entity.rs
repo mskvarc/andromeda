@@ -27,10 +27,11 @@ use crate::{
     entity_type::EntityTypeValue,
     node_refusal::{NodeRefusal, RefusedMember},
     request_body::RequestBody,
+    request_node::{NodeRead, read_request_node},
     scope_member::ScopeMember,
     temporal::simplified_unfold::instances_of,
 };
-use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
@@ -38,16 +39,14 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_representation::{
     compact_key_admission::CompactKeyError,
-    compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode, produced_node::ProducedNode},
-    core_term_aliases::CoreTermAliases,
+    compact_node::{CompactNode, NodeShape, context_reading::ContextReading, produced_node::ProducedNode},
     embedded_context_admission::is_native_json_member,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned, ser::SerializeMap};
-use serde_json::value::RawValue;
-use std::str::FromStr;
+use std::{convert::Infallible, str::FromStr};
 
 /// The Scope of a written Temporal Evolution.
 #[derive(Clone, Debug)]
@@ -233,9 +232,14 @@ impl<'de> Deserialize<'de> for WrittenTemporalEntity {
 impl RequestBody for WrittenTemporalEntity {
     /// Decode a Temporal Evolution from the JSON text of a request body, read
     /// in place as a Context Producer wrote it.
-    fn from_request_text(text: &[u8], aliases: &CoreTermAliases) -> Result<WrittenTemporalEntity, serde_json::Error> {
-        let raw: &RawValue = serde_json::from_slice(text)?;
-        WrittenTemporalEntity::from_node(ProducedNode::recording_deletions(AliasedNode::new(JsonPiece::new(raw), aliases))).map_err(refusal)
+    fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<WrittenTemporalEntity, serde_json::Error> {
+        read_request_node(text, reading)
+    }
+}
+
+impl NodeRead for WrittenTemporalEntity {
+    fn read_node<'n, N: CompactNode<'n, Unreadable = Infallible>>(node: N) -> Result<WrittenTemporalEntity, serde_json::Error> {
+        WrittenTemporalEntity::from_node(ProducedNode::recording_deletions(node)).map_err(refusal)
     }
 }
 

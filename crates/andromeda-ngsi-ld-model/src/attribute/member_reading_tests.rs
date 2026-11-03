@@ -18,7 +18,9 @@ use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, time::rendering::instant_text};
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
-    compact_node::aliased_node::AliasedNode,
+    compact_node::context_reading::ContextReading,
+    container_terms::ContainerTerms,
+    context_terms::ContextTerms,
     core_term_aliases::CoreTermAliases,
 };
 use pretty_assertions::assert_eq;
@@ -401,7 +403,7 @@ fn a_system_member_a_producer_writes_is_ignored() {
         "speed": {"type": "Property", "value": 1, "createdAt": true, "modifiedAt": "x"}
     })
     .to_string();
-    let entity = <Entity>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the system members are ignored");
+    let entity = <Entity>::from_request_text(text.as_bytes(), ContextReading::keyword_spellings()).expect("the system members are ignored");
     assert!(entity.created_at.is_none());
     let speed = entity.attrs.get("speed").and_then(|speed| speed.instances().next()).expect("the attribute");
     assert!(speed.common().created_at.is_none() && speed.common().modified_at.is_none());
@@ -518,7 +520,7 @@ fn a_chain_of_sub_attributes_as_long_as_the_reader_admits_is_read_on_a_small_sta
     let length = thread::Builder::new()
         .stack_size(512 * 1024)
         .spawn(move || {
-            let entity = <Entity>::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the entity is read");
+            let entity = <Entity>::from_request_text(text.as_bytes(), ContextReading::keyword_spellings()).expect("the entity is read");
             chain_length(entity.attrs.get("p").expect("the attribute is read"))
         })
         .expect("the thread starts")
@@ -553,8 +555,8 @@ fn an_entity_that_is_none_is_refused() {
 #[test]
 fn an_empty_array_member_reads_as_an_empty_property_value() {
     assert_eq!(property_value(&single(&json!([]))), &NgsiLdValue::from(literal("[]")));
-    let entity = <Entity>::from_request_text(br#"{"id": "urn:ngsi-ld:T:1", "type": "T", "tags": []}"#, CoreTermAliases::keyword_spellings())
-        .expect("the entity is read");
+    let entity =
+        <Entity>::from_request_text(br#"{"id": "urn:ngsi-ld:T:1", "type": "T", "tags": []}"#, ContextReading::keyword_spellings()).expect("the entity is read");
     let Some(AttributeValue::Single(tags)) = entity.attrs.get("tags") else {
         panic!("one instance: {:?}", entity.attrs);
     };
@@ -562,10 +564,10 @@ fn an_empty_array_member_reads_as_an_empty_property_value() {
 }
 
 /// The instance `member` reads as under the name `member`, read through
-/// `aliases`.
-fn single_through(member: &Value, aliases: &CoreTermAliases) -> Attribute {
+/// `reading`.
+fn single_through(member: &Value, reading: ContextReading<'_>) -> Attribute {
     let text = RawValue::from_string(member.to_string()).expect("the member is JSON");
-    match <AttributeValue as MemberReading>::from_node("member", AliasedNode::new(JsonPiece::new(&text), aliases)) {
+    match <AttributeValue as MemberReading>::from_node("member", reading.read(JsonPiece::new(&text))) {
         Ok(AttributeValue::Single(instance)) => *instance,
         other => panic!("one instance: {other:?} from {member}"),
     }
@@ -577,7 +579,7 @@ fn single_through(member: &Value, aliases: &CoreTermAliases) -> Attribute {
 fn a_keyword_spelled_instance_reads_typed() {
     let instance = single_through(
         &json!({"@type": "Relationship", "object": "urn:ngsi-ld:T:2", "since": {"@type": "Property", "value": 1}}),
-        CoreTermAliases::keyword_spellings(),
+        ContextReading::keyword_spellings(),
     );
     assert!(matches!(instance, Attribute::Relationship(_)), "{instance:?}");
     let Some(AttributeValue::Single(since)) = instance.common().sub_attributes.get("since") else {
@@ -594,7 +596,8 @@ fn an_aliased_instance_reads_typed() {
     aliases.alias("kind", "type");
     aliases.alias("v", "value");
     aliases.alias("Prop", "Property");
-    let instance = single_through(&json!({"kind": "Prop", "v": 21, "unitCode": "CEL"}), &aliases);
+    let terms = ContextTerms::new(aliases, ContainerTerms::none());
+    let instance = single_through(&json!({"kind": "Prop", "v": 21, "unitCode": "CEL"}), terms.reading());
     assert_eq!(property_value(&instance), &NgsiLdValue::from(literal("21")));
     let Attribute::Property(property) = &instance else {
         panic!("a Property: {instance:?}");
@@ -638,7 +641,7 @@ fn a_json_null_on_an_optional_entity_member_is_refused() {
         let mut entity = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"});
         entity[member] = Value::Null;
         assert!(
-            <Entity>::from_request_text(entity.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+            <Entity>::from_request_text(entity.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err(),
             "{member}"
         );
     }
@@ -646,7 +649,7 @@ fn a_json_null_on_an_optional_entity_member_is_refused() {
         let mut patch = json!({"speed": {"type": "Property", "value": 1}});
         patch[member] = Value::Null;
         assert!(
-            <EntityPatch>::from_request_text(patch.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+            <EntityPatch>::from_request_text(patch.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err(),
             "{member}"
         );
     }

@@ -291,7 +291,12 @@ mod tests {
     use crate::{registration_body::RegistrationBody, store::create_params::CreateCsrParams};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
     use andromeda_ngsi_ld_model::{clearable::Clearable, registration::operation::CsrOperation, request_body::RequestBody};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::{
+        compact_node::context_reading::ContextReading,
+        container_terms::ContainerTerms,
+        context_terms::ContextTerms,
+        core_term_aliases::CoreTermAliases,
+    };
     use serde_json::{Value, json};
 
     fn baseline() -> Value {
@@ -310,7 +315,7 @@ mod tests {
 
     /// The body `document` is as a request carrying it as text.
     fn body_of(document: &Value) -> Result<RegistrationBody, serde_json::Error> {
-        RegistrationBody::from_request_text(document.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+        RegistrationBody::from_request_text(document.to_string().as_bytes(), ContextReading::keyword_spellings())
     }
 
     fn create_of(document: &Value) -> Result<CreateCsrParams, String> {
@@ -418,7 +423,7 @@ mod tests {
     #[test]
     fn the_unknown_members_of_a_body_are_carried_in_the_order_written() {
         let body = RegistrationBody::from_request_text(
-            br#"{"type": "ContextSourceRegistration", "zeta": 1, "endpoint": "https://source.example.org", "alpha": {"b": [1.50]}, "information": [{"propertyNames": ["speed"]}]}"#, CoreTermAliases::keyword_spellings(),
+            br#"{"type": "ContextSourceRegistration", "zeta": 1, "endpoint": "https://source.example.org", "alpha": {"b": [1.50]}, "information": [{"propertyNames": ["speed"]}]}"#, ContextReading::keyword_spellings(),
         )
         .expect("a body");
         let extras: Vec<(&str, &str)> = body.additional_properties.iter().map(|(name, value)| (name.as_str(), value.text())).collect();
@@ -430,7 +435,7 @@ mod tests {
     #[test]
     fn a_top_level_context_is_no_context_source_property() {
         let body = RegistrationBody::from_request_text(
-            br#"{"@context": "https://example.org/ctx", "type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}]}"#, CoreTermAliases::keyword_spellings(),
+            br#"{"@context": "https://example.org/ctx", "type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}]}"#, ContextReading::keyword_spellings(),
         )
         .expect("a body");
         assert!(body.additional_properties.is_empty());
@@ -444,23 +449,24 @@ mod tests {
         let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
         aliases.alias("kind", "type");
         aliases.alias("ident", "id");
-        let rendered = |text: &str, aliases: &CoreTermAliases| {
+        let terms = ContextTerms::new(aliases, ContainerTerms::none());
+        let rendered = |text: &str, reading: ContextReading<'_>| {
             format!(
                 "{:?}",
-                RegistrationBody::from_request_text(text.as_bytes(), aliases).expect("a registration body")
+                RegistrationBody::from_request_text(text.as_bytes(), reading).expect("a registration body")
             )
         };
         let plain = rendered(
             r#"{"type": "ContextSourceRegistration", "id": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"type": "Vehicle"}]}]}"#,
-            CoreTermAliases::keyword_spellings(),
+            ContextReading::keyword_spellings(),
         );
         let keywords = rendered(
             r#"{"@type": "ContextSourceRegistration", "@id": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"@type": "Vehicle"}]}]}"#,
-            CoreTermAliases::keyword_spellings(),
+            ContextReading::keyword_spellings(),
         );
         let spelled_by_aliases = rendered(
             r#"{"kind": "ContextSourceRegistration", "ident": "urn:ngsi-ld:ContextSourceRegistration:1", "endpoint": "https://source.example.org", "information": [{"entities": [{"kind": "Vehicle"}]}]}"#,
-            &aliases,
+            terms.reading(),
         );
         pretty_assertions::assert_eq!(keywords, plain);
         pretty_assertions::assert_eq!(spelled_by_aliases, plain);

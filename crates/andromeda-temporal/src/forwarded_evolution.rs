@@ -112,7 +112,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::json;
 
     fn evolution() -> WrittenTemporalEntity {
@@ -126,7 +126,7 @@ mod tests {
             "brand": [{"type": "Property", "value": "x", "observedAt": "2025-01-01T00:00:00Z"}]
         })
         .to_string();
-        WrittenTemporalEntity::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("a written evolution")
+        WrittenTemporalEntity::from_request_text(text.as_bytes(), ContextReading::keyword_spellings()).expect("a written evolution")
     }
 
     fn core(name: &str) -> AttributeName {

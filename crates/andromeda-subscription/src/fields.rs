@@ -293,12 +293,12 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription::Subscription, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
     /// The request body `wire` writes, read as the request model reads it.
     fn request(wire: &Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request")
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request")
     }
 
     /// The values a create body of `wire` describes, whose notification names
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn a_dataset_selector_that_is_neither_a_uri_nor_none_is_refused_when_the_body_is_read() {
-        let refused = SubscriptionRequest::from_request_text(br#"{"datasetId": ["not a uri"]}"#, CoreTermAliases::keyword_spellings());
+        let refused = SubscriptionRequest::from_request_text(br#"{"datasetId": ["not a uri"]}"#, ContextReading::keyword_spellings());
 
         assert!(refused.is_err(), "got {refused:?}");
     }
@@ -583,7 +583,7 @@ mod tests {
             json!({"type": "urn:ngsi-ld:null"}),
         ] {
             assert!(
-                SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+                SubscriptionRequest::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err(),
                 "{body}"
             );
         }
@@ -658,7 +658,7 @@ mod tests {
         for token in [json!("1"), json!("1.2.3"), json!("abc"), json!(""), json!("v1.4"), json!(1.4), json!(null)] {
             let body = json!({"ngsildConformance": token});
             assert!(
-                SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err(),
+                SubscriptionRequest::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err(),
                 "{token} must be refused"
             );
         }

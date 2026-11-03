@@ -208,7 +208,7 @@ mod tests {
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use indexmap::IndexMap;
     use serde_json::{Value, json};
@@ -317,7 +317,7 @@ mod tests {
             JsonLiteral::admit(&json!({"settings": {"@id": "https://example.org/settings", "@type": "@json"}}).to_string()).expect("an admissible literal"),
         );
         let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
-        let written = WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+        let written = WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes(), ContextReading::keyword_spellings())
             .expect("a written Temporal Evolution");
         WrittenEvolution::expand(&expansion, written).await
     }

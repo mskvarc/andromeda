@@ -108,7 +108,7 @@ mod tests {
         registration::ContextSourceRegistration,
         request_body::RequestBody,
     };
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use futures::future::{self, BoxFuture};
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
@@ -154,7 +154,7 @@ mod tests {
 
     /// The body a request carrying `document` is decoded to.
     fn body_of(document: &Value) -> RegistrationBody {
-        RegistrationBody::from_request_text(document.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a registration body")
+        RegistrationBody::from_request_text(document.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a registration body")
     }
 
     fn baseline_store() -> Arc<FixedStore> {

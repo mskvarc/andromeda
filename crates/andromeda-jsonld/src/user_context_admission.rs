@@ -69,7 +69,7 @@ use crate::{
     error::JsonLdError,
 };
 use andromeda_json_literal::piece::JsonKind;
-use andromeda_ngsi_ld_representation::{core_term_aliases::CoreTermAliases, embedded_context_admission::EmbeddedContext};
+use andromeda_ngsi_ld_representation::{context_terms::ContextTerms, embedded_context_admission::EmbeddedContext};
 use derive_more::Deref;
 use iri_rs::IriBuf;
 use std::{
@@ -119,10 +119,10 @@ impl From<ContextSpec> for SubmittedContext {
     }
 }
 
-/// The aliases of the Core `@context`, which are the clause 4.4 keyword
-/// spellings alone: the Core `@context` defines each core term under its own
-/// name.
-static CORE_ALIASES: LazyLock<Arc<CoreTermAliases>> = LazyLock::new(|| Arc::new(CoreTermAliases::keyword_spellings().clone())); // clone: once, into the handle every core-only admission shares
+/// The terms of the Core `@context`: the clause 4.4 keyword spellings alone,
+/// since the Core `@context` defines each core term under its own name, and no
+/// container.
+static CORE_TERMS: LazyLock<Arc<ContextTerms>> = LazyLock::new(|| Arc::new(ContextTerms::keyword_spellings().clone())); // clone: once, into the handle every core-only admission shares
 
 /// A user `@context` [`admit_user_context`] admitted: every context it names
 /// loaded, none declares a JSON-LD Scoped Context, and the whole processes.
@@ -131,10 +131,10 @@ pub struct AdmittedContext {
     /// The admitted context.
     #[deref]
     spec: ContextSpec,
-    /// The terms the processed context defines for core terms, which the
-    /// request body is read through (clause 5.5.4: "according to the
-    /// @context").
-    aliases: Arc<CoreTermAliases>,
+    /// The terms the processed context defines for core terms and the terms
+    /// whose container reshapes what is written under them, which the request
+    /// body is read through (clause 5.5.4: "according to the @context").
+    terms: Arc<ContextTerms>,
 }
 
 impl AdmittedContext {
@@ -145,15 +145,15 @@ impl AdmittedContext {
     pub fn core_only() -> AdmittedContext {
         AdmittedContext {
             spec: ContextSpec::core_only(),
-            aliases: Arc::clone(&CORE_ALIASES),
+            terms: Arc::clone(&CORE_TERMS),
         }
     }
 
-    /// The terms the context defines for core terms, shared with the
-    /// processed context they were read from.
+    /// The aliases and containers of the context, shared with the processed
+    /// context they were read from.
     #[must_use]
-    pub const fn aliases(&self) -> &Arc<CoreTermAliases> {
-        &self.aliases
+    pub const fn terms(&self) -> &Arc<ContextTerms> {
+        &self.terms
     }
 
     /// The admitted context, for a consumer that keeps it beyond the request,
@@ -189,7 +189,7 @@ pub async fn admit_user_context(engine: &JsonLdEngine, submitted: SubmittedConte
     let processed = engine.expansion_context(&spec).await?;
     Ok(AdmittedContext {
         spec,
-        aliases: Arc::clone(processed.aliases()),
+        terms: Arc::clone(processed.terms()),
     })
 }
 
@@ -271,7 +271,7 @@ mod tests {
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
     use andromeda_ngsi_ld_representation::{
-        core_term_aliases::CoreTermAliases,
+        context_terms::ContextTerms,
         embedded_context_admission::{EmbeddedContext, find_embedded_context},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -555,10 +555,10 @@ mod tests {
         let engine = engine_serving(&[]);
         let context = ContextSpec::from_body(literal(&json!({"kind": "@type", "v": "https://uri.etsi.org/ngsi-ld/hasValue"})));
         let admitted = admitted(&engine, &context).await.expect("admitted");
-        pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("kind")), "type");
-        pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("v")), "value");
-        pretty_assertions::assert_eq!(admitted.aliases().core_name(Cow::Borrowed("@id")), "id");
-        pretty_assertions::assert_eq!(&**AdmittedContext::core_only().aliases(), CoreTermAliases::keyword_spellings());
+        pretty_assertions::assert_eq!(admitted.terms().aliases().core_name(Cow::Borrowed("kind")), "type");
+        pretty_assertions::assert_eq!(admitted.terms().aliases().core_name(Cow::Borrowed("v")), "value");
+        pretty_assertions::assert_eq!(admitted.terms().aliases().core_name(Cow::Borrowed("@id")), "id");
+        pretty_assertions::assert_eq!(&**AdmittedContext::core_only().terms(), ContextTerms::keyword_spellings());
     }
 
     /// Clause 5.5.4 judges data "according to the @context", so a context that

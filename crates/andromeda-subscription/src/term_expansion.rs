@@ -125,7 +125,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::{error::QueryError, filter::serialize::serialize_written_members, term_expander::TermExpansionFailure};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
     /// The core context's default vocabulary.
@@ -138,7 +138,7 @@ mod tests {
 
     /// The request body `wire` writes, read as the request model reads it.
     fn request(wire: &Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request")
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request")
     }
 
     /// `wire` expanded under the core context, written back as a body.

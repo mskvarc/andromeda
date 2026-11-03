@@ -76,7 +76,7 @@ mod tests {
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::json;
 
     /// Table 5.2.12-1 gives `temporalQ` to Context Registration Subscriptions,
@@ -85,7 +85,7 @@ mod tests {
     fn a_temporal_q_on_a_context_source_registration_subscription_is_admitted() {
         let variant = CsrSubscriptionVariant::new(JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"));
         let wire = json!({"temporalQ": {"timerel": "after", "timeAt": "2020-06-01T00:00:00Z"}});
-        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         let result = variant.validate_members(&request);
         assert!(result.is_ok(), "got {result:?}");
     }
@@ -93,7 +93,7 @@ mod tests {
     fn validated(accept: &str) -> Result<(), SubscriptionError> {
         let variant = CsrSubscriptionVariant::new(JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"));
         let wire = json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify", "accept": accept}}});
-        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         variant.validate_members(&request)
     }
 
@@ -112,7 +112,7 @@ mod tests {
     fn an_update_with_a_past_expires_at_is_admitted() {
         let variant = CsrSubscriptionVariant::new(JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"));
         let wire = json!({"expiresAt": "2020-01-01T00:00:00Z"});
-        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         let result = variant.validate_update_extra(&request);
         assert!(result.is_ok(), "got {result:?}");
     }

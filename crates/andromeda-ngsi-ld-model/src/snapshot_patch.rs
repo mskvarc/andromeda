@@ -72,11 +72,11 @@ pub struct SnapshotPatch {
 )]
 mod tests {
     use crate::{clearable::Clearable, request_body::RequestBody, snapshot_patch::SnapshotPatch};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
     fn read(fragment: &Value) -> Result<SnapshotPatch, serde_json::Error> {
-        SnapshotPatch::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+        SnapshotPatch::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings())
     }
 
     /// Clause 5.5.8: an omitted member is left alone and the NGSI-LD Null

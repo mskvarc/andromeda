@@ -15,9 +15,11 @@
 
 mod aliased_access;
 mod aliased_visitor;
+pub mod contained_members;
 
 use crate::{
     aliased_deserializer::aliased_visitor::AliasedVisitor,
+    compact_node::context_reading::ContextReading,
     core_term_aliases::{CoreTermAliases, Standing},
 };
 use andromeda_json_literal::LITERAL_CAPTURE;
@@ -63,24 +65,24 @@ impl Place<'_> {
 }
 
 /// A deserializer whose member names are read under the core terms they
-/// alias.
+/// alias, and whose members are read without the containers of their terms.
 #[derive(Debug)]
 pub struct AliasedDeserializer<'a, 's, D> {
     /// The deserializer of the text as written.
     inner: D,
-    /// The aliases the text is read through.
-    aliases: &'a CoreTermAliases,
+    /// The aliases and containers the text is read through.
+    reading: ContextReading<'a>,
     /// Where the value it delivers stands.
     place: Place<'s>,
 }
 
 impl<'a, D> AliasedDeserializer<'a, 'static, D> {
-    /// Read the document `inner` delivers through `aliases`.
+    /// Read the document `inner` delivers through `reading`.
     #[must_use]
-    pub const fn new(inner: D, aliases: &'a CoreTermAliases) -> AliasedDeserializer<'a, 'static, D> {
+    pub const fn new(inner: D, reading: ContextReading<'a>) -> AliasedDeserializer<'a, 'static, D> {
         AliasedDeserializer {
             inner,
-            aliases,
+            reading,
             place: Place::Value(Standing::Node),
         }
     }
@@ -88,16 +90,16 @@ impl<'a, D> AliasedDeserializer<'a, 'static, D> {
 
 impl<'a, 's, D> AliasedDeserializer<'a, 's, D> {
     /// Read the value `inner` delivers, standing at `place`, through
-    /// `aliases`.
-    pub(crate) const fn at(inner: D, aliases: &'a CoreTermAliases, place: Place<'s>) -> AliasedDeserializer<'a, 's, D> {
-        AliasedDeserializer { inner, aliases, place }
+    /// `reading`.
+    pub(crate) const fn at(inner: D, reading: ContextReading<'a>, place: Place<'s>) -> AliasedDeserializer<'a, 's, D> {
+        AliasedDeserializer { inner, reading, place }
     }
 
     /// The deserializer as written, and `visitor` reading what it delivers
-    /// through the aliases.
+    /// through the same terms.
     fn split<V>(self, visitor: V) -> (D, AliasedVisitor<'a, 's, V>) {
-        let AliasedDeserializer { inner, aliases, place } = self;
-        (inner, AliasedVisitor::new(visitor, aliases, place))
+        let AliasedDeserializer { inner, reading, place } = self;
+        (inner, AliasedVisitor::new(visitor, reading, place))
     }
 }
 

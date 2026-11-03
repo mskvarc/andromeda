@@ -109,7 +109,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn fragment(body: &Value) -> WrittenTemporalEntity {
-        WrittenTemporalEntity::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a decodable Fragment")
+        WrittenTemporalEntity::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a decodable Fragment")
     }
 
     fn refusal(body: &Value) -> TemporalInstanceFragmentError {

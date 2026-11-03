@@ -29,7 +29,7 @@ use andromeda_jsonld::batch_contexts::{AdmittedBatchContext, BatchContext};
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity, request_body::RequestBody};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
-use andromeda_ngsi_ld_representation::{core_term_aliases::CoreTermAliases, embedded_context_admission::EmbeddedContext};
+use andromeda_ngsi_ld_representation::{compact_node::context_reading::ContextReading, embedded_context_admission::EmbeddedContext};
 use axum::body::Bytes;
 
 /// The `id` a batch item is reported against.
@@ -109,7 +109,7 @@ impl BatchItem {
         let entity_id = match self.identifier {
             ItemIdentifier::Written(entity_id) => entity_id,
             ItemIdentifier::Aliased { index, held } => {
-                let entity_id = aliased_id(&self.text, index, context.aliases()).map_err(UnreadItem::Unidentified)?;
+                let entity_id = aliased_id(&self.text, index, context.terms().reading()).map_err(UnreadItem::Unidentified)?;
                 let refused = IdentifierTooLong::check(entity_id.as_str()).map_err(BatchItemRefusal::from).err().or(held);
                 if let Some(refusal) = refused {
                     return Err(UnreadItem::Refused(Box::new(refusal.against(entity_id))));
@@ -148,14 +148,14 @@ pub(crate) fn written_identifier(envelope: &BodyEnvelope, index: usize) -> Resul
 }
 
 /// The `id` the item `text`, at `index` in the array, writes under a term
-/// `aliases` reads as `id`.
+/// `reading` reads as `id`.
 ///
 /// # Errors
 ///
 /// As [`written_identifier`], and [`BatchBodyRefusal::MissingId`] for an item
 /// writing its `id` under no such term.
-fn aliased_id(text: &[u8], index: usize, aliases: &CoreTermAliases) -> Result<Uri, BatchBodyRefusal> {
-    let envelope = BodyEnvelope::read_under(text, aliases).map_err(|source| BatchBodyRefusal::NotJson(NotJsonDocument(source)))?;
+fn aliased_id(text: &[u8], index: usize, reading: ContextReading<'_>) -> Result<Uri, BatchBodyRefusal> {
+    let envelope = BodyEnvelope::read_under(text, reading).map_err(|source| BatchBodyRefusal::NotJson(NotJsonDocument(source)))?;
     written_identifier(&envelope, index)?.ok_or(BatchBodyRefusal::MissingId { index })
 }
 
@@ -192,10 +192,10 @@ impl AdmittedItem {
         self.entity_id
     }
 
-    /// Decode the item as an entity through the aliases of its context.
+    /// Decode the item as an entity through the terms of its context.
     #[must_use]
     pub fn decoded<M: MemberReading>(self) -> DecodedItem<M> {
-        let entity = entity_of(&self.text, self.context.aliases());
+        let entity = entity_of(&self.text, self.context.terms().reading());
         DecodedItem {
             entity_id: self.entity_id,
             context: self.context,
@@ -204,14 +204,14 @@ impl AdmittedItem {
     }
 }
 
-/// The entity the item `text` is, read through `aliases`.
+/// The entity the item `text` is, read through `reading`.
 ///
 /// # Errors
 ///
 /// Returns the refusal of an item that is no entity, naming the member it
 /// failed at.
-pub(crate) fn entity_of<M: MemberReading>(text: &[u8], aliases: &CoreTermAliases) -> Result<Entity<M>, BatchItemRefusal> {
-    Entity::<M>::from_request_text(text, aliases).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity<M>>(text, aliases, source)))
+pub(crate) fn entity_of<M: MemberReading>(text: &[u8], reading: ContextReading<'_>) -> Result<Entity<M>, BatchItemRefusal> {
+    Entity::<M>::from_request_text(text, reading).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity<M>>(text, reading, source)))
 }
 
 /// One batch item decoded under the context it names.

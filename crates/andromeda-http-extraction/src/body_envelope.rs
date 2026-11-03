@@ -14,7 +14,7 @@
 
 use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_number::json_value::value_census::MemberName;
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::{aliased_deserializer::contained_members::ContainedMembers, compact_node::context_reading::ContextReading};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{
     Deserialize,
@@ -87,18 +87,19 @@ impl BodyEnvelope {
     /// Returns the streaming reader's failure for a text that is not one JSON
     /// value, trailing content included.
     pub(crate) fn read(text: &[u8]) -> Result<BodyEnvelope, serde_json::Error> {
-        BodyEnvelope::read_under(text, CoreTermAliases::keyword_spellings())
+        BodyEnvelope::read_under(text, ContextReading::keyword_spellings())
     }
 
     /// Read the top level of the JSON text `text`, finding the `id` of an
-    /// object under every term `aliases` reads as `id`.
+    /// object under every term `reading` reads as `id`, wherever its
+    /// containers put it.
     ///
     /// # Errors
     ///
     /// As [`BodyEnvelope::read`].
-    pub(crate) fn read_under(text: &[u8], aliases: &CoreTermAliases) -> Result<BodyEnvelope, serde_json::Error> {
+    pub(crate) fn read_under(text: &[u8], reading: ContextReading<'_>) -> Result<BodyEnvelope, serde_json::Error> {
         let mut reader = JsonReader::from_slice(text);
-        let envelope = EnvelopeSeed(aliases).deserialize(&mut reader)?;
+        let envelope = EnvelopeSeed(reading).deserialize(&mut reader)?;
         reader.end()?;
         Ok(envelope)
     }
@@ -163,9 +164,10 @@ impl BodyEnvelope {
     }
 }
 
-/// Reads the top level of a body, finding an `id` under the aliases it holds.
+/// Reads the top level of a body, finding an `id` under the terms its reading
+/// holds.
 #[derive(Clone, Copy, Debug)]
-struct EnvelopeSeed<'a>(&'a CoreTermAliases);
+struct EnvelopeSeed<'a>(ContextReading<'a>);
 
 impl<'de> DeserializeSeed<'de> for EnvelopeSeed<'_> {
     type Value = BodyEnvelope;
@@ -222,7 +224,7 @@ impl<'de> Visitor<'de> for EnvelopeSeed<'_> {
 /// Reads one item of an array body: the members the rules ask about when it
 /// is an object, nothing otherwise.
 #[derive(Clone, Copy, Debug)]
-struct ItemSeed<'a>(&'a CoreTermAliases);
+struct ItemSeed<'a>(ContextReading<'a>);
 
 impl<'de> DeserializeSeed<'de> for ItemSeed<'_> {
     type Value = Option<ObjectEnvelope>;
@@ -335,12 +337,21 @@ impl<'de> Visitor<'de> for IdMemberVisitor {
 }
 
 /// Read the members of an object the rules ask about, the `id` under every
-/// term `aliases` reads as `id`, every other member skipped unread; a member
+/// term `reading` reads as `id`, every other member skipped unread; a member
 /// written twice counts as written last, as a parsed tree keeps it.
 ///
 /// An object whose first member carries the reader's private number name is
 /// the reader's spelling of a number, and no object at all.
-fn read_object<'de, A: MapAccess<'de>>(mut members: A, aliases: &CoreTermAliases) -> Result<Option<ObjectEnvelope>, A::Error> {
+fn read_object<'de, A: MapAccess<'de>>(members: A, reading: ContextReading<'_>) -> Result<Option<ObjectEnvelope>, A::Error> {
+    if reading.containers().is_empty() {
+        read_members(members, reading)
+    } else {
+        read_members(ContainedMembers::new(members, reading), reading)
+    }
+}
+
+/// Read the `members` of an object as [`read_object`] does.
+fn read_members<'de, A: MapAccess<'de>>(mut members: A, reading: ContextReading<'_>) -> Result<Option<ObjectEnvelope>, A::Error> {
     let mut envelope = ObjectEnvelope::default();
     let mut first = true;
     while let Some(name) = members.next_key::<String>()? {
@@ -351,7 +362,7 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A, aliases: &CoreTermAliases
         first = false;
         // JSON-LD 1.1 forbids an alias of `@context`, so only the `id` member
         // depends on the aliases.
-        match aliases.core_name(Cow::Borrowed(&name)).as_ref() {
+        match reading.aliases().core_name(Cow::Borrowed(&name)).as_ref() {
             keyword::CONTEXT => envelope.context = Some(members.next_value()?),
             keyword::ID_ALIAS => envelope.id = members.next_value::<IdMember>()?.0,
             _other => {
@@ -371,7 +382,11 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A, aliases: &CoreTermAliases
 mod tests {
     use crate::body_envelope::{BodyContextError, BodyEnvelope};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::{
+        compact_node::context_reading::ContextReading,
+        container_terms::{ContainerTerms, TermContainer},
+        core_term_aliases::CoreTermAliases,
+    };
     use serde_json::json;
 
     fn literal(value: &serde_json::Value) -> JsonLiteral {
@@ -412,7 +427,33 @@ mod tests {
         aliases.alias("eid", "id");
         for (read, expected) in [
             (BodyEnvelope::read(text), None),
-            (BodyEnvelope::read_under(text, &aliases), Some("urn:ngsi-ld:T:1")),
+            (
+                BodyEnvelope::read_under(text, ContextReading::new(&aliases, &ContainerTerms::none())),
+                Some("urn:ngsi-ld:T:1"),
+            ),
+        ] {
+            let BodyEnvelope::Object(object) = read.expect("valid JSON") else {
+                panic!("an object");
+            };
+            pretty_assertions::assert_eq!(object.id(), expected);
+            assert!(object.context().is_some());
+        }
+    }
+
+    /// Clause 5.5.7 and JSON-LD 1.1 section 4.6: the members under an alias of
+    /// `@nest` belong to the object holding it, `id` among them.
+    #[test]
+    fn an_id_written_under_a_nest_alias_is_found_as_the_id_of_the_object() {
+        let text = br#"{"n":{"id":"urn:ngsi-ld:T:1"},"@context":{"n":"@nest"}}"#;
+        let mut containers = ContainerTerms::none();
+        containers.contain("n", TermContainer::Nest);
+        let aliases = CoreTermAliases::keyword_spellings();
+        for (read, expected) in [
+            (BodyEnvelope::read(text), None),
+            (
+                BodyEnvelope::read_under(text, ContextReading::new(aliases, &containers)),
+                Some("urn:ngsi-ld:T:1"),
+            ),
         ] {
             let BodyEnvelope::Object(object) = read.expect("valid JSON") else {
                 panic!("an object");

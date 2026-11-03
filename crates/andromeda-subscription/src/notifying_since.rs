@@ -139,7 +139,7 @@ mod tests {
         subscription::{Subscription, SubscriptionStatus},
         subscription_request::SubscriptionRequest,
     };
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use chrono::DateTime;
     use serde_json::{Value, json};
 
@@ -228,8 +228,7 @@ mod tests {
     }
 
     fn restart_of(fragment: &Value) -> SinceRestart {
-        let request =
-            SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         SinceRestart::of_selection(&request, &stored())
     }
 

@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_query::{
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
 };
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use iri_rs::IriBuf;
@@ -484,7 +484,7 @@ async fn restart_written_after_update(status: SubscriptionStatus, fragment: Valu
         Arc::new(AcceptingEndpointValidator),
         filter_admission(),
     );
-    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable fragment");
     let updated = service
         .update(
             &ContextTarget::Live,
@@ -588,7 +588,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         Arc::new(AcceptingEndpointValidator),
         filter_admission(),
     );
-    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable fragment");
     let updated = service
         .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), request, &context)
         .await;
@@ -627,7 +627,7 @@ async fn status_written_after_update(status: SubscriptionStatus, fragment: Value
         Arc::new(AcceptingEndpointValidator),
         filter_admission(),
     );
-    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable fragment");
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable fragment");
     let updated = service
         .update(
             &ContextTarget::Live,
@@ -769,7 +769,7 @@ async fn a_subscription_created_with_a_scoped_jsonld_context_is_refused() {
         })
         .to_string()
         .as_bytes(),
-        CoreTermAliases::keyword_spellings(),
+        ContextReading::keyword_spellings(),
     )
     .expect("a readable subscription");
     let error = service
@@ -792,7 +792,7 @@ async fn a_subscription_created_without_its_type_is_refused_on_both_kinds() {
             })
             .to_string()
             .as_bytes(),
-            CoreTermAliases::keyword_spellings(),
+            ContextReading::keyword_spellings(),
         )
         .expect("a readable subscription")
     };
@@ -817,7 +817,7 @@ async fn an_update_naming_a_scoped_jsonld_context_is_refused_and_writes_nothing(
     let (service, written) = service_serving_a_scoped_context();
     let request = SubscriptionRequest::from_request_text(
         json!({ "jsonldContext": SCOPED_CONTEXT }).to_string().as_bytes(),
-        CoreTermAliases::keyword_spellings(),
+        ContextReading::keyword_spellings(),
     )
     .expect("a readable fragment");
     let error = service

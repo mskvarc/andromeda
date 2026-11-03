@@ -11,7 +11,7 @@
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use std::fmt::Write;
 
 /// The attributes the created Temporal Evolution writes.
@@ -51,7 +51,7 @@ fn a_temporal_body_is_decoded_without_a_tree() {
     let decode = |text: &str| {
         let mut decoded = None;
         let measured = allocation_counter::measure(|| {
-            decoded = Some(WrittenTemporalEntity::from_request_text(text.as_bytes(), CoreTermAliases::keyword_spellings()).expect("the body decodes"));
+            decoded = Some(WrittenTemporalEntity::from_request_text(text.as_bytes(), ContextReading::keyword_spellings()).expect("the body decodes"));
         });
         let instances = decoded.expect("the decode ran").attrs.values().map(Vec::len).sum::<usize>();
         (measured.count_total, instances)

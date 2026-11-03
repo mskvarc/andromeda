@@ -73,7 +73,7 @@ impl<'a> JsonPiece<'a> {
     #[must_use]
     pub fn as_str(self) -> Option<Cow<'a, str>> {
         match self.kind() {
-            JsonKind::String => serde_json::from_str::<Text<'a>>(self.text()).ok().map(|text| text.0),
+            JsonKind::String => serde_json::from_str::<JsonString<'a>>(self.text()).ok().map(|text| text.0),
             JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
         }
     }
@@ -179,35 +179,37 @@ impl Serialize for JsonPiece<'_> {
     }
 }
 
-/// A string read without copying it when it carries no escape.
-struct Text<'a>(Cow<'a, str>);
+/// A JSON string read without copying it when it carries no escape.
+#[derive(Debug)]
+pub struct JsonString<'a>(pub Cow<'a, str>);
 
-impl<'de> Deserialize<'de> for Text<'de> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Text<'de>, D::Error> {
-        deserializer.deserialize_str(TextVisitor)
+impl<'de> Deserialize<'de> for JsonString<'de> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<JsonString<'de>, D::Error> {
+        deserializer.deserialize_str(JsonStringVisitor)
     }
 }
 
 /// Reads one string, borrowed from the text when it can be.
-struct TextVisitor;
+#[derive(Debug)]
+struct JsonStringVisitor;
 
-impl<'de> Visitor<'de> for TextVisitor {
-    type Value = Text<'de>;
+impl<'de> Visitor<'de> for JsonStringVisitor {
+    type Value = JsonString<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("a JSON string")
     }
 
-    fn visit_borrowed_str<E: DeserializeError>(self, text: &'de str) -> Result<Text<'de>, E> {
-        Ok(Text(Cow::Borrowed(text)))
+    fn visit_borrowed_str<E: DeserializeError>(self, text: &'de str) -> Result<JsonString<'de>, E> {
+        Ok(JsonString(Cow::Borrowed(text)))
     }
 
-    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<Text<'de>, E> {
-        Ok(Text(Cow::Owned(text.to_owned())))
+    fn visit_str<E: DeserializeError>(self, text: &str) -> Result<JsonString<'de>, E> {
+        Ok(JsonString(Cow::Owned(text.to_owned())))
     }
 
-    fn visit_string<E: DeserializeError>(self, text: String) -> Result<Text<'de>, E> {
-        Ok(Text(Cow::Owned(text)))
+    fn visit_string<E: DeserializeError>(self, text: String) -> Result<JsonString<'de>, E> {
+        Ok(JsonString(Cow::Owned(text)))
     }
 }
 
@@ -232,7 +234,7 @@ impl<'de> Visitor<'de> for MembersVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Members<'de>, A::Error> {
         let mut members = Vec::with_capacity(map.size_hint().unwrap_or(0));
-        while let Some(Text(name)) = map.next_key::<Text<'de>>()? {
+        while let Some(JsonString(name)) = map.next_key::<JsonString<'de>>()? {
             let value: &'de RawValue = map.next_value()?;
             members.push((name, JsonPiece(value)));
         }

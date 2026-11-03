@@ -7,11 +7,11 @@
 //! body that failed to decode is therefore decoded once more, on that failure
 //! path alone, by a deserializer that tracks the member it is in, so the
 //! refusal names it. The second decoding reads the text itself, never a JSON
-//! tree built from it, through the same core term aliases the first one read
+//! tree built from it, through the same reading the first one read
 //! it through; the member is tracked beneath them, so the refusal names it as
 //! the client wrote it.
 
-use andromeda_ngsi_ld_representation::{aliased_deserializer::AliasedDeserializer, core_term_aliases::CoreTermAliases};
+use andromeda_ngsi_ld_representation::{aliased_deserializer::AliasedDeserializer, compact_node::context_reading::ContextReading};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::de::DeserializeOwned;
 use serde_json::{Deserializer as JsonReader, value::RawValue};
@@ -42,18 +42,18 @@ pub enum UndecodableBody {
 
 impl UndecodableBody {
     /// The failure decoding the admitted body `text` as a `T` through
-    /// `aliases` ended in with `source`, naming the member it failed at.
+    /// `reading` ended in with `source`, naming the member it failed at.
     ///
     /// Called only once a decoding has failed. The retracing decode reads the
-    /// text the failed one read, through the same aliases, without its
+    /// text the failed one read, through the same reading, without its
     /// top-level `@context` member, which no decoding reads, so it fails at the
     /// same member.
     #[must_use]
-    pub fn of_text<T: DeserializeOwned>(text: &[u8], aliases: &CoreTermAliases, source: serde_json::Error) -> UndecodableBody {
+    pub fn of_text<T: DeserializeOwned>(text: &[u8], reading: ContextReading<'_>, source: serde_json::Error) -> UndecodableBody {
         let context_free = without_context(text);
         let mut reader = JsonReader::from_slice(context_free.as_deref().unwrap_or(text));
         let mut track = Track::new();
-        let retraced = T::deserialize(AliasedDeserializer::new(PathTracker::new(&mut reader, &mut track), aliases));
+        let retraced = T::deserialize(AliasedDeserializer::new(PathTracker::new(&mut reader, &mut track), reading));
         let member = track.path();
         match retraced {
             Err(_) if member.iter().next().is_some() => UndecodableBody::Member { member, source },
@@ -80,14 +80,14 @@ fn without_context(text: &[u8]) -> Option<Vec<u8>> {
 )]
 mod tests {
     use crate::undecodable_body::UndecodableBody;
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde::de::DeserializeOwned;
     use std::{collections::HashMap, fmt::Debug};
 
     /// Decode `text` as a `T` and classify the failure.
     fn undecodable<T: DeserializeOwned + Debug>(text: &str) -> UndecodableBody {
         let source = serde_json::from_str::<T>(text).expect_err("the fixture must not decode");
-        UndecodableBody::of_text::<T>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source)
+        UndecodableBody::of_text::<T>(text.as_bytes(), ContextReading::keyword_spellings(), source)
     }
 
     #[test]
@@ -129,7 +129,7 @@ mod tests {
 
         let text = r#"{"@context": "https://example.org/a", "id": "x"}"#;
         let source = serde_json::from_str::<u16>("\"x\"").expect_err("a string is no number");
-        let error = UndecodableBody::of_text::<Strict>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source);
+        let error = UndecodableBody::of_text::<Strict>(text.as_bytes(), ContextReading::keyword_spellings(), source);
         assert!(
             matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "id"),
             "{error:?}"
@@ -148,7 +148,7 @@ mod tests {
 
         let text = r#"{"@id": "x"}"#;
         let source = serde_json::from_str::<u16>("\"x\"").expect_err("a string is no number");
-        let error = UndecodableBody::of_text::<Typed>(text.as_bytes(), CoreTermAliases::keyword_spellings(), source);
+        let error = UndecodableBody::of_text::<Typed>(text.as_bytes(), ContextReading::keyword_spellings(), source);
         assert!(
             matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "@id"),
             "{error:?}"

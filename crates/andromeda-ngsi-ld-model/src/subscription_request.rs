@@ -339,7 +339,7 @@ impl SubscriptionRequest {
 )]
 mod tests {
     use crate::{request_body::RequestBody, subscription_member::SubscriptionMember, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
     /// One create body naming every member Table 5.2.12-1 defines that a
@@ -382,7 +382,7 @@ mod tests {
     }
 
     fn decode(body: &Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable subscription body")
+        SubscriptionRequest::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable subscription body")
     }
 
     /// Clause 5.8.1: a POST body decoded into the request model and written
@@ -445,7 +445,7 @@ mod tests {
     ];
 
     fn refused(body: &Value) -> bool {
-        SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).is_err()
+        SubscriptionRequest::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err()
     }
 
     /// Clause 5.5.8: a member the fragment leaves out stays out, and the
@@ -580,7 +580,7 @@ mod tests {
     fn an_unknown_member_is_refused_naming_it() {
         for member in ["watchedAtributes", "priority"] {
             let body = json!({ member: ["speed"] });
-            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes(), CoreTermAliases::keyword_spellings())
+            let error = SubscriptionRequest::from_request_text(body.to_string().as_bytes(), ContextReading::keyword_spellings())
                 .expect_err("an unknown member is refused");
             assert!(error.to_string().contains(&format!("unknown field `{member}`")), "{member}: got {error}");
         }
@@ -600,7 +600,7 @@ mod tests {
     fn a_top_level_context_is_not_a_member() {
         let request = SubscriptionRequest::from_request_text(
             br#"{"@context": "https://example.com/ctx.jsonld", "q": "speed>1"}"#,
-            CoreTermAliases::keyword_spellings(),
+            ContextReading::keyword_spellings(),
         )
         .expect("the context is skipped");
         assert!(request.q.as_set().is_some());

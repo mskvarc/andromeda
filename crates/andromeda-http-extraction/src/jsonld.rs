@@ -17,7 +17,7 @@ use andromeda_http_response::{classified_report::ClassifiedReport, extraction_re
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use axum::{
     extract::{FromRequest, Request},
     http::Uri,
@@ -69,15 +69,15 @@ where
     }
 }
 
-/// Read the request body `text` as a `T` through `aliases`, a body that does
+/// Read the request body `text` as a `T` through `reading`, a body that does
 /// not decode refused as `BadRequestData` naming the member it failed at.
 ///
 /// # Errors
 ///
 /// Returns the `BadRequestData` of a body that does not decode.
-fn read_request_body<T: RequestBody>(text: &[u8], aliases: &CoreTermAliases, uri: &Uri) -> Result<T, ProblemResponse> {
-    T::from_request_text(text, aliases).map_err(|source| {
-        let refusal = UndecodableBody::of_text::<T>(text, aliases, source);
+fn read_request_body<T: RequestBody>(text: &[u8], reading: ContextReading<'_>, uri: &Uri) -> Result<T, ProblemResponse> {
+    T::from_request_text(text, reading).map_err(|source| {
+        let refusal = UndecodableBody::of_text::<T>(text, reading, source);
         // clone: the refusal owns the URI it names
         ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()).with_instance(uri.clone())
     })

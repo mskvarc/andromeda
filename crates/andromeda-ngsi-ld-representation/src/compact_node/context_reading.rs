@@ -12,12 +12,9 @@
 use crate::{
     compact_node::{aliased_node::AliasedNode, contained_node::ContainedNode},
     container_terms::ContainerTerms,
+    context_terms::ContextTerms,
     core_term_aliases::CoreTermAliases,
 };
-use std::sync::LazyLock;
-
-/// The containers of a context that gives none of its terms one.
-static NO_CONTAINERS: LazyLock<ContainerTerms> = LazyLock::new(ContainerTerms::none);
 
 /// The terms of one context a compact node written under it is read through.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +32,18 @@ impl<'c> ContextReading<'c> {
         ContextReading { aliases, containers }
     }
 
+    /// The terms the context defines for core terms.
+    #[must_use]
+    pub const fn aliases(self) -> &'c CoreTermAliases {
+        self.aliases
+    }
+
+    /// The terms whose container reshapes what is written under them.
+    #[must_use]
+    pub const fn containers(self) -> &'c ContainerTerms {
+        self.containers
+    }
+
     /// `node`, read without the containers and through the aliases.
     #[must_use]
     pub const fn read<N>(self, node: N) -> AliasedNode<'c, ContainedNode<'c, N>> {
@@ -47,7 +56,7 @@ impl ContextReading<'static> {
     /// `id` and `type`, and no container.
     #[must_use]
     pub fn keyword_spellings() -> ContextReading<'static> {
-        ContextReading::new(CoreTermAliases::keyword_spellings(), &NO_CONTAINERS)
+        ContextTerms::keyword_spellings().reading()
     }
 }
 

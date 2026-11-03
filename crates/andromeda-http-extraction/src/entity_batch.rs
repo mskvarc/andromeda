@@ -345,7 +345,7 @@ mod tests {
         error_type::NgsiLdErrorType,
         problem_detail::ProblemClassification,
     };
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use axum::{
         body::{Body, to_bytes},
         extract::FromRequest,
@@ -380,7 +380,7 @@ mod tests {
         let ParsedBatch { items, mut errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
         let mut entities = Vec::new();
         for BatchItem { identifier, text, .. } in items {
-            match entity_of(&text, CoreTermAliases::keyword_spellings()) {
+            match entity_of(&text, ContextReading::keyword_spellings()) {
                 Ok(entity) => entities.push(entity),
                 Err(refusal) => errors.push(refusal.against(written(&identifier).clone())), // clone: the fixture keeps the item it reports
             }
@@ -1013,7 +1013,7 @@ mod tests {
                     Ok(ParsedBatch { items, errors, .. }) => Ok((
                         items
                             .iter()
-                            .map(|item| match entity_of::<AttributeValue>(&item.text, CoreTermAliases::keyword_spellings()) {
+                            .map(|item| match entity_of::<AttributeValue>(&item.text, ContextReading::keyword_spellings()) {
                                 Ok(entity) => serde_json::to_value(entity).expect("an entity serializes"),
                                 Err(refusal) => serde_json::Value::String(refusal.to_string()),
                             })

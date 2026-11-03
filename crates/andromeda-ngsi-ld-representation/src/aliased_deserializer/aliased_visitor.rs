@@ -7,8 +7,9 @@ use crate::{
         AliasedDeserializer,
         Place,
         aliased_access::{AliasedElements, AliasedEnum, AliasedMembers},
+        contained_members::ContainedMembers,
     },
-    core_term_aliases::CoreTermAliases,
+    compact_node::context_reading::ContextReading,
 };
 use serde::de::{DeserializeSeed, Deserializer, EnumAccess, Error as DeserializeError, MapAccess, SeqAccess, Unexpected, Visitor};
 use std::{borrow::Cow, fmt};
@@ -17,23 +18,23 @@ use std::{borrow::Cow, fmt};
 pub(crate) struct AliasedVisitor<'a, 's, V> {
     /// The visitor of the typed resource.
     visitor: V,
-    /// The aliases the value is read through.
-    aliases: &'a CoreTermAliases,
+    /// The aliases and containers the value is read through.
+    reading: ContextReading<'a>,
     /// Where the value stands.
     place: Place<'s>,
 }
 
 impl<'a, 's, V> AliasedVisitor<'a, 's, V> {
     /// `visitor`, handed the value standing at `place` read through
-    /// `aliases`.
-    pub(crate) const fn new(visitor: V, aliases: &'a CoreTermAliases, place: Place<'s>) -> AliasedVisitor<'a, 's, V> {
-        AliasedVisitor { visitor, aliases, place }
+    /// `reading`.
+    pub(crate) const fn new(visitor: V, reading: ContextReading<'a>, place: Place<'s>) -> AliasedVisitor<'a, 's, V> {
+        AliasedVisitor { visitor, reading, place }
     }
 
     /// The deserializer `inner`, read at the same place through the same
-    /// aliases.
+    /// terms.
     const fn nested<D>(&self, inner: D) -> AliasedDeserializer<'a, 's, D> {
-        AliasedDeserializer::at(inner, self.aliases, self.place)
+        AliasedDeserializer::at(inner, self.reading, self.place)
     }
 }
 
@@ -77,21 +78,21 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for AliasedVisitor<'_, '_, V> {
     );
 
     fn visit_str<E: DeserializeError>(self, text: &str) -> Result<V::Value, E> {
-        match self.place.read(self.aliases, Cow::Borrowed(text)) {
+        match self.place.read(self.reading.aliases(), Cow::Borrowed(text)) {
             Cow::Borrowed(read) => self.visitor.visit_str(read),
             Cow::Owned(read) => self.visitor.visit_string(read),
         }
     }
 
     fn visit_borrowed_str<E: DeserializeError>(self, text: &'de str) -> Result<V::Value, E> {
-        match self.place.read(self.aliases, Cow::Borrowed(text)) {
+        match self.place.read(self.reading.aliases(), Cow::Borrowed(text)) {
             Cow::Borrowed(read) => self.visitor.visit_borrowed_str(read),
             Cow::Owned(read) => self.visitor.visit_string(read),
         }
     }
 
     fn visit_string<E: DeserializeError>(self, text: String) -> Result<V::Value, E> {
-        let read: Cow<'de, str> = self.place.read(self.aliases, Cow::Owned(text));
+        let read: Cow<'de, str> = self.place.read(self.reading.aliases(), Cow::Owned(text));
         match read {
             Cow::Borrowed(read) => self.visitor.visit_borrowed_str(read),
             Cow::Owned(read) => self.visitor.visit_string(read),
@@ -120,15 +121,19 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for AliasedVisitor<'_, '_, V> {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, elements: A) -> Result<V::Value, A::Error> {
-        self.visitor.visit_seq(AliasedElements::new(elements, self.aliases, self.place.elements()))
+        self.visitor.visit_seq(AliasedElements::new(elements, self.reading, self.place.elements()))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, members: A) -> Result<V::Value, A::Error> {
-        self.visitor.visit_map(AliasedMembers::new(members, self.aliases))
+        if self.reading.containers().is_empty() {
+            self.visitor.visit_map(AliasedMembers::new(members, self.reading))
+        } else {
+            self.visitor.visit_map(ContainedMembers::new(members, self.reading))
+        }
     }
 
     fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<V::Value, A::Error> {
-        self.visitor.visit_enum(AliasedEnum::new(data, self.aliases))
+        self.visitor.visit_enum(AliasedEnum::new(data, self.reading))
     }
 }
 
@@ -136,16 +141,16 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for AliasedVisitor<'_, '_, V> {
 pub(crate) struct AliasedSeed<'a, 's, S> {
     /// The seed of the typed resource.
     seed: S,
-    /// The aliases the value is read through.
-    aliases: &'a CoreTermAliases,
+    /// The aliases and containers the value is read through.
+    reading: ContextReading<'a>,
     /// Where the value stands.
     place: Place<'s>,
 }
 
 impl<'a, 's, S> AliasedSeed<'a, 's, S> {
-    /// `seed`, handed the value standing at `place` read through `aliases`.
-    pub(crate) const fn new(seed: S, aliases: &'a CoreTermAliases, place: Place<'s>) -> AliasedSeed<'a, 's, S> {
-        AliasedSeed { seed, aliases, place }
+    /// `seed`, handed the value standing at `place` read through `reading`.
+    pub(crate) const fn new(seed: S, reading: ContextReading<'a>, place: Place<'s>) -> AliasedSeed<'a, 's, S> {
+        AliasedSeed { seed, reading, place }
     }
 }
 
@@ -153,6 +158,6 @@ impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for AliasedSeed<'_, '_, 
     type Value = S::Value;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<S::Value, D::Error> {
-        self.seed.deserialize(AliasedDeserializer::at(deserializer, self.aliases, self.place))
+        self.seed.deserialize(AliasedDeserializer::at(deserializer, self.reading, self.place))
     }
 }

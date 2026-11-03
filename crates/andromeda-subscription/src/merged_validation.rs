@@ -70,7 +70,7 @@ mod tests {
         variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
     /// The write values a create body of `members` describes, over a
@@ -80,7 +80,7 @@ mod tests {
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
             target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
         }
-        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request");
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         SubscriptionWriteValues::from_create(request, policy)
     }
 

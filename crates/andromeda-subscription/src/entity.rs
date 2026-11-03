@@ -93,11 +93,11 @@ mod tests {
         subscription::Subscription,
         subscription_request::SubscriptionRequest,
     };
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::json;
 
     fn request(wire: &serde_json::Value) -> SubscriptionRequest {
-        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a readable request")
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request")
     }
 
     /// Table 5.2.12-1: `temporalQ` is "to be used only in Context Registration

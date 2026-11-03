@@ -20,13 +20,13 @@ use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::attribute::{member_reading::MemberReading, written_attribute::WrittenAttribute};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+use andromeda_ngsi_ld_representation::{compact_node::context_reading::ContextReading, context_terms::ContextTerms};
 use axum::{body::Bytes, http::Uri};
 use std::{borrow::Borrow, sync::Arc};
 
-/// How a body is read from its admitted text under the aliases of its
-/// context, for the request it names.
-type BodyReading<T> = Box<dyn FnOnce(&[u8], &CoreTermAliases, &Uri) -> Result<T, ProblemResponse> + Send>;
+/// How a body is read from its admitted text under the terms of its context,
+/// for the request it names.
+type BodyReading<T> = Box<dyn FnOnce(&[u8], ContextReading<'_>, &Uri) -> Result<T, ProblemResponse> + Send>;
 
 /// A request body admitted as text, read as a `T` once its context is.
 #[must_use = "a submitted body is read once its context is admitted"]
@@ -49,7 +49,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
         text: Bytes,
         uri: Uri,
         blocking_decode: Option<BlockingDecodePolicy>,
-        read: impl FnOnce(&[u8], &CoreTermAliases, &Uri) -> Result<T, ProblemResponse> + Send + 'static,
+        read: impl FnOnce(&[u8], ContextReading<'_>, &Uri) -> Result<T, ProblemResponse> + Send + 'static,
     ) -> SubmittedBody<T> {
         SubmittedBody {
             text,
@@ -66,7 +66,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
     /// Returns the refusal the body's payload rules gave it, and an
     /// `InternalError` when the blocking decoding task fails.
     pub async fn admitted(self, context: &AdmittedContext) -> Result<T, ProblemResponse> {
-        self.decoded(Arc::clone(context.aliases())).await
+        self.decoded(Arc::clone(context.terms())).await
     }
 
     /// The body of an operation that never resolves `context`, refused first
@@ -81,7 +81,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
         if let Err(embedded) = context.unused() {
             return Err(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, embedded.to_string()).with_instance(self.uri));
         }
-        self.decoded(CoreTermAliases::keyword_spellings()).await
+        self.decoded(ContextTerms::keyword_spellings()).await
     }
 
     /// The body `map` makes of the decoded one, refused as `map` refuses it.
@@ -92,14 +92,14 @@ impl<T: Send + 'static> SubmittedBody<T> {
             blocking_decode,
             read,
         } = self;
-        SubmittedBody::new(text, uri, blocking_decode, move |text, aliases, uri| {
-            read(text, aliases, uri).and_then(|value| map(value, uri))
+        SubmittedBody::new(text, uri, blocking_decode, move |text, reading, uri| {
+            read(text, reading, uri).and_then(|value| map(value, uri))
         })
     }
 
-    /// Decode the body through `aliases`, on the blocking pool when it is
+    /// Decode the body through `terms`, on the blocking pool when it is
     /// large.
-    async fn decoded(self, aliases: impl Borrow<CoreTermAliases> + Send + 'static) -> Result<T, ProblemResponse> {
+    async fn decoded(self, terms: impl Borrow<ContextTerms> + Send + 'static) -> Result<T, ProblemResponse> {
         let SubmittedBody {
             text,
             uri,
@@ -107,7 +107,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
             read,
         } = self;
         let instance = uri.clone(); // clone: a failed decoding task still names the request
-        decode_payload(blocking_decode.as_ref(), text.len(), move || read(&text, aliases.borrow(), &uri))
+        decode_payload(blocking_decode.as_ref(), text.len(), move || read(&text, terms.borrow().reading(), &uri))
             .await
             .map_err(|failure| failure.report().with_instance(instance))?
     }
@@ -127,7 +127,7 @@ impl SubmittedBody<WrittenAttribute> {
         let instance = self.uri.clone(); // clone: the refusal of the fragment names the request the decode consumes
         let written = self.admitted(context).await?;
         written
-            .read(attribute, context.aliases())
+            .read(attribute, context.terms().reading())
             .map_err(|refused| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refused.to_string()).with_instance(instance))
     }
 }
@@ -166,21 +166,24 @@ mod tests {
 
     /// A body read as the number it holds.
     fn decodable() -> SubmittedBody<u8> {
-        SubmittedBody::new(Bytes::from_static(b"7"), uri(), None, |text, _aliases, _uri| {
+        SubmittedBody::new(Bytes::from_static(b"7"), uri(), None, |text, _reading, _uri| {
             Ok(str::from_utf8(text).ok().and_then(|digits| digits.parse().ok()).unwrap_or_default())
         })
     }
 
     fn refused() -> SubmittedBody<u8> {
-        SubmittedBody::new(Bytes::from_static(b"x"), uri(), None, |_text, _aliases, uri| {
+        SubmittedBody::new(Bytes::from_static(b"x"), uri(), None, |_text, _reading, uri| {
             Err(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "undecodable").with_instance(uri.clone()))
         })
     }
 
     /// A body read as the core term the name it holds stands for.
     fn spelled(name: &'static str) -> SubmittedBody<String> {
-        SubmittedBody::new(Bytes::from_static(name.as_bytes()), uri(), None, |text, aliases, _uri| {
-            Ok(aliases.core_name(Cow::Borrowed(str::from_utf8(text).unwrap_or_default())).into_owned())
+        SubmittedBody::new(Bytes::from_static(name.as_bytes()), uri(), None, |text, reading, _uri| {
+            Ok(reading
+                .aliases()
+                .core_name(Cow::Borrowed(str::from_utf8(text).unwrap_or_default()))
+                .into_owned())
         })
     }
 

@@ -57,7 +57,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, request_body::RequestBody};
-    use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
     use std::{
         collections::HashMap,
@@ -132,11 +132,11 @@ mod tests {
             "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
             "contextSourceInfo": forwarding_info(context)
         });
-        RegistrationBody::from_request_text(document.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a registration body")
+        RegistrationBody::from_request_text(document.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a registration body")
     }
 
     fn fragment(document: &Value) -> RegistrationBody {
-        RegistrationBody::from_request_text(document.to_string().as_bytes(), CoreTermAliases::keyword_spellings()).expect("a registration fragment")
+        RegistrationBody::from_request_text(document.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a registration fragment")
     }
 
     fn registration_id() -> Identifier {
