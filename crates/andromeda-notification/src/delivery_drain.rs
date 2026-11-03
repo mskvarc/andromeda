@@ -186,10 +186,10 @@ impl NotificationDeliveryDrain {
     ///
     /// A delivery holds its slot until its outcome is acknowledged. The pass
     /// has at most one acknowledgement in flight: the deliveries whose
-    /// attempts end while one is in flight are acknowledged together once it
-    /// comes back, so endpoints that answer at once cost one acknowledgement
-    /// per batch of attempts, not one per delivery, and a lone outcome with no
-    /// acknowledgement in flight is still recorded at once.
+    /// attempts end together, or while one is in flight, are acknowledged
+    /// together once it comes back, so endpoints that answer at once cost one
+    /// acknowledgement per batch of attempts, not one per delivery, and a lone
+    /// outcome with no acknowledgement in flight is still recorded at once.
     ///
     /// Every claimed delivery is driven to its acknowledgement even when
     /// another one fails or the pass is cancelled, so no lease this worker
@@ -234,54 +234,63 @@ impl NotificationDeliveryDrain {
             if let Some(group) = acknowledgements.next_group() {
                 slots.push(self.acknowledge(group).boxed());
             }
-            let Some(event) = slots.next().await else {
+            let Some(mut event) = slots.next().await else {
                 break;
             };
-            match event {
-                SlotEvent::Claimed {
-                    asked,
-                    order,
-                    claims: Ok(claims),
-                } => {
-                    supply = supply.after_claim(asked, order, claims.len());
-                    refill.settle(asked, claims.len());
-                    claimed += claims.len();
-                    for claim in &claims {
-                        match claim {
-                            DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
-                            DeliveryClaim::Unreadable(_) => {}
-                        }
-                    }
-                    slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
-                }
-                SlotEvent::Claimed { asked, claims: Err(error), .. } => {
-                    refill.settle(asked, 0);
-                    failure.get_or_insert(error);
-                }
-                SlotEvent::Attempted(ended) => match *ended {
-                    AttemptEnded {
-                        settlement: Ok(settlement),
-                        occupant,
-                    } => acknowledgements.wait(AwaitingAcknowledgement { settlement, occupant }),
-                    AttemptEnded {
-                        settlement: Err(error),
-                        occupant,
+            loop {
+                match event {
+                    SlotEvent::Claimed {
+                        asked,
+                        order,
+                        claims: Ok(claims),
                     } => {
-                        free_slot(&mut share, &mut refill, occupant);
+                        supply = supply.after_claim(asked, order, claims.len());
+                        refill.settle(asked, claims.len());
+                        claimed += claims.len();
+                        for claim in &claims {
+                            match claim {
+                                DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
+                                DeliveryClaim::Unreadable(_) => {}
+                            }
+                        }
+                        slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &clock, &held).boxed()));
+                    }
+                    SlotEvent::Claimed { asked, claims: Err(error), .. } => {
+                        refill.settle(asked, 0);
                         failure.get_or_insert(error);
                     }
-                },
-                SlotEvent::Acknowledged { answers, occupants } => {
-                    acknowledgements.settle();
-                    for occupant in occupants {
-                        free_slot(&mut share, &mut refill, occupant);
-                    }
-                    match answers {
-                        Ok(answers) => lease_lost += answers.iter().filter(|answer| **answer == LeaseAcknowledgement::Lost).count(),
-                        Err(error) => {
+                    SlotEvent::Attempted(ended) => match *ended {
+                        AttemptEnded {
+                            settlement: Ok(settlement),
+                            occupant,
+                        } => acknowledgements.wait(AwaitingAcknowledgement { settlement, occupant }),
+                        AttemptEnded {
+                            settlement: Err(error),
+                            occupant,
+                        } => {
+                            free_slot(&mut share, &mut refill, occupant);
                             failure.get_or_insert(error);
                         }
+                    },
+                    SlotEvent::Acknowledged { answers, occupants } => {
+                        acknowledgements.settle();
+                        for occupant in occupants {
+                            free_slot(&mut share, &mut refill, occupant);
+                        }
+                        match answers {
+                            Ok(answers) => lease_lost += answers.iter().filter(|answer| **answer == LeaseAcknowledgement::Lost).count(),
+                            Err(error) => {
+                                failure.get_or_insert(error);
+                            }
+                        }
                     }
+                }
+                // Every event already finished is taken in before the next
+                // claim or acknowledgement goes out, so attempts that end
+                // together share one acknowledgement.
+                match slots.next().now_or_never() {
+                    Some(Some(ready)) => event = ready,
+                    Some(None) | None => break,
                 }
             }
         }
@@ -1188,7 +1197,8 @@ mod tests {
         block_on(async {
             let entries = (1..=12_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_claims(entries));
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(6))?
+            let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 12);
@@ -1206,7 +1216,8 @@ mod tests {
         block_on(async {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, []));
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(6))?
+            let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 6);
@@ -1214,6 +1225,41 @@ mod tests {
             pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 6);
             Ok(())
         })
+    }
+
+    #[test]
+    fn attempts_that_end_together_share_the_first_acknowledgement() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, []));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(6))?
+                .execute(Utc::now(), &CancellationToken::new())
+                .await?;
+            pretty_assertions::assert_eq!(outcome.claimed, 6);
+            pretty_assertions::assert_eq!(store.group_sizes(), vec![6]);
+            Ok(())
+        })
+    }
+
+    /// The polls every delivery but the first waits before its transport
+    /// answers: fewer than an acknowledgement or a claim stays in flight, so
+    /// the first attempt ends alone and the rest end while its
+    /// acknowledgement is in flight.
+    const STAGGER_POLLS: u32 = 8;
+
+    /// A transport that answers delivery 1 at once and every other one
+    /// [`STAGGER_POLLS`] polls later, as `.0` would.
+    struct Staggered<T>(T);
+
+    impl<T: NotificationDeliveryTransport> NotificationDeliveryTransport for Staggered<T> {
+        fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
+            Box::pin(async move {
+                if entry.key != DeliveryKey::from(1_i64) {
+                    round_trip(STAGGER_POLLS).await;
+                }
+                self.0.deliver(entry).await
+            })
+        }
     }
 
     #[test]
@@ -1261,7 +1307,7 @@ mod tests {
         block_on(async {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_acknowledgements(entries, [DeliveryKey::from(5_i64)]));
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(MixedTransport), waits(), &sized(5))?
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(Staggered(MixedTransport)), waits(), &sized(5))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (5, 1));
@@ -1292,7 +1338,8 @@ mod tests {
                 lease_state: LeaseState::UnrecordableOnce,
                 ..RecordingStore::with_slow_acknowledgements(entries, [])
             });
-            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(5))?
+            let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
+            let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(5))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (5, 0));
@@ -1414,7 +1461,8 @@ mod tests {
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
-            pretty_assertions::assert_eq!(store.claim_widths(), vec![2, 1, 1]);
+            // Both deliveries end together, so the second claim asks for both slots and comes back with the last one.
+            pretty_assertions::assert_eq!(store.claim_widths(), vec![2, 2]);
             Ok(())
         })
     }
@@ -1733,7 +1781,7 @@ mod tests {
     fn claim_orders(entries: Vec<DeliveryEntry>) -> Result<Vec<DeliveryClaimOrder>, NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entries(entries));
-            NotificationDeliveryDrain::new(store.clone(), Arc::new(InFlightTransport::default()), waits(), &sized(4))?
+            NotificationDeliveryDrain::new(store.clone(), Arc::new(Staggered(InFlightTransport::default())), waits(), &sized(4))?
                 .execute(Utc::now(), &CancellationToken::new())
                 .await?;
             Ok(store.orders.lock().expect("the test lock is not poisoned").clone())
