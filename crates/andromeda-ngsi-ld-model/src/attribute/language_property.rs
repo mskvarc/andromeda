@@ -72,6 +72,17 @@ pub enum LanguageMapValue {
     Multiple(Vec<String>),
 }
 
+impl LanguageMapValue {
+    /// The strings the value holds; each expands to one language entry.
+    #[must_use]
+    pub const fn string_count(&self) -> usize {
+        match self {
+            LanguageMapValue::Single(_) => 1,
+            LanguageMapValue::Multiple(texts) => texts.len(),
+        }
+    }
+}
+
 // Hand-written: the two enums carry the same payloads under different variant
 // names, and no derive maps one enum onto another.
 impl From<OneOrMany<String>> for LanguageMapValue {
@@ -88,6 +99,15 @@ impl From<OneOrMany<String>> for LanguageMapValue {
 #[derive(Debug, Clone, Default, Serialize, From, Deref, DerefMut)]
 #[serde(transparent)]
 pub struct LanguageMap(pub IndexMap<LanguageMapKey, LanguageMapValue>);
+
+impl LanguageMap {
+    /// The strings the map holds over every tag; each expands to one language
+    /// entry.
+    #[must_use]
+    pub fn string_count(&self) -> usize {
+        self.0.values().map(LanguageMapValue::string_count).sum()
+    }
+}
 
 // Hand-written: a refused entry names its language tag, which a derived map
 // reading never passes to the value it reads.
@@ -178,6 +198,15 @@ mod tests {
         language_property::{LanguageMap, LanguageMapKey, LanguageMapValue, LanguageProperty},
     };
     use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+
+    #[test]
+    fn a_language_map_counts_one_string_per_expanded_entry_over_every_tag() {
+        let map: LanguageMap = serde_json::from_str(r#"{"en":"a","fr":["b","c","d"],"@none":["e"]}"#).expect("a language map");
+        pretty_assertions::assert_eq!(map.string_count(), 5);
+        pretty_assertions::assert_eq!(LanguageMap::default().string_count(), 0);
+        pretty_assertions::assert_eq!(LanguageMapValue::Single("a".to_owned()).string_count(), 1);
+        pretty_assertions::assert_eq!(LanguageMapValue::Multiple(Vec::new()).string_count(), 0);
+    }
 
     #[test]
     fn language_property_round_trip_supports_previous_language_map() {

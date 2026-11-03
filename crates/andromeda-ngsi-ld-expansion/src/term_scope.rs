@@ -97,6 +97,16 @@ impl<'c> TermScope<'c> {
         self.values.count_one()
     }
 
+    /// Count `values` values a member holds, by the census rule for that
+    /// member, before the member is expanded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Decline::ValueLimit`] once the count passes the limit.
+    pub(crate) fn count_member(&self, values: usize) -> Result<(), Decline> {
+        self.values.count_member(values)
+    }
+
     /// The room to make for the items an array of `written` elements expands
     /// to in this scope.
     pub(crate) fn value_capacity(&self, written: usize) -> usize {

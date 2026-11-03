@@ -13,6 +13,11 @@
 //! census counts every one of them and more besides (the entity, its
 //! instances, their members), so the walk stops only for a document the
 //! census refuses, and the census still decides every other one.
+//!
+//! A member whose expansion does not map one to one onto the census (`object`,
+//! `objectList`, `vocab`, `languageMap`, the entity `scope`) is counted before
+//! it is expanded, by the census's own rule for it: the walk counts the member
+//! as the census does and never the items its expansion makes.
 
 use crate::decline::Decline;
 use andromeda_ngsi_ld_number::json_value::value_census::ValueTally;
@@ -83,6 +88,17 @@ impl<'t> ValueCount<'t> {
             (Position::Structure, _) | (Position::Value, None) => Ok(()),
         }
     }
+
+    /// Count `values` values a member holds by the census rule for that
+    /// member, wherever the member stands. The member is counted before it is
+    /// expanded, so one far over the limit is refused without being held.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Decline::ValueLimit`] once the count passes the limit.
+    pub(crate) fn count_member(self, values: usize) -> Result<(), Decline> {
+        self.tally.map_or(Ok(()), |tally| tally.admit(values).map_err(|_exceeded| Decline::ValueLimit))
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +142,26 @@ mod tests {
             pretty_assertions::assert_eq!(count.count_one(), Ok(()));
         }
         pretty_assertions::assert_eq!(tally.counted().get(), 0);
+    }
+
+    #[test]
+    fn a_member_counts_wherever_it_stands_until_the_count_passes_the_limit() {
+        let tally = tally(5);
+        let count = ValueCount::into_tally(Some(&tally));
+        pretty_assertions::assert_eq!(count.count_member(5), Ok(()));
+        pretty_assertions::assert_eq!(tally.counted().get(), 5);
+        pretty_assertions::assert_eq!(count.count_member(1), Err(Decline::ValueLimit));
+    }
+
+    #[test]
+    fn a_member_far_over_the_limit_is_refused_in_one_count() {
+        let tally = tally(5);
+        pretty_assertions::assert_eq!(ValueCount::into_tally(Some(&tally)).count_member(4_000_000), Err(Decline::ValueLimit));
+    }
+
+    #[test]
+    fn an_uncounted_walk_counts_no_member() {
+        pretty_assertions::assert_eq!(ValueCount::uncounted().count_member(usize::MAX), Ok(()));
     }
 
     #[test]

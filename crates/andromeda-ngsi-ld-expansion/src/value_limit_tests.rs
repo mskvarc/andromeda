@@ -124,19 +124,132 @@ async fn the_values_of_every_attribute_and_sub_attribute_count_together() {
     assert_counts(&body, 6).await;
 }
 
-/// Only the values below a value carrier are counted: the entity, its
-/// instances and their other members are the census's to count.
+/// The members a count never reaches: the instance's own scalar members, a
+/// JSON literal and the identifier and type of the entity are the census's to
+/// count.
 #[tokio::test]
-async fn the_members_around_a_value_are_not_counted() {
+async fn the_members_the_walk_does_not_count_are_left_to_the_census() {
     let body = entity(&json!({
-        "scope": ["/a", "/b", "/c"],
         "speed": {"type": "Property", "value": 1, "unitCode": "KMH", "observedAt": "2024-01-01T00:00:00Z"},
-        "owner": {"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2"]},
-        "name": {"type": "LanguageProperty", "languageMap": {"en": "a", "fr": "b"}},
-        "kind": {"type": "VocabProperty", "vocab": ["a", "b"]},
         "config": {"type": "JsonProperty", "json": {"a": [1, 2, 3]}}
     }));
     pretty_assertions::assert_eq!(walk_entity(body, 1).await.ok(), Some(true), "one value below a carrier");
+}
+
+/// A Relationship `object` counts one value per target, a single target
+/// written bare included.
+#[tokio::test]
+async fn a_relationship_object_counts_each_target() {
+    assert_counts(
+        &entity(&json!({"owner": {"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2", "urn:ngsi-ld:Person:3"]}})),
+        3,
+    )
+    .await;
+    assert_counts(
+        &entity(&json!({"owner": {"type": "Relationship", "object": "urn:ngsi-ld:Person:1"}, "speed": {"type": "Property", "value": 1}})),
+        2,
+    )
+    .await;
+}
+
+/// A `ListRelationship` `objectList` counts the list and each entry: an entry
+/// expands to two items and is counted once.
+#[tokio::test]
+async fn a_list_relationship_counts_the_list_and_each_entry() {
+    assert_counts(
+        &entity(&json!({"friends": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2", "urn:ngsi-ld:Person:3"]}})),
+        4,
+    )
+    .await;
+}
+
+/// A `VocabProperty` `vocab` counts one value per term.
+#[tokio::test]
+async fn a_vocab_property_counts_each_term() {
+    assert_counts(&entity(&json!({"kind": {"type": "VocabProperty", "vocab": ["a", "b", "c", "d"]}})), 4).await;
+}
+
+/// A `LanguageProperty` `languageMap` counts the map and each string over
+/// every tag, an array of strings under one tag included.
+#[tokio::test]
+async fn a_language_property_counts_the_map_and_each_string() {
+    assert_counts(
+        &entity(&json!({"name": {"type": "LanguageProperty", "languageMap": {"en": "a", "fr": ["b", "c"], "@none": "d"}}})),
+        5,
+    )
+    .await;
+    assert_counts(
+        &entity(&json!({"name": {"type": "LanguageProperty", "languageMap": {"en": ["a", "b", "c"]}}})),
+        4,
+    )
+    .await;
+}
+
+/// The entity `scope` counts one value per scope.
+#[tokio::test]
+async fn an_entity_scope_counts_each_scope() {
+    assert_counts(&entity(&json!({"scope": ["/a", "/b", "/c"]})), 3).await;
+    assert_counts(&entity(&json!({"scope": "/a", "speed": {"type": "Property", "value": 1}})), 2).await;
+}
+
+/// An entity whose members add up to the limit exactly is admitted, and one
+/// value fewer refuses it: the early count is the census's count, not the
+/// count of the items the expansion makes.
+#[tokio::test]
+async fn the_members_count_together_with_the_values_up_to_the_limit() {
+    let body = entity(&json!({
+        "scope": ["/a", "/b"],
+        "speed": {"type": "Property", "value": 1},
+        "owner": {"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2"]},
+        "friends": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:3", "urn:ngsi-ld:Person:4"]},
+        "kind": {"type": "VocabProperty", "vocab": ["a", "b"]},
+        "name": {"type": "LanguageProperty", "languageMap": {"en": "a", "fr": ["b", "c"]}}
+    }));
+    assert_counts(&body, 2 + 1 + 2 + 3 + 2 + 4).await;
+}
+
+/// A member below a sub-attribute is counted like one of the entity.
+#[tokio::test]
+async fn a_member_of_a_sub_attribute_is_counted() {
+    let body = entity(
+        &json!({"speed": {"type": "Property", "value": 1, "source": {"type": "Relationship", "object": ["urn:ngsi-ld:Sensor:1", "urn:ngsi-ld:Sensor:2"]}}}),
+    );
+    assert_counts(&body, 3).await;
+}
+
+/// A merge fragment counts these members as an entity does (clause 5.6.17).
+#[tokio::test]
+async fn a_merge_fragment_counts_its_relationship_vocab_language_and_scope_members() {
+    let (body, context) = under_terms(json!({
+        "scope": ["/a", "/b"],
+        "owner": {"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2"]},
+        "friends": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:3"]},
+        "kind": {"type": "VocabProperty", "vocab": ["a", "b"]},
+        "name": {"type": "LanguageProperty", "languageMap": {"en": "a", "fr": ["b", "c"]}}
+    }))
+    .await;
+    let patch: EntityPatch<MergeMember> = serde_json::from_value(body).expect("a typed fragment");
+    let expander = TypedExpander::new(&context);
+    let values = 2 + 2 + 2 + 2 + 4;
+    assert!(expander.bounded_by(limit(values)).entity_patch(&patch, Normalization::MemberDeletions).is_ok());
+    assert_refused(
+        expander.bounded_by(limit(values - 1)).entity_patch(&patch, Normalization::MemberDeletions),
+        values - 1,
+    );
+}
+
+/// An Attribute Fragment counts these members as the attribute of an entity
+/// does (clauses 5.6.4, 5.6.19).
+#[tokio::test]
+async fn an_attribute_fragment_counts_its_relationship_object() {
+    let (_, context) = under_terms(json!({})).await;
+    let written =
+        RawValue::from_string(json!({"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2"]}).to_string()).expect("a JSON text");
+    let member = MergeMember::from_fragment_node("owner", ProducedNode::new(JsonPiece::new(&written))).expect("a typed fragment");
+    let attribute: AttributeName = "https://example.org/terms#owner".parse().expect("an attribute name");
+    let expander = TypedExpander::new(&context);
+    assert!(expander.bounded_by(limit(2)).attribute(&attribute, &member).is_ok());
+    assert_refused(expander.bounded_by(limit(1)).attribute(&attribute, &member), 1);
 }
 
 /// An expander bounded by no limit counts nothing.

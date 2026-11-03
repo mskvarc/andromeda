@@ -665,6 +665,37 @@ mod tests {
             .expect("five positions are within a budget of five");
     }
 
+    /// Assert that, for every limit from one value to `up_to`, the admission of
+    /// `probe` answers as the census of its expanded document does, and that
+    /// the limits tried hold both an admission and a refusal.
+    async fn assert_walk_refuses_where_census_refuses(probe: &Entity, up_to: usize) {
+        let (unbounded, _writes) = recording_service().await;
+        let document = EntityExpansion::prepare(&unbounded.engine, &ContextSpec::core_only())
+            .await
+            .expect("the core context processes")
+            .entity(probe, Normalization::Entity)
+            .await
+            .expect("the probe expands");
+        let mut answers = Vec::new();
+        for values in 1..=up_to {
+            let census = admit_entity_document(value_budget(values), &document);
+            let service = budgeted_recording_service(value_budget(values));
+            let admission = service
+                .admit_entity_write::<CreateEntity>(probe, &admitted_context(&service, &ContextSpec::core_only()).await)
+                .await;
+            match (&census, &admission) {
+                (Ok(()), Ok(_))
+                | (Err(PayloadBudgetExceeded::EntityJsonValues { .. }), Err(EntityError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { .. }))) => {}
+                (census, admission) => panic!("under {values} values the census answers {census:?} and the admission {admission:?}"),
+            }
+            answers.push(census.is_ok());
+        }
+        assert!(
+            answers.contains(&false) && answers.contains(&true),
+            "the probe crosses the limits tried: {answers:?}"
+        );
+    }
+
     /// Clause 6.3.2: the walk counts an entity's values while it expands them
     /// and refuses at exactly the limit the census of the whole expanded
     /// document refuses at, so counting early changes no answer.
@@ -679,31 +710,26 @@ mod tests {
             "l": {"type": "ListProperty", "valueList": [1, [2, 3]]}
         }))
         .expect("a valid entity");
-        let (unbounded, _writes) = recording_service().await;
-        let document = EntityExpansion::prepare(&unbounded.engine, &ContextSpec::core_only())
-            .await
-            .expect("the core context processes")
-            .entity(&probe, Normalization::Entity)
-            .await
-            .expect("the probe expands");
-        let mut answers = Vec::new();
-        for values in 1..=40 {
-            let census = admit_entity_document(value_budget(values), &document);
-            let service = budgeted_recording_service(value_budget(values));
-            let admission = service
-                .admit_entity_write::<CreateEntity>(&probe, &admitted_context(&service, &ContextSpec::core_only()).await)
-                .await;
-            match (&census, &admission) {
-                (Ok(()), Ok(_))
-                | (Err(PayloadBudgetExceeded::EntityJsonValues { .. }), Err(EntityError::PayloadBudget(PayloadBudgetExceeded::EntityJsonValues { .. }))) => {}
-                (census, admission) => panic!("under {values} values the census answers {census:?} and the admission {admission:?}"),
-            }
-            answers.push(census.is_ok());
-        }
-        assert!(
-            answers.contains(&false) && answers.contains(&true),
-            "the probe crosses the limits tried: {answers:?}"
-        );
+        assert_walk_refuses_where_census_refuses(&probe, 40).await;
+    }
+
+    /// Clause 6.3.2: an `object`, an `objectList`, a `vocab`, a `languageMap`
+    /// and a `scope` are counted before they are expanded, by the rule the
+    /// census counts them by, so the walk refuses at exactly the limit the
+    /// census refuses at and an entity at the limit is admitted.
+    #[tokio::test]
+    async fn the_admission_counts_object_vocab_language_and_scope_members_as_the_census_does() {
+        let probe: Entity = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Probe:1",
+            "type": "Probe",
+            "scope": ["/a", "/b", "/c"],
+            "owner": {"type": "Relationship", "object": ["urn:ngsi-ld:Person:1", "urn:ngsi-ld:Person:2"]},
+            "friends": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:3", "urn:ngsi-ld:Person:4", "urn:ngsi-ld:Person:5"]},
+            "kind": {"type": "VocabProperty", "vocab": ["a", "b"]},
+            "name": {"type": "LanguageProperty", "languageMap": {"en": "a", "fr": ["b", "c"], "@none": "d"}}
+        }))
+        .expect("a valid entity");
+        assert_walk_refuses_where_census_refuses(&probe, 60).await;
     }
 
     /// Clause 4.5.2.3: a concise `GeoProperty` is its geometry alone, which

@@ -21,7 +21,10 @@ use crate::{
     decline::Decline,
     expanded_tree::{ExpandedItem, Scalar, ValueObject},
     term_scope::TermScope,
-    typed_walk::instance::{add_geo_value, add_json, add_member, add_optional, add_serialized, add_value, add_value_list, member_name, null_property},
+    typed_walk::{
+        instance::{add_counted, add_geo_value, add_json, add_member, add_optional, add_serialized, add_value, add_value_list, member_name, null_property},
+        member_census,
+    },
 };
 use andromeda_ngsi_ld_lexicon::time::{rendering::instant_text, value::TimeValueForm};
 use andromeda_ngsi_ld_model::attribute::{
@@ -134,9 +137,9 @@ fn add_merge_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, val
         MergeValue::GeoProperty(value) => add_geo_value(node, scope, key, value),
         MergeValue::JsonProperty(json) => add_json(node, scope, key, json.piece()),
         MergeValue::ListProperty(values) => add_value_list(node, scope, values),
-        MergeValue::Relationship(object) => add_serialized(node, scope, key, object),
-        MergeValue::VocabProperty(vocab) => add_serialized(node, scope, key, vocab),
-        MergeValue::LanguageProperty(language_map) => add_serialized(node, scope, key, language_map),
-        MergeValue::ListRelationship(object_list) => add_serialized(node, scope, key, object_list),
+        MergeValue::Relationship(object) => add_counted(node, scope, key, member_census::listed(object), object),
+        MergeValue::VocabProperty(vocab) => add_counted(node, scope, key, member_census::listed(vocab), vocab),
+        MergeValue::LanguageProperty(language_map) => add_counted(node, scope, key, member_census::language_map_patch(language_map), language_map),
+        MergeValue::ListRelationship(object_list) => add_counted(node, scope, key, member_census::object_list(object_list), object_list),
     }
 }

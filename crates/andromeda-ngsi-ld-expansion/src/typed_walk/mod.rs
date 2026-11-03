@@ -9,6 +9,7 @@
 //! attribute.
 
 pub mod instance;
+pub(crate) mod member_census;
 pub(crate) mod merge_instance;
 
 use crate::{
@@ -16,11 +17,14 @@ use crate::{
     decline::Decline,
     normalization::Normalization,
     term_scope::TermScope,
-    typed_walk::instance::{add_member, add_optional, add_serialized},
+    typed_walk::instance::{add_counted, add_member, add_optional, add_serialized},
     written_member::WrittenMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_model::{
+    entity::{Entity, EntityPatch},
+    scope_member::ScopeMember,
+};
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};
 
 /// Expand a typed entity written at the top of a request.
@@ -32,7 +36,7 @@ pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, 
     let mut node = NodeBuilder::default();
     add_serialized(&mut node, scope, keyword::ID_ALIAS, &entity.id)?;
     add_serialized(&mut node, scope, keyword::TYPE_ALIAS, &entity.type_)?;
-    add_optional(&mut node, scope, compact_properties::SCOPE, entity.scope.as_ref())?;
+    add_scope(&mut node, scope, entity.scope.as_ref())?;
     add_optional(&mut node, scope, compact_properties::EXPIRES_AT, entity.expires_at.map(instant_text).as_ref())?;
     add_optional(&mut node, scope, compact_properties::CREATED_AT, entity.created_at.map(instant_text).as_ref())?;
     add_optional(&mut node, scope, compact_properties::MODIFIED_AT, entity.modified_at.map(instant_text).as_ref())?;
@@ -55,7 +59,7 @@ pub fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M
     let mut node = NodeBuilder::default();
     add_optional(&mut node, scope, keyword::ID_ALIAS, patch.id.as_ref())?;
     add_optional(&mut node, scope, keyword::TYPE_ALIAS, patch.type_.as_ref())?;
-    add_optional(&mut node, scope, compact_properties::SCOPE, patch.scope.as_ref())?;
+    add_scope(&mut node, scope, patch.scope.as_ref())?;
     add_optional(&mut node, scope, compact_properties::EXPIRES_AT, patch.expires_at.map(instant_text).as_ref())?;
     let geo_members = [
         (compact_properties::LOCATION, patch.location.as_ref()),
@@ -64,6 +68,13 @@ pub fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M
     ];
     attributes(&mut node, scope, geo_members, &patch.attrs, normalization)?;
     Ok(node.finish(None))
+}
+
+/// The entity `scope`, counted by the census rule before it is expanded.
+fn add_scope(node: &mut NodeBuilder, scope: &TermScope<'_>, member: Option<&ScopeMember>) -> Result<(), Decline> {
+    member.map_or(Ok(()), |member| {
+        add_counted(node, scope, compact_properties::SCOPE, member_census::scope(member), member)
+    })
 }
 
 /// Expand every attribute member: the three the model holds in fields of

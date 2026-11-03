@@ -98,6 +98,7 @@ pub mod linked_temporal_fixtures;
 pub mod linked_temporal_hop;
 pub mod load_outcome;
 pub mod load_run;
+pub mod many_entries;
 pub mod minted_context_url;
 pub mod minted_wrapper;
 pub mod mqtt_observer;

@@ -8,6 +8,7 @@
 use crate::non_empty::{EmptyCollection, NonEmpty};
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use derive_more::{AsRef, Deref};
+use indexmap::IndexSet;
 
 /// One or more scope paths, in order, each at most once.
 #[derive(AsRef, Clone, Debug, Deref, Eq, PartialEq)]
@@ -22,18 +23,15 @@ impl Scopes {
     }
 
     /// Hold `paths` in order, keeping the first occurrence of a repeated path.
+    /// Repeats are found by hash, so a member of millions of paths is read in
+    /// linear time.
     ///
     /// # Errors
     ///
     /// Returns [`EmptyCollection`] when `paths` is empty.
     pub fn try_from_paths(paths: impl IntoIterator<Item = ScopePath>) -> Result<Scopes, EmptyCollection> {
-        let mut distinct: Vec<ScopePath> = Vec::new();
-        for path in paths {
-            if !distinct.contains(&path) {
-                distinct.push(path);
-            }
-        }
-        NonEmpty::try_from_vec(distinct).map(Scopes)
+        let distinct: IndexSet<ScopePath> = paths.into_iter().collect();
+        NonEmpty::try_from_vec(distinct.into_iter().collect()).map(Scopes)
     }
 
     /// Add the paths this set lacks, in the order given (the clause 5.6.3.4
@@ -78,6 +76,12 @@ mod tests {
     fn a_repeated_path_is_kept_once() {
         let scopes = Scopes::try_from_paths([path("/a"), path("/b"), path("/a")]).expect("two paths");
         pretty_assertions::assert_eq!(scopes.as_slice(), &[path("/a"), path("/b")]);
+    }
+
+    #[test]
+    fn many_distinct_paths_are_held_in_linear_time() {
+        let paths = (0..200_000).map(|number| path(&format!("/s{number}")));
+        pretty_assertions::assert_eq!(Scopes::try_from_paths(paths).expect("many paths").as_slice().len(), 200_000);
     }
 
     #[test]

@@ -146,7 +146,18 @@ impl ValueTally {
     /// Returns [`ValueLimitExceeded`] once the count passes the limit, and on
     /// every count after it.
     pub fn admit_one(&self) -> Result<(), ValueLimitExceeded> {
-        let counted = self.counted.get().saturating_add(1);
+        self.admit(1)
+    }
+
+    /// Count `values` values at once, as `values` calls of
+    /// [`ValueTally::admit_one`] would.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValueLimitExceeded`] once the count passes the limit, and on
+    /// every count after it.
+    pub fn admit(&self, values: usize) -> Result<(), ValueLimitExceeded> {
+        let counted = self.counted.get().saturating_add(values);
         self.counted.set(counted);
         if counted > self.limit.get() {
             self.exceeded.set(true);
@@ -449,6 +460,22 @@ mod tests {
         pretty_assertions::assert_eq!(tally.admit_one(), Err(ValueLimitExceeded { limit: limit(2) }));
         assert!(tally.exceeded());
         pretty_assertions::assert_eq!(tally.counted().get(), 3);
+    }
+
+    #[test]
+    fn a_tally_counts_several_values_at_once_up_to_its_limit() {
+        let tally = ValueTally::new(limit(5));
+        assert!(tally.admit(3).is_ok() && tally.admit(2).is_ok());
+        assert!(!tally.exceeded());
+        pretty_assertions::assert_eq!(tally.admit(1), Err(ValueLimitExceeded { limit: limit(5) }));
+        assert!(tally.exceeded());
+    }
+
+    #[test]
+    fn a_tally_refuses_a_batch_that_passes_the_limit_and_does_not_overflow() {
+        let tally = ValueTally::new(limit(5));
+        pretty_assertions::assert_eq!(tally.admit(usize::MAX), Err(ValueLimitExceeded { limit: limit(5) }));
+        pretty_assertions::assert_eq!(tally.admit(usize::MAX), Err(ValueLimitExceeded { limit: limit(5) }));
     }
 
     #[test]

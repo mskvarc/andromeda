@@ -15,7 +15,7 @@ use crate::{
     decline::Decline,
     expanded_tree::{ExpandedGeometry, ExpandedItem},
     term_scope::TermScope,
-    typed_walk::merge_instance::merge_expanded,
+    typed_walk::{member_census, merge_instance::merge_expanded},
     written_member::{WrittenMember, WrittenMemberRef},
 };
 use andromeda_json_literal::piece::JsonPiece;
@@ -120,7 +120,13 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
             if relationship.entity.is_some() {
                 return Err(Decline::OutputOnlyMember);
             }
-            add_serialized(node, scope, compact_properties::OBJECT, &relationship.object)?;
+            add_counted(
+                node,
+                scope,
+                compact_properties::OBJECT,
+                member_census::listed(&relationship.object),
+                &relationship.object,
+            )?;
             add_optional(node, scope, compact_properties::OBJECT_TYPE, relationship.object_type.as_ref())
         }
         Attribute::GeoProperty(geo_property) => {
@@ -129,11 +135,23 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
             add_optional(node, scope, compact_properties::VALUE_TYPE, geo_property.value_type.as_ref())
         }
         Attribute::VocabProperty(vocab_property) => {
-            add_serialized(node, scope, compact_properties::VOCAB, &vocab_property.vocab)?;
+            add_counted(
+                node,
+                scope,
+                compact_properties::VOCAB,
+                member_census::listed(&vocab_property.vocab),
+                &vocab_property.vocab,
+            )?;
             add_optional(node, scope, compact_properties::VALUE_TYPE, vocab_property.value_type.as_ref())
         }
         Attribute::LanguageProperty(language_property) => {
-            add_serialized(node, scope, compact_properties::LANGUAGE_MAP, &language_property.language_map)?;
+            add_counted(
+                node,
+                scope,
+                compact_properties::LANGUAGE_MAP,
+                member_census::language_map(&language_property.language_map),
+                &language_property.language_map,
+            )?;
             add_optional(node, scope, compact_properties::VALUE_TYPE, language_property.value_type.as_ref())
         }
         Attribute::JsonProperty(json_property) => {
@@ -149,7 +167,13 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
             if list_relationship.entity_list.is_some() {
                 return Err(Decline::OutputOnlyMember);
             }
-            add_serialized(node, scope, compact_properties::OBJECT_LIST, &list_relationship.object_list)?;
+            add_counted(
+                node,
+                scope,
+                compact_properties::OBJECT_LIST,
+                member_census::object_list(&list_relationship.object_list),
+                &list_relationship.object_list,
+            )?;
             add_optional(node, scope, compact_properties::OBJECT_TYPE, list_relationship.object_type.as_ref())
         }
     }
@@ -259,6 +283,14 @@ pub(crate) fn member_name(scope: &TermScope<'_>, key: &str) -> Result<Option<Str
 /// A typed member written when present.
 pub fn add_optional<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: Option<&T>) -> Result<(), Decline> {
     value.map_or(Ok(()), |value| add_serialized(node, scope, key, value))
+}
+
+/// A typed member holding `values` values by the census rule, counted before
+/// it is serialized and expanded, so a member over the entity value limit is
+/// refused without being held whole.
+pub(crate) fn add_counted<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, values: usize, value: &T) -> Result<(), Decline> {
+    scope.count_member(values)?;
+    add_serialized(node, scope, key, value)
 }
 
 /// A typed member, expanded as the JSON text it serializes to.
