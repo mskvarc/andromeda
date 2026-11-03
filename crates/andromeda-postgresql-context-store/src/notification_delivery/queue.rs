@@ -10,7 +10,7 @@ use crate::{
     notification_delivery::{
         claim::ClaimTerms,
         claimed_event_read::ClaimDictionaries,
-        cleanup,
+        cleanup::{delivered, exhausted, orphan_events},
         round::{self, RoundClaim},
         rows::UnreadableClaimedDelivery,
     },
@@ -96,19 +96,19 @@ impl DeliveryStore for NotificationDeliveryQueue {
     }
 
     async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
-        cleanup::purge_delivered_before(&self.pool, cutoff)
+        delivered::purge_delivered_before(&self.pool, cutoff)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 
     async fn delete_exhausted_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
-        cleanup::purge_exhausted_before(&self.pool, cutoff)
+        exhausted::purge_exhausted_before(&self.pool, cutoff)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }
 
     async fn delete_orphan_events_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
-        cleanup::purge_orphan_events_before(&self.pool, cutoff)
+        orphan_events::purge_orphan_events_before(&self.pool, cutoff)
             .await
             .map_err(|error| NotificationError::Persistence(persistence_failure(&error)))
     }

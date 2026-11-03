@@ -398,12 +398,12 @@ mod tests {
         assert!(
             sql.starts_with(concat!(
                 r#"WITH "successor" AS (SELECT "delivery_key" FROM "notification_deliveries" WHERE "subscription_key" = $1 "#,
-                r#"AND "held_at" IS NOT NULL ORDER BY "held_at" ASC, "delivery_key" ASC LIMIT $2) , "#,
+                r#"AND "held_at" IS NOT NULL ORDER BY "held_at" ASC, "delivery_key" ASC LIMIT 1) , "#,
                 r#""handed_over" AS (UPDATE "notification_delivery_holds" SET "delivery_key" = "successor"."delivery_key" "#,
-                r#"FROM "successor" WHERE "notification_delivery_holds"."subscription_key" = $3) , "#,
-                r#""dropped" AS (DELETE FROM "notification_delivery_holds" WHERE "subscription_key" = $4 "#,
-                r#"AND (NOT EXISTS(SELECT $5 FROM "successor"))) , "#,
-                r#""revived" AS (UPDATE "notification_deliveries" SET "held_at" = NULL, "next_attempt_at" = $6"#
+                r#"FROM "successor" WHERE "notification_delivery_holds"."subscription_key" = $2) , "#,
+                r#""dropped" AS (DELETE FROM "notification_delivery_holds" WHERE "subscription_key" = $3 "#,
+                r#"AND (NOT EXISTS(SELECT $4 FROM "successor"))) , "#,
+                r#""revived" AS (UPDATE "notification_deliveries" SET "held_at" = NULL, "next_attempt_at" = $5"#
             )),
             "{sql}"
         );
