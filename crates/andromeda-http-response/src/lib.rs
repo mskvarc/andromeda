@@ -25,6 +25,7 @@ mod linked_entity_unresolved;
 pub mod linked_resolution_warning;
 pub mod method_not_allowed;
 pub mod not_acceptable;
+pub mod page_ceiling;
 pub mod pagination;
 pub mod parameter_failure;
 pub mod problem_response;

@@ -39,6 +39,11 @@ impl WrittenBody {
         }
     }
 
+    /// The bytes written so far.
+    pub(crate) fn len(&self) -> usize {
+        self.filled.iter().map(Bytes::len).sum::<usize>() + self.current.len()
+    }
+
     /// The body, ready to be sent.
     pub(crate) fn into_body(self) -> Body {
         let WrittenBody { mut filled, current } = self;
@@ -130,6 +135,14 @@ mod tests {
         pretty_assertions::assert_eq!(body.size_hint().exact(), u64::try_from(written.len()).ok());
         let read = to_bytes(body, usize::MAX).await.expect("the body reads");
         pretty_assertions::assert_eq!(read.as_ref(), written.as_slice());
+    }
+
+    /// The length counts the filled chunks and the one being filled.
+    #[test]
+    fn the_length_of_a_body_spanning_several_chunks_is_what_was_written() {
+        let mut body = WrittenBody::new();
+        body.write_all(&vec![7_u8; CHUNK_SIZE * 2 + 5]).expect("an in-memory body accepts every write");
+        pretty_assertions::assert_eq!(body.len(), CHUNK_SIZE * 2 + 5);
     }
 
     /// An empty body has nothing to send and says so.

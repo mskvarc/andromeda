@@ -2,6 +2,7 @@
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
+    page_ceiling::RenderedPageSize,
     rendered_response::RenderedResponse,
     version_negotiation::apply_version_negotiation,
 };
@@ -127,6 +128,9 @@ impl IntoResponse for NgsiLdCollectionResponse {
             },
         );
 
-        (status, headers, body.into_body()).into_response()
+        let size = RenderedPageSize::new(body.len());
+        let mut response = (status, headers, body.into_body()).into_response();
+        response.extensions_mut().insert(size);
+        response
     }
 }

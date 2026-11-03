@@ -18,4 +18,6 @@ pub enum Budget {
     LargePosition,
     /// The bytes of the largest request body a broker reads.
     MaxRequestBody,
+    /// The bytes one page of a collection may render to on the front broker.
+    PageBytes,
 }

@@ -8,6 +8,7 @@ mod decompression_layer;
 mod encoded_entity_tag;
 mod forwarded_trust_layer;
 pub mod helmet_layer;
+mod page_ceiling_layer;
 mod request_deadline;
 mod request_metrics;
 mod server_timing;
@@ -23,6 +24,7 @@ use crate::{
         encoded_entity_tag::EncodedEntityTags,
         forwarded_trust_layer::{ForwardedTrustPolicy, install_forwarded_trust},
         helmet_layer::{SecurityHeadersError, build_helmet_layer},
+        page_ceiling_layer::refuse_oversized_page,
         request_deadline::{RequestDeadline, answer_within_deadline},
         request_metrics::observe_request,
         server_timing::apply_server_timing,
@@ -41,6 +43,7 @@ use andromeda_http_extraction::{
     request_json_value_limit::RequestJsonValueLimit,
 };
 use andromeda_http_headers::{link::field_layout::apply_link_field_layout, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
+use andromeda_http_response::page_ceiling::PageByteCeiling;
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
@@ -102,6 +105,8 @@ pub struct HttpStack {
     request_json_value_limit: RequestJsonValueLimit,
     /// API-wide limit on the positions one geometry of a payload may hold.
     request_geometry_position_limit: RequestGeometryPositionLimit,
+    /// API-wide ceiling on the bytes one page of a collection may render to.
+    page_byte_ceiling: PageByteCeiling,
     /// How a payload is decoded beside the executor.
     blocking_decode: BlockingDecodePolicy,
     /// Whose forwarded fields are believed.
@@ -145,6 +150,7 @@ impl HttpStack {
             request_body_limit,
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(limits.max_json_values)),
             request_geometry_position_limit: RequestGeometryPositionLimit::new(GeometryPositionLimit::new(limits.max_geometry_positions)),
+            page_byte_ceiling: PageByteCeiling::new(limits.max_page_ceiling_bytes()?),
             blocking_decode,
             forwarded_trust: ForwardedTrustPolicy::from(&config.forwarded),
             link_field: config.link_field,
@@ -180,7 +186,10 @@ impl HttpStack {
             // geometry be, so refusing one past it costs the same whatever its
             // size.
             .layer(Extension(self.request_geometry_position_limit))
-            .layer(Extension(self.blocking_decode.clone())); // clone: every request shares the stack's decode permits
+            .layer(Extension(self.blocking_decode.clone())) // clone: every request shares the stack's decode permits
+            // A collection page is held to its byte ceiling once rendered,
+            // whichever handler answered it.
+            .layer(middleware::from_fn_with_state(self.page_byte_ceiling, refuse_oversized_page));
         if let Some(helmet) = &self.helmet {
             router = router.layer(helmet.clone());
         }
