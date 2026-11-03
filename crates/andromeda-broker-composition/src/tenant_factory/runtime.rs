@@ -8,12 +8,15 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use std::{sync::Arc, time::SystemTime};
 use tokio::{sync::watch, task::JoinHandle};
+use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
 /// Everything one tenant's runtime holds open.
 pub struct BrokerTenantRuntime {
     context_workers: TenantContextWorkers,
     background_handles: Vec<JoinHandle<()>>,
+    /// The hand-offs of committed changes to notification evaluation.
+    handoffs: Vec<TaskTracker>,
     transport: Arc<TransportDispatcher>,
     pool: PgPool,
     health_shutdown: Option<watch::Sender<bool>>,
@@ -35,12 +38,14 @@ impl BrokerTenantRuntime {
     ) -> BrokerTenantRuntime {
         let TaskSupervision {
             handles,
+            handoffs,
             health_shutdown,
             task_supervisor,
         } = supervision;
         BrokerTenantRuntime {
             context_workers,
             background_handles: handles,
+            handoffs,
             transport,
             pool,
             health_shutdown,
@@ -68,6 +73,7 @@ impl TenantRuntime for BrokerTenantRuntime {
             let _ = shutdown.send(true);
         }
         self.task_supervisor.shutdown().await;
+        wait_for_handoffs(&self.handoffs).await;
         stop_background_tasks(self.background_handles).await;
         info!(event = "tenant_background_tasks_stopped");
         self.transport.shutdown().await;
@@ -83,6 +89,17 @@ impl TenantRuntime for BrokerTenantRuntime {
 
     fn next_periodic_due(&self) -> Option<SystemTime> {
         self.periodic_due.earliest()
+    }
+}
+
+/// Wait until no hand-off of committed changes to notification evaluation runs.
+///
+/// The notification workers have stopped by now, and with them the readers of
+/// the queues, so a hand-off still waiting for room ends at its next send.
+async fn wait_for_handoffs(handoffs: &[TaskTracker]) {
+    for tracker in handoffs {
+        tracker.close();
+        tracker.wait().await;
     }
 }
 
@@ -109,8 +126,11 @@ mod tests {
         let background_shutdown = source
             .find("stop_background_tasks(self.background_handles).await")
             .ok_or("background task shutdown call missing")?;
+        let handoff_wait = source.find("wait_for_handoffs(&self.handoffs).await").ok_or("hand-off wait call missing")?;
         let transport_shutdown = source.find("self.transport.shutdown().await").ok_or("transport shutdown call missing")?;
         let pool_shutdown = source.find("self.pool.close().await").ok_or("pool shutdown call missing")?;
+        assert!(task_shutdown < handoff_wait);
+        assert!(handoff_wait < background_shutdown);
         assert!(task_shutdown < background_shutdown);
         assert!(background_shutdown < transport_shutdown);
         assert!(transport_shutdown < pool_shutdown);

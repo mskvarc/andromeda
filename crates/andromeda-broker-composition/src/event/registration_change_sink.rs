@@ -11,23 +11,37 @@ use andromeda_registration::RegistrationChangeSink;
 use futures::future::BoxFuture;
 use std::iter;
 use tokio::sync::mpsc;
+use tokio_util::task::TaskTracker;
 
 /// Queues committed registration changes for the tenant's context source
 /// notification evaluation.
+#[derive(Clone, Debug)]
 pub struct QueuedRegistrationChangeSink {
+    /// The queue context source notification evaluation reads.
     sender: mpsc::Sender<CsrChangeEvent>,
+    /// The tasks finishing the hand-off of writes that found the queue full.
+    handoffs: TaskTracker,
 }
 
 impl QueuedRegistrationChangeSink {
     /// Create a sink queueing into the supplied sender.
-    pub const fn new(sender: mpsc::Sender<CsrChangeEvent>) -> QueuedRegistrationChangeSink {
-        QueuedRegistrationChangeSink { sender }
+    pub fn new(sender: mpsc::Sender<CsrChangeEvent>) -> QueuedRegistrationChangeSink {
+        QueuedRegistrationChangeSink {
+            sender,
+            handoffs: TaskTracker::new(),
+        }
+    }
+
+    /// The tasks finishing the hand-off of writes that found the queue full;
+    /// stopping the tenant waits for them.
+    pub const fn handoffs(&self) -> &TaskTracker {
+        &self.handoffs
     }
 }
 
 impl RegistrationChangeSink for QueuedRegistrationChangeSink {
     fn publish(&self, event: CsrChangeEvent) -> BoxFuture<'static, ()> {
-        queue_in_order(&self.sender, iter::once(event), QueuedChange::Registration)
+        queue_in_order(&self.sender, &self.handoffs, iter::once(event), QueuedChange::Registration)
     }
 }
 

@@ -23,7 +23,7 @@ x-pgbouncer: &pgbouncer
     timeout: 3s
     retries: 30
 
-# Fourteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
+# Fifteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
 # without a limit each sizes itself for the whole host, so together they outgrow it and the host kills processes of
 # whichever service is running; with 2 GB each, every server fits beside the others.
 x-postgres-memory: &postgres-memory
@@ -121,6 +121,43 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "2m"
       ANDROMEDA__TENANCY__RESIDENCY__SWEEP_INTERVAL: "5s"
       ANDROMEDA__TENANCY__RESIDENCY__MIN_WAKE_INTERVAL: "3s"
+
+  postgres-dormant-live:
+    <<: *postgres-memory
+    extends:
+      <<: *template
+      service: postgres
+
+  pgbouncer-dormant-live:
+    <<: *pgbouncer
+    command: ["/etc/pgbouncer/dormant-live.ini"]
+    depends_on:
+      postgres-dormant-live:
+        condition: service_healthy
+
+  # Live delivery with an evaluation queue of two changes and one evaluation lane, in a cache of three tenants: a
+  # burst of writes to a slow endpoint fills the queue and the lane, and a tenant leaves the cache within seconds of
+  # its last write while changes are still waiting for evaluation.
+  broker-dormant-live:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-dormant-live:
+        condition: service_healthy
+      pgbouncer-dormant-live:
+        condition: service_healthy
+    environment:
+      <<: [*broker-env, *observed-env]
+      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-dormant-live:5432/postgres"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-dormant-live:6432/postgres"
+      ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "live"
+      ANDROMEDA__NOTIFICATIONS__EVALUATION__MAX_QUEUED_CHANGES: "2"
+      ANDROMEDA__NOTIFICATIONS__EVALUATION__MAX_CONCURRENT_CHANGES: "1"
+      ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "3"
+      ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER: "2m"
+      ANDROMEDA__TENANCY__RESIDENCY__SWEEP_INTERVAL: "5s"
 
   postgres-resilience:
     <<: *postgres-memory
@@ -435,6 +472,20 @@ services:
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
+  # Sends SIGTERM to broker-dormant-live and starts it again, for the test of a broker stopped while changes still wait
+  # for evaluation: busybox nc runs one script for each request, driving the container runtime through its socket.
+  signaller:
+    image: docker:29-cli
+    entrypoint: ["nc", "-lk", "-p", "8080", "-e", "/signaller/handle"]
+    volumes:
+      - ./signaller:/signaller:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   runner:
     extends:
       <<: *template
@@ -443,6 +494,10 @@ services:
       broker:
         condition: service_healthy
       broker-dormant:
+        condition: service_healthy
+      broker-dormant-live:
+        condition: service_healthy
+      signaller:
         condition: service_healthy
       broker-resilience:
         condition: service_healthy

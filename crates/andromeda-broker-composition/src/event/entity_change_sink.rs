@@ -14,6 +14,7 @@ use andromeda_notification::pending_change::{PendingChange, PendingCommits};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::task::TaskTracker;
 
 /// Queues committed entity changes for the tenant's live notification
 /// evaluation.
@@ -23,13 +24,25 @@ pub struct QueuedEntityChangeSink {
     sender: mpsc::Sender<PendingChange>,
     /// The changes handed off and not yet evaluated.
     commits: Arc<PendingCommits>,
+    /// The tasks finishing the hand-off of writes that found the queue full.
+    handoffs: TaskTracker,
 }
 
 impl QueuedEntityChangeSink {
     /// Create a sink queueing into `sender`, holding every change among
     /// `commits` until it is dropped.
-    pub const fn new(sender: mpsc::Sender<PendingChange>, commits: Arc<PendingCommits>) -> QueuedEntityChangeSink {
-        QueuedEntityChangeSink { sender, commits }
+    pub fn new(sender: mpsc::Sender<PendingChange>, commits: Arc<PendingCommits>) -> QueuedEntityChangeSink {
+        QueuedEntityChangeSink {
+            sender,
+            commits,
+            handoffs: TaskTracker::new(),
+        }
+    }
+
+    /// The tasks finishing the hand-off of writes that found the queue full;
+    /// stopping the tenant waits for them.
+    pub const fn handoffs(&self) -> &TaskTracker {
+        &self.handoffs
     }
 
     /// The changes handed off through this sink and not yet evaluated.
@@ -41,14 +54,14 @@ impl QueuedEntityChangeSink {
 impl EntityChangeSink for QueuedEntityChangeSink {
     fn publish(&self, changes: Vec<ContextChangeEvent>) -> BoxFuture<'static, ()> {
         let held: Vec<PendingChange> = changes.into_iter().map(|change| self.commits.hold(change)).collect();
-        queue_in_order(&self.sender, held, QueuedChange::Entity)
+        queue_in_order(&self.sender, &self.handoffs, held, QueuedChange::Entity)
     }
 }
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod tests {
-    use crate::event::entity_change_sink::QueuedEntityChangeSink;
+    use crate::event::{entity_change_sink::QueuedEntityChangeSink, queued_handoff::settle};
     use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::change_sink::EntityChangeSink;
@@ -59,8 +72,8 @@ mod tests {
     };
     use andromeda_notification::pending_change::{PendingChange, PendingCommits};
     use chrono::Utc;
-    use futures::FutureExt;
-    use std::sync::Arc;
+    use futures::{FutureExt, future};
+    use std::{convert::Infallible, sync::Arc};
     use tokio::{sync::mpsc, task};
 
     fn change(entity: &str) -> ContextChangeEvent {
@@ -160,5 +173,39 @@ mod tests {
         );
         waiting.await;
         later.await;
+    }
+
+    #[tokio::test]
+    async fn a_saturated_queue_holds_one_handoff_per_waiting_write() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let sink = sink(sender);
+        sink.publish(vec![change("0")]).await;
+        let waiting: Vec<_> = (1..=5).map(|write| sink.publish(vec![change(&write.to_string())])).collect();
+        assert_eq!(sink.handoffs().len(), 5, "each waiting write holds exactly one hand-off");
+        let mut arrived = Vec::new();
+        settle(sink.handoffs(), &mut receiver, |pending| {
+            arrived.push(pending.change.event.entity_id.to_string());
+            future::ready(Ok::<(), Infallible>(()))
+        })
+        .await
+        .expect("accepting a change never fails");
+        future::join_all(waiting).await;
+        assert_eq!(arrived.len(), 6, "every committed change is read out when the queue settles");
+        assert!(sink.handoffs().is_empty(), "no hand-off is still running after the queue settles");
+    }
+
+    #[tokio::test]
+    async fn settling_keeps_the_commit_order_of_changes_still_waiting_for_room() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let sink = sink(sender);
+        drop(sink.publish(vec![change("1"), change("2"), change("3")]));
+        let mut arrived = Vec::new();
+        settle(sink.handoffs(), &mut receiver, |pending| {
+            arrived.push(pending.change.event.entity_id.to_string());
+            future::ready(Ok::<(), Infallible>(()))
+        })
+        .await
+        .expect("accepting a change never fails");
+        assert_eq!(arrived, ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:3"]);
     }
 }

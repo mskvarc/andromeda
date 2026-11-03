@@ -7,16 +7,19 @@
 //! stores, and both compact what they notify through the JSON-LD engine, so
 //! they are composed together.
 
-use crate::tenant_factory::{
-    assembly_invariant::AssemblyInvariant,
-    error::TenantAssemblyError,
-    periodic_due::PeriodicSweep,
-    storage::TenantStorage,
-    tasks::{
-        PeriodicSweepDrive,
-        notification_schedule::{register_notification_schedule, register_periodic_wake},
-        notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
-        periodic_evaluation::periodic_pass,
+use crate::{
+    event::queued_handoff::settle,
+    tenant_factory::{
+        assembly_invariant::AssemblyInvariant,
+        error::TenantAssemblyError,
+        periodic_due::PeriodicSweep,
+        storage::TenantStorage,
+        tasks::{
+            PeriodicSweepDrive,
+            notification_schedule::{register_notification_schedule, register_periodic_wake},
+            notification_worker_failure::{ChangeChannel, channel_closed, worker_notification_failure},
+            periodic_evaluation::periodic_pass,
+        },
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -51,6 +54,7 @@ use tokio::sync::{
     broadcast::error::{RecvError, TryRecvError},
     mpsc,
 };
+use tokio_util::task::TaskTracker;
 
 /// The change streams a context-source notification worker reacts to.
 ///
@@ -61,8 +65,14 @@ pub(super) struct CsourceNotificationStreams {
     /// The one reader of the queue of registration lifecycle changes evaluated
     /// against context-source subscriptions, held across worker restarts.
     pub(super) registrations: Arc<Mutex<mpsc::Receiver<CsrChangeEvent>>>,
+    /// The hand-offs of writes that found the registration queue full, which
+    /// the worker waits for when it stops.
+    pub(super) handoffs: TaskTracker,
     /// Context-source subscription changes keeping the evaluated set current.
     pub(super) subscriptions: broadcast::Sender<CsourceSubscriptionChange>,
+    /// The longest one notification takes to send; the worker's shutdown grace
+    /// covers it, so a stop does not abort a notification in flight.
+    pub(super) request_timeout: Duration,
 }
 
 /// Everything a context source notification worker addresses, gathered so a
@@ -163,7 +173,9 @@ fn register_csource_notification_processor(
 ) -> Result<(), TenantAssemblyError> {
     let CsourceNotificationStreams {
         registrations: registration_changes,
+        handoffs,
         subscriptions: subscription_changes,
+        request_timeout,
     } = streams;
     let CsourceNotificationPorts {
         target,
@@ -181,11 +193,12 @@ fn register_csource_notification_processor(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
-        ShutdownPolicy::new(restart_delay),
+        ShutdownPolicy::new(request_timeout.saturating_add(restart_delay)),
     );
     let task = ResidentTask::new(registration, move |execution| {
         let registration_changes = Arc::clone(&registration_changes); // clone: every resident attempt takes the one queue reader in turn.
         let interval_wake = interval_wake.clone(); // clone: each resident attempt owns a wake handle it pulses.
+        let handoffs = handoffs.clone(); // clone: every resident attempt waits for the hand-offs the sink starts.
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = CsourceNotificationProcessor::new(CsourceNotificationProcessorDeps {
             target: target.clone(), // clone: each resident restart owns the same immutable live branch target.
@@ -203,7 +216,13 @@ fn register_csource_notification_processor(
             execution.mark_running();
             loop {
                 tokio::select! {
-                    () = execution.cancellation().cancelled() => return Ok(()),
+                    () = execution.cancellation().cancelled() => {
+                        return settle(&handoffs, &mut registration_receiver, |event| async {
+                            processor.apply_registration_change(event).await;
+                            Ok(())
+                        })
+                        .await;
+                    }
                     received = subscription_receiver.recv() => match received {
                         Ok(change) => processor.apply_subscription_change(change).await,
                         Err(RecvError::Lagged(skipped)) => {

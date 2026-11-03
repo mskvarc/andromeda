@@ -46,11 +46,7 @@ pub enum EvictionError {
 /// [`DORMANCY_BOUND`].
 pub async fn evict_by_pressure(broker: &BrokerClient, target: &Tenant) -> Result<Instant, EvictionError> {
     let management = broker.without_tenant();
-    let watch = async {
-        await_status(&management, target, TenantStatus::Dormant, DORMANCY_BOUND)
-            .await
-            .map(|()| Instant::now())
-    };
+    let watch = watch_dormant(&management, target);
     let push = async {
         let others = TenantSet::provision(&management, &Namespace::fresh(), EVICTION_PRESSURE, PRESSURE_CONCURRENCY).await?;
         for index in 0..others.len() {
@@ -62,4 +58,31 @@ pub async fn evict_by_pressure(broker: &BrokerClient, target: &Tenant) -> Result
     let (seen, pushed) = tokio::join!(watch, push);
     pushed?;
     Ok(seen?)
+}
+
+/// Evicts `target` by reading every tenant of `others`, which the caller brought up beforehand, so the eviction
+/// begins as soon as the reads do, and answers when `target` was first seen `dormant`.
+///
+/// `others` must hold more tenants than the broker's cache holds beside `target`.
+///
+/// # Errors
+///
+/// Returns [`EvictionError`] when `target` is not seen dormant within [`DORMANCY_BOUND`].
+pub async fn evict_by_reading(broker: &BrokerClient, target: &Tenant, others: &TenantSet) -> Result<Instant, EvictionError> {
+    let management = broker.without_tenant();
+    let touch = async {
+        for index in 0..others.len() {
+            // Each read only moves its tenant to the front of the cache; how it is answered is not the subject.
+            let _touched = others.read(index).await;
+        }
+    };
+    let (seen, ()) = tokio::join!(watch_dormant(&management, target), touch);
+    Ok(seen?)
+}
+
+/// Answers when `target` was first seen `dormant`, watching its status without loading it.
+async fn watch_dormant(management: &BrokerClient, target: &Tenant) -> Result<Instant, TenantManagementError> {
+    await_status(management, target, TenantStatus::Dormant, DORMANCY_BOUND)
+        .await
+        .map(|()| Instant::now())
 }

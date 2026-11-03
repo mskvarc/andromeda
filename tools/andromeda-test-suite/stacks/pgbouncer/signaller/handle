@@ -1,0 +1,24 @@
+#!/bin/sh
+# Answers one request of the signaller: sends SIGTERM to the container of broker-dormant-live or starts it again.
+read -r method target version || exit 0
+while read -r header; do
+  [ "$header" = "$(printf '\r')" ] && break
+  [ -z "$header" ] && break
+done
+container=test-suite-pgbouncer-broker-dormant-live-1
+# A container still draining after SIGTERM is running, and starting a running container does nothing.
+wait_stopped() {
+  for _ in $(seq 1 240); do
+    [ "$(docker inspect --format '{{.State.Running}}' "$container")" = false ] && return 0
+    sleep 0.5
+  done
+  echo "the container did not stop"
+  return 1
+}
+case "$target" in
+  /terminate-dormant-live) body=$(docker kill --signal TERM "$container" 2>&1) ;;
+  /start-dormant-live) body=$(wait_stopped && docker start "$container" 2>&1) ;;
+  *) printf 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'; exit 0 ;;
+esac
+if [ $? -eq 0 ]; then status='200 OK'; else status='500 Internal Server Error'; fi
+printf 'HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s' "$status" "${#body}" "$body"

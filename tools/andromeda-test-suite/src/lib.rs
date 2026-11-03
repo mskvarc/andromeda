@@ -26,6 +26,7 @@ pub mod body_pattern;
 pub mod bounded_federation;
 pub mod broker;
 pub mod broker_metrics;
+pub mod broker_process;
 pub mod budget;
 pub mod callback_server;
 pub mod cleanup;

@@ -18,7 +18,7 @@ mod temporal_retention;
 mod temporal_sweep_failure;
 
 use crate::{
-    event::entity_change_sink::QueuedEntityChangeSink,
+    event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::QueuedRegistrationChangeSink},
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
@@ -32,6 +32,7 @@ use crate::{
             csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
             discovery_census::register_discovery_census_fold,
             entity_notification::{
+                EntityNotificationStreams,
                 IntervalDelivery,
                 compose_notification_processor,
                 compose_notification_query,
@@ -72,6 +73,7 @@ use tokio::{
     sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
+use tokio_util::task::TaskTracker;
 
 /// Committed registration changes queued for context source notification
 /// evaluation before a further write waits for room.
@@ -87,7 +89,7 @@ pub(super) struct TenantSignals {
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
     /// Where committed registration changes queue for context source
     /// notification evaluation.
-    pub(super) registration: mpsc::Sender<CsrChangeEvent>,
+    pub(super) registration: QueuedRegistrationChangeSink,
     /// The registration queue's one reader, held across restarts of the
     /// context source notification worker so a change queued while it
     /// restarts is still evaluated.
@@ -103,6 +105,7 @@ impl TenantSignals {
         let entity = QueuedEntityChangeSink::new(entity, Arc::new(PendingCommits::default()));
         let (subscription, _) = broadcast::channel(1024);
         let (registration, registration_receiver) = mpsc::channel(REGISTRATION_QUEUE_CAPACITY.get());
+        let registration = QueuedRegistrationChangeSink::new(registration);
         let (csource_subscription, _) = broadcast::channel(1024);
         TenantSignals {
             entity,
@@ -118,6 +121,9 @@ impl TenantSignals {
 /// Handles needed to stop the complete tenant worker set.
 pub(super) struct TaskSupervision {
     pub(super) handles: Vec<JoinHandle<()>>,
+    /// The tasks finishing the hand-off of committed changes to notification
+    /// evaluation, which the runtime waits for after its tasks stop.
+    pub(super) handoffs: Vec<TaskTracker>,
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
     pub(super) task_supervisor: TaskSupervisor,
 }
@@ -252,8 +258,11 @@ pub(super) fn supervise_tasks(
         delivery_queue(storage),
         &config.notifications,
         notification_processor,
-        entity_receiver,
-        subscription,
+        EntityNotificationStreams {
+            entity_changes: entity_receiver,
+            handoffs: entity.handoffs().clone(), // clone: the processor waits for the hand-offs the sink starts.
+            subscription_changes: subscription,
+        },
         DeliveryDrainDrive {
             wake: notification_wake,
             pacer: Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
@@ -282,7 +291,9 @@ pub(super) fn supervise_tasks(
         csource_subscriptions,
         CsourceNotificationStreams {
             registrations: registration_receiver,
+            handoffs: registration.handoffs().clone(), // clone: the worker waits for the hand-offs the sink starts.
             subscriptions: csource_subscription,
+            request_timeout: config.notifications.delivery.request_timeout(),
         },
         periodic,
     )?;
@@ -305,6 +316,7 @@ pub(super) fn supervise_tasks(
     register_spatial_workers(&task_supervisor, config, storage)?;
     Ok(TaskSupervision {
         handles,
+        handoffs: vec![entity.handoffs().clone(), registration.handoffs().clone()], // clone: the runtime waits on the trackers the sinks spawn on.
         health_shutdown,
         task_supervisor,
     })

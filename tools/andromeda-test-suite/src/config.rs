@@ -104,6 +104,9 @@ pub enum BrokerRole {
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,
+    /// The pgbouncer stack broker keeping at most three tenants resident and delivering notifications live through an
+    /// evaluation queue of two changes and one lane, whose evicted tenants must still have been evaluated in full.
+    DormantLive,
     /// The pgbouncer stack broker whose pooler the resilience tests pause, reconnect, saturate and kill, one tenant
     /// database at a time.
     Resilience,
@@ -170,6 +173,8 @@ pub struct SuiteConfig {
     /// The anonymous Mosquitto broker announcing a maximum packet size below the brokers' `max_mqtt_packet`, on the
     /// andromeda stack.
     capped_mqtt_host: Option<HostName>,
+    /// The service that signals a broker's process, on the pgbouncer stack.
+    signaller: Option<Url>,
     /// The servers and poolers behind the brokers, on the pgbouncer stack.
     pooling: Option<PoolingSettings>,
     /// The Prometheus exposition each broker that serves one serves on its management listener, by role.
@@ -284,6 +289,15 @@ impl SuiteConfig {
             .as_ref()
             .map(HostName::host)
             .ok_or(ConfigError::Missing(ConfigKey::CappedMqttHost))
+    }
+
+    /// The service that signals a broker's process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Missing`] on a stack that runs none.
+    pub fn signaller(&self) -> Result<&Url, ConfigError> {
+        self.signaller.as_ref().ok_or(ConfigError::Missing(ConfigKey::Signaller))
     }
 
     /// The servers and poolers behind the brokers.

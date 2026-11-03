@@ -8,6 +8,7 @@
 //! share nothing with these beyond the schedule helper.
 
 use crate::{
+    event::queued_handoff::settle,
     linked_forwarding::LinkedForwarding,
     tenant_factory::{
         TenantFactoryConfig,
@@ -64,6 +65,7 @@ use tokio::sync::{
     broadcast::error::{RecvError, TryRecvError},
     mpsc,
 };
+use tokio_util::task::TaskTracker;
 
 /// Committed entity changes one live evaluation lane queues behind the change
 /// it is evaluating; a full lane holds the rest in the tenant's change queue.
@@ -155,8 +157,7 @@ pub(super) fn register_notification_workers(
     store: Arc<dyn DeliveryStore>,
     config: &NotificationsConfig,
     processor: Arc<NotificationProcessor>,
-    entity_changes: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
-    subscription_changes: broadcast::Sender<SubscriptionChange>,
+    streams: EntityNotificationStreams,
     drive: DeliveryDrainDrive,
 ) -> Result<(), TenantAssemblyError> {
     let delivery = if config.delivery.is_durable() {
@@ -166,11 +167,13 @@ pub(super) fn register_notification_workers(
     };
     register_notification_processor(
         supervisor,
-        entity_changes,
-        subscription_changes,
+        streams,
         Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
         delivery,
-        config.evaluation.max_concurrent_changes,
+        EvaluationLimits {
+            lanes: config.evaluation.max_concurrent_changes,
+            request_timeout: config.delivery.request_timeout(),
+        },
     )?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }
@@ -267,23 +270,51 @@ fn live_evaluation_lanes(
     }
 }
 
+/// The change streams the resident notification processor reacts to.
+pub(super) struct EntityNotificationStreams {
+    /// The one reader of the queue of committed entity changes, held across
+    /// restarts so a change queued meanwhile is still evaluated.
+    pub(super) entity_changes: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
+    /// The hand-offs of writes that found the entity queue full, which the
+    /// processor waits for when it stops.
+    pub(super) handoffs: TaskTracker,
+    /// Subscription changes keeping the evaluated set current.
+    pub(super) subscription_changes: broadcast::Sender<SubscriptionChange>,
+}
+
+/// How wide live evaluation runs and how long one notification may take.
+#[derive(Clone, Copy)]
+struct EvaluationLimits {
+    /// The evaluation lanes running concurrently.
+    lanes: NonZeroUsize,
+    /// The longest one notification takes to send; the processor's shutdown
+    /// grace covers it, so a stop does not abort a lane mid-send.
+    request_timeout: Duration,
+}
+
 fn register_notification_processor(
     supervisor: &TaskSupervisor,
-    entity_changes: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
-    subscription_changes: broadcast::Sender<SubscriptionChange>,
+    streams: EntityNotificationStreams,
     processor: Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
-    lanes: NonZeroUsize,
+    limits: EvaluationLimits,
 ) -> Result<(), TenantAssemblyError> {
+    let EntityNotificationStreams {
+        entity_changes,
+        handoffs,
+        subscription_changes,
+    } = streams;
+    let EvaluationLimits { lanes, request_timeout } = limits;
     let restart_delay = Duration::from_secs(1);
     let name = TaskName::try_from("notification-events").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
-        ShutdownPolicy::new(restart_delay),
+        ShutdownPolicy::new(request_timeout.saturating_add(restart_delay)),
     );
     let task = ResidentTask::new(registration, move |execution| {
+        let handoffs = handoffs.clone(); // clone: every resident attempt waits for the hand-offs the sink starts.
         let entity_changes = Arc::clone(&entity_changes); // clone: every resident attempt takes the one queue reader in turn.
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = Arc::clone(&processor); // clone: every resident attempt owns the shared policy operation.
@@ -296,6 +327,10 @@ fn register_notification_processor(
                 tokio::select! {
                     () = execution.cancellation().cancelled() => {
                         if let Some(lanes) = evaluation {
+                            settle(&handoffs, &mut entity_receiver, |change| async {
+                                lanes.lane(&change.change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)
+                            })
+                            .await?;
                             lanes.finish().await;
                         }
                         return Ok(());
@@ -308,24 +343,28 @@ fn register_notification_processor(
                         }
                         Err(RecvError::Closed) => return Err(channel_closed(ChangeChannel::Subscription)),
                     },
-                    received = entity_receiver.recv(), if evaluation.is_some() => match received {
-                        Some(change) => {
-                            loop {
-                                match subscription_receiver.try_recv() {
-                                    Ok(change) => processor.apply_subscription_change(change).await,
-                                    Err(TryRecvError::Lagged(skipped)) => {
-                                        tracing::debug!(skipped, "notification subscription stream lagged before entity evaluation; reloading policy cache");
-                                        processor.reload_cache().await.map_err(worker_notification_failure)?;
-                                    }
-                                    Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                                }
+                    received = entity_receiver.recv(), if evaluation.is_some() => {
+                        let Some(change) = received else {
+                            // Every sender is gone, as when the tenant is torn down: the lanes still run out what they hold.
+                            if let Some(lanes) = evaluation {
+                                lanes.finish().await;
                             }
-                            if let Some(lanes) = &evaluation {
-                                lanes.lane(&change.change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
+                            return Err(channel_closed(ChangeChannel::Entity));
+                        };
+                        loop {
+                            match subscription_receiver.try_recv() {
+                                Ok(change) => processor.apply_subscription_change(change).await,
+                                Err(TryRecvError::Lagged(skipped)) => {
+                                    tracing::debug!(skipped, "notification subscription stream lagged before entity evaluation; reloading policy cache");
+                                    processor.reload_cache().await.map_err(worker_notification_failure)?;
+                                }
+                                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
                             }
                         }
-                        None => return Err(channel_closed(ChangeChannel::Entity)),
-                    },
+                        if let Some(lanes) = &evaluation {
+                            lanes.lane(&change.change.event.entity_id).dispatch(change).await.map_err(evaluation_lane_stopped)?;
+                        }
+                    }
                 }
             }
         }

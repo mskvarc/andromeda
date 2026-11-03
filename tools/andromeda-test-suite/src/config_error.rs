@@ -57,6 +57,8 @@ pub enum ConfigKey {
     ApiRootPrefixed,
     /// The directory of the stack's files.
     StackDir,
+    /// The service signalling a broker's process.
+    Signaller,
 }
 
 // Hand-written: an entry is spelled from its section and name, behind the shared prefix.
@@ -65,6 +67,7 @@ impl fmt::Display for ConfigKey {
         match self {
             ConfigKey::Entry { section, name } => write!(formatter, "{PREFIX}{section}__{name}"),
             ConfigKey::Mqtt => write!(formatter, "{PREFIX}MQTT__*"),
+            ConfigKey::Signaller => write!(formatter, "{PREFIX}SIGNALLER"),
             ConfigKey::CappedMqttHost => write!(formatter, "{PREFIX}CAPPED_MQTT_HOST"),
             ConfigKey::Pooling => write!(formatter, "{PREFIX}POOLING__*"),
             ConfigKey::ApiRootPrefixed => write!(formatter, "{PREFIX}API_ROOT_PREFIXED"),

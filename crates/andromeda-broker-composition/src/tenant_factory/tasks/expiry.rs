@@ -25,7 +25,6 @@ use andromeda_entity::{
     port::expiry::EntityExpirySource,
 };
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
-use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
@@ -42,7 +41,6 @@ use andromeda_task_runtime::{
 };
 use chrono::{DateTime, Utc};
 use std::{convert::Infallible, sync::Arc, time::Duration};
-use tokio::sync::mpsc;
 
 /// Register every sweep that deletes a resource past its `expiresAt`, each
 /// paced by `pacer` so a tenant nobody is using sweeps only when something is
@@ -57,7 +55,7 @@ pub(super) fn register_expiry_workers(
     config: &TenantFactoryConfig,
     storage: &TenantStorage,
     state: &AndromedaState,
-    registration_changes: &mpsc::Sender<CsrChangeEvent>,
+    registration_changes: &QueuedRegistrationChangeSink,
     pacer: &Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let interval = config.expiry.sweep_interval.duration();
@@ -83,7 +81,7 @@ pub(super) fn register_expiry_workers(
         supervisor,
         shared_pacer(),
         Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-        Arc::new(QueuedRegistrationChangeSink::new(registration_changes.clone())), // clone: each worker owns a sender handle.
+        Arc::new(registration_changes.clone()),  // clone: each worker owns a sink handle.
         // clone: request handling and the sweep tear down removed registrations through one forwarding service.
         state
             .subscription_forwarding
