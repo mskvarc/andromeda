@@ -34,9 +34,15 @@ use andromeda_configuration::schema::{
     link_field_layout::LinkFieldLayout,
     request_limits::{RequestLimitsConfig, RequestLimitsConfigError},
 };
-use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
+use andromeda_http_extraction::{
+    blocking_decode::BlockingDecodePolicy,
+    request_body_limit::RequestBodyLimit,
+    request_geometry_position_limit::RequestGeometryPositionLimit,
+    request_json_value_limit::RequestJsonValueLimit,
+};
 use andromeda_http_headers::{link::field_layout::apply_link_field_layout, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use axum::{
     Extension,
@@ -94,6 +100,8 @@ pub struct HttpStack {
     request_body_limit: RequestBodyLimit,
     /// API-wide limit on the JSON values one payload may hold.
     request_json_value_limit: RequestJsonValueLimit,
+    /// API-wide limit on the positions one geometry of a payload may hold.
+    request_geometry_position_limit: RequestGeometryPositionLimit,
     /// How a payload is decoded beside the executor.
     blocking_decode: BlockingDecodePolicy,
     /// Whose forwarded fields are believed.
@@ -136,6 +144,7 @@ impl HttpStack {
         Ok(HttpStack {
             request_body_limit,
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(limits.max_json_values)),
+            request_geometry_position_limit: RequestGeometryPositionLimit::new(GeometryPositionLimit::new(limits.max_geometry_positions)),
             blocking_decode,
             forwarded_trust: ForwardedTrustPolicy::from(&config.forwarded),
             link_field: config.link_field,
@@ -167,6 +176,10 @@ impl HttpStack {
             // limit before it builds a tree, and decodes a payload this large
             // or larger beside the executor.
             .layer(Extension(self.request_json_value_limit))
+            // A geometry is recorded no further than this limit lets a
+            // geometry be, so refusing one past it costs the same whatever its
+            // size.
+            .layer(Extension(self.request_geometry_position_limit))
             .layer(Extension(self.blocking_decode.clone())); // clone: every request shares the stack's decode permits
         if let Some(helmet) = &self.helmet {
             router = router.layer(helmet.clone());

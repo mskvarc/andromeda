@@ -14,6 +14,7 @@ andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-http-tenancy.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-telemetry.workspace = true

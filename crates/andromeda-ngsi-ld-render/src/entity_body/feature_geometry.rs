@@ -195,7 +195,7 @@ const fn typed(value: &GeoPropertyValue) -> FeatureGeometry<'_> {
     match value {
         GeoPropertyValue::Geometry(geometry) => FeatureGeometry::Typed(geometry),
         GeoPropertyValue::Encoded(encoded) => FeatureGeometry::Form(encoded.form()),
-        GeoPropertyValue::Null => FeatureGeometry::Undefined,
+        GeoPropertyValue::Null | GeoPropertyValue::Oversized(_) => FeatureGeometry::Undefined,
     }
 }
 

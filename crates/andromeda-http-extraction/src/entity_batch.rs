@@ -20,6 +20,7 @@ use crate::{
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     not_json_document::NotJsonDocument,
+    request_geometry_position_limit::RequestGeometryPositionLimit,
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
@@ -64,6 +65,9 @@ pub struct BatchBody {
     body: Bytes,
     /// The most JSON values the body may hold, when the stack published it.
     value_limit: Option<RequestJsonValueLimit>,
+    /// The most positions a geometry of the body may hold, when the stack
+    /// published it.
+    geometry_positions: Option<RequestGeometryPositionLimit>,
     /// How the body is decoded beside the executor, when the stack published
     /// it.
     blocking_decode: Option<BlockingDecodePolicy>,
@@ -119,6 +123,7 @@ where
         // the size limit the request's extensions carry, never at a header.
         let headers = take(&mut parts.headers);
         let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
+        let geometry_positions = parts.extensions.get::<RequestGeometryPositionLimit>().copied();
         let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
         let req = Request::from_parts(parts, body);
         let body = buffer_payload(req, state, declared, uri.clone()) // clone: an empty payload below names the same request
@@ -136,6 +141,7 @@ where
             link_context,
             body,
             value_limit,
+            geometry_positions,
             blocking_decode,
         })
     }
@@ -247,10 +253,10 @@ fn admitted_text(text: &[u8]) -> Result<Option<EmbeddedContext>, BatchItemRefusa
 pub async fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
     let body = batch.body.clone(); // clone: a reference-count bump; the decode may run on the blocking pool
     let link_context = batch.link_context.clone(); // clone: the decode may run on the blocking pool, which borrows nothing
-    let (content_kind, value_limit) = (batch.content_kind, batch.value_limit);
+    let (content_kind, value_limit, geometry_positions) = (batch.content_kind, batch.value_limit, batch.geometry_positions);
     let instance = uri.clone(); // clone: the decode's refusals name the request it answers
     decode_payload(batch.blocking_decode.as_ref(), body.len(), move || {
-        decode_batch(&body, content_kind, link_context, value_limit).map_err(|refusal| refusal.into_problem(instance))
+        decode_batch(&body, content_kind, link_context, value_limit, geometry_positions).map_err(|refusal| refusal.into_problem(instance))
     })
     .await
     .map_err(|failure| failure.report().with_instance(uri.clone()))? // clone: the refusal names the request it answers
@@ -267,6 +273,7 @@ fn decode_batch(
     content_kind: ContentKind,
     link_context: ContextSpec,
     value_limit: Option<RequestJsonValueLimit>,
+    geometry_positions: Option<RequestGeometryPositionLimit>,
 ) -> Result<ParsedBatch, BatchBodyRefusal> {
     // Counted before anything is built, so a body of too many values costs
     // its bytes and nothing more.
@@ -309,6 +316,7 @@ fn decode_batch(
             text,
             context: contexts.context_of(own_context),
             embedded,
+            geometry_positions,
         });
     }
 
@@ -380,7 +388,7 @@ mod tests {
         let ParsedBatch { items, mut errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
         let mut entities = Vec::new();
         for BatchItem { identifier, text, .. } in items {
-            match entity_of(&text, ContextReading::keyword_spellings()) {
+            match entity_of(&text, ContextReading::keyword_spellings(), None) {
                 Ok(entity) => entities.push(entity),
                 Err(refusal) => errors.push(refusal.against(written(&identifier).clone())), // clone: the fixture keeps the item it reports
             }
@@ -1013,10 +1021,12 @@ mod tests {
                     Ok(ParsedBatch { items, errors, .. }) => Ok((
                         items
                             .iter()
-                            .map(|item| match entity_of::<AttributeValue>(&item.text, ContextReading::keyword_spellings()) {
-                                Ok(entity) => serde_json::to_value(entity).expect("an entity serializes"),
-                                Err(refusal) => serde_json::Value::String(refusal.to_string()),
-                            })
+                            .map(
+                                |item| match entity_of::<AttributeValue>(&item.text, ContextReading::keyword_spellings(), None) {
+                                    Ok(entity) => serde_json::to_value(entity).expect("an entity serializes"),
+                                    Err(refusal) => serde_json::Value::String(refusal.to_string()),
+                                },
+                            )
                             .collect::<Vec<_>>(),
                         errors,
                     )),

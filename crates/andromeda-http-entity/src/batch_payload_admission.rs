@@ -309,6 +309,7 @@ mod tests {
                     JsonLiteral::admit(context).unwrap_or_else(|_| JsonLiteral::string(context).expect("a JSON string")),
                 )),
                 embedded: None,
+                geometry_positions: None,
             })
             .collect()
     }
@@ -578,6 +579,7 @@ mod tests {
                 text: Bytes::from(json!({ "id": id, "type": "Building" }).to_string()),
                 context: contexts.context_of(None),
                 embedded: None,
+                geometry_positions: None,
             })
             .collect();
         let mut admissions = 0_usize;
@@ -641,6 +643,7 @@ mod tests {
                 JsonLiteral::admit(context).unwrap_or_else(|_| JsonLiteral::string(context).expect("a JSON string")),
             )),
             embedded: None,
+            geometry_positions: None,
         }
     }
 

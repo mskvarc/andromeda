@@ -7,7 +7,8 @@
 //! to undo, so such a body is read through its aliases alone.
 
 use andromeda_json_literal::piece::JsonPiece;
-use andromeda_ngsi_ld_representation::compact_node::{CompactNode, aliased_node::AliasedNode, context_reading::ContextReading};
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, aliased_node::AliasedNode, bounded_piece::BoundedPiece, context_reading::ContextReading};
 use serde_json::value::RawValue;
 use std::convert::Infallible;
 
@@ -31,10 +32,30 @@ pub(crate) trait NodeRead: Sized {
 /// failure of [`NodeRead::read_node`] otherwise.
 pub(crate) fn read_request_node<T: NodeRead>(text: &[u8], reading: ContextReading<'_>) -> Result<T, serde_json::Error> {
     let raw: &RawValue = serde_json::from_slice(text)?;
-    let piece = JsonPiece::new(raw);
+    read_through(JsonPiece::new(raw), reading)
+}
+
+/// Read a `T` as [`read_request_node`] does, each geometry of the body
+/// recorded no further than a geometry of `positions` positions can hold
+/// (clause 6.3.2).
+///
+/// # Errors
+///
+/// As [`read_request_node`].
+pub(crate) fn read_bounded_request_node<T: NodeRead>(
+    text: &[u8],
+    reading: ContextReading<'_>,
+    positions: GeometryPositionLimit,
+) -> Result<T, serde_json::Error> {
+    let raw: &RawValue = serde_json::from_slice(text)?;
+    read_through(BoundedPiece::new(JsonPiece::new(raw), positions), reading)
+}
+
+/// Read a `T` from `node` through `reading`.
+fn read_through<'n, T: NodeRead, N: CompactNode<'n, Unreadable = Infallible>>(node: N, reading: ContextReading<'n>) -> Result<T, serde_json::Error> {
     if reading.containers().is_empty() {
-        T::read_node(AliasedNode::new(piece, reading.aliases()))
+        T::read_node(AliasedNode::new(node, reading.aliases()))
     } else {
-        T::read_node(reading.read(piece))
+        T::read_node(reading.read(node))
     }
 }

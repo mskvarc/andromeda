@@ -21,12 +21,13 @@ use crate::{
     entity::{Entity, EntityPatch},
     node_refusal::NodeReadError,
     query::body::Query,
-    request_node::{NodeRead, read_request_node},
+    request_node::{NodeRead, read_bounded_request_node, read_request_node},
     snapshot_clone::SnapshotCloneInput,
     snapshot_input::SnapshotInput,
     snapshot_patch::SnapshotPatch,
 };
 use andromeda_json_literal::piece::JsonString;
+use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_representation::{
     aliased_deserializer::AliasedDeserializer,
     compact_node::{CompactNode, context_reading::ContextReading, produced_node::ProducedNode},
@@ -64,6 +65,21 @@ pub trait RequestBody: DeserializeOwned {
     fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<Self, serde_json::Error> {
         read_context_free(text, reading, DeserializedFromMembers::<Self>(PhantomData))
     }
+
+    /// Decode the resource as [`RequestBody::from_request_text`] does, a
+    /// geometry it carries recorded no further than a geometry of `positions`
+    /// positions can hold (clause 6.3.2), so refusing an oversized geometry
+    /// costs what the bound costs whatever its size.
+    ///
+    /// A resource that carries no geometry reads exactly as
+    /// [`RequestBody::from_request_text`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reader's failure, positioned in the text.
+    fn from_bounded_request_text(text: &[u8], reading: ContextReading<'_>, _positions: GeometryPositionLimit) -> Result<Self, serde_json::Error> {
+        Self::from_request_text(text, reading)
+    }
 }
 
 impl RequestBody for Query {}
@@ -86,6 +102,12 @@ impl<M: MemberReading> RequestBody for Entity<M> {
     fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<Entity<M>, serde_json::Error> {
         read_request_node(text, reading)
     }
+
+    /// Decode an Entity as [`Entity::from_request_text`] does, each geometry
+    /// recorded within `positions`.
+    fn from_bounded_request_text(text: &[u8], reading: ContextReading<'_>, positions: GeometryPositionLimit) -> Result<Entity<M>, serde_json::Error> {
+        read_bounded_request_node(text, reading, positions)
+    }
 }
 
 impl<M: MemberReading> NodeRead for Entity<M> {
@@ -99,6 +121,12 @@ impl<M: MemberReading> RequestBody for EntityPatch<M> {
     /// [`Entity`] is decoded.
     fn from_request_text(text: &[u8], reading: ContextReading<'_>) -> Result<EntityPatch<M>, serde_json::Error> {
         read_request_node(text, reading)
+    }
+
+    /// Decode a partial Entity as [`EntityPatch::from_request_text`] does,
+    /// each geometry recorded within `positions`.
+    fn from_bounded_request_text(text: &[u8], reading: ContextReading<'_>, positions: GeometryPositionLimit) -> Result<EntityPatch<M>, serde_json::Error> {
+        read_bounded_request_node(text, reading, positions)
     }
 }
 

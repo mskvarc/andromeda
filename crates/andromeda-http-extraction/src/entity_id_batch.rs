@@ -68,6 +68,7 @@ where
                  context,
                  uri,
                  blocking_decode,
+                 ..
              }| {
                 let context = submitted_context(context, &text, &uri)?;
                 // An array of strings names no term a context could alias, so the

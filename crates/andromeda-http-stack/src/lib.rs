@@ -14,6 +14,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-http-tenancy",
+        "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-telemetry",

@@ -10,6 +10,7 @@
 
 use crate::{
     body_admission::{AdmittedBody, admit_request_body, submitted_context},
+    request_geometry_position_limit::{RequestGeometryPositionLimit, read_within},
     submitted_body::SubmittedBody,
     undecodable_body::UndecodableBody,
 };
@@ -57,10 +58,13 @@ where
                  context,
                  uri,
                  blocking_decode,
+                 geometry_positions,
              }| {
                 let context = submitted_context(context, &text, &uri)?;
                 Ok(JsonLd {
-                    body: SubmittedBody::new(text, uri, blocking_decode, read_request_body::<T>),
+                    body: SubmittedBody::new(text, uri, blocking_decode, move |text, reading, uri| {
+                        read_request_body::<T>(text, reading, uri, geometry_positions)
+                    }),
                     context,
                 })
             },
@@ -69,14 +73,20 @@ where
     }
 }
 
-/// Read the request body `text` as a `T` through `reading`, a body that does
-/// not decode refused as `BadRequestData` naming the member it failed at.
+/// Read the request body `text` as a `T` through `reading`, its geometries
+/// recorded within `geometry_positions`, a body that does not decode refused
+/// as `BadRequestData` naming the member it failed at.
 ///
 /// # Errors
 ///
 /// Returns the `BadRequestData` of a body that does not decode.
-fn read_request_body<T: RequestBody>(text: &[u8], reading: ContextReading<'_>, uri: &Uri) -> Result<T, ProblemResponse> {
-    T::from_request_text(text, reading).map_err(|source| {
+fn read_request_body<T: RequestBody>(
+    text: &[u8],
+    reading: ContextReading<'_>,
+    uri: &Uri,
+    geometry_positions: Option<RequestGeometryPositionLimit>,
+) -> Result<T, ProblemResponse> {
+    read_within::<T>(geometry_positions, text, reading).map_err(|source| {
         let refusal = UndecodableBody::of_text::<T>(text, reading, source);
         // clone: the refusal owns the URI it names
         ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()).with_instance(uri.clone())

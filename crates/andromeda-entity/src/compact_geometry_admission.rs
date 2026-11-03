@@ -46,8 +46,7 @@ fn admit_member(limit: GeometryPositionLimit, name: &str, member: &AttributeValu
             [Some(&geo_property.value), geo_property.previous_value.as_ref()]
                 .into_iter()
                 .flatten()
-                .filter_map(GeoPropertyValue::form)
-                .try_for_each(|form| admit_form(limit, name, form))?;
+                .try_for_each(|value| admit_value(limit, name, value))?;
         }
         instance
             .common()
@@ -60,10 +59,8 @@ fn admit_member(limit: GeometryPositionLimit, name: &str, member: &AttributeValu
 /// Admit every instance of the merge member `name`.
 fn admit_merge_member(limit: GeometryPositionLimit, name: &str, member: &MergeMember) -> Result<(), PayloadBudgetExceeded> {
     member.instances().try_for_each(|instance| {
-        if let Some(Patched::Set(MergeValue::GeoProperty(value))) = &instance.value
-            && let Some(form) = value.form()
-        {
-            admit_form(limit, name, form)?;
+        if let Some(Patched::Set(MergeValue::GeoProperty(value))) = &instance.value {
+            admit_value(limit, name, value)?;
         }
         instance
             .sub_attributes
@@ -72,15 +69,32 @@ fn admit_merge_member(limit: GeometryPositionLimit, name: &str, member: &MergeMe
     })
 }
 
+/// Admit the `GeoProperty` value of the attribute `name`: a geometry read
+/// past the position limit is already known to hold too many, and any other
+/// is counted.
+fn admit_value(limit: GeometryPositionLimit, name: &str, value: &GeoPropertyValue) -> Result<(), PayloadBudgetExceeded> {
+    match value {
+        GeoPropertyValue::Oversized(_) => Err(refusal(limit, name)),
+        GeoPropertyValue::Geometry(_) | GeoPropertyValue::Encoded(_) | GeoPropertyValue::Null => {
+            value.form().map_or(Ok(()), |form| admit_form(limit, name, form))
+        }
+    }
+}
+
 /// Admit one geometry of the attribute `name`.
 fn admit_form(limit: GeometryPositionLimit, name: &str, form: &GeometryForm) -> Result<(), PayloadBudgetExceeded> {
     if limit.admits(form.position_count()) {
         return Ok(());
     }
-    Err(PayloadBudgetExceeded::GeometryPositions {
+    Err(refusal(limit, name))
+}
+
+/// The refusal of a geometry of the attribute `name` past `limit`.
+fn refusal(limit: GeometryPositionLimit, name: &str) -> PayloadBudgetExceeded {
+    PayloadBudgetExceeded::GeometryPositions {
         owner: AttributeName::from_str(name).map_or(GeometryOwner::Unnamed, GeometryOwner::Attribute),
         limit,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -95,8 +109,12 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         attribute::merge_member::MergeMember,
         entity::{Entity, EntityPatch},
+        request_body::RequestBody,
     };
-    use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
+    use andromeda_ngsi_ld_representation::{
+        compact_node::context_reading::ContextReading,
+        payload_budget::{GeometryOwner, PayloadBudgetExceeded},
+    };
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
@@ -197,5 +215,16 @@ mod tests {
             "footprint"
         );
         admit_compact_geometries(limit(5), fragment.attribute_members()).expect("each geometry is within five");
+    }
+    /// A geometry the decoding read past the limit is refused by its written
+    /// name without its coordinates being counted.
+    #[test]
+    fn a_geometry_read_past_the_limit_is_refused_by_its_written_name() {
+        let written = json!({"id": "urn:ngsi-ld:Area:1", "type": "Area", "location": {"type": "GeoProperty", "value": square()}});
+        let text = written.to_string();
+        let located =
+            <Entity as RequestBody>::from_bounded_request_text(text.as_bytes(), ContextReading::keyword_spellings(), limit(1)).expect("the body decodes");
+        let refusal = admit_compact_geometries(limit(1), located.attribute_members()).expect_err("read past the limit");
+        pretty_assertions::assert_eq!(owner(refusal), "location");
     }
 }

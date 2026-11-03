@@ -13,6 +13,7 @@ use crate::{
     bounding_box::BoundingBoxError,
     coordinate_path::CoordinatePath,
     form::{GeometryForm, PolygonRings},
+    geometry_census::GeometryPositionLimit,
     line_string_coordinates::LineStringError,
     linear_ring::LinearRingError,
     position::{Position, PositionError},
@@ -121,6 +122,13 @@ pub enum GeometryError {
     /// not keep.
     #[error("a foreign member of the GeoJSON geometry is not admissible JSON: {0}")]
     ForeignMember(#[source] JsonLiteralError),
+    /// The `coordinates` member holds more ordinates than a geometry of the
+    /// permitted positions can; it was read no further.
+    #[error("the GeoJSON geometry holds more than the {limit} positions this broker accepts in one geometry")]
+    PositionLimit {
+        /// The limit the geometry exceeds.
+        limit: GeometryPositionLimit,
+    },
 }
 
 impl GeometryForm {

@@ -52,6 +52,7 @@ pub mod query_decoding;
 pub mod query_refusal;
 pub mod request_body_limit;
 pub mod request_envelope;
+pub mod request_geometry_position_limit;
 pub mod request_json_value_limit;
 pub mod request_links;
 pub mod request_payload;
@@ -78,6 +79,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-response",
         "andromeda-json-literal",
         "andromeda-jsonld",
+        "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",

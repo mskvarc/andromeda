@@ -9,10 +9,10 @@
 
 use crate::attribute::geo_property::{TypedGeometryRefusal, typed_geometry};
 use andromeda_ngsi_ld_entity::geo_value::EncodedGeometry;
-use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry::Geometry, geometry_census::GeometryPositionLimit};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::{NULL_URI, is_ngsi_ld_null};
-use serde::{Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::Error as SerializeError};
 use thiserror::Error;
 
 /// The value of one `GeoProperty` instance.
@@ -24,6 +24,10 @@ pub enum GeoPropertyValue {
     Encoded(EncodedGeometry),
     /// The NGSI-LD Null: the geometry was deleted (clause 4.5.0).
     Null,
+    /// A geometry written with more ordinates than the position limit it was
+    /// read under admits; its coordinates were read no further (clause 6.3.2).
+    /// A write holding one is refused before it is used.
+    Oversized(GeometryPositionLimit),
 }
 
 /// Why a compact node is no `GeoProperty` value.
@@ -49,6 +53,7 @@ impl Serialize for GeoPropertyValue {
             GeoPropertyValue::Geometry(geometry) => geometry.serialize(serializer),
             GeoPropertyValue::Encoded(encoded) => serializer.serialize_str(encoded.as_str()),
             GeoPropertyValue::Null => serializer.serialize_str(NULL_URI.as_str()),
+            GeoPropertyValue::Oversized(limit) => Err(SerializeError::custom(GeometryError::PositionLimit { limit: *limit })),
         }
     }
 }
@@ -71,8 +76,10 @@ impl GeoPropertyValue {
             NodeShape::Object(_) => node
                 .read_geometry()?
                 .map_err(GeoValueRefusal::Written)
-                .and_then(|written| typed_geometry(written).map_err(GeoValueRefusal::from))
-                .map(GeoPropertyValue::Geometry),
+                .and_then(|written| match written.exceeded_positions() {
+                    Some(limit) => Ok(GeoPropertyValue::Oversized(limit)),
+                    None => typed_geometry(written).map(GeoPropertyValue::Geometry).map_err(GeoValueRefusal::from),
+                }),
             NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) => Err(GeoValueRefusal::Geometry(GeometryError::NotAnObject)),
         })
     }
@@ -83,7 +90,7 @@ impl GeoPropertyValue {
         match self {
             GeoPropertyValue::Geometry(geometry) => Some(geometry.form()),
             GeoPropertyValue::Encoded(encoded) => Some(encoded.form()),
-            GeoPropertyValue::Null => None,
+            GeoPropertyValue::Null | GeoPropertyValue::Oversized(_) => None,
         }
     }
 }

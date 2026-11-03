@@ -200,12 +200,14 @@ pub(crate) fn add_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str
 }
 
 /// A `GeoProperty` `value`: the geometry already read, the clause 4.7.2 string
-/// as written, or the NGSI-LD Null.
+/// as written, or the NGSI-LD Null. A geometry read past the position limit
+/// has no coordinates to expand and does not serialize.
 pub(crate) fn add_geo_value(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: &GeoPropertyValue) -> Result<(), Decline> {
     match value {
         GeoPropertyValue::Geometry(geometry) => add_geometry(node, scope, key, geometry),
         GeoPropertyValue::Encoded(encoded) => add_serialized(node, scope, key, encoded.as_str()),
         GeoPropertyValue::Null => add_serialized(node, scope, key, NULL_URI.as_str()),
+        GeoPropertyValue::Oversized(_) => Err(Decline::CompactSerialization),
     }
 }
 

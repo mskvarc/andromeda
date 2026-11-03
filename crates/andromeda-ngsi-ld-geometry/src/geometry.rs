@@ -171,7 +171,8 @@ mod tests {
             | GeometryError::InvalidBbox(_)
             | GeometryError::NotAnArray { .. }
             | GeometryError::GeometryCollectionUnsupported
-            | GeometryError::ForeignMember(_)) => {
+            | GeometryError::ForeignMember(_)
+            | GeometryError::PositionLimit { .. }) => {
                 panic!("expected a refused position, got {other:?}")
             }
         }

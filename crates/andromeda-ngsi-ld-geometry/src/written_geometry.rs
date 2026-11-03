@@ -17,6 +17,7 @@ use crate::{
     foreign_members::ForeignMemberName,
     geojson::GeometryError,
     geometry::Geometry,
+    geometry_census::GeometryPositionLimit,
     geometry_member::GeometryMember,
     geometry_members::{ForeignMemberReading, GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
 };
@@ -52,7 +53,53 @@ impl WrittenGeometry {
     pub(crate) fn deserialize_without_foreign_members<'de, D: Deserializer<'de>>(deserializer: D) -> Result<WrittenGeometry, D::Error> {
         deserializer.deserialize_any(WrittenGeometryVisitor {
             foreign: ForeignMemberReading::Skipped,
+            positions: None,
         })
+    }
+
+    /// Read a written geometry from the JSON text `text`, its `coordinates`
+    /// recorded no further than a geometry of `limit` positions can hold.
+    ///
+    /// A geometry past the bound reads as a refused geometry, not a failure,
+    /// and costs what the bound costs whatever the size of `text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reader's failure for text that is no JSON value.
+    pub fn read_within(text: &str, limit: GeometryPositionLimit) -> Result<WrittenGeometry, serde_json::Error> {
+        let mut reader = serde_json::Deserializer::from_str(text);
+        let written = (&mut reader).deserialize_any(WrittenGeometryVisitor {
+            foreign: ForeignMemberReading::Kept,
+            positions: Some(limit),
+        })?;
+        reader.end()?;
+        Ok(written)
+    }
+
+    /// The position limit the object's `coordinates` held more ordinates than,
+    /// when they did.
+    #[must_use]
+    pub const fn exceeded_positions(&self) -> Option<GeometryPositionLimit> {
+        match &self.geometry {
+            Err(GeometryError::PositionLimit { limit }) => Some(*limit),
+            Ok(_)
+            | Err(
+                GeometryError::Position { .. }
+                | GeometryError::LineString { .. }
+                | GeometryError::LinearRing { .. }
+                | GeometryError::MixedArity { .. }
+                | GeometryError::NotAnObject
+                | GeometryError::EncodedNotJson(_)
+                | GeometryError::MissingType
+                | GeometryError::UnknownType(_)
+                | GeometryError::MissingCoordinates
+                | GeometryError::MissingGeometries
+                | GeometryError::InvalidBbox(_)
+                | GeometryError::NotAnArray { .. }
+                | GeometryError::GeometryCollectionUnsupported
+                | GeometryError::ForeignMember(_),
+            ) => None,
+        }
     }
 
     /// Whether a member of the object is named by a JSON-LD keyword.
@@ -62,12 +109,13 @@ impl WrittenGeometry {
     }
 
     /// The written geometry `members` spell.
-    fn of_members(members: GeometryMembers) -> WrittenGeometry {
+    fn of_members(members: GeometryMembers, positions: Option<GeometryPositionLimit>) -> WrittenGeometry {
         let json_ld_keywords = members.json_ld_keywords;
-        WrittenGeometry {
-            geometry: members.into_geometry(),
-            json_ld_keywords,
-        }
+        let geometry = match positions {
+            Some(limit) if members.coordinates.as_ref().is_some_and(CoordinateTape::overflowed) => Err(GeometryError::PositionLimit { limit }),
+            Some(_) | None => members.into_geometry(),
+        };
+        WrittenGeometry { geometry, json_ld_keywords }
     }
 
     /// A written value that is no JSON object.
@@ -86,6 +134,7 @@ impl<'de> Deserialize<'de> for WrittenGeometry {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<WrittenGeometry, D::Error> {
         deserializer.deserialize_any(WrittenGeometryVisitor {
             foreign: ForeignMemberReading::Kept,
+            positions: None,
         })
     }
 }
@@ -103,6 +152,9 @@ impl<'de> Deserialize<'de> for Geometry {
 struct WrittenGeometryVisitor {
     /// Whether the foreign members the object carries are kept.
     foreign: ForeignMemberReading,
+    /// The positions a geometry may hold, when `coordinates` is recorded only
+    /// that far.
+    positions: Option<GeometryPositionLimit>,
 }
 
 impl<'de> Visitor<'de> for WrittenGeometryVisitor {
@@ -156,7 +208,7 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<WrittenGeometry, A::Error> {
         let mut members = GeometryMembers::default();
         let Some(first) = map.next_key_seed(GeometryKeySeed)? else {
-            return Ok(WrittenGeometry::of_members(members));
+            return Ok(WrittenGeometry::of_members(members, self.positions));
         };
         // The reader's spelling of a number, which is no object.
         if let GeometryKey::Other(name) = &first
@@ -167,10 +219,10 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
         }
         let mut key = first;
         loop {
-            read_member(&mut map, key, self.foreign, &mut members)?;
+            read_member(&mut map, key, self.foreign, self.positions, &mut members)?;
             match map.next_key_seed(GeometryKeySeed)? {
                 Some(next) => key = next,
-                None => return Ok(WrittenGeometry::of_members(members)),
+                None => return Ok(WrittenGeometry::of_members(members, self.positions)),
             }
         }
     }
@@ -178,7 +230,13 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
 
 /// Read the value of the member `key` into `members`, keeping a foreign member
 /// only when `foreign` says so.
-fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, foreign: ForeignMemberReading, members: &mut GeometryMembers) -> Result<(), A::Error> {
+fn read_member<'de, A: MapAccess<'de>>(
+    map: &mut A,
+    key: GeometryKey,
+    foreign: ForeignMemberReading,
+    positions: Option<GeometryPositionLimit>,
+    members: &mut GeometryMembers,
+) -> Result<(), A::Error> {
     match key {
         GeometryKey::Type => {
             members.geometry_type = match map.next_value_seed(MemberShapeSeed)? {
@@ -186,8 +244,8 @@ fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, foreign: F
                 MemberShape::Number | MemberShape::Array | MemberShape::Other => TypeMember::Missing,
             };
         }
-        GeometryKey::Coordinates => members.coordinates = Some(read_tape(map)?),
-        GeometryKey::Bbox => members.bbox = Some(read_tape(map)?),
+        GeometryKey::Coordinates => members.coordinates = Some(read_tape(map, positions)?),
+        GeometryKey::Bbox => members.bbox = Some(read_tape(map, None)?),
         GeometryKey::Geometries => {
             members.geometries = match map.next_value_seed(MemberShapeSeed)? {
                 MemberShape::Array => GeometriesMember::Array,
@@ -211,8 +269,8 @@ fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, foreign: F
 }
 
 /// Record the value of the current member onto a tape.
-fn read_tape<'de, A: MapAccess<'de>>(map: &mut A) -> Result<CoordinateTape, A::Error> {
-    let mut tape = CoordinateTape::default();
+fn read_tape<'de, A: MapAccess<'de>>(map: &mut A, positions: Option<GeometryPositionLimit>) -> Result<CoordinateTape, A::Error> {
+    let mut tape = positions.map_or_else(CoordinateTape::default, CoordinateTape::within);
     map.next_value_seed(CoordinateTapeSeed::new(&mut tape))?;
     Ok(tape)
 }
@@ -359,8 +417,15 @@ impl<'de> Visitor<'de> for MemberShapeSeed {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
+    use crate::{
+        geojson::GeometryError,
+        geometry::Geometry,
+        geometry_census::GeometryPositionLimit,
+        geometry_members::JsonLdKeywords,
+        written_geometry::WrittenGeometry,
+    };
     use serde_json::Value;
+    use std::num::NonZeroUsize;
 
     /// Geometry texts covering every refusal and acceptance, written with
     /// their members in more than one order.
@@ -459,6 +524,42 @@ mod tests {
         let read: Vec<WrittenGeometry> = serde_json::from_str(r#"[[1, [2]], {"a": {"b": 1}}, 7, {"type": "Point", "coordinates": [1, 2]}]"#).expect("read");
         let forms: Vec<bool> = read.into_iter().map(|written| written.into_geometry().is_ok()).collect();
         pretty_assertions::assert_eq!(forms, vec![false, false, false, true]);
+    }
+
+    fn limit(positions: usize) -> GeometryPositionLimit {
+        GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit"))
+    }
+
+    /// A geometry holding no more ordinates than the limit allows reads as it
+    /// does unbounded.
+    #[test]
+    fn a_geometry_within_the_position_limit_reads_as_it_does_without_one() {
+        let text = r#"{"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}"#;
+        let written = WrittenGeometry::read_within(text, limit(5)).expect("read");
+        assert!(written.exceeded_positions().is_none());
+        pretty_assertions::assert_eq!(written.into_geometry().expect("a polygon").form().position_count().get(), 5);
+    }
+
+    /// A geometry with more ordinates than three per permitted position reads
+    /// as past the limit, whatever its type or the order of its members, and
+    /// the reading goes on to the end of the text.
+    #[test]
+    fn a_geometry_past_the_position_limit_reads_as_exceeding_it() {
+        for text in [
+            r#"{"type": "LineString", "coordinates": [[0, 0], [1, 1], [2, 2], [3, 3]]}"#,
+            r#"{"coordinates": [[0, 0], [1, 1], [2, 2], [3, 3]], "type": "LineString", "foreign": 1}"#,
+        ] {
+            let written = WrittenGeometry::read_within(text, limit(1)).expect("read to its end");
+            pretty_assertions::assert_eq!(written.exceeded_positions(), Some(limit(1)), "{text}");
+            assert!(matches!(written.into_geometry(), Err(GeometryError::PositionLimit { .. })), "{text}");
+        }
+    }
+
+    /// A text that is no JSON is the reader's failure, not an oversized
+    /// geometry.
+    #[test]
+    fn a_text_that_is_no_json_is_a_reading_failure_under_the_limit() {
+        assert!(WrittenGeometry::read_within(r#"{"type": "Point", "coordinates": [1, "#, limit(1)).is_err());
     }
 
     impl WrittenGeometry {

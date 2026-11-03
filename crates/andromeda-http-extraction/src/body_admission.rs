@@ -17,6 +17,7 @@ use crate::{
     content_length_precondition::{ContentLengthPreconditionError, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     not_json_document::NotJsonDocument,
+    request_geometry_position_limit::RequestGeometryPositionLimit,
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
@@ -40,6 +41,9 @@ pub(crate) struct AdmittedBody {
     /// How the body is decoded beside the executor once its context was
     /// admitted, when the stack published it.
     pub(crate) blocking_decode: Option<BlockingDecodePolicy>,
+    /// The most positions a geometry of the body may hold, when the stack
+    /// published it.
+    pub(crate) geometry_positions: Option<RequestGeometryPositionLimit>,
 }
 
 /// The user `@context` a client body submitted: the context it names and the
@@ -87,6 +91,9 @@ struct ReadBody {
     uri: Uri,
     /// The most JSON values the payload may hold, when the stack published it.
     value_limit: Option<RequestJsonValueLimit>,
+    /// The most positions a geometry of the payload may hold, when the stack
+    /// published it.
+    geometry_positions: Option<RequestGeometryPositionLimit>,
     /// How the payload is decoded beside the executor, when the stack
     /// published it.
     blocking_decode: Option<BlockingDecodePolicy>,
@@ -121,6 +128,7 @@ impl ReadBody {
             link_context,
             uri,
             value_limit,
+            geometry_positions,
             blocking_decode,
         } = self;
         // Counted before anything is built, so a payload of too many values
@@ -166,6 +174,7 @@ impl ReadBody {
             context,
             uri,
             blocking_decode,
+            geometry_positions,
         })
     }
 }
@@ -192,6 +201,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
         .and_then(|links| links.context_for(carrier))
         .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(uri.clone())))?;
     let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
+    let geometry_positions = parts.extensions.get::<RequestGeometryPositionLimit>().copied();
     let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
     let req = Request::from_parts(parts, body);
 
@@ -211,6 +221,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
         link_context,
         uri,
         value_limit,
+        geometry_positions,
         blocking_decode,
     })
 }

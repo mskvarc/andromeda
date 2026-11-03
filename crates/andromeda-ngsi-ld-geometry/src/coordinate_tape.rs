@@ -17,10 +17,14 @@
 //! onto, whatever holds them, so one reader decides how every geometry's
 //! coordinates nest and refuses them with the same reasons.
 
+use crate::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Number;
 use std::{fmt, slice::Iter};
+
+/// The most ordinates one position holds: longitude, latitude and altitude.
+const MOST_ORDINATES_PER_POSITION: usize = 3;
 
 /// One step of a recorded `coordinates` member.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,12 +42,21 @@ enum CoordinateStep {
 }
 
 /// A `coordinates` member, recorded in document order.
+///
+/// A tape made [`within`](CoordinateTape::within) a position limit stops
+/// recording at the first ordinate no geometry within that limit can hold, so
+/// what an oversized member costs does not follow its size.
 #[derive(Debug, Default)]
 pub struct CoordinateTape {
     /// Every array boundary and member, in document order.
     steps: Vec<CoordinateStep>,
     /// The double of every [`CoordinateStep::Ordinate`], in the same order.
     ordinates: Vec<f64>,
+    /// The most ordinates the tape records, when it is bounded.
+    ordinate_cap: Option<usize>,
+    /// Whether an ordinate past the cap was met, after which nothing is
+    /// recorded.
+    overflowed: bool,
 }
 
 /// One item read back from a [`CoordinateTape`].
@@ -74,31 +87,64 @@ impl CoordinateTape {
         Ok(tape)
     }
 
+    /// An empty tape for the coordinates of a geometry of at most `limit`
+    /// positions.
+    ///
+    /// A position holds at most three ordinates (IETF RFC 7946 section 3.1.1),
+    /// so a member with more than three per permitted position holds more
+    /// positions than `limit` admits whatever its nesting.
+    #[must_use]
+    pub fn within(limit: GeometryPositionLimit) -> CoordinateTape {
+        CoordinateTape {
+            ordinate_cap: Some(limit.get().saturating_mul(MOST_ORDINATES_PER_POSITION)),
+            ..CoordinateTape::default()
+        }
+    }
+
+    /// Whether the member held more ordinates than the tape was bounded to;
+    /// the tape then holds the ordinates before the first one past the bound,
+    /// and nothing after it.
+    #[must_use]
+    pub const fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
     /// Record an array opening.
     pub fn open(&mut self) {
-        self.steps.push(CoordinateStep::Open);
+        if !self.overflowed {
+            self.steps.push(CoordinateStep::Open);
+        }
     }
 
     /// Record the innermost open array closing.
     pub fn close(&mut self) {
-        self.steps.push(CoordinateStep::Close);
+        if !self.overflowed {
+            self.steps.push(CoordinateStep::Close);
+        }
     }
 
     /// Record a number by the double that stands for it, if a finite one
     /// does, and as a member that is no ordinate otherwise.
     pub fn number(&mut self, ordinate: Option<f64>) {
-        match ordinate.filter(|ordinate| ordinate.is_finite()) {
-            Some(ordinate) => {
-                self.steps.push(CoordinateStep::Ordinate);
-                self.ordinates.push(ordinate);
-            }
-            None => self.other(),
+        let Some(ordinate) = ordinate.filter(|ordinate| ordinate.is_finite()) else {
+            return self.other();
+        };
+        if self.overflowed {
+            return;
         }
+        if self.ordinate_cap.is_some_and(|cap| self.ordinates.len() >= cap) {
+            self.overflowed = true;
+            return;
+        }
+        self.steps.push(CoordinateStep::Ordinate);
+        self.ordinates.push(ordinate);
     }
 
     /// Record a member that is neither an array nor a number.
     pub fn other(&mut self) {
-        self.steps.push(CoordinateStep::Other);
+        if !self.overflowed {
+            self.steps.push(CoordinateStep::Other);
+        }
     }
 
     /// Read the tape back from its first step.
@@ -306,10 +352,13 @@ impl Visitor<'_> for OrdinateTokenSeed {
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::coordinate_tape::{CoordinateTape, CoordinateTapeSeed, TapeItem};
+    use crate::{
+        coordinate_tape::{CoordinateTape, CoordinateTapeSeed, TapeItem},
+        geometry_census::GeometryPositionLimit,
+    };
     use serde::de::DeserializeSeed;
     use serde_json::Value;
-    use std::iter::from_fn;
+    use std::{iter::from_fn, num::NonZeroUsize};
 
     /// Every item of `tape`, in order.
     fn items(tape: &CoordinateTape) -> Vec<TapeItem> {
@@ -407,5 +456,41 @@ mod tests {
         ];
         pretty_assertions::assert_eq!(items(&streamed(text)), expected);
         pretty_assertions::assert_eq!(items(&of_tree(&tree)), expected);
+    }
+    /// A tape bounded to a geometry of two positions holds at most six
+    /// ordinates; the first one past them ends the recording.
+    #[test]
+    fn a_bounded_tape_stops_recording_at_the_first_ordinate_past_the_bound() {
+        let limit = GeometryPositionLimit::new(NonZeroUsize::new(2).expect("a positive limit"));
+        let mut within = CoordinateTape::within(limit);
+        CoordinateTapeSeed::new(&mut within)
+            .deserialize(&serde_json::json!([[1, 2, 3], [4, 5, 6]]))
+            .expect("read");
+        assert!(!within.overflowed());
+        pretty_assertions::assert_eq!(within.ordinates.len(), 6);
+
+        let mut past = CoordinateTape::within(limit);
+        CoordinateTapeSeed::new(&mut past)
+            .deserialize(&serde_json::json!([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11]]))
+            .expect("read to its end");
+        assert!(past.overflowed());
+        pretty_assertions::assert_eq!(past.ordinates.len(), 6);
+    }
+
+    /// Nothing is recorded after the bound, whatever follows it.
+    #[test]
+    fn a_bounded_tape_records_nothing_after_it_overflowed() {
+        let limit = GeometryPositionLimit::new(NonZeroUsize::MIN);
+        let mut tape = CoordinateTape::within(limit);
+        CoordinateTapeSeed::new(&mut tape)
+            .deserialize(&serde_json::json!([[1, 2, 3, 4], [], "x", [[5]]]))
+            .expect("read to its end");
+        assert!(tape.overflowed());
+        let steps = tape.steps.len();
+        tape.open();
+        tape.number(Some(1.0));
+        tape.other();
+        tape.close();
+        pretty_assertions::assert_eq!(tape.steps.len(), steps);
     }
 }
