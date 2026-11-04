@@ -10,10 +10,22 @@
 //! after the other leaves it.
 
 use crate::{
-    evolution_horizon::{horizon_of, horizon_raise_statement, project_horizon},
+    horizon_raise::{horizon_raise_statement, project_horizon},
     intent_application::{
         deletion_judgement::{created_by_application, ended_before_evolution},
-        intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, intent_entity_key, source_entries, write_ordinal},
+        intent_source::{
+            E,
+            I,
+            StagedSource,
+            attribute_entry,
+            entry,
+            entry_kind_in,
+            intent,
+            intent_entity_key,
+            latest_entry_instant,
+            source_entries,
+            write_ordinal,
+        },
         scope_judgement::recorded_scope_entry,
     },
     stream_shape_growth::shape_growth_statement,
@@ -21,6 +33,7 @@ use crate::{
 use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::{
     entity_sides::holds_evolution,
+    evolution_horizon::horizon_of,
     history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values},
 };
 use andromeda_postgresql_schema::{
@@ -69,11 +82,6 @@ struct Grown;
 #[iden = "extent"]
 struct Extent;
 
-/// The two attribute entry kinds.
-fn attribute_entries() -> SimpleExpr {
-    entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()])
-}
-
 /// The entries of `kinds` of Entities with a Temporal Evolution, the
 /// evolution under `te`. An identity row holding a current state alone has
 /// none: its Entity records no history until an intent stating types brings
@@ -91,7 +99,7 @@ fn entries_with_evolution(source: &StagedSource<'_>, schema: Option<&DynIden>, k
 
 /// The attribute entries the application records, the evolution under `te`.
 fn recorded_attribute_entries(source: &StagedSource<'_>, schema: Option<&DynIden>) -> SelectStatement {
-    let mut select = entries_with_evolution(source, schema, attribute_entries());
+    let mut select = entries_with_evolution(source, schema, attribute_entry());
     select.and_where(ended_before_evolution(created_by_application(source)).not());
     select
 }
@@ -229,16 +237,9 @@ pub(crate) fn history_statement(source: &StagedSource<'_>, schema: Option<&DynId
 /// each time axis (clause 4.11), so every instant its history holds stays at or
 /// before its horizon.
 pub(crate) fn horizon_statement(source: &StagedSource<'_>, schema: Option<&DynIden>) -> UpdateStatement {
-    let axes = [
-        TemporalEntry::ObservedAt,
-        TemporalEntry::CreatedAt,
-        TemporalEntry::ModifiedAt,
-        TemporalEntry::DeletedAt,
-    ];
-    let latest: SimpleExpr = Func::greatest(axes.map(entry)).into();
     let mut reached = recorded_attribute_entries(source, schema);
     reached.column((Te, Entities::EntityKey)).group_by_col((Te, Entities::EntityKey));
-    project_horizon(&mut reached, horizon_of(Func::max(latest).into()));
+    project_horizon(&mut reached, horizon_of(Func::max(latest_entry_instant()).into()));
     horizon_raise_statement(qualified(schema, Entities::Table), reached)
 }
 

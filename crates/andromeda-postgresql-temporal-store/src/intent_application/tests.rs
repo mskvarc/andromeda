@@ -689,7 +689,7 @@ fn one_row_of_an_entity_carries_every_type_its_intents_state() {
     assert!(evolutions.contains(r#"ORDER BY "i"."entity_id" ASC, "i"."intent_key" DESC"#), "{evolutions}");
     assert!(evolutions.contains(r#"cardinality("i"."entity_type_name_keys") > 0"#), "{evolutions}");
     assert!(
-        evolutions.contains(r#""i"."recorded_at", "stated_types"."entity_type_name_keys" FROM"#),
+        evolutions.contains(r#""i"."recorded_at", "stated_types"."entity_type_name_keys", MAX("#),
         "{evolutions}"
     );
     assert!(
@@ -701,6 +701,31 @@ fn one_row_of_an_entity_carries_every_type_its_intents_state() {
         evolutions.contains(r#"AS "stated_types" WHERE "stated_types"."id" = "i"."entity_id""#),
         "{evolutions}"
     );
+}
+
+/// An evolution the upsert creates is minted with the horizon the attribute
+/// entries of its Entity's intents reach, each intent reading its own entries,
+/// so the raise after the history leaves the new row as it is. The conflict
+/// action leaves a stored horizon to that raise.
+#[test]
+fn a_created_evolution_is_minted_with_the_horizon_its_attribute_entries_reach() {
+    let evolving = evolving();
+    let evolutions = common_table(&evolving, "evolved");
+    assert!(
+        evolutions.contains(
+            r#"INSERT INTO "entities" ("id", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys", "evolution_active_until")"#
+        ),
+        "{evolutions}"
+    );
+    assert!(
+        evolutions.contains(concat!(
+            r#"MAX(date_trunc('hour', (SELECT MAX(GREATEST("e"."observed_at", "e"."created_at", "e"."modified_at", "e"."deleted_at")) "#,
+            r#"FROM UNNEST("i"."entries") AS "e" WHERE "e"."entry_kind" IN (1, 2)), 'UTC') + (make_interval(secs => 3600))) "#,
+            r#"OVER ( PARTITION BY "i"."entity_id" )"#
+        )),
+        "{evolutions}"
+    );
+    assert!(!evolutions.contains(r#""evolution_active_until" = "#), "{evolutions}");
 }
 
 /// Clauses 5.6.11.4 and 5.6.12.4 add the types a write states that the

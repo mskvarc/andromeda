@@ -9,11 +9,10 @@ use crate::{
     intent_application::{
         deletion_judgement::{created_by_application, ended_before_evolution},
         evolution_upsert::{Created, Evolved, NewTypes, OldTypes, with_evolutions},
-        intent_source::{E, I, StagedSource, entry, entry_kind_in, intent, source_entries, source_intents, write_ordinal},
+        intent_source::{E, I, StagedSource, attribute_entry, entry, intent, source_entries, source_intents, write_ordinal},
     },
     stream_census::{StreamChange, counted_stream_addition, stream_census_change, typed_rows},
 };
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_query::{
     entity_sides::holds_evolution,
     history_source::entry_values::{attribute_entry_values, recorded_extent},
@@ -184,7 +183,7 @@ pub(crate) fn evolutions_and_streams_statement(source: &StagedSource<'_>, schema
     entries
         .from(Evolved)
         .and_where(Expr::col((Evolved, Entities::Id)).equals((I, TemporalAppendIntents::EntityId)))
-        .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
+        .and_where(attribute_entry())
         .and_where(ended_before_evolution(created_evolution()).not());
     let mut grains = Query::select();
     grains
@@ -357,7 +356,7 @@ pub(crate) fn untyped_streams_statement(source: &StagedSource<'_>, schema: Optio
         .and_where(Expr::col((Te, Entities::Id)).equals((I, TemporalAppendIntents::EntityId)))
         .and_where(holds_evolution(Te))
         .and_where(has_elements(intent(TemporalAppendIntents::EntityTypeNameKeys)).not())
-        .and_where(entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()]))
+        .and_where(attribute_entry())
         .and_where(ended_before_evolution(created_by_application(source)).not());
     let mut select = Query::select();
     select.columns(GRAIN_COLUMNS.map(|column| (Ah, column)));

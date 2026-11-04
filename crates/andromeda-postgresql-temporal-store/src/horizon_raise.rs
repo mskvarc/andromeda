@@ -1,40 +1,23 @@
-//! The activity horizon of a Temporal Evolution, `evolution_active_until`.
+//! Raising the activity horizon of Temporal Evolutions, `evolution_active_until`,
+//! to cover the instants a write records.
 //!
-//! A bounded temporal window (clause 4.11) keeps an Evolution only for an
-//! instance of a concerned attribute whose instant on the window's axis lies
-//! inside it, so an Evolution none of whose instances reaches the window's
-//! start on any axis can never match. The horizon bounds every such instant
-//! from above: each statement that writes an instant into `attribute_history`
-//! raises it to cover that instant, and nothing lowers it while the Evolution
+//! Each statement that writes an instant into `attribute_history` raises the
+//! horizon to cover that instant, and nothing lowers it while the Evolution
 //! lasts. A horizon left above the instants an Evolution still holds (after an
 //! instance deletion, or a retention sweep that keeps the Evolution) only adds
-//! a candidate the window match then rejects.
-//!
-//! The horizon is the end of the UTC hour holding the instant. A recording
-//! write therefore changes it only when it moves the bound into a later hour,
+//! a candidate the window match then rejects. The horizon rounds to the end of
+//! an hour, so a raise moves it only when a write passes into a later hour,
 //! about once an hour for an Entity written steadily, and every other write
 //! leaves the indexed column alone and stays a heap-only update.
 
 use andromeda_postgresql_schema::current::Entities;
-use andromeda_postgresql_seaquery::{date_field::date_trunc, interval::make_interval_secs};
 use sea_query::{Condition, Expr, ExprTrait, Iden, IntoIden, IntoTableRef, Query, SelectStatement, SimpleExpr, TableRef, UpdateStatement};
-
-/// The seconds of the hour a horizon rounds up to the end of.
-const HOUR_SECONDS: f64 = 3_600.0;
 
 /// The horizon each Evolution of a raise reaches, `reached`, both the
 /// relation and its horizon column.
 #[derive(Iden, Clone, Copy)]
 #[iden = "reached"]
 struct Reached;
-
-/// The horizon covering `instant`: the end of the UTC hour holding it,
-/// `date_trunc('hour', <instant>, 'UTC') + (make_interval(secs => 3600))`. An
-/// instant on the hour gets the hour after it, which still bounds it.
-#[must_use]
-pub(crate) fn horizon_of(instant: SimpleExpr) -> SimpleExpr {
-    date_trunc("hour", instant).add(make_interval_secs(Expr::val(HOUR_SECONDS)))
-}
 
 /// Raise the horizon of every Evolution `reached` names to the one it reaches
 /// there, in the identity rows of `entities`.
@@ -64,19 +47,11 @@ pub(crate) fn project_horizon(select: &mut SelectStatement, horizon: SimpleExpr)
 
 #[cfg(test)]
 mod tests {
-    use crate::evolution_horizon::{horizon_of, horizon_raise_statement, project_horizon};
+    use crate::horizon_raise::{horizon_raise_statement, project_horizon};
+    use andromeda_postgresql_query::evolution_horizon::horizon_of;
     use andromeda_postgresql_schema::current::Entities;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
-
-    #[test]
-    fn a_horizon_is_the_end_of_the_utc_hour_holding_its_instant() {
-        let sql = Query::select()
-            .expr(horizon_of(Expr::col(Alias::new("observed_at"))))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql, r#"SELECT date_trunc('hour', "observed_at", 'UTC') + (make_interval(secs => 3600))"#);
-    }
 
     #[test]
     fn a_raise_moves_only_a_horizon_that_is_missing_or_earlier() {

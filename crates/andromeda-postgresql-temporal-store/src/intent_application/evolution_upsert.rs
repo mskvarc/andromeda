@@ -9,9 +9,10 @@
 
 use crate::intent_application::{
     established_evolutions::{Upserted, among, left_established, no_types},
-    intent_source::{I, StagedSource, intent, source_intents, source_intents_as},
+    intent_source::{E, I, StagedSource, attribute_entry, intent, latest_entry_instant, source_intents, source_intents_as},
 };
 use andromeda_postgresql_query::{
+    evolution_horizon::horizon_of,
     type_list_union::{TypeListColumn, type_list_union},
     type_membership::Memberships,
     type_membership_moves::{Member, carried_among, membership_insert},
@@ -25,6 +26,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::{all, array_cat, array_of_subquery, array_position, has_elements},
     pg_type::PostgresType,
     returning_image::{New, Old},
+    scalar_subquery::scalar_subquery,
     unnest::unnest_of,
 };
 use sea_query::{
@@ -186,6 +188,11 @@ pub(crate) fn with_evolutions(with: &mut WithClause, source: &StagedSource<'_>, 
 /// one after the other leaves. `created_at` is never moved and `modified_at`
 /// never moves back ([`latest_modification`], clause 4.8).
 ///
+/// A row the insert creates carries the activity horizon the attribute
+/// entries of its intents reach ([`reached_horizon`]), so the history the
+/// application records next leaves it as it is and the row keeps one version.
+/// The conflict action leaves a stored horizon to the raise that follows.
+///
 /// An Entity in `established` holds the evolution its commit's create wrote,
 /// which is what the upsert writes into an identity row holding none. Its
 /// conflict action takes the inserted row's values as they are, and writes
@@ -202,7 +209,8 @@ fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>, est
             WindowStatement::partition_by((I, TemporalAppendIntents::EntityId)),
         )
         .expr(intent(TemporalAppendIntents::RecordedAt))
-        .column((StatedTypes, TypeListColumn::EntityTypeNameKeys));
+        .column((StatedTypes, TypeListColumn::EntityTypeNameKeys))
+        .expr_window(reached_horizon(), WindowStatement::partition_by((I, TemporalAppendIntents::EntityId)));
     source_intents(&mut select, source);
     select
         .from_subquery(stated_types(source), StatedTypes)
@@ -213,7 +221,12 @@ fn evolutions_statement(source: &StagedSource<'_>, schema: Option<&DynIden>, est
     let mut statement = Query::insert();
     statement
         .into_table(qualified(schema, Entities::Table))
-        .columns([Entities::Id].into_iter().chain(MERGED_COLUMNS.map(|(column, _)| column)))
+        .columns(
+            [Entities::Id]
+                .into_iter()
+                .chain(MERGED_COLUMNS.map(|(column, _)| column))
+                .chain([Entities::EvolutionActiveUntil]),
+        )
         .select_from(select)?;
     match established {
         None => {
@@ -274,6 +287,21 @@ const MERGED_COLUMNS: [(Entities, fn() -> SimpleExpr); 3] = [
     (Entities::EvolutionModifiedAt, latest_modification),
     (Entities::EvolutionTypeNameKeys, merged_types),
 ];
+
+/// The activity horizon the attribute entries of the intents of one Entity
+/// reach, as a window aggregate partitioned by the Entity: the latest instant
+/// any of them holds, rounded up ([`horizon_of`]). NULL when they hold none,
+/// as an Evolution without an attribute instance has no horizon.
+///
+/// Each intent reads its own entries, so the source is read once.
+fn reached_horizon() -> SimpleExpr {
+    let mut latest = Query::select();
+    latest
+        .expr(Func::max(latest_entry_instant()))
+        .from_function(unnest_of(intent(TemporalAppendIntents::Entries)), E)
+        .and_where(attribute_entry());
+    Func::max(horizon_of(scalar_subquery(latest))).into()
+}
 
 /// Every type the intents of `source` state, one list per Entity, under the
 /// columns of [`type_list_union`]: each type once, in the order of the first

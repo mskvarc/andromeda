@@ -39,8 +39,6 @@ mod entity_attribute_history;
 pub(crate) mod entity_history_runs;
 /// Error types for the temporal store crate.
 pub mod error;
-/// The activity horizon bounding every instant a Temporal Evolution holds.
-pub(crate) mod evolution_horizon;
 /// Giving up the Temporal Evolution of identity rows.
 pub(crate) mod evolution_vacancy;
 /// Reading which disqualifying shapes the instances a request aggregates carry.
@@ -59,6 +57,8 @@ pub(crate) mod history_row_decode;
 pub(crate) mod history_row_identity;
 /// Answering the wake loop for the history a dormant tenant owes its sweeps.
 pub mod history_work_probe;
+/// Raising the activity horizon of Temporal Evolutions to cover what a write records.
+pub(crate) mod horizon_raise;
 /// The temporal hypertables whose storage policy is reconciled, and their columnstore layout.
 pub mod hypertable_policy;
 /// Reading the instances a split query's filters read in effect when its

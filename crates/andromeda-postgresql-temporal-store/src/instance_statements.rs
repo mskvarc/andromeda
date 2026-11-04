@@ -16,13 +16,13 @@
 
 use crate::{
     attribute_history_value::AttributeHistoryValue,
-    evolution_horizon::{horizon_of, horizon_raise_statement, project_horizon},
+    horizon_raise::{horizon_raise_statement, project_horizon},
     stream_shape_growth::shape_growth_statement,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, evolution_horizon::horizon_of};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams},

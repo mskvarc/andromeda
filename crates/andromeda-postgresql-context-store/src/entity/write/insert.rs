@@ -43,10 +43,12 @@ use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
+use andromeda_postgresql_query::evolution_horizon::horizon_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     clock::now,
     external_arguments::{ExternalArguments, ExternallyBound},
+    pg_array::has_elements,
     returning_image::{New, Old},
     unnest::UnnestAliased,
 };
@@ -76,8 +78,11 @@ use std::collections::HashSet;
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $12::boolean[]) AS d(…)),
 ///      ins(entity_key, id, established) AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at,
-///                                                    evolution_created_at, evolution_modified_at, evolution_type_name_keys)
-///              SELECT proj.id, $accepted_at, $accepted_at, …, CASE WHEN proj.establishes_evolution THEN $accepted_at END, … FROM proj
+///                                                    evolution_created_at, evolution_modified_at, evolution_type_name_keys,
+///                                                    evolution_active_until)
+///              SELECT proj.id, $accepted_at, $accepted_at, …, CASE WHEN proj.establishes_evolution THEN $accepted_at END, …,
+///                     CASE WHEN proj.establishes_evolution AND cardinality(proj.attribute_instance_name_keys) > 0
+///                          THEN date_trunc('hour', $accepted_at, 'UTC') + make_interval(secs => 3600) END FROM proj
 ///              ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …,
 ///              write_count = entities.write_count + 1 WHERE entities.created_at IS NULL
 ///              RETURNING new.entity_key, new.id, old.entity_key IS NULL AND new.evolution_created_at IS NOT NULL),
@@ -130,9 +135,12 @@ use std::collections::HashSet;
 /// (clause 4.5.6) at `accepted_at` under the types the create states. A new
 /// identity row is minted with that evolution and with its memberships on
 /// both sides, which the history application then leaves as they are, so
-/// each row is written once. The conflict action does not touch the
-/// evolution columns, so an identity row that existed keeps the evolution
-/// it held, and `established` says which rows were minted with one.
+/// each row is written once. The row of an entity with attribute instances
+/// is minted with the activity horizon of `accepted_at` too: every entry the
+/// create records is created and modified then, so the history raises it
+/// only for an `observedAt` in a later hour. The conflict action does not
+/// touch the evolution columns, so an identity row that existed keeps the
+/// evolution it held, and `established` says which rows were minted with one.
 ///
 /// # Errors
 ///
@@ -234,13 +242,16 @@ pub(super) fn entity_insert_statement<'entities>(
 fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result<InsertStatement, ContextStoreError> {
     let mut identity = Query::insert();
     let current_state = [Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt, Entities::MinAttributeExpiresAt];
-    let evolution = [Entities::EvolutionCreatedAt, Entities::EvolutionModifiedAt, Entities::EvolutionTypeNameKeys];
-    let established = |value: SimpleExpr| -> SimpleExpr {
-        CaseStatement::new()
-            .case(projected(StagedColumn::EstablishesEvolution), value)
-            .finally(Keyword::Null)
-            .into()
-    };
+    let evolution = [
+        Entities::EvolutionCreatedAt,
+        Entities::EvolutionModifiedAt,
+        Entities::EvolutionTypeNameKeys,
+        Entities::EvolutionActiveUntil,
+    ];
+    let established_when =
+        |condition: SimpleExpr, value: SimpleExpr| -> SimpleExpr { CaseStatement::new().case(condition, value).finally(Keyword::Null).into() };
+    let established = |value: SimpleExpr| established_when(projected(StagedColumn::EstablishesEvolution), value);
+    let recorded_instances = projected(StagedColumn::EstablishesEvolution).and(has_elements(projected(EntitySearch::AttributeInstanceNameKeys)));
     identity
         .into_table(table_of(target, Entities::Table))
         .columns([Entities::Id].into_iter().chain(current_state).chain(evolution))
@@ -254,6 +265,7 @@ fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result
                 .expr(established(Expr::val(accepted_at)))
                 .expr(established(Expr::val(accepted_at)))
                 .expr(established(projected(EntitySearch::EntityTypeNameKeys)))
+                .expr(established_when(recorded_instances, horizon_of(Expr::val(accepted_at))))
                 .from(Proj)
                 .take(),
         )?;
@@ -366,7 +378,7 @@ mod tests {
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 4;
+        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 6;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -392,9 +404,9 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($16::text[]"), "{sql}");
-        assert!(sql.contains(r"$21::smallint[], $42::numeric[], $22::text[]"), "{sql}");
-        assert!(sql.contains(r"$46::sub_attribute_tree[], $39::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($18::text[]"), "{sql}");
+        assert!(sql.contains(r"$23::smallint[], $44::numeric[], $24::text[]"), "{sql}");
+        assert!(sql.contains(r"$48::sub_attribute_tree[], $41::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -415,7 +427,7 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" ("entity_key", "id", "established") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys")"#),
+            sql.contains(r#""ins" ("entity_key", "id", "established") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys", "evolution_active_until")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location", "location_reach")"#), "{sql}");
@@ -498,7 +510,9 @@ mod tests {
             sql.contains(concat!(
                 r#"SELECT "proj"."id", $12, $13, "proj"."expires_at", "proj"."min_attribute_expires_at", "#,
                 r#"(CASE WHEN ("proj"."establishes_evolution") THEN $14 ELSE NULL END), (CASE WHEN ("proj"."establishes_evolution") THEN $15 ELSE NULL END), "#,
-                r#"(CASE WHEN ("proj"."establishes_evolution") THEN "proj"."entity_type_name_keys" ELSE NULL END) FROM "proj" "#,
+                r#"(CASE WHEN ("proj"."establishes_evolution") THEN "proj"."entity_type_name_keys" ELSE NULL END), "#,
+                r#"(CASE WHEN ("proj"."establishes_evolution" AND cardinality("proj"."attribute_instance_name_keys") > 0) "#,
+                r#"THEN date_trunc('hour', $16, 'UTC') + (make_interval(secs => $17)) ELSE NULL END) FROM "proj" "#,
                 r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
                 r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at", "#,
                 r#""write_count" = "entities"."write_count" + 1 WHERE "entities"."created_at" IS NULL "#,
@@ -507,6 +521,27 @@ mod tests {
             "{sql}"
         );
         assert!(!sql.contains("geography"), "the geography is an index expression, never stored: {sql}");
+    }
+
+    /// Every entry a create records is created and modified at `accepted_at`
+    /// (clause 4.8), so an evolution the insert mints is minted with the
+    /// horizon the history then reaches and the history raise leaves the row as
+    /// it is. An Entity without an attribute instance records no attribute
+    /// entry, and its evolution has no horizon.
+    #[test]
+    fn an_established_evolution_with_instances_is_minted_with_the_horizon_of_its_creation() {
+        let entities = PreparedEntityColumns::with_capacity(0);
+        let statement =
+            entity_insert_statement(&ContextTarget::Live, &entities, StagedRows::default(), accepted_at(), &HashSet::new()).expect("the fixed insert builds");
+        let sql = text_of_query(statement.into_query());
+        assert!(
+            sql.contains(r#"(CASE WHEN ("proj"."establishes_evolution" AND cardinality("proj"."attribute_instance_name_keys") > 0) THEN date_trunc('hour', $16, 'UTC') + (make_interval(secs => $17)) ELSE NULL END)"#),
+            "{sql}"
+        );
+        assert!(
+            !sql.contains(r#""evolution_active_until" = "excluded""#),
+            "a revived identity row keeps the horizon its evolution holds: {sql}"
+        );
     }
 
     /// Every child insert finds its row by the identifier the identity insert

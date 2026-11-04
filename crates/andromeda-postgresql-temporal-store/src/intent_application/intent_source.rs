@@ -17,7 +17,7 @@
 use crate::{error::TemporalStoreError, stored_catalog_error::StoredCatalogError, temporal_entry_record::TemporalIntentRecord};
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
+use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, temporal_intent_reach::TemporalIntentReach};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -345,4 +345,22 @@ pub(crate) fn write_ordinal() -> SimpleExpr {
 /// Whether the entry under `e` is one of `kinds`.
 pub(crate) fn entry_kind_in(kinds: &[i16]) -> SimpleExpr {
     entry(TemporalEntry::EntryKind).is_in(kinds.iter().copied())
+}
+
+/// Whether the entry under `e` is an attribute entry: an observation or the
+/// end of an instance.
+pub(crate) fn attribute_entry() -> SimpleExpr {
+    entry_kind_in(&[TemporalEntryKind::Observation.code(), TemporalEntryKind::Tombstone.code()])
+}
+
+/// The latest instant the entry under `e` holds on any clause 4.11 time axis,
+/// the instant the activity horizon of its Evolution has to cover.
+pub(crate) fn latest_entry_instant() -> SimpleExpr {
+    let axes = [
+        TemporalEntry::ObservedAt,
+        TemporalEntry::CreatedAt,
+        TemporalEntry::ModifiedAt,
+        TemporalEntry::DeletedAt,
+    ];
+    Func::greatest(axes.map(entry)).into()
 }
