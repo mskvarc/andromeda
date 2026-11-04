@@ -98,7 +98,8 @@ const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceErr
         | MaintenanceError::UnknownHorizonHolder(_)
         | MaintenanceError::UnreadableCode(_)
         | MaintenanceError::ProbeTargetNotAnIndex(_)
-        | MaintenanceError::InvalidDensityBaseline { .. }
+        | MaintenanceError::KeyLayoutTargetNotDensityMeasured(_)
+        | MaintenanceError::InvalidKeyLayout { .. }
         | MaintenanceError::UnknownBranchSchema
         | MaintenanceError::InvalidSnapshotKey(_)
         | MaintenanceError::UnreadableSnapshotStatus(_)

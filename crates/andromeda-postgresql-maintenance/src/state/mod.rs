@@ -7,8 +7,8 @@
 //! [`target_record`] what is recorded per target, [`pending_action`] which
 //! queued action a visit runs next, [`open_breach`] which breach runs triage
 //! waits on, [`branch_rows`] which context branch a
-//! target row belongs to, [`density_baseline`] the baseline a
-//! density-measured GIN is compared with and [`analyzed_rows`] the row count a
+//! target row belongs to, [`gin_key_layout`] the keys per row and bytes per key
+//! a density-measured GIN is judged by and [`analyzed_rows`] the row count a
 //! heap or a density-measured GIN is judged by.
 
 /// The analyzed row count stored on each heap and density-measured GIN.
@@ -17,8 +17,8 @@ pub(crate) mod analyzed_rows;
 pub(crate) mod autovacuum_saturation;
 /// The context branch dimension of the target rows.
 pub(crate) mod branch_rows;
-/// The recorded density baseline of each density-measured GIN.
-pub(crate) mod density_baseline;
+/// The keys per row and bytes per key stored on each density-measured GIN.
+pub(crate) mod gin_key_layout;
 /// The open breach runs that triage waits on.
 pub(crate) mod open_breach;
 /// Which queued action a visit runs next.

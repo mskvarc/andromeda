@@ -26,6 +26,8 @@ pub enum CatalogCounter {
     BlockSize,
     /// Rows a density-measured GIN covers, from `pg_class` and `pg_stats`.
     CoveredRows,
+    /// Pages of the table a density-measured GIN covers, from `pg_class`.
+    HeapPages,
     /// Rows a heap or a density-measured GIN is judged by, as its table's
     /// latest analyze left them, stored on its target row.
     AnalyzedRows,
@@ -76,8 +78,12 @@ pub enum CatalogCounter {
     BeforeDeadTuples,
     /// Dead tuples recorded after a vacuum.
     AfterDeadTuples,
-    /// A density-measured GIN's recorded baseline density.
-    BaselineDensity,
+    /// A density-measured GIN's keys per covered row, in thousandths of a key,
+    /// sampled from its table or stored on its target row.
+    KeysPerRow,
+    /// A density-measured GIN's bytes per key, in thousandths of a byte, stored
+    /// on its target row.
+    KeyBytes,
     /// Dead tuples past which autovacuum vacuums a table.
     AutovacuumTrigger,
     /// Autovacuum workers running across the cluster.

@@ -57,5 +57,5 @@ async fn settled_sample(
 ) -> Result<Option<HeapSample>, MaintenanceError> {
     let row = BranchTarget::new(branch, MaintenanceTarget::Heap(reading.target))?;
     let live = analyzed_rows::settled_rows(platform, tenant, row, reading.live, stored.of(row.target())).await?;
-    Ok(live.map(|live| reading.sample(live, profile)))
+    Ok(live.map(|live| reading.sample(live.rows, profile)))
 }

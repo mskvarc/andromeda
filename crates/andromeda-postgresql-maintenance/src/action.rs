@@ -5,17 +5,23 @@ use crate::{
     action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
     artifact::{ArtifactOwner, RecoveryArtifact},
     branch::{Branch, BranchTarget},
-    candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
+    candidate::{
+        MaintenanceTarget,
+        heap_target::HeapTarget,
+        history_table::HistoryTable,
+        index_target::{DensityColumn, IndexTarget},
+    },
     controller::{PassOutcome, density_sampling},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
-    gin_density::{self, Density, DensityReading},
+    gin_density::{self, DensityReading},
+    gin_keys::KeyBytes,
     inspection,
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
     prepared_action::{Preparation, prepare_action, read_comparison},
     rowstore_rebuild,
     safety_gate_inspection::{self, GateScope},
-    state::{RegisteredTenant, density_baseline, pending_action, target_record, tenant_inspection},
+    state::{RegisteredTenant, gin_key_layout, pending_action, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder, HorizonScope},
 };
 use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
@@ -155,9 +161,9 @@ pub(crate) async fn execute_pending(
                 ActionComparison::Index { before_bytes, after_bytes } => {
                     info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                     if let MaintenanceTarget::Index(index) = target
-                        && index.density_column().is_some()
+                        && let Some(column) = index.density_column()
                     {
-                        reset_density_baseline(platform, tenant_connection, tenant, branch, index).await?;
+                        measure_rebuilt_key_bytes(platform, tenant_connection, tenant, branch, column, profile).await?;
                     }
                 }
                 ActionComparison::Heap { before, after } => {
@@ -187,24 +193,26 @@ pub(crate) async fn execute_pending(
     }
 }
 
-/// Record a rebuilt density-measured GIN's density as its new baseline, read
-/// the way a catalog sample reads it, over its analyzed covered rows. A GIN
-/// whose covered rows the statistics no longer describe has its baseline
-/// cleared, so its next observation records one.
-async fn reset_density_baseline(
+/// Record the bytes per key a rebuilt density-measured GIN takes, read the way
+/// a catalog sample reads its size, over its analyzed covered rows and its
+/// sampled keys per row. A GIN whose covered rows or keys the platform state
+/// does not hold has its bytes per key cleared, so it is judged at its shape's
+/// default, or measured on its next observation when its shape has none.
+async fn measure_rebuilt_key_bytes(
     platform: &mut PgConnection,
     tenant_connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     branch: Branch,
-    index: IndexTarget,
+    column: DensityColumn,
+    profile: PolicyProfile,
 ) -> Result<(), MaintenanceError> {
     let sizes = inspection::index_sizes(tenant_connection, branch).await?;
-    let coverage = density_sampling::settled_coverage(platform, tenant_connection, tenant, branch).await?;
-    let baseline = gin_density::density_readings(&sizes, &coverage)
-        .find(|reading| reading.target == index)
-        .and_then(DensityReading::density);
-    density_baseline::record_density_baseline(platform, tenant, branch, index, baseline).await?;
-    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.relation_name(), baseline_millibytes_per_row = ?baseline.map(Density::millibytes_per_row), "PostgreSQL maintenance density baseline reset after rebuild");
+    let coverage = density_sampling::settled_coverage(platform, tenant_connection, tenant, branch, &sizes, profile).await?;
+    let key_bytes = gin_density::density_readings(&sizes, &coverage)
+        .find(|reading| reading.column == column)
+        .and_then(DensityReading::key_bytes);
+    gin_key_layout::record_key_bytes(platform, tenant, branch, column, key_bytes).await?;
+    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = column.gin().relation_name(), key_millibytes = ?key_bytes.map(KeyBytes::thousandths), "PostgreSQL maintenance gin bytes per key measured after rebuild");
     Ok(())
 }
 

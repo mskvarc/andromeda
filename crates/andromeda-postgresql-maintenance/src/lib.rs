@@ -52,6 +52,7 @@ mod fleet_triage;
 mod freeze_policy;
 mod freeze_report;
 mod gin_density;
+mod gin_keys;
 mod heap_reading;
 mod history_chunk_policy;
 /// On-disk size of the history chunk each temporal hypertable converts next.

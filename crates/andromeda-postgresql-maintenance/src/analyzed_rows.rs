@@ -14,6 +14,13 @@
 //! latest analyze is newer than that instant and than the table's latest
 //! vacuum. Between two analyzes it lags the table by at most the rows the
 //! table's analyze trigger lets change.
+//!
+//! A target with no stored count takes the first reading after its table's
+//! first analyze, whatever vacuum followed. A table that stopped taking writes
+//! is never analyzed again, so waiting for an analyze newer than its last
+//! vacuum would leave it unjudged for good, and once writes stop a vacuum's
+//! figure no longer drifts from the analyze's. The next analyze newer than
+//! every vacuum replaces it.
 
 use crate::{
     catalog_counter::{CatalogCounter, non_negative},
@@ -47,14 +54,14 @@ pub(crate) struct RowCountReading {
 }
 
 impl RowCountReading {
-    /// The rows to store in place of `stored`: this reading's, when the
-    /// table's latest analyze is newer than `stored` and than its latest
-    /// vacuum. `None` keeps `stored`.
+    /// The rows to store in place of `stored`: this reading's, once the table
+    /// was analyzed, when nothing is stored or when the table's latest
+    /// analyze is newer than `stored` and than its latest vacuum. `None` keeps
+    /// `stored`.
     pub(crate) fn replacement(self, stored: Option<AnalyzedRows>) -> Option<AnalyzedRows> {
         let analyzed_at = self.last_analyzed?;
-        let newer_than_stored = stored.is_none_or(|stored| analyzed_at > stored.analyzed_at);
-        let newer_than_vacuum = self.last_vacuumed.is_none_or(|vacuumed| analyzed_at > vacuumed);
-        (newer_than_stored && newer_than_vacuum).then_some(AnalyzedRows { rows: self.rows, analyzed_at })
+        let replaces = stored.is_none_or(|stored| analyzed_at > stored.analyzed_at && self.last_vacuumed.is_none_or(|vacuumed| analyzed_at > vacuumed));
+        replaces.then_some(AnalyzedRows { rows: self.rows, analyzed_at })
     }
 
     /// Decode a reading of `rows` rows from a row projected with
@@ -155,10 +162,19 @@ mod tests {
     }
 
     #[test]
-    fn a_table_first_analyzed_after_its_vacuums_stores_its_rows_and_never_before() {
+    fn a_target_with_nothing_stored_takes_the_first_reading_after_an_analyze_whatever_vacuum_followed() {
         assert_eq!(reading(850_000, None, Some(5)).replacement(None), None);
-        assert_eq!(reading(850_000, Some(4), Some(5)).replacement(None), None);
+        assert_eq!(reading(850_000, Some(4), Some(5)).replacement(None), Some(stored(850_000, 4)));
         assert_eq!(reading(850_000, Some(6), Some(5)).replacement(None), Some(stored(850_000, 6)));
+        assert_eq!(reading(850_000, Some(6), None).replacement(None), Some(stored(850_000, 6)));
+    }
+
+    #[test]
+    fn rows_stored_from_a_reading_a_vacuum_followed_give_way_to_the_next_analyze_after_every_vacuum() {
+        let first = reading(850_000, Some(4), Some(5)).replacement(None);
+        assert_eq!(reading(900_000, Some(4), Some(9)).replacement(first), None);
+        assert_eq!(reading(910_000, Some(8), Some(9)).replacement(first), None);
+        assert_eq!(reading(920_000, Some(10), Some(9)).replacement(first), Some(stored(920_000, 10)));
     }
 
     #[test]

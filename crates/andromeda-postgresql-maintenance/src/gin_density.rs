@@ -1,26 +1,22 @@
 //! The density signal of a GIN that no canary B-tree stands in for.
 //!
 //! `pgstattuple` reads no GIN index. A density-measured GIN is judged by its
-//! bytes per covered row instead, read from the catalogs only: its size, and
-//! the rows of its table holding a non-null value in the column it covers
-//! (`pg_class.reltuples` times one minus that column's `pg_stats.null_frac`),
-//! kept as the GIN's analyzed rows so a vacuum's extrapolated `reltuples` never
-//! enters a density. The density is compared with a baseline recorded on the
-//! GIN's first observation and after each rebuild.
-//!
-//! Density is not normalised by value width: `pg_stats.avg_width` is the stored
-//! width, compressed or a TOAST pointer, and says nothing about how many keys a
-//! value yields. A shift towards values with more keys therefore reads as
-//! degradation. The reclaim floor bounds that, and so does the verdict on the
-//! rebuild: one reclaiming less than the floor is ineffective, and its density
-//! becomes the new baseline.
+//! size against the size its covered rows take at its keys per row and its
+//! bytes per key, read from the catalogs and the platform state only: its
+//! size, and the rows of its table holding a non-null value in the column it
+//! covers (`pg_class.reltuples` times one minus that column's
+//! `pg_stats.null_frac`), kept as the GIN's analyzed rows so a vacuum's
+//! extrapolated `reltuples` never enters the comparison. The keys per row and
+//! the bytes per key, and why a GIN is judged by them, are described with
+//! their sampling and their defaults.
 
 use crate::{
     analyzed_rows::{RowCountReading, project_maintenance_instants},
     branch::Branch,
-    candidate::index_target::{DensityColumn, IndexTarget},
-    catalog_counter::{CatalogCounter, percent},
+    candidate::index_target::DensityColumn,
+    catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
+    gin_keys::{KeyBytes, KeysPerRow},
     inspection::IndexSize,
     policy::{DegradationSample, PolicyProfile},
 };
@@ -32,77 +28,77 @@ use std::{num::NonZeroU64, str::FromStr};
 /// The alias of the statistics row of the GIN's heap.
 const TABLE_STATISTICS: &str = "t";
 
-/// A density is held in thousandths of a byte per covered row, so a GIN of a
-/// few bytes per row keeps three significant digits without a float.
-const MILLIBYTES_PER_BYTE: u64 = 1_000;
-
-/// A GIN's bytes per covered row, in thousandths of a byte, never zero.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct Density(NonZeroU64);
-
-impl Density {
-    /// A density from its stored thousandths of a byte per row.
-    pub(crate) const fn from_millibytes(millibytes_per_row: NonZeroU64) -> Density {
-        Density(millibytes_per_row)
-    }
-
-    /// Thousandths of a byte per covered row.
-    pub(crate) const fn millibytes_per_row(self) -> u64 {
-        self.0.get()
-    }
-}
+/// Keys per row and bytes per key are both thousandths, so their product over
+/// the covered rows is in millionths of a byte.
+const MILLIONTHS: u128 = 1_000_000;
 
 /// How many rows one density-measured GIN covers, read from the catalogs now.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GinCoverageReading {
-    /// The GIN.
-    pub(crate) target: IndexTarget,
+    /// The column the GIN covers.
+    pub(crate) column: DensityColumn,
     /// Rows holding a non-null value in the column the GIN is partial on, with
     /// its table's latest analyze and vacuum.
     pub(crate) covered: RowCountReading,
+    /// Pages of the GIN's table, from `pg_class.relpages`, which bound a
+    /// sample of its keys.
+    pub(crate) heap_pages: u64,
 }
 
 /// How many rows one density-measured GIN covers, as its table's latest
-/// analyze counted them.
+/// analyze counted them, and the keys it holds for each.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GinCoverage {
-    /// The GIN.
-    pub(crate) target: IndexTarget,
+    /// The column the GIN covers.
+    pub(crate) column: DensityColumn,
     /// Rows holding a non-null value in the column the GIN is partial on.
     pub(crate) covered_rows: u64,
+    /// Keys the GIN holds per covered row.
+    pub(crate) keys_per_row: KeysPerRow,
 }
 
-/// One density-measured GIN's size and covered rows, read in the same pass.
+/// One density-measured GIN's size and coverage, read in the same pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DensityReading {
-    /// The GIN.
-    pub(crate) target: IndexTarget,
+    /// The column the GIN covers.
+    pub(crate) column: DensityColumn,
     /// The GIN's physical bytes.
     pub(crate) index_bytes: u64,
     /// Rows the GIN covers.
     pub(crate) covered_rows: u64,
+    /// Keys the GIN holds per covered row.
+    pub(crate) keys_per_row: KeysPerRow,
 }
 
 impl DensityReading {
-    /// The GIN's current density, `None` when it covers no row or rounds to
-    /// zero.
-    pub(crate) fn density(self) -> Option<Density> {
-        let millibytes = self.index_bytes.saturating_mul(MILLIBYTES_PER_BYTE).checked_div(self.covered_rows)?;
-        NonZeroU64::new(millibytes).map(Density)
+    /// The bytes the covered rows take at `key_bytes` per key.
+    fn expected_bytes(self, key_bytes: KeyBytes) -> u64 {
+        let millionths = u128::from(self.covered_rows) * u128::from(self.keys_per_row.thousandths()) * u128::from(key_bytes.thousandths());
+        u64::try_from(millionths / MILLIONTHS).unwrap_or(u64::MAX)
     }
 
-    /// The reading against `baseline` as a degradation sample: the share of
-    /// the current density above the baseline, and the bytes above the size
-    /// the covered rows take at the baseline. `None` without a density.
-    pub(crate) fn sample(self, baseline: Density, profile: PolicyProfile) -> Option<DegradationSample> {
-        let current = self.density()?.millibytes_per_row();
-        let baseline_bytes = baseline.millibytes_per_row().saturating_mul(self.covered_rows) / MILLIBYTES_PER_BYTE;
+    /// The reading as a degradation sample against the size its covered rows
+    /// take at `key_bytes` per key: the share of the GIN's size above that
+    /// size, and the bytes above it. `None` when the GIN covers no row.
+    pub(crate) fn sample(self, key_bytes: KeyBytes, profile: PolicyProfile) -> Option<DegradationSample> {
+        if self.covered_rows == 0 {
+            return None;
+        }
+        let reclaimable_bytes = self.index_bytes.saturating_sub(self.expected_bytes(key_bytes));
         Some(DegradationSample {
             relation_bytes: self.index_bytes,
-            reclaimable_bytes: self.index_bytes.saturating_sub(baseline_bytes),
-            degraded_percent: percent(current.saturating_sub(baseline.millibytes_per_row()), current),
+            reclaimable_bytes,
+            degraded_percent: percent(reclaimable_bytes, self.index_bytes),
             threshold_percent: profile.index_free_percent,
         })
+    }
+
+    /// The bytes one key takes in the GIN as it stands, `None` when it covers
+    /// no row or its keys round to none.
+    pub(crate) fn key_bytes(self) -> Option<KeyBytes> {
+        let keys = u128::from(self.covered_rows) * u128::from(self.keys_per_row.thousandths());
+        let thousandths = (u128::from(self.index_bytes) * MILLIONTHS).checked_div(keys)?;
+        NonZeroU64::new(u64::try_from(thousandths).unwrap_or(u64::MAX)).map(KeyBytes::from_thousandths)
     }
 }
 
@@ -110,10 +106,11 @@ impl DensityReading {
 /// from either has no reading.
 pub(crate) fn density_readings<'pass>(sizes: &'pass [IndexSize], coverage: &'pass [GinCoverage]) -> impl Iterator<Item = DensityReading> + 'pass {
     coverage.iter().filter_map(|covered| {
-        sizes.iter().find(|size| size.target == covered.target).map(|size| DensityReading {
-            target: covered.target,
+        sizes.iter().find(|size| size.target == covered.column.gin()).map(|size| DensityReading {
+            column: covered.column,
             index_bytes: size.bytes,
             covered_rows: covered.covered_rows,
+            keys_per_row: covered.keys_per_row,
         })
     })
 }
@@ -128,18 +125,21 @@ pub(crate) async fn gin_coverage_readings(connection: &mut PgConnection, branch:
         .map(|row| {
             let column = DensityColumn::from_str(&row.try_get::<String, _>("attname")?).map_err(MaintenanceError::UnknownTarget)?;
             Ok(GinCoverageReading {
-                target: column.gin(),
+                column,
                 covered: RowCountReading::of(row.try_get(CoverageColumn::CoveredRows.to_string().as_str())?, CatalogCounter::CoveredRows, row)?,
+                heap_pages: non_negative(row.try_get(CoverageColumn::HeapPages.to_string().as_str())?, CatalogCounter::HeapPages)?,
             })
         })
         .collect()
 }
 
-/// The column the coverage statement projects besides `attname`.
+/// The columns the coverage statement projects besides `attname`.
 #[derive(Clone, Copy, Iden)]
 enum CoverageColumn {
     /// `reltuples * (1 - null_frac)`, rounded to a whole row.
     CoveredRows,
+    /// `relpages` of the heap, widened to `bigint`.
+    HeapPages,
 }
 
 /// A column of one aliased catalog.
@@ -156,6 +156,7 @@ fn gin_coverage_statement(branch: Branch) -> SelectStatement {
     statement
         .column((Alias::new("s"), Alias::new("attname")))
         .expr_as(cast_compound(covered, PostgresType::Bigint), CoverageColumn::CoveredRows)
+        .expr_as(cast_compound(catalog_column("c", "relpages"), PostgresType::Bigint), CoverageColumn::HeapPages)
         .from_as(Alias::new("pg_class"), Alias::new("c"))
         .join_as(
             JoinType::InnerJoin,
@@ -195,8 +196,9 @@ mod tests {
         action_measurement::ActionComparison,
         action_policy::{ActionVerdict, action_verdict},
         branch::Branch,
-        candidate::{MaintenanceTarget, index_target::IndexTarget},
-        gin_density::{Density, DensityReading, gin_coverage_statement},
+        candidate::{MaintenanceTarget, index_target::DensityColumn},
+        gin_density::{DensityReading, gin_coverage_statement},
+        gin_keys::{KeyBytes, KeysPerRow, default_key_bytes},
         policy::PolicyProfile,
     };
     use andromeda_configuration::schema::database::maintenance::MaintenanceProfile;
@@ -206,108 +208,141 @@ mod tests {
 
     const MIB: u64 = 1_048_576;
 
-    fn responsive() -> PolicyProfile {
-        PolicyProfile::from_profile(MaintenanceProfile::Responsive)
+    fn conservative() -> PolicyProfile {
+        PolicyProfile::from_profile(MaintenanceProfile::Conservative)
     }
 
-    fn density(millibytes_per_row: u64) -> Density {
-        Density::from_millibytes(NonZeroU64::new(millibytes_per_row).expect("a test density is positive"))
+    fn keys(thousandths: u64) -> KeysPerRow {
+        KeysPerRow::from_thousandths(NonZeroU64::new(thousandths).expect("a test key count is positive"))
     }
 
-    /// A reading of 1,000 covered rows whose density is `millibytes_per_row`.
-    const fn reading(millibytes_per_row: u64) -> DensityReading {
+    fn key_bytes(thousandths: u64) -> KeyBytes {
+        KeyBytes::from_thousandths(NonZeroU64::new(thousandths).expect("a test key size is positive"))
+    }
+
+    fn identifier_default() -> KeyBytes {
+        default_key_bytes(DensityColumn::Id).expect("the identifier trigram GIN has a default")
+    }
+
+    /// An identifier trigram GIN of `index_bytes` covering `covered_rows` rows
+    /// of `keys_per_row` thousandths of a trigram each.
+    const fn identifiers(index_bytes: u64, covered_rows: u64, keys_per_row: u64) -> DensityReading {
         DensityReading {
-            target: IndexTarget::IdxCaValueObject,
-            index_bytes: millibytes_per_row,
-            covered_rows: 1_000,
+            column: DensityColumn::Id,
+            index_bytes,
+            covered_rows,
+            keys_per_row: KeysPerRow::from_thousandths(NonZeroU64::MIN.saturating_add(keys_per_row - 1)),
         }
     }
 
-    /// `100 * (1 - baseline / current)`: 2.0 against 4.0 bytes per row is 50.
+    /// 2,047,710 identifiers of 124.198 trigrams take 381,482,229 bytes at the
+    /// default 1.5 bytes per trigram; the GIN holds 1,139,130,368, 66 % of
+    /// them above that. Rebuilt from every row the GIN measured 455,491,584
+    /// bytes, 1.791 per trigram, against which it is 60 % degraded.
     #[test]
-    fn density_degradation_follows_the_baseline() {
-        let baseline = density(2_000);
-        let degraded = |current| reading(current).sample(baseline, responsive()).map(|sample| sample.degraded_percent);
-        assert_eq!(degraded(4_000), Some(50));
-        assert_eq!(degraded(2_000), Some(0));
-        assert_eq!(degraded(1_500), Some(0), "a GIN denser than its baseline is not degraded");
+    fn a_large_identifier_gin_reads_its_degradation_at_the_default_close_to_what_a_rebuild_measures() {
+        let reading = identifiers(1_139_130_368, 2_047_710, 124_198);
+        let sample = reading.sample(identifier_default(), conservative()).expect("the GIN covers rows");
+        assert_eq!(sample.degraded_percent, 66);
+        assert_eq!(sample.reclaimable_bytes, 757_648_139);
+        assert_eq!(sample.relation_bytes, 1_139_130_368);
+        assert_eq!(sample.threshold_percent, conservative().index_free_percent);
+        let rebuilt = identifiers(455_491_584, 2_047_710, 124_198);
+        let measured = rebuilt.key_bytes().expect("the rebuilt GIN covers rows");
+        assert_eq!(measured, key_bytes(1_791));
+        assert_eq!(reading.sample(measured, conservative()).map(|sample| sample.degraded_percent), Some(60));
     }
 
-    /// 400 MiB is 419,430,400 bytes; 1,000,000 rows at 200 bytes each take
-    /// 200,000,000.
+    /// 759,319 identifiers of 45.086 trigrams, 108,781,568 bytes: 52 % at the
+    /// default and 49 % at the 1.612 bytes per trigram a rebuild measured. The
+    /// default crosses the conservative 50 % threshold the measurement stays
+    /// under, and the rebuild it queues measures the GIN.
     #[test]
-    fn density_reclaim_is_bytes_above_the_baseline_layout() {
-        let reading = DensityReading {
-            target: IndexTarget::IdxCaValueObject,
-            index_bytes: 400 * MIB,
-            covered_rows: 1_000_000,
-        };
-        let sample = reading.sample(density(200_000), responsive()).expect("the GIN covers rows");
-        assert_eq!(sample.reclaimable_bytes, 219_430_400);
-        assert_eq!(sample.relation_bytes, 419_430_400);
-        assert_eq!(sample.threshold_percent, responsive().index_free_percent);
+    fn a_default_below_what_a_rebuild_measures_overstates_degradation_by_a_few_points() {
+        let reading = identifiers(108_781_568, 759_319, 45_086);
+        let at = |bytes| reading.sample(bytes, conservative()).map(|sample| sample.degraded_percent);
+        assert_eq!(at(identifier_default()), Some(52));
+        assert_eq!(at(key_bytes(1_612)), Some(49));
     }
 
-    /// The rebuild reclaims 1 MiB against the responsive 16 MiB floor.
+    /// 938,585 identifiers of 36.478 trigrams take 51,356,555 bytes at the
+    /// default; 91,471,872 bytes are 43 % above that, as they are at the
+    /// 1.514 a rebuild measured.
     #[test]
-    fn low_reclaim_rebuild_resets_the_baseline() {
-        let target = IndexTarget::IdxCaValueLongTextTrgm;
+    fn a_gin_under_the_threshold_at_its_rebuilt_size_reads_under_it_at_the_default() {
+        let reading = identifiers(91_471_872, 938_585, 36_478);
+        assert_eq!(
+            reading.sample(identifier_default(), conservative()).map(|sample| sample.degraded_percent),
+            Some(43)
+        );
+        assert_eq!(reading.sample(key_bytes(1_514), conservative()).map(|sample| sample.degraded_percent), Some(43));
+    }
+
+    /// The bytes per key are measured to a thousandth of a byte, rounded down,
+    /// so the rebuilt GIN stands 1,802 bytes above the 455,489,782 its rows
+    /// take at the 1.791 measured: no whole percent of it.
+    #[test]
+    fn a_gin_at_the_bytes_per_key_its_rebuild_measured_is_not_degraded() {
+        let rebuilt = identifiers(455_491_584, 2_047_710, 124_198);
+        let measured = rebuilt.key_bytes().expect("the rebuilt GIN covers rows");
+        let sample = rebuilt.sample(measured, conservative()).expect("the rebuilt GIN covers rows");
+        assert_eq!((sample.degraded_percent, sample.reclaimable_bytes), (0, 1_802));
+    }
+
+    #[test]
+    fn values_with_more_keys_raise_the_size_a_gin_is_judged_against() {
+        let before = identifiers(200 * MIB, 1_000_000, 100_000);
+        let measured = before.key_bytes().expect("the GIN covers rows");
+        let longer = identifiers(400 * MIB, 1_000_000, 200_000);
+        assert_eq!(longer.sample(measured, conservative()).map(|sample| sample.degraded_percent), Some(0));
+        let bloated = identifiers(400 * MIB, 1_000_000, 100_000);
+        assert_eq!(bloated.sample(measured, conservative()).map(|sample| sample.degraded_percent), Some(50));
+    }
+
+    #[test]
+    fn a_gin_smaller_than_its_covered_rows_take_is_not_degraded() {
+        let reading = identifiers(10 * MIB, 1_000_000, 10_000);
+        let sample = reading.sample(identifier_default(), conservative()).expect("the GIN covers rows");
+        assert_eq!((sample.degraded_percent, sample.reclaimable_bytes), (0, 0));
+    }
+
+    /// A `null_frac` of 1.0 leaves no covered row.
+    #[test]
+    fn zero_covered_rows_yields_no_sample_and_no_bytes_per_key() {
+        let reading = identifiers(64 * MIB, 0, 36_000);
+        assert_eq!(reading.sample(identifier_default(), conservative()), None);
+        assert_eq!(reading.key_bytes(), None);
+    }
+
+    /// The rebuild reclaims 1 MiB against the conservative 64 MiB floor, and
+    /// the bytes per key it measures judge the GIN as it stands after it.
+    #[test]
+    fn a_low_reclaim_rebuild_is_ineffective_and_still_measures_the_gin() {
         let comparison = ActionComparison::Index {
             before_bytes: 101 * MIB,
             after_bytes: 100 * MIB,
         };
         assert_eq!(
-            action_verdict(responsive(), MaintenanceTarget::Index(target), comparison),
+            action_verdict(conservative(), MaintenanceTarget::Index(DensityColumn::ValueLongText.gin()), comparison),
             ActionVerdict::Ineffective
         );
         let rebuilt = DensityReading {
-            target,
+            column: DensityColumn::ValueLongText,
             index_bytes: 100 * MIB,
             covered_rows: 50_000,
+            keys_per_row: keys(400_000),
         };
-        let baseline = rebuilt.density().expect("the rebuilt GIN covers rows");
-        assert_eq!(baseline, density(2_097_152));
-        let sample = rebuilt.sample(baseline, responsive()).expect("the rebuilt GIN covers rows");
-        assert_eq!((sample.degraded_percent, sample.reclaimable_bytes), (0, 0));
-        assert_eq!(
-            action_verdict(responsive(), MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber), comparison),
-            ActionVerdict::Effective,
-            "a probed index is rebuilt on measured free space, so its rebuild is never judged by its reclaim"
-        );
-    }
-
-    /// 49,496,064 bytes over 850,000 stored rows is 58.230 bytes per row;
-    /// `100 * (58,230 - 31,900) / 58,230` is 45.2.
-    #[test]
-    fn a_density_over_the_stored_covered_rows_reads_its_degradation_against_the_baseline() {
-        let reading = DensityReading {
-            target: IndexTarget::IdxCaSubEqKeys,
-            index_bytes: 49_496_064,
-            covered_rows: 850_000,
-        };
-        assert_eq!(reading.density(), Some(density(58_230)));
-        let sample = reading.sample(density(31_900), responsive()).expect("the GIN covers rows");
-        assert_eq!(sample.degraded_percent, 45);
-        assert_eq!(sample.reclaimable_bytes, 22_381_064);
-    }
-
-    /// A `null_frac` of 1.0 leaves no covered row.
-    #[test]
-    fn zero_covered_rows_yields_no_sample() {
-        let reading = DensityReading {
-            target: IndexTarget::IdxCaSubEqKeys,
-            index_bytes: 64 * MIB,
-            covered_rows: 0,
-        };
-        assert_eq!(reading.density(), None);
-        assert_eq!(reading.sample(density(2_000), responsive()), None);
+        let measured = rebuilt.key_bytes().expect("the rebuilt GIN covers rows");
+        assert_eq!(measured, key_bytes(5_242));
+        assert_eq!(rebuilt.sample(measured, conservative()).map(|sample| sample.degraded_percent), Some(0));
     }
 
     #[test]
-    fn density_statement_reads_null_frac_reltuples_and_the_latest_analyze_and_vacuum() {
+    fn density_statement_reads_null_frac_reltuples_relpages_and_the_latest_analyze_and_vacuum() {
         let sql = gin_coverage_statement(Branch::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""n"."nspname" = 'public'"#), "{sql}");
         assert!(sql.contains(r#"("c"."reltuples" * (1 - "s"."null_frac"))::bigint AS "covered_rows""#), "{sql}");
+        assert!(sql.contains(r#"("c"."relpages")::bigint AS "heap_pages""#), "{sql}");
         assert!(sql.contains(r#""s"."inherited" = FALSE"#), "{sql}");
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "a table never analyzed covers nothing: {sql}");
         assert!(sql.contains(r#"INNER JOIN "pg_stat_user_tables" AS "t" ON "t"."relid" = "c"."oid""#), "{sql}");

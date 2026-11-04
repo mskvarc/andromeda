@@ -90,6 +90,7 @@ pub mod timescale_job;
 pub mod transaction;
 pub mod transaction_id;
 pub mod trigger_switch;
+pub mod trigram;
 pub mod unnest;
 
 #[cfg(test)]

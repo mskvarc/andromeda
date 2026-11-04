@@ -34,10 +34,16 @@
 -- rebuild that reclaimed less than the profile's reclaim floor, and a backoff
 -- doubling with `consecutive_failures` (capped at 24 hours) after a failure.
 --
--- `baseline_density` is a density-measured GIN's bytes per covered row, in
--- thousandths of a byte, recorded on its first observation and again after
--- each successful rebuild. It stays NULL for every other target, and for a GIN
--- whose covered rows the statistics do not yet describe.
+-- A density-measured GIN is judged against the size its covered rows take at
+-- its keys per row and its bytes per key, and its degradation is its size
+-- above that. `keys_per_row` is its keys per covered row, in thousandths of a
+-- key, sampled from its table whenever `analyzed_rows` is recorded, so values
+-- that yield more keys raise the size the GIN is judged against instead of
+-- reading as degradation. `key_bytes` is its bytes per key, in thousandths of
+-- a byte, measured after each successful rebuild, and on its first
+-- observation for a GIN of a shape with no default; until it is measured, a
+-- trigram GIN is judged at its shape's default. Both stay NULL for every
+-- other target.
 --
 -- `analyzed_rows` is the row count a target is judged by, as its table's
 -- latest analyze left it: the live rows of a heap, the rows holding a value in
@@ -143,7 +149,8 @@ create table postgresql_maintenance_targets (
     last_after_bytes bigint,
     last_dead_tuples_before bigint,
     last_dead_tuples_after bigint,
-    baseline_density bigint,
+    keys_per_row bigint,
+    key_bytes bigint,
     analyzed_rows bigint,
     last_relation_bytes bigint,
     last_reclaimable_bytes bigint,
@@ -165,7 +172,8 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0)),
-    constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0),
+    constraint chk_postgresql_maintenance_targets_keys_per_row_positive check (keys_per_row is null or keys_per_row > 0),
+    constraint chk_postgresql_maintenance_targets_key_bytes_positive check (key_bytes is null or key_bytes > 0),
     constraint chk_postgresql_maintenance_targets_analyzed_rows check ((analyzed_rows is null) = (rows_analyzed_at is null) and (analyzed_rows is null or analyzed_rows >= 0)),
     constraint chk_postgresql_maintenance_targets_sample_non_negative check ((last_relation_bytes is null or last_relation_bytes >= 0) and (last_reclaimable_bytes is null or last_reclaimable_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_percentages check ((last_degraded_percent is null or last_degraded_percent between 0 and 100) and (last_threshold_percent is null or last_threshold_percent between 0 and 100)),

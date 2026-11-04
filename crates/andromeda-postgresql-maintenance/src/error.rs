@@ -58,13 +58,16 @@ pub enum MaintenanceError {
     /// Durable index-probe state names a target that is not an index.
     #[error("platform maintenance state records an index probe for non-index target '{}'", .0.label())]
     ProbeTargetNotAnIndex(MaintenanceTargetCode),
-    /// Durable state records a density baseline that is not positive, or on a
-    /// target no density measures.
-    #[error("platform maintenance state records an invalid density baseline {value} for '{}'", .target.label())]
-    InvalidDensityBaseline {
-        /// The target the baseline is recorded on.
+    /// Durable index-key layout state names a target no density measures.
+    #[error("platform maintenance state records a gin key layout for '{}', which no density measures", .0.label())]
+    KeyLayoutTargetNotDensityMeasured(MaintenanceTargetCode),
+    /// Durable state records keys per row or bytes per key that are not
+    /// positive.
+    #[error("platform maintenance state records an invalid gin key layout value {value} for '{}'", .target.label())]
+    InvalidKeyLayout {
+        /// The target the value is recorded on.
         target: MaintenanceTargetCode,
-        /// The stored baseline.
+        /// The stored value.
         value: i64,
     },
     /// A catalog statement selecting branch schemas returned a schema that is
