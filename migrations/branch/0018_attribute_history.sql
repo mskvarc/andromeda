@@ -169,15 +169,24 @@ with (
 -- observation in `createdAt`, `modifiedAt` and, when observed, `observedAt`
 -- (the broker stamps the first two on every instance, clause 4.8), a
 -- deletion in `deletedAt` alone.
+--
+-- The `createdAt` and `modifiedAt` keys ascend. A stream receives the write
+-- instant in increasing order, so a new entry lands at the end of its
+-- stream's run, and PostgreSQL splits a full leaf of keys no wider than two
+-- eight-byte columns at that entry, leaving the left page full. A descending
+-- key places it at the start of the run, where every split halves the page.
+-- The `observedAt` and `deletedAt` keys are too wide for that split choice,
+-- so their direction leaves their size unchanged, and they descend in the
+-- order a `lastN` reads.
 create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc, recorded_at desc, write_id desc, write_ordinal desc)
 where
     observed_at is not null;
 
-create index idx_attribute_history_stream_created_at on attribute_history (stream_key, created_at desc)
+create index idx_attribute_history_stream_created_at on attribute_history (stream_key, created_at)
 where
     created_at is not null;
 
-create index idx_attribute_history_stream_modified_at on attribute_history (stream_key, modified_at desc)
+create index idx_attribute_history_stream_modified_at on attribute_history (stream_key, modified_at)
 where
     modified_at is not null;
 
