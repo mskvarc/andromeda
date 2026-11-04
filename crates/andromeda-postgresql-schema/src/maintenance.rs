@@ -75,9 +75,13 @@ pub enum PostgresqlMaintenanceTargets {
     /// index target.
     LastDeadTuplesAfter,
     /// A density-measured GIN's keys per covered row in thousandths of a key,
-    /// sampled from its table whenever `analyzed_rows` is recorded; NULL for
-    /// every other target and until a visit samples it.
+    /// sampled from its table once for the rows of each analyze; NULL for
+    /// every other target and until a sample reads a covered row.
     KeysPerRow,
+    /// The instant of the analyze whose covered rows a density-measured GIN's
+    /// keys were last sampled for, whether or not the sample read a row; NULL
+    /// for every other target and before the first sample.
+    KeysAnalyzedAt,
     /// A density-measured GIN's bytes per key in thousandths of a byte,
     /// measured after each successful rebuild, or on its first observation for
     /// a GIN of a shape with no default; NULL for every other target and until
@@ -125,6 +129,7 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::FirstBreachAt.to_string(), "first_breach_at");
         assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
         assert_eq!(PostgresqlMaintenanceTargets::KeysPerRow.to_string(), "keys_per_row");
+        assert_eq!(PostgresqlMaintenanceTargets::KeysAnalyzedAt.to_string(), "keys_analyzed_at");
         assert_eq!(PostgresqlMaintenanceTargets::KeyBytes.to_string(), "key_bytes");
         assert_eq!(PostgresqlMaintenanceTargets::AnalyzedRows.to_string(), "analyzed_rows");
         assert_eq!(PostgresqlMaintenanceTargets::RowsAnalyzedAt.to_string(), "rows_analyzed_at");

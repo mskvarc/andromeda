@@ -163,7 +163,7 @@ pub(crate) async fn execute_pending(
                     if let MaintenanceTarget::Index(index) = target
                         && let Some(column) = index.density_column()
                     {
-                        measure_rebuilt_key_bytes(platform, tenant_connection, tenant, branch, column, profile).await?;
+                        measure_rebuilt_key_bytes(platform, tenant_connection, tenant, branch, column).await?;
                     }
                 }
                 ActionComparison::Heap { before, after } => {
@@ -204,10 +204,9 @@ async fn measure_rebuilt_key_bytes(
     tenant: &RegisteredTenant,
     branch: Branch,
     column: DensityColumn,
-    profile: PolicyProfile,
 ) -> Result<(), MaintenanceError> {
     let sizes = inspection::index_sizes(tenant_connection, branch).await?;
-    let coverage = density_sampling::settled_coverage(platform, tenant_connection, tenant, branch, &sizes, profile).await?;
+    let coverage = density_sampling::settled_coverage(platform, tenant_connection, tenant, branch).await?;
     let key_bytes = gin_density::density_readings(&sizes, &coverage)
         .find(|reading| reading.column == column)
         .and_then(DensityReading::key_bytes);

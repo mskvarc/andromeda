@@ -11,9 +11,9 @@
 //! the keys per row its table holds now and at the bytes per key a rebuild of
 //! it measures, and its degradation is its size above that.
 //!
-//! The keys per row are sampled from the GIN's table each time its analyzed
-//! row count is recorded, so values that yield more keys raise the size a GIN
-//! is judged against instead of reading as degradation. The bytes per key are
+//! The keys per row are sampled from the GIN's table once for the rows of each
+//! analyze, so values that yield more keys raise the size a GIN is judged
+//! against instead of reading as degradation. The bytes per key are
 //! measured on the GIN after each rebuild. Before its first rebuild a GIN takes
 //! the default of its shape, set at the low end of what rebuilt GINs of that
 //! shape measure: a default below the truth overstates degradation by a few

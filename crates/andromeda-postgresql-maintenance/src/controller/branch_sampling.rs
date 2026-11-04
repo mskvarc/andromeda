@@ -69,7 +69,7 @@ pub(crate) async fn sample_branches(
         let partiality = columnstore_partiality::partiality_samples(connection, branch).await?;
         let rebuilds = rowstore_rebuild::rebuild_samples(connection, branch, profile).await?;
         let rights = action_rights::history_rights(platform, connection, tenant, visit, &partiality, &rebuilds, profile).await?;
-        let coverage = density_sampling::settled_coverage(platform, connection, tenant, branch, &index_sizes, profile).await?;
+        let coverage = density_sampling::settled_coverage(platform, connection, tenant, branch).await?;
         let probe_states = target_record::index_probe_states(platform, tenant, branch).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, branch, &index_sizes, &coverage, profile).await?;
         report_stale_observed_heaps(tenant, branch, &statistics);

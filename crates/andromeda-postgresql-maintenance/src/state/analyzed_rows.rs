@@ -65,25 +65,6 @@ pub(crate) async fn stored_analyzed_rows(
         .map(StoredAnalyzedRows)
 }
 
-/// Whether a reading recorded the analyzed rows a target is judged by.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RowsChange {
-    /// The reading's rows replaced the stored ones.
-    Recorded,
-    /// The stored rows stand.
-    Kept,
-}
-
-/// The analyzed rows a target is judged by, and whether the reading that
-/// settled them recorded them.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SettledRows {
-    /// The rows.
-    pub(crate) rows: AnalyzedRows,
-    /// Whether the reading recorded them.
-    pub(crate) change: RowsChange,
-}
-
 /// The analyzed rows to judge `row` by: `reading`'s when it replaces `stored`,
 /// which are then recorded in its place, else `stored`. `None` until the
 /// target is read after its table's first analyze.
@@ -93,18 +74,12 @@ pub(crate) async fn settled_rows(
     row: BranchTarget,
     reading: RowCountReading,
     stored: Option<AnalyzedRows>,
-) -> Result<Option<SettledRows>, MaintenanceError> {
+) -> Result<Option<AnalyzedRows>, MaintenanceError> {
     let Some(replacement) = reading.replacement(stored) else {
-        return Ok(stored.map(|rows| SettledRows {
-            rows,
-            change: RowsChange::Kept,
-        }));
+        return Ok(stored);
     };
     analyzed_rows_upsert(tenant, row, replacement)?.to_query().execute(connection).await?;
-    Ok(Some(SettledRows {
-        rows: replacement,
-        change: RowsChange::Recorded,
-    }))
+    Ok(Some(replacement))
 }
 
 /// The analyzed rows upsert, creating the target row on its first reading and
