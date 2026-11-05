@@ -214,7 +214,7 @@ fn a_pooled_tenant_pool_past_the_direct_one_is_refused_an_equal_one_accepted_and
     config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(3);
     assert_accepted(&config);
     config.database.pooler = Some(PoolerConfig {
-        url: url!("postgres://postgres:postgres@localhost:6432/postgres"),
+        url: url!("postgres://andromeda:andromeda@localhost:6432/andromeda"),
         max_connections_per_tenant: NonZeroU32::MIN.saturating_add(4),
     });
     assert_eq!(

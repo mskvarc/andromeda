@@ -47,7 +47,7 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: wait_for DESCRIPTION EXPECTED SECONDS DATABASE QUERY
@@ -73,11 +73,11 @@ for _ in $(seq 1 120); do
 	fi
 	sleep 0.5
 done
-sql postgres "CREATE DATABASE andromeda_tenant_orphan_0badc0de" > /dev/null
+sql andromeda "CREATE DATABASE andromeda_tenant_orphan_0badc0de" > /dev/null
 
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+	-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=automatic \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
 	-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \
@@ -94,7 +94,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $te
 	--data '{"id":"urn:ngsi-ld:Probe:1","type":"Probe","temperature":[{"type":"Property","value":1,"observedAt":"2026-10-17T10:00:00Z"}]}' \
 	"$base/temporal/entities")"
 expect "create temporal entity" 201 "$status"
-db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
+db="$(sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
 # History is partitioned on the write clock, so rows recorded sixty days ago
 # land in a chunk past the thirty-day horizon; eight instances of the one
 # stream make it pay to convert rather than stay in the rowstore.
@@ -116,7 +116,7 @@ expect "rows readable after recompression" 9 "$(sql "$db" 'SELECT count(*) FROM 
 
 # Target 35 is attribute_history_columnstore, snapshot key 0 the live
 # branch; result 1 is succeeded.
-wait_for "the platform records the recompression as succeeded" 1 30 postgres \
+wait_for "the platform records the recompression as succeeded" 1 30 andromeda \
 	"SELECT coalesce(string_agg(last_action_result::text, ','), 'none') FROM postgresql_maintenance_targets WHERE target = 35 AND snapshot_key = 0"
 
 logs="$(docker logs "$broker" 2>&1)"

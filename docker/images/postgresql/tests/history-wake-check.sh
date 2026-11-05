@@ -55,7 +55,7 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: wait_for DESCRIPTION EXPECTED SECONDS DATABASE QUERY
@@ -92,7 +92,7 @@ run_case() {
 
 	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+		-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=observe \
 		-e "ANDROMEDA__TEMPORAL__STORAGE__RETENTION__MODE=$3" \
 		-e ANDROMEDA__TEMPORAL__STORAGE__RETENTION__DELETE_AFTER=30days \
@@ -113,7 +113,7 @@ run_case() {
 		--data '{"id":"urn:ngsi-ld:Probe:1","type":"Probe","temperature":[{"type":"Property","value":1,"observedAt":"2026-10-17T10:00:00Z"}]}' \
 		"$base/temporal/entities")"
 	expect "$1: create temporal entity" 201 "$status"
-	db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$tenant'")"
+	db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = '$tenant'")"
 	# History is partitioned on the write clock, so rows recorded sixty days ago
 	# land in a chunk past both horizons; eight instances of the one stream make
 	# it pay to convert rather than stay in the rowstore.
@@ -149,20 +149,20 @@ check_log() {
 
 run_case retention "$image" enabled
 wait_for "retention: the wake loop loads the tenant and the aged chunk is dropped" none 300 "$db" "$aged_chunks"
-wait_for "retention: the unloaded tenant's next wake is weeks ahead" weeks-ahead 300 postgres "$wake_state"
+wait_for "retention: the unloaded tenant's next wake is weeks ahead" weeks-ahead 300 andromeda "$wake_state"
 check_log retention
 
 run_case conversion "$image" disabled
 wait_for "conversion: the wake loop loads the tenant and the aged chunk is converted" true 300 "$db" "$aged_chunks"
-wait_for "conversion: the unloaded tenant's next wake is weeks ahead" weeks-ahead 300 postgres "$wake_state"
+wait_for "conversion: the unloaded tenant's next wake is weeks ahead" weeks-ahead 300 andromeda "$wake_state"
 check_log conversion
 
 if [ -n "$apache_image" ]; then
 	run_case apache "$apache_image" disabled
-	wait_for "apache: the reconciliation probe records no wake" none 300 postgres "$wake_state"
+	wait_for "apache: the reconciliation probe records no wake" none 300 andromeda "$wake_state"
 	sleep 60
 	expect "apache: the aged chunk stays in the rowstore" false "$(sql "$db" "$aged_chunks")"
-	expect "apache: still no wake" none "$(sql postgres "$wake_state")"
+	expect "apache: still no wake" none "$(sql andromeda "$wake_state")"
 	check_log apache
 fi
 

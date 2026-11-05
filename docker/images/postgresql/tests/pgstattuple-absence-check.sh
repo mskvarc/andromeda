@@ -51,7 +51,7 @@ expect() {
 
 # usage: sql QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d postgres -c "$1"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d andromeda -c "$1"
 }
 
 # usage: wait_for DESCRIPTION EXPECTED SECONDS QUERY
@@ -88,7 +88,7 @@ done
 
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+	-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=automatic \
 	-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
 	-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \
@@ -147,7 +147,7 @@ expect "an UPDATE into the converted chunk leaves it partial" 9 "$(sql "$aged_st
 # candidate, and the absence of probes asserted below would then prove
 # nothing. A relation or index still short after the cap ends the check here
 # rather than after the fifteen-minute wait.
-docker exec -d -u postgres "$database" psql -XAtq -d postgres -c "SET application_name = 'horizon-hold'; SELECT pg_sleep(3600)"
+docker exec -d -u postgres "$database" psql -U andromeda -XAtq -d andromeda -c "SET application_name = 'horizon-hold'; SELECT pg_sleep(3600)"
 for _ in $(seq 1 20); do
 	[ "$(sql "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'horizon-hold' AND state = 'active'")" = 1 ] && break
 	sleep 0.5

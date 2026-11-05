@@ -57,7 +57,10 @@ pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -
     TenantDatabaseName::from(format!("{prefix}_{trimmed}_{short_hash}"))
 }
 
-/// Create the named database if it does not already exist.
+/// Create the named database if it does not already exist, from a connection
+/// to the database `base_url` names. `CREATE DATABASE` runs from any database,
+/// and a tenant's database is never the one `base_url` names, so the server
+/// needs no database set aside for administration.
 ///
 /// No locale or collation is specified, so the database inherits the cluster's.
 /// That is deliberate: every column whose comparison decides NGSI-LD behaviour
@@ -72,10 +75,8 @@ pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -
 /// cannot be opened, when the existence probe or the `CREATE DATABASE` fails,
 /// or when the connection cannot be closed cleanly.
 pub async fn create_database_if_missing(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
-    let admin_database = TenantDatabaseName::from("postgres".to_owned());
-    let admin_url = base_url.with_database_name(&admin_database);
     let database_name = database_name.as_str();
-    let mut conn = PgConnection::connect(admin_url.as_str()).await?;
+    let mut conn = PgConnection::connect(base_url.as_ref().as_str()).await?;
     let exists = database_exists_statement(database_name).to_query().fetch_optional(&mut conn).await?.is_some();
     if !exists {
         create_database_with_retry(&mut conn, database_name).await?;
@@ -93,7 +94,8 @@ pub enum DatabaseDrop {
     InUse,
 }
 
-/// Drop the named database unless a session is connected to it.
+/// Drop the named database unless a session is connected to it, from a
+/// connection to the database `base_url` names, which is never a tenant's.
 ///
 /// The drop never forces sessions out, so a database any broker still holds a
 /// connection to is left in place (SQLSTATE 55006, `object_in_use`).
@@ -104,8 +106,7 @@ pub enum DatabaseDrop {
 /// cannot be opened or closed, or when the drop fails for any reason other
 /// than a connected session.
 pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<DatabaseDrop, ContextStoreError> {
-    let admin_url = base_url.with_database_name(&TenantDatabaseName::from("postgres".to_owned()));
-    let mut conn = PgConnection::connect(admin_url.as_str()).await?;
+    let mut conn = PgConnection::connect(base_url.as_ref().as_str()).await?;
     let outcome = match DatabaseDefinition::drop(Alias::new(database_name.as_str()), ConnectedSessions::Refuse)
         .to_query()
         .execute(&mut conn)

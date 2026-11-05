@@ -116,7 +116,7 @@ impl Default for DatabaseConfig {
     fn default() -> DatabaseConfig {
         DatabaseConfig {
             // Compile-time validated, so the built-in default carries no runtime parse or panic.
-            url: url!("postgres://postgres:postgres@localhost:5432/postgres"),
+            url: url!("postgres://andromeda:andromeda@localhost:5432/andromeda"),
             platform_max_connections: NonZeroU32::MIN.saturating_add(31),
             write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
@@ -187,7 +187,10 @@ mod tests {
 
     #[test]
     fn the_built_in_default_database_url_is_valid() {
-        pretty_assertions::assert_eq!(DatabaseConfig::default().url.as_str(), "postgres://postgres:postgres@localhost:5432/postgres");
+        pretty_assertions::assert_eq!(
+            DatabaseConfig::default().url.as_str(),
+            "postgres://andromeda:andromeda@localhost:5432/andromeda"
+        );
     }
 
     fn pooled(max_connections_per_tenant: NonZeroU32) -> DatabaseConfig {

@@ -43,7 +43,7 @@ impl Default for PoolerConfig {
     // with a write while the proxy does the real backend pooling.
     fn default() -> PoolerConfig {
         PoolerConfig {
-            url: url!("postgres://postgres:postgres@localhost:6432/postgres"),
+            url: url!("postgres://andromeda:andromeda@localhost:6432/andromeda"),
             max_connections_per_tenant: NonZeroU32::MIN.saturating_add(1),
         }
     }

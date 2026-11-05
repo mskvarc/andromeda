@@ -3,18 +3,17 @@ services:
     image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-postgresql:local}
     build:
       context: ../../images/postgresql
+    # The broker's default database.url names the image's default role and database with this password.
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
-      # A TimescaleDB scheduler per tenant database, plus their running policy jobs.
-      TS_TUNE_MAX_BG_WORKERS: "128"
+      POSTGRES_PASSWORD: andromeda
     # ETSI keeps many tenant pools alive.
     command: ["postgres", "-c", "max_connections=300"]
+    # Dynamic shared memory grows with the tenant databases; Docker's default is 64 MB.
+    shm_size: 1gb
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U andromeda"]
       interval: 2s
       timeout: 5s
       retries: 30

@@ -46,7 +46,7 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 docker network create "$network" > /dev/null
@@ -59,7 +59,7 @@ for _ in $(seq 1 120); do
 done
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+	-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 	"$broker_image" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 for _ in $(seq 1 120); do
@@ -74,7 +74,7 @@ status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $te
 	--data '{"id":"urn:ngsi-ld:Probe:1","type":"Probe","temperature":[{"type":"Property","value":1,"observedAt":"2026-10-17T10:00:00Z"}]}' \
 	"$base/temporal/entities")"
 expect "create temporal entity" 201 "$status"
-db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
+db="$(sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
 
 expect "configured sparse indexes of attribute_history" \
 	"bloom(generated_instance_id) bloom(verbatim_instance_id) minmax(created_at) minmax(deleted_at) minmax(modified_at) minmax(observed_at)" \
@@ -122,9 +122,9 @@ expect "TimescaleDB jobs on attribute_history" 0 \
 	"$(sql "$db" "SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'attribute_history'")"
 
 # The default request timeout of 30 s plus the 5 s margin.
-for database_name in "$db" postgres; do
+for database_name in "$db" andromeda; do
 	expect "$database_name session defaults" "client_connection_check_interval=1000ms statement_timeout=35000ms synchronous_commit=on timescaledb.enable_chunk_skipping=on" \
-		"$(sql postgres "SELECT string_agg(setting, ' ' ORDER BY setting) FROM pg_db_role_setting, unnest(setconfig) AS setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '$database_name')")"
+		"$(sql andromeda "SELECT string_agg(setting, ' ' ORDER BY setting) FROM pg_db_role_setting, unnest(setconfig) AS setting WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '$database_name')")"
 done
 expect "a tenant session runs under the installed defaults" "on 35s" "$(sql "$db" "SELECT current_setting('synchronous_commit') || ' ' || current_setting('statement_timeout')")"
 

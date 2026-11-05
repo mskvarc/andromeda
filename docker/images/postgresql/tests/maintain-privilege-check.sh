@@ -50,7 +50,7 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: wait_for DESCRIPTION EXPECTED SECONDS DATABASE QUERY
@@ -124,12 +124,12 @@ for _ in $(seq 1 120); do
 	sleep 0.5
 done
 
-start_broker "$setup" "postgres://postgres:check@$database:5432/postgres" disabled
+start_broker "$setup" "postgres://andromeda:check@$database:5432/andromeda" disabled
 status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
 	--data '{"id":"urn:ngsi-ld:Probe:0","type":"Probe","temperature":{"type":"Property","value":0}}' \
 	"$base/entities")"
 expect "create the tenant's first entity" 201 "$status"
-db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
+db="$(sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
 sql "$db" "ALTER TABLE entities SET (autovacuum_enabled = false); ALTER TABLE attribute_census SET (autovacuum_enabled = false); ALTER TABLE current_attributes SET (autovacuum_enabled = false)" > /dev/null
 for first in 1 501 1001 1501; do
 	expect "create entities $first to $((first + 499))" 201 "$(create_batch "$first" "$((first + 499))")"
@@ -149,28 +149,28 @@ sql "$db" "UPDATE entities SET modified_at = modified_at; UPDATE entities SET mo
 # a heap to sample; entities stays unanalyzed for its stale statistics.
 sql "$db" "ANALYZE current_attributes" > /dev/null
 
-sql postgres "CREATE ROLE $role LOGIN PASSWORD 'check'; GRANT pg_read_all_stats, pg_stat_scan_tables TO $role" > /dev/null
-grant_role postgres
+sql andromeda "CREATE ROLE $role LOGIN PASSWORD 'check'; GRANT pg_read_all_stats, pg_stat_scan_tables TO $role" > /dev/null
+grant_role andromeda
 grant_role "$db"
 sql "$db" "REVOKE MAINTAIN ON entities FROM $role" > /dev/null
 expect "the role lacks MAINTAIN on the tenant's entities only" "f,t" \
 	"$(sql "$db" "SELECT concat_ws(',', has_table_privilege('$role', 'public.entities', 'MAINTAIN'), has_table_privilege('$role', 'public.current_attributes', 'MAINTAIN'))")"
 
-start_broker "$broker" "postgres://$role:check@$database:5432/postgres" automatic
-key="$(sql postgres "SELECT tenant_key FROM tenants WHERE name = '$tenant'")"
+start_broker "$broker" "postgres://$role:check@$database:5432/andromeda" automatic
+key="$(sql andromeda "SELECT tenant_key FROM tenants WHERE name = '$tenant'")"
 
 # Result 16 is would-act; 6 (missing-maintain) and 12 (capability-unavailable)
 # are what a visit that stopped at the privilege check records.
-wait_for "the visit records its own outcome" 16 300 postgres \
+wait_for "the visit records its own outcome" 16 300 andromeda \
 	"SELECT coalesce(last_result::text, 'none') FROM postgresql_maintenance_tenants WHERE tenant_key = $key"
 # Target 11 is current_attributes, 23 entities_statistics; decision 3 is
 # would-act.
 expect "the current_attributes heap is sampled" 1 \
-	"$(sql postgres "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 11 AND last_sampled_at IS NOT NULL")"
+	"$(sql andromeda "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 11 AND last_sampled_at IS NOT NULL")"
 expect "the stale entities statistics are reported as would-act" 3 \
-	"$(sql postgres "SELECT coalesce(last_decision::text, 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 23")"
+	"$(sql andromeda "SELECT coalesce(last_decision::text, 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 23")"
 expect "no live target records an action result or a queued action" 0 \
-	"$(sql postgres "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND (last_action_result IS NOT NULL OR is_action_pending)")"
+	"$(sql andromeda "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND (last_action_result IS NOT NULL OR is_action_pending)")"
 expect "the entities statistics were never analyzed" 0 \
 	"$(sql "$db" "SELECT analyze_count + autoanalyze_count FROM pg_stat_user_tables WHERE relid = 'public.entities'::regclass")"
 

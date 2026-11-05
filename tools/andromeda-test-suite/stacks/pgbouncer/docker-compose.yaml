@@ -76,8 +76,8 @@ services:
         condition: service_healthy
     environment:
       <<: *broker-env
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "4"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-pgbouncer"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-pgbouncer"
@@ -112,8 +112,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-dormant:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-dormant:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-dormant:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-dormant:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_ATTEMPTS: "10"
@@ -149,8 +149,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-dormant-live:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-dormant-live:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-dormant-live:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-dormant-live:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "live"
       ANDROMEDA__NOTIFICATIONS__EVALUATION__MAX_QUEUED_CHANGES: "2"
@@ -184,8 +184,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-resilience:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-resilience:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-resilience:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-resilience:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "4"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "128"
 
@@ -215,8 +215,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-pooled-durable:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-pooled-durable:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-pooled-durable:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-pooled-durable:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__DATABASE__MAINTENANCE__MODE: "automatic"
       ANDROMEDA__DATABASE__MAINTENANCE__PROFILE: "responsive"
@@ -240,7 +240,7 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-direct:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-direct:5432/andromeda"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
   postgres-provisioning:
@@ -264,8 +264,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-provisioning:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-provisioning:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-provisioning:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-provisioning:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
@@ -290,8 +290,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-thrash:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-thrash:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-thrash:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-thrash:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
@@ -316,8 +316,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-zipf:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-zipf:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-zipf:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-zipf:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
@@ -343,8 +343,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-wide:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-wide:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-wide:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-wide:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "1000"
 
@@ -369,8 +369,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-crowded:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-crowded:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-crowded:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-crowded:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "1000"
 
@@ -395,8 +395,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-concurrency:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-concurrency:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-concurrency:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-concurrency:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
@@ -422,8 +422,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-burst-pooled:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-burst-pooled:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-burst-pooled:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-burst-pooled:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
@@ -439,7 +439,7 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-burst-direct:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-burst-direct:5432/andromeda"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 
   postgres-first-write:
@@ -468,8 +468,8 @@ services:
         condition: service_healthy
     environment:
       <<: [*broker-env, *observed-env]
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-first-write:5432/postgres"
-      ANDROMEDA__DATABASE__POOLER__URL: "postgres://postgres:postgres@pgbouncer-first-write:6432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-first-write:5432/andromeda"
+      ANDROMEDA__DATABASE__POOLER__URL: "postgres://andromeda:andromeda@pgbouncer-first-write:6432/andromeda"
       ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT: "2"
       ANDROMEDA__TENANCY__RESIDENCY__MAX_RESIDENT: "32"
 

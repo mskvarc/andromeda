@@ -2,14 +2,28 @@
 
 FROM postgres:18.6-trixie
 
+# The key packagecloud serves for the TimescaleDB repository, checked by
+# fingerprint so a key swapped at the source fails the build.
+ARG TIMESCALEDB_KEY_FINGERPRINT=1005FB68604CE9B8F6879CF759F18EDF47F24417
+# The PGDG archive keeps every version PGDG main has dropped, so the pinned
+# PostGIS and pg_repack versions stay installable after a newer release.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
-    curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
-        | gpg --dearmor -o /usr/share/keyrings/timescaledb.gpg; \
+    key="$(mktemp)"; \
+    curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey -o "$key"; \
+    fingerprint="$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "fpr" { print $10; exit }')"; \
+    if [ "$fingerprint" != "$TIMESCALEDB_KEY_FINGERPRINT" ]; then \
+        echo "TimescaleDB key fingerprint is '$fingerprint', expected '$TIMESCALEDB_KEY_FINGERPRINT'" >&2; \
+        exit 1; \
+    fi; \
+    gpg --dearmor -o /usr/share/keyrings/timescaledb.gpg "$key"; \
+    rm -f "$key"; \
     . /etc/os-release; \
     echo "deb [signed-by=/usr/share/keyrings/timescaledb.gpg] https://packagecloud.io/timescale/timescaledb/debian/ ${VERSION_CODENAME} main" \
         > /etc/apt/sources.list.d/timescaledb.list; \
+    echo "deb [ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] https://apt-archive.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg-archive main" \
+        > /etc/apt/sources.list.d/pgdg-archive.list; \
     apt-get purge -y --auto-remove curl gnupg; \
     rm -rf /var/lib/apt/lists/*
 
@@ -57,8 +71,11 @@ RUN sed -ri "s/^[#]?\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaledb
     /usr/share/postgresql/postgresql.conf.sample
 
 COPY andromeda.conf /etc/postgresql/andromeda.conf.d/10-andromeda.conf
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY andromeda-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/andromeda-entrypoint.sh
+# A new ENTRYPOINT clears the CMD the base image declares.
+ENTRYPOINT ["andromeda-entrypoint.sh"]
+CMD ["postgres"]
 
 # CI overrides licenses per edition.
 LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \

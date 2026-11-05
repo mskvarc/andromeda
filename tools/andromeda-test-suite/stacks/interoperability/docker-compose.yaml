@@ -23,7 +23,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-1:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-1:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-1"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-1"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-1:1056"
@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-2:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-2:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-2"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-2"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-2:1056"
@@ -61,7 +61,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-3:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-3:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-3"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-3"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-3:1056"
@@ -80,7 +80,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-4:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-4:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-4"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-4"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-4:1056"
@@ -99,7 +99,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-5:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-5:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:interoperability-5"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "interoperability-5"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-5:1056"

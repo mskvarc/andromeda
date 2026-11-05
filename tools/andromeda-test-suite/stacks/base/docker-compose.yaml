@@ -44,7 +44,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1056"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres:5432/andromeda"
       # Small enough to reach the 206 cut of a temporal query.
       ANDROMEDA__TEMPORAL__QUERY__DEFAULT_LAST_N: "19"
       ANDROMEDA__TEMPORAL__QUERY__MAX_LAST_N: "19"

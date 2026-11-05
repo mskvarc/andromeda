@@ -11,7 +11,7 @@ use url::Url;
 
 /// A database URL whose path names a database, the base each tenant database
 /// URL is built from.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, derive_more::AsRef)]
 pub struct DatabaseUrl(Url);
 
 /// The URL carries no path segment, so it names no database.

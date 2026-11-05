@@ -36,7 +36,7 @@ impl Default for TenantDatabasesConfig {
     fn default() -> TenantDatabasesConfig {
         TenantDatabasesConfig {
             name_prefix: DbNamePrefix::default(),
-            max_connections: NonZeroU32::MIN.saturating_add(15),
+            max_connections: NonZeroU32::MIN.saturating_add(3),
         }
     }
 }
@@ -146,7 +146,7 @@ impl Default for ResidencyConfig {
     fn default() -> ResidencyConfig {
         ResidencyConfig {
             idle_eviction_after: HumanDuration::from_secs(900),
-            max_resident: NonZeroUsize::MIN.saturating_add(63),
+            max_resident: NonZeroUsize::MIN.saturating_add(15),
             sweep_interval: HumanDuration::from_secs(30),
             min_wake_interval: HumanDuration::from_secs(30),
             woken_lifetime: HumanDuration::from_secs(60),

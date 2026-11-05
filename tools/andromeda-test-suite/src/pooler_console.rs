@@ -302,12 +302,12 @@ mod tests {
     #[gtest]
     fn a_database_is_reached_through_the_pooler_with_the_console_login() -> Result<()> {
         let console = PoolerConsole {
-            admin: Url::parse("postgres://postgres:postgres@pgbouncer:6432/pgbouncer")?,
+            admin: Url::parse("postgres://andromeda:andromeda@pgbouncer:6432/pgbouncer")?,
         };
         let database = DatabaseName::from("andromeda_tenant_a".to_owned());
         verify_that!(
             console.database_url(&database).as_str(),
-            eq("postgres://postgres:postgres@pgbouncer:6432/andromeda_tenant_a")
+            eq("postgres://andromeda:andromeda@pgbouncer:6432/andromeda_tenant_a")
         )
     }
 }

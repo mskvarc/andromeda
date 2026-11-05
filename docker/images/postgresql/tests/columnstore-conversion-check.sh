@@ -43,12 +43,12 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: tenant_database TENANT
 tenant_database() {
-	sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${1}%'"
+	sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${1}%'"
 }
 
 # The aged chunks of attribute_history, as "<converted> <in the rowstore>".
@@ -66,11 +66,11 @@ for _ in $(seq 1 120); do
 	fi
 	sleep 0.5
 done
-expect "timescaledb.max_background_workers" 1 "$(sql postgres 'SHOW timescaledb.max_background_workers')"
+expect "timescaledb.max_background_workers" 1 "$(sql andromeda 'SHOW timescaledb.max_background_workers')"
 
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-	-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+	-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 	-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \
 	"$broker_image" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
@@ -106,7 +106,7 @@ for tenant in "${tenants[@]}"; do
 done
 
 expect "TimescaleDB schedulers running" 0 \
-	"$(sql postgres "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'TimescaleDB Background Worker Scheduler'")"
+	"$(sql andromeda "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'TimescaleDB Background Worker Scheduler'")"
 
 for tenant in "${tenants[@]}"; do
 	db="$(tenant_database "$tenant")"

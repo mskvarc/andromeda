@@ -52,7 +52,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1061"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-a:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-a:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-a"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-a:1061"
@@ -67,7 +67,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1062"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-b:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-b:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-b"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-b"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-b:1062"
@@ -82,7 +82,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1063"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-c:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-c:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-c"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-c"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-c:1063"
@@ -97,7 +97,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1064"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-d:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-d:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-d"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-d"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-d:1064"
@@ -116,7 +116,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1065"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-e:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-e:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-e"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-e"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-e:1065"
@@ -137,7 +137,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1066"
-      ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres-f:5432/postgres"
+      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-f:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-f"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-f"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-f:1066"

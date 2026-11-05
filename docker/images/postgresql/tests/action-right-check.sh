@@ -60,7 +60,7 @@ expect() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: wait_for DESCRIPTION EXPECTED SECONDS DATABASE QUERY
@@ -173,12 +173,12 @@ for _ in $(seq 1 120); do
 	sleep 0.5
 done
 
-start_broker "$setup" "postgres://postgres:check@$database:5432/postgres" disabled
+start_broker "$setup" "postgres://andromeda:check@$database:5432/andromeda" disabled
 status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
 	--data '{"id":"urn:ngsi-ld:Probe:0","type":"Probe","temperature":[{"type":"Property","value":0,"observedAt":"2026-10-17T10:00:00Z"}]}' \
 	"$base/temporal/entities")"
 expect "create temporal entity" 201 "$status"
-db="$(sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
+db="$(sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'")"
 sql "$db" "ALTER TABLE entities SET (autovacuum_enabled = false)" > /dev/null
 for first in 1 501 1001 1501; do
 	expect "create entities $first to $((first + 499))" 201 "$(create_batch "$first" "$((first + 499))")"
@@ -211,8 +211,8 @@ sql "$db" "UPDATE entities SET modified_at = modified_at; UPDATE entities SET mo
 sql "$db" "CREATE INDEX idx_ca_value_number_ccnew ON current_attributes (value_number);
 	UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'public.idx_ca_value_number_ccnew'::regclass" > /dev/null
 
-sql postgres "CREATE ROLE $role LOGIN PASSWORD 'check'; GRANT pg_read_all_stats, pg_stat_scan_tables TO $role" > /dev/null
-grant_role postgres
+sql andromeda "CREATE ROLE $role LOGIN PASSWORD 'check'; GRANT pg_read_all_stats, pg_stat_scan_tables TO $role" > /dev/null
+grant_role andromeda
 grant_role "$db"
 sql "$db" "DO \$\$
 DECLARE
@@ -230,20 +230,23 @@ expect "the role holds MAINTAIN on current_attributes and entities and none on t
 expect "the role owns neither attribute_history nor current_attributes" "false,false" \
 	"$(sql "$db" "SELECT string_agg(pg_has_role('$role', relowner, 'USAGE')::text, ',' ORDER BY relname) FROM pg_class WHERE oid IN ('public.attribute_history'::regclass, 'public.current_attributes'::regclass)")"
 
-start_broker "$broker" "postgres://$role:check@$database:5432/postgres" automatic
-key="$(sql postgres "SELECT tenant_key FROM tenants WHERE name = '$tenant'")"
+start_broker "$broker" "postgres://$role:check@$database:5432/andromeda" automatic
+key="$(sql andromeda "SELECT tenant_key FROM tenants WHERE name = '$tenant'")"
 
 # Target 23 is entities_statistics, 35 attribute_history_columnstore and 44
 # attribute_history_rowstore; snapshot key 0 is the live branch, result 1
 # succeeded and decision 3 would-act.
-wait_for "the queued analyze of entities runs beside the leftover index" 1 900 postgres \
+wait_for "the queued analyze of entities runs beside the leftover index" 1 900 andromeda \
 	"SELECT coalesce(string_agg(last_action_result::text, ','), 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 23"
-wait_for "the partial chunk is recorded as would-act" 3 60 postgres \
+# The two history targets qualify on breach runs of their own, which need not
+# have lasted the qualifying duration yet when the analyze runs, so each waits
+# past it.
+wait_for "the partial chunk is recorded as would-act" 3 300 andromeda \
 	"SELECT coalesce(string_agg(last_decision::text, ','), 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 35"
-wait_for "the kept chunk awaiting its rebuild is recorded as would-act" 3 60 postgres \
+wait_for "the kept chunk awaiting its rebuild is recorded as would-act" 3 300 andromeda \
 	"SELECT coalesce(string_agg(last_decision::text, ','), 'none') FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target = 44"
 expect "neither history action records a result or a queued action" 0 \
-	"$(sql postgres "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target IN (35, 44) AND (last_action_result IS NOT NULL OR is_action_pending)")"
+	"$(sql andromeda "SELECT count(*) FROM postgresql_maintenance_targets WHERE tenant_key = $key AND snapshot_key = 0 AND target IN (35, 44) AND (last_action_result IS NOT NULL OR is_action_pending)")"
 expect "the chunk stays partial" 9 "$(sql "$db" "$partial_status")"
 expect "no chunk is recorded as rebuilt" 0 "$(sql "$db" 'SELECT count(*) FROM rebuilt_history_chunks')"
 expect "the leftover index is still there and invalid" f \

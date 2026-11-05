@@ -481,8 +481,8 @@ mod tests {
     fn the_pooling_settings_are_read_as_one_section_by_role() -> Result<()> {
         let mut pairs = REQUIRED.to_vec();
         pairs.extend([
-            ("POOLING__SERVERS__DORMANT", "postgres://postgres:postgres@postgres-dormant:5432/postgres"),
-            ("POOLING__POOLERS__DORMANT", "postgres://postgres:postgres@pgbouncer-dormant:6432/pgbouncer"),
+            ("POOLING__SERVERS__DORMANT", "postgres://andromeda:andromeda@postgres-dormant:5432/andromeda"),
+            ("POOLING__POOLERS__DORMANT", "postgres://andromeda:andromeda@pgbouncer-dormant:6432/pgbouncer"),
             ("POOLING__SCALE_TENANTS", "100"),
             ("POOLING__LOAD_SECONDS", "60"),
         ]);
@@ -490,7 +490,7 @@ mod tests {
         let pooling = config.pooling()?;
         expect_that!(
             pooling.server(BrokerRole::Dormant).map(Url::as_str),
-            ok(eq(&"postgres://postgres:postgres@postgres-dormant:5432/postgres"))
+            ok(eq(&"postgres://andromeda:andromeda@postgres-dormant:5432/andromeda"))
         );
         expect_that!(pooling.pooler(BrokerRole::Dormant).map(Url::path), ok(eq(&"/pgbouncer")));
         expect_that!(pooling.scale_tenants(), eq(100));

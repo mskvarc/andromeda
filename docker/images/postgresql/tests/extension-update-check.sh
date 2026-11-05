@@ -51,12 +51,14 @@ expect() {
 	fi
 }
 
-# usage: start_database IMAGE
+# usage: start_database IMAGE [docker-run-args...]
 # Waits for TCP, which the socket-only server of first-start initialisation never opens.
-# Twenty resident tenants hold more connections than the default 100.
+# Twenty tenants loaded on the previous broker's pools hold more connections than the default 200.
 start_database() {
+	local image="$1"
+	shift
 	docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check \
-		-v "$volume:/var/lib/postgresql" "$1" postgres -c max_connections=400 > /dev/null
+		-v "$volume:/var/lib/postgresql" "$@" "$image" postgres -c max_connections=400 > /dev/null
 	for _ in $(seq 1 120); do
 		if docker exec "$database" pg_isready -q -h 127.0.0.1 2> /dev/null; then
 			return 0
@@ -75,7 +77,7 @@ stop_database() {
 
 # usage: sql DATABASE QUERY
 sql() {
-	docker exec -u postgres "$database" psql -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
 # usage: extversion DATABASE EXTENSION
@@ -85,18 +87,18 @@ extversion() {
 
 # usage: shipped EXTENSION
 shipped() {
-	sql postgres "SELECT default_version FROM pg_available_extensions WHERE name = '$1'"
+	sql andromeda "SELECT default_version FROM pg_available_extensions WHERE name = '$1'"
 }
 
 tenant_database() {
-	sql postgres "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'"
+	sql andromeda "SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_${tenant}%'"
 }
 
 # usage: start_broker IMAGE
 start_broker() {
 	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=postgres://postgres:check@$database:5432/postgres" \
+		-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
 		"$1" > /dev/null
 	local port
 	port="$(docker port "$broker" 1056/tcp)"
@@ -177,18 +179,18 @@ docker network create "$network" > /dev/null
 printf -- '--- previous minor created in the platform database and template1\n'
 start_database "$image"
 current="$(shipped timescaledb)"
-previous="$(sql postgres "SELECT version FROM pg_available_extension_versions WHERE name = 'timescaledb' AND version LIKE '${current%.*.*}.$(( $(cut -d. -f2 <<< "$current") - 1 )).%'" | sort -V | tail -n 1)"
+previous="$(sql andromeda "SELECT version FROM pg_available_extension_versions WHERE name = 'timescaledb' AND version LIKE '${current%.*.*}.$(( $(cut -d. -f2 <<< "$current") - 1 )).%'" | sort -V | tail -n 1)"
 if [ -z "$previous" ]; then
 	printf 'FAIL %s ships no release of the minor before %s\n' "$image" "$current" >&2
 	exit 1
 fi
-for name in postgres template1; do
+for name in andromeda template1; do
 	sql "$name" "CREATE EXTENSION timescaledb VERSION '$previous'"
 	sql "$name" "CREATE EXTENSION postgis"
 	expect "$name timescaledb before the broker" "$previous" "$(extversion "$name" timescaledb)"
 done
 start_broker "$broker_image"
-assert_current postgres
+assert_current andromeda
 write_tenant a
 read_tenant a
 assert_current "$(tenant_database)"
@@ -200,14 +202,15 @@ docker volume rm "$volume" > /dev/null
 if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	printf -- '--- tenants created on the previous image, brought up to date on this one with no request\n'
 	mapfile -t catch_up_tenants < <(seq -f 'cu%02g' 1 20)
-	start_database "$previous_image"
+	# An image older than the andromeda default role is told to create it.
+	start_database "$previous_image" -e POSTGRES_USER=andromeda -e POSTGRES_DB=andromeda
 	start_broker "$previous_broker_image"
 	for name in "${catch_up_tenants[@]}"; do
 		tenant="$name"
 		write_tenant b
 	done
 	stop_broker
-	first_db="$(sql postgres "SELECT database_name FROM tenants WHERE name = 'cu01'")"
+	first_db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = 'cu01'")"
 	old_timescaledb="$(extversion "$first_db" timescaledb)"
 	old_postgis="$(extversion "$first_db" postgis)"
 	stop_database
@@ -215,15 +218,15 @@ if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	expect "$first_db timescaledb on the new image before the broker" "$old_timescaledb" "$(extversion "$first_db" timescaledb)"
 	# A resident tenant's background work commits far more than a client's
 	# writes, so the busiest is read from the counter the catch-up ranks by.
-	busiest="$(sql postgres "SELECT t.name FROM tenants t JOIN pg_stat_database d ON d.datname = t.database_name WHERE t.name LIKE 'cu%' ORDER BY d.xact_commit DESC LIMIT 1")"
+	busiest="$(sql andromeda "SELECT t.name FROM tenants t JOIN pg_stat_database d ON d.datname = t.database_name WHERE t.name LIKE 'cu%' ORDER BY d.xact_commit DESC LIMIT 1")"
 	start_broker "$broker_image"
-	assert_current postgres
+	assert_current andromeda
 	# Five wake passes of four tenants, plus building each, with no request.
 	lagging=''
 	for _ in $(seq 1 90); do
 		lagging=''
 		for name in "${catch_up_tenants[@]}"; do
-			db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$name'")"
+			db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = '$name'")"
 			if [ "$(extversion "$db" timescaledb)" != "$(shipped timescaledb)" ] || [ "$(extversion "$db" postgis)" != "$(shipped postgis)" ]; then
 				lagging="$lagging $name"
 			fi
@@ -235,16 +238,16 @@ if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	# The record matches every tenant database's own catalogue.
 	mismatched=''
 	for name in "${catch_up_tenants[@]}"; do
-		db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$name'")"
+		db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = '$name'")"
 		for extension in timescaledb postgis pg_repack; do
-			recorded="$(sql postgres "SELECT v.installed_version FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$name' AND v.extension = '$extension'")"
+			recorded="$(sql andromeda "SELECT v.installed_version FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$name' AND v.extension = '$extension'")"
 			[ "$recorded" = "$(extversion "$db" "$extension")" ] || mismatched="$mismatched $name/$extension"
 		done
 	done
 	expect "tenants whose recorded versions differ from pg_extension" '' "$mismatched"
 	# Scheduled wakes take a pass's four loads first, so the busiest tenant is
 	# among the tenants the first two passes open.
-	busiest_rank="$(sql postgres "SELECT count(*) FROM (SELECT min(v.reconciled_at) AS opened FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name LIKE 'cu%' GROUP BY t.name) o WHERE o.opened <= (SELECT min(v.reconciled_at) FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$busiest')")"
+	busiest_rank="$(sql andromeda "SELECT count(*) FROM (SELECT min(v.reconciled_at) AS opened FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name LIKE 'cu%' GROUP BY t.name) o WHERE o.opened <= (SELECT min(v.reconciled_at) FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$busiest')")"
 	expect "$busiest opened within the first eight tenants" t "$([ "$busiest_rank" -le 8 ] && echo t || echo "f, opened as number $busiest_rank")"
 	# Each changed extension is updated once in the platform database and once
 	# in every tenant's.
