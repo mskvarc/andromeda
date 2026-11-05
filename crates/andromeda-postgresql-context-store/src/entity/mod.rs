@@ -16,6 +16,9 @@ pub mod entity_types;
 pub mod expiry;
 /// One Entity a create or update statement wrote, and when it committed.
 pub mod landed_entity;
+/// One Entity a write that changes no current state locked, and the version
+/// its current state stands at.
+pub mod locked_entity;
 /// Row-to-domain conversions for the `entities` table.
 pub mod mapper;
 /// The parallel bind vectors every entity statement is driven from.

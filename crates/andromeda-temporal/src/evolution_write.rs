@@ -216,8 +216,10 @@ struct EvolutionWrite {
 )]
 mod tests {
     use crate::{
+        deleted_while_folding::{Attempt, DeletedWhileFolding},
         error::TemporalError,
         evolution_write::{EvolutionWrite, evolution_write},
+        stub_broker::service_over_entities,
         written_evolution::WrittenEvolution,
     };
     use andromeda_context_commit::{entity_mutation::EntityMutation, entity_version::EntityVersion, precondition::Precondition};
@@ -509,5 +511,33 @@ mod tests {
         let write = folded(&evolution, Some(&current), SystemInstant::new(Utc::now()), limit(1)).expect("the fold does not grow the entity");
 
         assert!(matches!(write.write.entity, EntityMutation::Update(_)), "{:?}", write.write.entity);
+    }
+
+    /// A backfill folded against a current state a concurrent deletion took
+    /// leaves the state as it was, so it states the version it read. The store
+    /// supersedes it, its history lands nothing, and the evolution is folded
+    /// again against the deleted Entity, which it brings into being anew
+    /// (clause 5.6.11.4).
+    #[tokio::test]
+    async fn a_backfill_superseded_by_a_deletion_is_folded_again_into_a_creation() {
+        let current = standing();
+        let read = current.version;
+        let entities = Arc::new(DeletedWhileFolding::new(current));
+        let service = service_over_entities(Arc::clone(&entities)); // clone: the test reads back what the service committed
+        let evolution = vehicle(&json!({SPEED: [instance(0, "2023-01-01T00:00:00Z")]}));
+        let document = EntityDocument::from_slice(&serde_json::to_vec(&evolution).expect("JSON")).expect("a written evolution decodes");
+
+        service
+            .commit_evolution(&ContextTarget::Live, &entity_id(), &WrittenEvolution::new(Arc::new(document), None))
+            .await
+            .expect("the refolded evolution lands");
+
+        pretty_assertions::assert_eq!(
+            entities.attempts(),
+            vec![
+                Attempt::Untouched(Precondition::UnchangedSince(read)),
+                Attempt::Creation(Precondition::MustNotExist)
+            ]
+        );
     }
 }

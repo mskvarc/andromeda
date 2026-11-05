@@ -38,7 +38,7 @@ pub(crate) struct EntityGroups<'a> {
     /// Entity deletes.
     pub(crate) deletes: Vec<IndexedWrite<'a>>,
     /// Writes that do not mutate current entity state.
-    pub(crate) untouched: Vec<usize>,
+    pub(crate) untouched: Vec<IndexedWrite<'a>>,
 }
 
 /// Group writes while preserving submission order within each statement.
@@ -49,7 +49,7 @@ pub(crate) fn group(writes: &[AtomicWrite]) -> EntityGroups<'_> {
             EntityMutation::Insert(_) => groups.inserts.push((index, write)),
             EntityMutation::Update(_) => groups.updates.push((index, write)),
             EntityMutation::Delete => groups.deletes.push((index, write)),
-            EntityMutation::None => groups.untouched.push(index),
+            EntityMutation::None => groups.untouched.push((index, write)),
         }
     }
     groups
@@ -201,7 +201,7 @@ mod tests {
         pretty_assertions::assert_eq!(groups.inserts.iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![0, 4]);
         pretty_assertions::assert_eq!(groups.updates.iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![2]);
         pretty_assertions::assert_eq!(groups.deletes.iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
-        pretty_assertions::assert_eq!(groups.untouched, vec![3]);
+        pretty_assertions::assert_eq!(groups.untouched.iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![3]);
     }
 
     #[test]

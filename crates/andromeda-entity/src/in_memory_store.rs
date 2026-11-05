@@ -325,6 +325,16 @@ mod tests {
             .build()
     }
 
+    /// A write that changes no current state of the Building `id`, stated
+    /// against `read`, as a backfill folded against `read` sends.
+    fn backfill(id: &Identifier, read: EntityVersion) -> AtomicWrite {
+        AtomicWrite::builder()
+            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity(EntityMutation::None)
+            .precondition(Precondition::UnchangedSince(read))
+            .build()
+    }
+
     /// Commit `write` at the shared instant and answer its one outcome.
     async fn commit(store: &InMemoryStore, write: AtomicWrite) -> WriteOutcome {
         let mut outcomes = store.commit(&ContextTarget::Live, accepted_at(), vec![write]).await.expect("the commit runs");
@@ -374,6 +384,19 @@ mod tests {
         assert!(commit(&store, update(&id, &first, &["stale"], first_version)).await.is_superseded());
         let (stored, _) = store.stored(&id).expect("the Building is stored");
         assert_eq!(attribute_terms(&stored), vec!["second"]);
+    }
+
+    /// A backfill folded against a version a deletion replaced is superseded,
+    /// so it is folded again rather than recorded against a state that is
+    /// gone; one against the standing version lands.
+    #[tokio::test]
+    async fn a_write_changing_no_current_state_is_held_to_the_version_it_read() {
+        let store = InMemoryStore::default();
+        let (id, _, version) = seeded_at(&store, offset(-60));
+
+        assert!(commit(&store, backfill(&id, version)).await.is_no_entity_change());
+        assert!(commit(&store, delete(&id, version)).await.is_deleted());
+        assert!(commit(&store, backfill(&id, version)).await.is_superseded());
     }
 
     /// Clause 4.8: a write stamped before the `modifiedAt` the entity holds

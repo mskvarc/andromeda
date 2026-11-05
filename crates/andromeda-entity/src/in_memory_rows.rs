@@ -2,7 +2,8 @@
 //! them, the way the PostgreSQL committer applies them.
 //!
 //! A write that states `UnchangedSince` lands only while the entity still
-//! carries that version, and every landed write gives the entity a new one.
+//! carries that version, a write that changes no current state included, and
+//! every landed write of the current state gives the entity a new one.
 //! The version is the row's key and write count: a row is keyed once and
 //! counts every write, and a deleted entity created anew is keyed again. A
 //! committed write stamps its `modifiedAt` with the instant it was accepted
@@ -156,7 +157,7 @@ impl StoredRows {
                     StoreInstant::new(accepted_at),
                 )
             }
-            (EntityMutation::None, _, _) => WriteOutcome::NoEntityChange,
+            (EntityMutation::None, current, precondition) => precondition.untouched_outcome(current.map(|(version, _)| version)),
         }
     }
 }

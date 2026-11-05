@@ -321,6 +321,27 @@ pub(crate) fn service_reading(reader: Arc<dyn TemporalHistoryReader>) -> Tempora
     service_over_reader(Arc::new(StubBroker::new([])), reader, None, limits())
 }
 
+/// A service reading and writing current state through `entities`, every
+/// other port of it an empty stubbed broker.
+pub(crate) fn service_over_entities<E: EntityReader + ContextCommitter>(entities: Arc<E>) -> TemporalService {
+    let broker = Arc::new(StubBroker::new([]));
+    TemporalService::new(
+        TemporalServicePorts {
+            entity_reader: Arc::clone(&entities) as Arc<dyn EntityReader>, // clone: one test double supplies both current-state capabilities
+            reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
+            mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
+            mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
+            writes: entities as Arc<dyn ContextCommitter>,
+            retry_delay: broker as Arc<dyn RetryDelay>,
+        },
+        JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+        Arc::new(ChangeNotifier::new(None, SubscriptionMatching::Absent)),
+        limits(),
+        None,
+        TemporalJoin::Extended,
+    )
+}
+
 /// A service whose history is read through `reader` and whose every other
 /// port is `broker`.
 fn service_over_reader(

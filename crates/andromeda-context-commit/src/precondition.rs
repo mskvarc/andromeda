@@ -27,6 +27,25 @@ impl Precondition {
             Precondition::None | Precondition::MustNotExist | Precondition::MustExist => None,
         }
     }
+
+    /// The outcome of a write that changes no current state, held to this
+    /// precondition, of an Entity whose current state stands at `current`,
+    /// `None` when it has none.
+    ///
+    /// The write still records its history, so what it assumed is checked as
+    /// a write of the current state checks it: a version read before a
+    /// concurrent write, a deletion included, is superseded, and the caller
+    /// reads the Entity again.
+    #[must_use]
+    pub fn untouched_outcome(self, current: Option<EntityVersion>) -> WriteOutcome {
+        match (self, current) {
+            (Precondition::None, _) | (Precondition::MustExist, Some(_)) | (Precondition::MustNotExist, None) => WriteOutcome::NoEntityChange,
+            (Precondition::UnchangedSince(expected), current) if current == Some(expected) => WriteOutcome::NoEntityChange,
+            (Precondition::UnchangedSince(_), _) => WriteOutcome::Superseded,
+            (Precondition::MustExist, None) => WriteOutcome::NotFound,
+            (Precondition::MustNotExist, Some(_)) => WriteOutcome::AlreadyExists,
+        }
+    }
 }
 
 /// Next action after one read-modify-write commit attempt.
@@ -64,7 +83,8 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
 #[cfg(test)]
 mod tests {
     use crate::{
-        precondition::{AfterAttempt, after_attempt},
+        entity_version::EntityVersion,
+        precondition::{AfterAttempt, Precondition, after_attempt},
         store_instant::StoreInstant,
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
@@ -109,5 +129,30 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(after_attempt(&outcome), AfterAttempt::Settled);
         }
+    }
+
+    /// A backfill computed against a version a concurrent write replaced
+    /// lands nothing, and is folded again against what that write left.
+    #[test]
+    fn an_untouched_write_reading_a_replaced_version_is_superseded() {
+        let read = EntityVersion::new(7, 3);
+        assert!(Precondition::UnchangedSince(read).untouched_outcome(Some(read)).is_no_entity_change());
+        assert!(
+            Precondition::UnchangedSince(read)
+                .untouched_outcome(Some(EntityVersion::new(7, 4)))
+                .is_superseded()
+        );
+        assert!(Precondition::UnchangedSince(read).untouched_outcome(None).is_superseded());
+    }
+
+    #[test]
+    fn an_untouched_write_is_held_to_the_existence_it_states() {
+        let current = Some(EntityVersion::new(7, 3));
+        assert!(Precondition::None.untouched_outcome(None).is_no_entity_change());
+        assert!(Precondition::None.untouched_outcome(current).is_no_entity_change());
+        assert!(Precondition::MustExist.untouched_outcome(current).is_no_entity_change());
+        assert!(Precondition::MustExist.untouched_outcome(None).is_not_found());
+        assert!(Precondition::MustNotExist.untouched_outcome(None).is_no_entity_change());
+        assert!(Precondition::MustNotExist.untouched_outcome(current).is_already_exists());
     }
 }

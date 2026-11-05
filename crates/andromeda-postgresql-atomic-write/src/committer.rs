@@ -18,9 +18,9 @@ use crate::{
     evolution_establishment,
     history,
     history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode},
-    history_only_lock,
     job_settlement::settle,
     name_resolution::resolve_write_names,
+    untouched_writes,
     write_isolation::IsolatedSubmission,
 };
 use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;
@@ -98,7 +98,8 @@ impl PostgresAtomicCommitter {
     /// the instant its attributes carry (clause 4.8), and a created entity in
     /// `establishing` has its Temporal Evolution established beside it. A
     /// write to an Entity holding a later instant lands nothing, and its
-    /// outcome carries that instant.
+    /// outcome carries that instant. A write that changes no current state
+    /// locks its Entity's row first and is held to its precondition there.
     async fn apply_entities(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -114,9 +115,7 @@ impl PostgresAtomicCommitter {
             untouched,
         } = group(writes);
         let mut outcomes: Vec<Option<WriteOutcome>> = writes.iter().map(|_| None).collect();
-        for &index in &untouched {
-            outcomes[index] = Some(WriteOutcome::NoEntityChange);
-        }
+        untouched_writes::apply(tx, target, &untouched, &mut outcomes).await?;
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let CreatedEntities { landed, established, predated } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;
@@ -270,7 +269,6 @@ impl PostgresAtomicCommitter {
             tx.commit().await.map_err(|error| database(&error))?;
             return Ok(Vec::new());
         }
-        history_only_lock::apply(&mut tx, target, writes).await?;
         let placement = self.history_mode.placement(target, response);
         let establishing = evolution_establishment::establishing(placement.inline_recording(), writes, self.core_write_history);
         let EntityMutations { outcomes, established } = self.apply_entities(&mut tx, target, writes, record.recorded_at(), &establishing).await?;

@@ -35,8 +35,6 @@ use std::collections::BTreeSet;
 mod delete;
 /// Taking back the Temporal Evolution a create established.
 mod evolution_withdrawal;
-/// Locking the identity rows of writes that only record history.
-mod history_lock;
 /// The batch insert.
 mod insert;
 /// The latest instant an Entity holds, which no write may precede.
@@ -49,6 +47,8 @@ pub(crate) mod staging;
 pub(crate) mod statement_ctes;
 /// The type-membership rows each set-write keeps in step with the search row.
 pub(crate) mod type_membership;
+/// Locking the identity rows of writes that change no current state.
+mod untouched_lock;
 /// The batch update.
 mod update;
 /// The batch update's identity row write.

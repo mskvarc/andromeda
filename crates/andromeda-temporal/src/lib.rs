@@ -28,6 +28,15 @@ mod compilation;
 /// The ways a temporal policy configuration is refused as it is read.
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
 pub mod delete_by_query;
+/// An Entity a concurrent deletion takes the current state of while a Temporal
+/// Evolution write folds against it.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod deleted_while_folding;
 /// The streams whose older deletions a split query still has to ask its
 /// sources for.
 pub mod deletion_follow_up;
