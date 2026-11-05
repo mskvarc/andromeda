@@ -6,10 +6,10 @@ use crate::{
     batch::{
         BatchResult,
         admitted_batch::{AdmittedBatchEntity, prepared_chunk},
-        chunk::{ChunkWrite, UpdatedStates},
-        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
-        prepare::PreparedEntity,
-        upsert::{UpsertOutcome, stored_state},
+        chunk::UpdatedStates,
+        chunk_read_modify_write::{ChunkRead, ChunkRewrite, PlannedWrite},
+        requested_state::{RequestedState, built},
+        upsert::UpsertOutcome,
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
@@ -20,24 +20,6 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use std::sync::Arc;
 
-/// What a replacement is built from on each attempt.
-enum Replacement {
-    /// The request's prepared document, which no attempt has spent yet.
-    Requested(Box<PreparedEntity>),
-    /// The replacement an earlier attempt stored, kept so a later attempt does
-    /// not convert the request again.
-    ///
-    /// Only this entry holds it once the refused write is dropped, so a later
-    /// attempt takes it back without copying it; its system times are stamped
-    /// again against the state that attempt reads.
-    Built {
-        /// The entity the replacement is for.
-        id: Identifier,
-        /// The replacement as the earlier attempt stored it.
-        state: Arc<EntityState>,
-    },
-}
-
 /// Replacing each entity of a chunk, or creating it when an attempt finds it
 /// absent (clause 5.6.8.4, replace mode).
 struct ReplaceRewrite<'a> {
@@ -46,26 +28,21 @@ struct ReplaceRewrite<'a> {
 }
 
 impl ChunkRewrite for ReplaceRewrite<'_> {
-    type Entry = Replacement;
+    type Entry = RequestedState;
 
-    fn id(entry: &Replacement) -> &Identifier {
-        match entry {
-            Replacement::Requested(prepared) => &prepared.id,
-            Replacement::Built { id, .. } => id,
-        }
+    const READ: ChunkRead = ChunkRead::Snapshots;
+
+    fn id(entry: &RequestedState) -> &Identifier {
+        entry.id()
     }
 
     fn build(
         &self,
-        entry: Replacement,
+        entry: RequestedState,
         snapshot: Option<&EntitySnapshot>,
         now: SystemInstant,
-    ) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
-        let (id, replacement) = match entry {
-            Replacement::Requested(prepared) => prepared.into_state()?,
-            // clone: reference-count bumps only when the earlier attempt's write still shares the state
-            Replacement::Built { id, state } => (id, Arc::unwrap_or_clone(state)),
-        };
+    ) -> Result<PlannedWrite<RequestedState>, Box<(Identifier, EntityError)>> {
+        let (id, replacement) = entry.into_state()?;
         self.service.replacement_write(self.target, id, replacement, snapshot, now)
     }
 }
@@ -90,7 +67,7 @@ impl EntityService {
             service: self,
             target: placement.target(),
         };
-        let entries = prepared.into_iter().map(|prepared| Replacement::Requested(Box::new(prepared))).collect();
+        let entries = prepared.into_iter().map(|prepared| RequestedState::Requested(Box::new(prepared))).collect();
         let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, entries, now).await?;
         errors.extend(outcome.errors);
         Ok((
@@ -122,7 +99,7 @@ impl EntityService {
         replacement: EntityState,
         snapshot: Option<&EntitySnapshot>,
         now: SystemInstant,
-    ) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
+    ) -> Result<PlannedWrite<RequestedState>, Box<(Identifier, EntityError)>> {
         let Some(snapshot) = snapshot else {
             let write = self.chunk_insert(target, id, replacement, now)?;
             return built(write);
@@ -137,7 +114,7 @@ impl EntityService {
             // The replacement restated the entity this attempt read, so that
             // state is the replacement.
             None => Ok(PlannedWrite {
-                entry: Replacement::Built {
+                entry: RequestedState::Built {
                     id: entry_id,
                     state: Arc::clone(&snapshot.state), // clone: Arc ref-count bump
                 },
@@ -145,16 +122,4 @@ impl EntityService {
             }),
         }
     }
-}
-
-/// The planned write storing `write`, kept so a refused attempt rebuilds from
-/// the replacement it stored.
-fn built(write: ChunkWrite) -> Result<PlannedWrite<Replacement>, Box<(Identifier, EntityError)>> {
-    Ok(PlannedWrite {
-        entry: Replacement::Built {
-            id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
-            state: stored_state(&write)?,
-        },
-        write: Some(write),
-    })
 }

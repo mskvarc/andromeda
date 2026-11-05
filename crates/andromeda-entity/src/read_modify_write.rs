@@ -23,13 +23,13 @@ use crate::{
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    attempt_instant::AttemptInstant,
     precondition::{AfterAttempt, Precondition, after_attempt},
     store_instant::StoreInstant,
     write_outcome::{WriteOutcome, single},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-use chrono::Utc;
 use std::slice::from_ref;
 
 /// What one attempt of a computed write asked the store to do.
@@ -70,7 +70,10 @@ impl EntityService {
     /// handed, which the commit records the write's history and the entity's
     /// `modifiedAt` at. It runs once per attempt, each attempt at an
     /// instant read after the state it computes from, so it must not consume
-    /// anything it needs again.
+    /// anything it needs again. The store refuses an attempt stamped before an
+    /// instant the entity holds, which only a clock that stepped back
+    /// produces, and the next attempt is stamped after that instant (clause
+    /// 4.8).
     ///
     /// Returns `None` when the entity does not exist or when `build` declined to
     /// produce a write.
@@ -92,11 +95,12 @@ impl EntityService {
     {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
+        let mut instant = AttemptInstant::default();
         self.retry_contended(async |_| {
             let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
                 return Ok(None);
             };
-            let now = SystemInstant::new(Utc::now());
+            let now = instant.next();
             let Some(mut write) = build(&snapshot, now)? else {
                 return Ok(None);
             };
@@ -110,6 +114,10 @@ impl EntityService {
                 // The next attempt re-reads the state the write is computed
                 // from.
                 AfterAttempt::Reread => Err(ContendedAttempt::Lost),
+                AfterAttempt::Restamp(latest) => {
+                    instant.refused(latest);
+                    Err(ContendedAttempt::Lost)
+                }
             }
         })
         .await

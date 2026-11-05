@@ -97,6 +97,9 @@ pub mod expiry;
 mod history_recording_assertions;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
+/// The rows the in-memory store holds and the commit rules it applies.
+#[cfg(test)]
+mod in_memory_rows;
 /// An entity service reading the in-memory store, for tests.
 #[cfg(test)]
 #[expect(

@@ -28,14 +28,8 @@
 //! order", so the coordinator hands each one to a separate round, and a chunk
 //! carries at most one instance of any entity.
 
-use crate::{
-    batch::{BatchResult, chunk::ChunkWrite},
-    entity_invariant::EntityInvariant,
-    error::EntityError,
-};
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use crate::{batch::BatchResult, error::EntityError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use std::sync::Arc;
 
 /// Replace mode.
 mod replace;
@@ -48,22 +42,3 @@ type UpsertOutcome = (BatchResult, Vec<Identifier>);
 /// One chunk's per-entity upsert results, the failures it collected while
 /// preparing them, and the identifiers it created.
 pub(super) type UpsertChunkOutcome = (BatchResult, Vec<(Identifier, EntityError)>, Vec<Identifier>);
-
-/// The entity state `write` stores, shared rather than copied.
-///
-/// # Errors
-///
-/// Reports [`EntityInvariant::WriteWithoutStoredState`] for a write that stores
-/// no state, which no insert or update is.
-fn stored_state(write: &ChunkWrite) -> Result<Arc<EntityState>, Box<(Identifier, EntityError)>> {
-    match write.entity.record() {
-        Some(record) => Ok(Arc::clone(&record.state)), // clone: Arc ref-count bump
-        None => Err(Box::new((
-            write.id.clone(), // clone: the report owns the identifier it names
-            EntityInvariant::WriteWithoutStoredState {
-                entity: write.id.clone(), // clone: the invariant owns the entity it names
-            }
-            .into(),
-        ))),
-    }
-}

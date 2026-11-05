@@ -9,12 +9,17 @@
 use crate::{
     EntityService,
     NotificationWriteConfig,
+    admission_fixture::admitted_batch,
+    batch::{BatchResult, UpsertPolicy},
     building_subscription_fixture::{BUILDING_TYPE_IRI, building_subscription_cache},
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
+    in_memory_rows::StoredRows,
     in_memory_service::in_memory_service,
-    in_memory_store::{ConcurrentWriter, InMemoryStore, StoredRows},
+    in_memory_store::{ConcurrentWriter, InMemoryStore},
     notification_recording_harness::RecordingSink,
+    side_effect::SideEffectPlacement,
+    write_kind::{BatchMerge, BatchUpsert},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -24,9 +29,14 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     precondition::Precondition,
 };
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, instance::Instance};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_model::{
+    attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
+    entity::Entity,
+};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -123,21 +133,64 @@ pub(crate) fn held_version(write: &AtomicWrite) -> EntityVersion {
     }
 }
 
-/// A writer that adds the Property `attribute` to the Building `id` just
-/// before the next commit, and records the version it left the Building at.
-pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<EntityVersion>>>) -> ConcurrentWriter {
+/// A write that adds the Property `attribute` to the Building `id`, or
+/// creates the Building holding it, then hands the rows it left to `record`.
+pub(crate) fn attribute_adder(
+    id: &Identifier,
+    attribute: &str,
+    record: impl FnOnce(&StoredRows) + Send + 'static,
+) -> impl FnOnce(&mut StoredRows) + Send + 'static {
     let id = id.clone(); // clone: the writer outlives the borrow
     let member: AttributeName = term(attribute).parse().expect("a valid attribute name");
     let addition = building_with(&id, &[attribute], 2);
-    let version = Arc::clone(version); // clone: the test reads the version the writer records
-    ConcurrentWriter::BeforeNextCommit(Box::new(move |rows: &mut StoredRows| {
+    move |rows: &mut StoredRows| {
         // clone: the writer stores a changed copy sharing what it leaves alone
         let mut state = rows.payload(&id).map_or_else(|| stored_building(&id, &[]), |stored| EntityState::clone(stored));
         let added = addition.attributes().get_shared(member.as_str()).expect("the addition holds the attribute");
         state.attributes_mut().insert_shared(member, Arc::clone(added));
         rows.put(&id, Arc::new(state));
-        *version.lock().expect("the version lock is not poisoned") = rows.version(&id);
-    }))
+        record(rows);
+    }
+}
+
+/// A writer that adds the Property `attribute` to the Building `id` just
+/// before the next commit, and records the version it left the Building at.
+pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<EntityVersion>>>) -> ConcurrentWriter {
+    let recorded = id.clone(); // clone: the recorder outlives the borrow
+    let version = Arc::clone(version); // clone: the test reads the version the writer records
+    ConcurrentWriter::BeforeNextCommit(Box::new(attribute_adder(id, attribute, move |rows: &StoredRows| {
+        *version.lock().expect("the version lock is not poisoned") = rows.version(&recorded);
+    })))
+}
+
+/// Merge `entities` in one batch, inline on the live branch.
+pub(crate) async fn batch_merge(contended: &ContendedService, entities: Vec<Entity<MergeMember>>) -> BatchResult {
+    let admitted = admitted_batch(&contended.service, BatchMerge, entities, &ContextSpec::core_only()).await;
+    contended
+        .service
+        .batch_merge(SideEffectPlacement::Inline(&ContextTarget::Live), admitted)
+        .await
+        .expect("the batch completes")
+}
+
+/// Upsert the Buildings `entities` in update mode, inline on the live branch.
+pub(crate) async fn upsert_update(contended: &ContendedService, entities: Vec<Entity<AttributeValue>>) -> (BatchResult, Vec<Identifier>) {
+    let admitted = admitted_batch(&contended.service, BatchUpsert(UpsertPolicy::Update), entities, &ContextSpec::core_only()).await;
+    contended
+        .service
+        .batch_upsert(SideEffectPlacement::Inline(&ContextTarget::Live), admitted)
+        .await
+        .expect("the batch completes")
+}
+
+/// The `modifiedAt` the write stamped on the instance of `attribute`.
+pub(crate) fn stamped_modified_at(write: &AtomicWrite, attribute: &str) -> Option<SystemInstant> {
+    let state = &write.entity.record().expect("the write stores a state").state;
+    state
+        .attributes()
+        .get(&term(attribute))
+        .and_then(|instances| instances.get(None))
+        .and_then(Instance::modified_at)
 }
 
 /// An entity service over a Building store another writer may change.

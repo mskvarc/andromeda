@@ -1,6 +1,7 @@
 //! Entity mutation preconditions and retry classification.
 
 use crate::{entity_version::EntityVersion, write_outcome::WriteOutcome};
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use derive_more::IsVariant;
 
 /// Assumption an atomic write makes about current entity state.
@@ -39,6 +40,9 @@ pub enum AfterAttempt {
     Reread,
     /// The target entity vanished.
     Vanished,
+    /// The Entity holds the instant carried, later than the one the attempt
+    /// was stamped at: the next attempt is stamped after it.
+    Restamp(SystemInstant),
 }
 
 /// Classify a write outcome for the read-modify-write retry loop.
@@ -53,6 +57,7 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
         | WriteOutcome::Refused(_) => AfterAttempt::Settled,
         WriteOutcome::Superseded | WriteOutcome::AlreadyExists => AfterAttempt::Reread,
         WriteOutcome::NotFound => AfterAttempt::Vanished,
+        WriteOutcome::Predated(latest) => AfterAttempt::Restamp(*latest),
     }
 }
 
@@ -64,11 +69,18 @@ mod tests {
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use chrono::Utc;
 
     #[test]
     fn a_superseded_write_requests_a_reread() {
         pretty_assertions::assert_eq!(after_attempt(&WriteOutcome::Superseded), AfterAttempt::Reread);
+    }
+
+    #[test]
+    fn a_predated_write_is_stamped_again_after_the_instant_it_carries() {
+        let latest = SystemInstant::new(Utc::now());
+        pretty_assertions::assert_eq!(after_attempt(&WriteOutcome::Predated(latest)), AfterAttempt::Restamp(latest));
     }
 
     #[test]

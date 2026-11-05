@@ -14,7 +14,7 @@ use crate::{
     EntityService,
     batch::{
         chunk::ChunkWrite,
-        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+        chunk_read_modify_write::{ChunkRead, ChunkRewrite, PlannedWrite},
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
@@ -48,6 +48,8 @@ struct DeleteRewrite<'a> {
 
 impl ChunkRewrite for DeleteRewrite<'_> {
     type Entry = Identifier;
+
+    const READ: ChunkRead = ChunkRead::Snapshots;
 
     fn id(entry: &Identifier) -> &Identifier {
         entry

@@ -19,7 +19,8 @@
 use crate::{
     entity::write::{
         search_image::SearchImage,
-        staging::{Established, Ins, Srch, from_inserted, projected},
+        staging::{from_inserted, projected},
+        statement_ctes::{Established, Ins, Srch},
     },
     error::ContextStoreError,
 };

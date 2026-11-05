@@ -10,6 +10,8 @@
 
 /// Everything one entity write must commit together.
 pub mod atomic_write;
+/// The instant each attempt of one write is stamped at.
+pub mod attempt_instant;
 /// Deferred temporal and change-event consequences of a batch write.
 pub mod batch_side_effect_job;
 /// The entity change event consumed after a commit.

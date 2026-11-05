@@ -15,6 +15,12 @@
 //! instance a concurrent write added would otherwise be removed without a
 //! tombstone or a notification. A deletion that loses is outlined again from
 //! the start, the watcher decision included.
+//!
+//! The tombstones are recorded at the deletion's instant, so the store refuses
+//! a deletion stamped before an instant the entity holds, which only a clock
+//! that stepped back produces: the Temporal Evolution would show an instance
+//! in effect after the entity is gone. The next attempt is stamped after that
+//! instant.
 
 use crate::{
     EntityService,
@@ -29,6 +35,7 @@ use crate::{
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    attempt_instant::AttemptInstant,
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     history_record::{deletion_history, deletion_tombstones},
@@ -37,13 +44,12 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::reads::attribute_change::deleted_instances;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::ChangeOrigin,
 };
 use andromeda_telemetry::entity::{self, EntityOperation};
-use chrono::Utc;
 use std::sync::Arc;
 
 impl EntityService {
@@ -59,12 +65,17 @@ impl EntityService {
         let id = entity.id;
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
-            self.retry_contended(async |_| match self.delete_attempt(target, entity).await? {
+            let mut instant = AttemptInstant::default();
+            self.retry_contended(async |_| match self.delete_attempt(target, entity, instant).await? {
                 AfterAttempt::Settled => Ok(()),
                 AfterAttempt::Vanished => Err(ContendedAttempt::Failed(EntityError::not_found(id))),
                 // A write landed between the read and the deletion: read the
                 // entity again.
                 AfterAttempt::Reread => Err(ContendedAttempt::Lost),
+                AfterAttempt::Restamp(latest) => {
+                    instant.refused(latest);
+                    Err(ContendedAttempt::Lost)
+                }
             })
             .await
             .map_err(|failure| failure.into_entity_error(id))
@@ -75,8 +86,9 @@ impl EntityService {
     }
 
     /// One attempt at the deletion: outline the entity, decide whether its
-    /// removed state is needed, and delete it unless it changed since.
-    async fn delete_attempt(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
+    /// removed state is needed, and delete it unless it changed since, stamped
+    /// at the instant `instant` gives once the entity is read.
+    async fn delete_attempt(&self, target: &ContextTarget, entity: WriteTarget<'_>, instant: AttemptInstant) -> Result<AfterAttempt, EntityError> {
         let id = entity.id;
         let Some(outline) = self.deletion_outline.deletion_outline(target, id).await? else {
             return Ok(AfterAttempt::Vanished);
@@ -96,8 +108,8 @@ impl EntityService {
             types: &outline.types,
         };
         match self.deletion_watchers(deleted, &change).await {
-            DeletionWatchers::Possible => self.delete_removed_state(target, entity).await,
-            DeletionWatchers::None => self.delete_outline(target, id, outline, change).await,
+            DeletionWatchers::Possible => self.delete_removed_state(target, entity, instant).await,
+            DeletionWatchers::None => self.delete_outline(target, id, outline, change, instant).await,
         }
     }
 
@@ -122,6 +134,7 @@ impl EntityService {
         id: &Identifier,
         outline: DeletionOutline,
         change: EntityChange,
+        instant: AttemptInstant,
     ) -> Result<AfterAttempt, EntityError> {
         let DeletionOutline {
             types,
@@ -138,7 +151,7 @@ impl EntityService {
             .history(deletion_tombstones(instances, scope))
             .precondition(Precondition::UnchangedSince(version))
             .build();
-        let now = SystemInstant::new(Utc::now());
+        let now = instant.next();
         let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
         let next = after_attempt(&outcome);
         let Some(committed_at) = outcome.changed_at() else {
@@ -162,7 +175,7 @@ impl EntityService {
 
     /// Delete an entity a subscription may be owed a notification for,
     /// reading the state it removes for the notification.
-    async fn delete_removed_state(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
+    async fn delete_removed_state(&self, target: &ContextTarget, entity: WriteTarget<'_>, instant: AttemptInstant) -> Result<AfterAttempt, EntityError> {
         let id = entity.id;
         let Some(EntitySnapshot {
             state: removed,
@@ -212,7 +225,7 @@ impl EntityService {
             .precondition(Precondition::UnchangedSince(version))
             .build();
 
-        let now = SystemInstant::new(Utc::now());
+        let now = instant.next();
         let outcome = single(self.writes.commit(target, now, vec![write]).await?)?;
         let next = after_attempt(&outcome);
         let Some(committed_at) = outcome.changed_at() else {

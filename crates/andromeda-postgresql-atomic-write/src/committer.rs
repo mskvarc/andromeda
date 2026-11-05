@@ -14,7 +14,7 @@ use crate::{
     },
     contention_retry::rerun_while_contended,
     deferred_history,
-    entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
+    entity_group::{EntityGroups, IndexedWrite, delete_outcome, group, insert_outcome, returned_rows, take_returned, update_outcome},
     evolution_establishment,
     history,
     history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode},
@@ -29,23 +29,23 @@ use andromeda_context_commit::{
     commit_invariant::CommitInvariant,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
-    deleted_entity::DeletedEntity,
     error::CommitError,
-    store_instant::StoreInstant,
     write_outcome::WriteOutcome,
     write_record::WriteRecord,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-use andromeda_postgresql_context_store::entity::{created_entities::CreatedEntities, landed_entity::LandedEntity, repo::EntityRepository};
+use andromeda_postgresql_context_store::entity::{
+    created_entities::CreatedEntities,
+    removed_entity::RemovedEntity,
+    repo::EntityRepository,
+    written_entities::WrittenEntities,
+};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 /// What one commit's entity statements produced.
 struct EntityMutations {
@@ -95,7 +95,9 @@ impl PostgresAtomicCommitter {
     /// Apply every current-state mutation and preserve submission-order
     /// outcomes. Every entity inserted or updated is stamped `accepted_at`,
     /// the instant its attributes carry (clause 4.8), and a created entity in
-    /// `establishing` has its Temporal Evolution established beside it.
+    /// `establishing` has its Temporal Evolution established beside it. A
+    /// write to an Entity holding a later instant lands nothing, and its
+    /// outcome carries that instant.
     async fn apply_entities(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -116,13 +118,13 @@ impl PostgresAtomicCommitter {
         }
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
-        let CreatedEntities { landed, established } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;
-        let landed = landed_at(landed);
+        let CreatedEntities { landed, established, predated } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;
+        let mut returned = returned_rows(WrittenEntities { landed, predated }, |entity| (entity.id, entity.committed_at));
         for (index, write) in &inserts {
-            outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
+            outcomes[*index] = Some(insert_outcome(write.precondition, take_returned(&mut returned, write.entity_id.as_ref())));
         }
         self.apply_updates(tx, target, &updates, &names, accepted_at, &mut outcomes).await?;
-        self.apply_deletes(tx, target, &deletes, &mut outcomes).await?;
+        self.apply_deletes(tx, target, &deletes, accepted_at, &mut outcomes).await?;
         let outcomes = outcomes
             .into_iter()
             .enumerate()
@@ -169,19 +171,21 @@ impl PostgresAtomicCommitter {
         let saved = EntityRepository::save_batch_in_tx(tx, target, &binds.entities, binds.rows, binds.grains, &expected, accepted_at)
             .await
             .map_err(|error| entity_statement(error))?;
-        let landed = landed_at(saved);
+        let mut returned = returned_rows(saved, |entity| (entity.id, entity.committed_at));
         for (index, write) in updates {
-            outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(&landed, write.entity_id.as_ref())));
+            outcomes[*index] = Some(update_outcome(write.precondition, take_returned(&mut returned, write.entity_id.as_ref())));
         }
         Ok(())
     }
 
-    /// Delete the grouped entity rows and retain their pre-deletion state.
+    /// Delete the grouped entity rows stamped `accepted_at` and retain their
+    /// pre-deletion state.
     async fn apply_deletes(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         deletes: &[IndexedWrite<'_>],
+        accepted_at: DateTime<Utc>,
         outcomes: &mut [Option<WriteOutcome>],
     ) -> Result<(), CommitError> {
         if deletes.is_empty() {
@@ -192,28 +196,17 @@ impl PostgresAtomicCommitter {
             .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
             .collect();
         let expected = expectations(deletes);
-        let mut snapshots: HashMap<Identifier, (DeletedEntity, StoreInstant)> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
+        let removed = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected, accepted_at)
             .await
-            .map_err(|error| context_store(error))?
-            .into_iter()
-            .map(|removed| (removed.entity.id.clone(), (removed.entity, removed.committed_at))) // clone: both the lookup key and returned snapshot own the identifier.
-            .collect();
+            .map_err(|error| context_store(error))?;
+        let mut returned = returned_rows(removed, |removed: RemovedEntity| {
+            (removed.entity.id.clone(), (removed.entity, removed.committed_at)) // clone: both the lookup key and returned snapshot own the identifier.
+        });
         for (index, write) in deletes {
-            outcomes[*index] = Some(delete_outcome(write.precondition, snapshots.remove(write.entity_id.as_ref())));
+            outcomes[*index] = Some(delete_outcome(write.precondition, take_returned(&mut returned, write.entity_id.as_ref())));
         }
         Ok(())
     }
-}
-
-/// The entities a fused statement wrote, keyed by identifier.
-fn landed_at(landed: Vec<LandedEntity>) -> HashMap<Identifier, StoreInstant> {
-    landed.into_iter().map(|entity| (entity.id, entity.committed_at)).collect()
-}
-
-/// Whether a fused statement returned an entity identifier, and the instant
-/// of the transaction it was written in.
-fn returned_flag(landed: &HashMap<Identifier, StoreInstant>, id: &Identifier) -> RowReturned {
-    landed.get(id).map_or(RowReturned::No, |at| RowReturned::At(*at))
 }
 
 impl PostgresAtomicCommitter {
@@ -384,28 +377,5 @@ impl ContextCommitter for PostgresAtomicCommitter {
                 .await
                 .map_err(AttemptFailure::into_commit_error)
         })
-    }
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
-mod tests {
-    use crate::{committer::returned_flag, entity_group::RowReturned};
-    use andromeda_context_commit::store_instant::StoreInstant;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use chrono::Utc;
-    use std::collections::HashMap;
-
-    #[test]
-    fn returned_flag_reports_identifier_membership_with_its_commit_instant() {
-        let present = "urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI");
-        let absent = "urn:ngsi-ld:B".parse::<Identifier>().expect("valid entity URI");
-        let committed = StoreInstant::new(Utc::now());
-        let landed = HashMap::from([(present.clone(), committed)]); // clone: the map and the probe each own the probe identifier
-        pretty_assertions::assert_eq!(returned_flag(&landed, &present), RowReturned::At(committed));
-        pretty_assertions::assert_eq!(returned_flag(&landed, &absent), RowReturned::No);
     }
 }

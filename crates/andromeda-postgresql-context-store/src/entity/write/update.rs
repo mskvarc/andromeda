@@ -13,38 +13,38 @@ use crate::{
         landed_entity::LandedEntity,
         mapper::stored_uri,
         params::PreparedEntityColumns,
+        predated_entity::PredatedEntity,
         repo::EntityRepository,
         staged_geometry::{kept_column, staged_column},
         types_present::{entity_write_failure, types_present},
         write::{
+            latest_instant::{LatestInstant, QueuedAt, queued_instant},
             search_image::SearchImage,
             staging::{
-                Attrs,
-                Dropped,
-                Ents,
-                Gone,
                 HOISTED_LOCATION,
-                Moved,
-                Proj,
                 ProjectedWrite,
-                Srch,
+                StagedColumn,
                 entity_arrays,
                 projected,
                 projection_cte,
+                staged,
                 update_staging_columns,
                 with_staged_alias,
             },
+            statement_ctes::{Attrs, Dropped, Ents, Gone, Moved, Proj, Srch, Stamped},
             type_membership::{Mbrs, Strays, Unflagged, added_memberships, dropped_memberships},
-            version_guard::{expectation, expectation_arrays, next_write_count},
+            update_anchor::update_anchor,
+            version_guard::expectation_arrays,
         },
+        written_entities::WrittenEntities,
     },
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
 use andromeda_context_commit::{entity_version::EntityVersion, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -59,7 +59,7 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, IntoIden, Query, SimpleExpr, UpdateStatement, WithClause, WithQuery};
+use sea_query::{CaseStatement, CommonTableExpression, Cond, Expr, ExprTrait, IntoIden, Query, SimpleExpr, WithClause, WithQuery};
 use sqlx::{Postgres, Transaction};
 
 /// Build the batch update of `entities`, each held to its entry of
@@ -67,14 +67,17 @@ use sqlx::{Postgres, Transaction};
 /// instance rows `rows` and the grains `grains` stage for them.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $14::bigint[]) AS d(…)),
-///      ents AS (UPDATE entities SET write_count = entities.write_count + 1, modified_at = $accepted_at,
-///                                   expires_at = proj.expires_at, min_attribute_expires_at = proj.min_attribute_expires_at
+/// WITH proj AS (SELECT …, <latest queued intent of d.id> AS queued_at FROM UNNEST($1::text[], …, $14::bigint[]) AS d(…)),
+///      stamped AS (UPDATE entities SET write_count = CASE WHEN <refused> THEN entities.write_count ELSE entities.write_count + 1 END,
+///                                      modified_at = CASE WHEN <refused> THEN entities.modified_at ELSE $accepted_at END,
+///                                      expires_at = CASE WHEN <refused> THEN entities.expires_at ELSE proj.expires_at END, …
 ///               FROM proj
 ///               WHERE entities.id = proj.id
 ///                 AND (proj.expected_entity_key IS NULL
 ///                      OR (entities.entity_key = proj.expected_entity_key AND entities.write_count = proj.expected_write_count))
-///               RETURNING entities.entity_key, entities.id),
+///               RETURNING entities.entity_key, entities.id,
+///                         CASE WHEN new.write_count = old.write_count THEN <latest of old> END AS latest_instant),
+///      ents AS (SELECT entity_key, id FROM stamped WHERE latest_instant IS NULL),
 ///      srch(entity_key, id, old_types, new_types, old_instance_names, …) AS
 ///              (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …,
 ///                      location = CASE WHEN proj.loc_kept THEN entity_search.location ELSE proj.location END, …,
@@ -98,14 +101,18 @@ use sqlx::{Postgres, Transaction};
 ///                WHERE (current_attributes.ordinal, …) IS DISTINCT FROM (excluded.ordinal, …)),
 ///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
 ///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT id, now() FROM ents
+/// SELECT id, now(), latest_instant FROM stamped
 /// ```
+///
+/// `<refused>` is `GREATEST(entities.modified_at, entities.evolution_modified_at,
+/// proj.queued_at) > $accepted_at`: the Entity holds an instant later than the
+/// write's.
 ///
 /// Each written row comes back with `now()`, the transaction timestamp: the
 /// store's own clock, which orders the change against a Subscription's
 /// lifecycle the same way whichever broker committed either.
 ///
-/// The identity row is the anchor ([`entity_write`]): it counts the write,
+/// The identity row is the anchor ([`update_anchor`]): it counts the write,
 /// stamps the clause 4.8 `modifiedAt` and replaces both expiries, which are
 /// derived from the state just written: an entity whose new state no longer
 /// carries `expiresAt` (clause 4.22) must not keep an expiry instant that would
@@ -116,6 +123,11 @@ use sqlx::{Postgres, Transaction};
 /// either "gone" or "moved on", and which of those it is depends on the
 /// precondition the caller attached. No column the anchor writes is in an
 /// index unless it changed, so the update stays a heap-only tuple.
+///
+/// An Entity holding an instant later than `accepted_at` keeps every column
+/// as it was, its write count included, and its row answers that instant: the
+/// condition reads the row the anchor writes, after any writer it waited on.
+/// It is not one of `ents`, so nothing else of the write lands.
 ///
 /// Every other relation is written only for the entities whose anchor landed.
 /// The attribute instances are written as each entity's edit says
@@ -151,6 +163,8 @@ pub(super) fn entity_update_statement<'entities>(
     accepted_at: DateTime<Utc>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
+    let queued = queued_instant(target, staged(StagedColumn::Id));
+    let projected_queued = queued.is_some().then(|| projected(QueuedAt));
     let mut external = ExternalArguments::default();
     let mut staged_entities = entity_arrays(entities, &staged_column(&entities.locations), &mut external);
     staged_entities.push(Expr::val(kept_column(&entities.locations)));
@@ -194,11 +208,24 @@ pub(super) fn entity_update_statement<'entities>(
 
     let dropped = dropped_memberships(target);
     let mut with = WithClause::new();
-    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update))
+    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update { queued }))
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Stamped)
+                .columns([Entities::EntityKey.into_iden(), Entities::Id.into_iden(), LatestInstant.into_iden()])
+                .query(update_anchor(target, accepted_at, projected_queued))
+                .to_owned(),
+        )
         .cte(
             CommonTableExpression::new()
                 .table_name(Ents)
-                .query(entity_write(target, accepted_at))
+                .query(
+                    Query::select()
+                        .columns([Entities::EntityKey, Entities::Id])
+                        .from(Stamped)
+                        .and_where(Expr::col(LatestInstant).is_null())
+                        .take(),
+                )
                 .to_owned(),
         )
         .cte(
@@ -234,36 +261,10 @@ pub(super) fn entity_update_statement<'entities>(
     for census in CensusStatements::of(target, Srch, CensusChange::Replaced)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::Id).expr(now()).from(Ents).take());
+    let statement = with.query(Query::select().column(Entities::Id).expr(now()).column(LatestInstant).from(Stamped).take());
 
     let statement = with_grains_alias(with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns)));
     Ok(ExternallyBound::new(statement, external))
-}
-
-/// The update's anchor, `ents`: each identity row holding a current state
-/// whose expectation still holds, stamped and given its new expiries, with
-/// the key and identifier of every row it landed in. A row whose current state
-/// a core deletion removed keeps only its Temporal Evolution, which no core
-/// update reaches.
-///
-/// It finds each row through the unique identifier index, so its cost grows
-/// with the batch whatever row estimate the plan was made for.
-fn entity_write(target: &ContextTarget, accepted_at: DateTime<Utc>) -> UpdateStatement {
-    Query::update()
-        .table(table_of(target, Entities::Table))
-        .value(Entities::WriteCount, next_write_count(Entities::Table))
-        .value(Entities::ModifiedAt, Expr::val(accepted_at))
-        .value(Entities::ExpiresAt, projected(Entities::ExpiresAt))
-        .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
-        .from(Proj)
-        .cond_where(
-            Cond::all()
-                .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
-                .add(holds_current_state(Entities::Table))
-                .add(expectation(Proj, Entities::Table)),
-        )
-        .returning(Query::returning().exprs([Expr::col((Entities::Table, Entities::EntityKey)), Expr::col((Entities::Table, Entities::Id))]))
-        .take()
 }
 
 /// The seven scalar `entity_search` columns the update projects, each written
@@ -309,10 +310,11 @@ fn hoisted_changed() -> Cond {
 }
 
 impl EntityRepository {
-    /// Write every entity in `entities` whose expectation still holds, its
-    /// attribute instances edited as `rows` and `grains` stage it, returning
-    /// the entities actually written with the instant of the transaction that
-    /// wrote them.
+    /// Write every entity in `entities` whose expectation still holds and that
+    /// holds no instant later than `accepted_at`, its attribute instances
+    /// edited as `rows` and `grains` stage it, returning the entities actually
+    /// written with the instant of the transaction that wrote them, and every
+    /// entity refused for holding a later instant, with that instant.
     ///
     /// `expected` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
@@ -331,9 +333,9 @@ impl EntityRepository {
         grains: StagedGrains<'_>,
         expected: &[Option<EntityVersion>],
         accepted_at: DateTime<Utc>,
-    ) -> Result<Vec<LandedEntity>, ContextStoreError> {
+    ) -> Result<WrittenEntities<LandedEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(WrittenEntities::none());
         }
         if expected.len() != entities.ids.len() {
             return Err(StoreInvariant::ExpectationCount {
@@ -348,19 +350,26 @@ impl EntityRepository {
         // The statement reads the written entities through `UNNEST` of bound arrays.
         let stretch = GenericPlanStretch::begin(tx).await.map_err(entity_write_failure)?;
         let rows = entity_update_statement(target, entities, rows, grains, expected, accepted_at)?
-            .into_query_as::<(String, DateTime<Utc>)>()
+            .into_query_as::<(String, DateTime<Utc>, Option<DateTime<Utc>>)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ObservedStatement::EntityUpdate, rows).await.map_err(entity_write_failure)?;
         stretch.end(tx).await.map_err(entity_write_failure)?;
 
-        rows.iter()
-            .map(|(id, committed_at)| {
-                Ok(LandedEntity {
-                    id: stored_uri(id)?,
+        let mut written = WrittenEntities::none();
+        for (id, committed_at, latest) in &rows {
+            let id = stored_uri(id)?;
+            match latest {
+                Some(latest) => written.predated.push(PredatedEntity {
+                    id,
+                    latest: SystemInstant::new(*latest),
+                }),
+                None => written.landed.push(LandedEntity {
+                    id,
                     committed_at: StoreInstant::new(*committed_at),
-                })
-            })
-            .collect()
+                }),
+            }
+        }
+        Ok(written)
     }
 }
 
@@ -415,7 +424,9 @@ mod tests {
     #[test]
     fn the_update_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = update();
-        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + 5 + 1;
+        // The write instant binds once as the stamp and once in the refusal
+        // each of the four columns the anchor sets tests.
+        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + 5 + 5;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -435,22 +446,70 @@ mod tests {
     /// The compare-and-set version is the row's key and write count, which
     /// the anchor compares with what the caller read and moves by one; the
     /// clause 4.8 `modifiedAt` is stamped with the instant the commit was
-    /// accepted at, the one its attributes carry, and compared with nothing,
-    /// since two writes accepted in the same microsecond stamp the same one.
+    /// accepted at, the one its attributes carry, and is not the version: two
+    /// writes accepted in the same microsecond stamp the same one.
     #[test]
     fn a_compare_and_set_write_states_the_read_version() {
         let sql = update();
         assert!(
-            sql.contains(r#""ents" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "modified_at" = $14, "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
+            sql.contains(r#""stamped" ("entity_key", "id", "latest_instant") AS (UPDATE "entities" SET "write_count" = (CASE WHEN"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r#""proj"."expected_entity_key" IS NULL OR ("entities"."entity_key" = "proj"."expected_entity_key" AND "entities"."write_count" = "proj"."expected_write_count")"#),
+            sql.contains(r#"FROM "proj" WHERE "entities"."id" = "proj"."id" AND "entities"."created_at" IS NOT NULL AND ("proj"."expected_entity_key" IS NULL OR ("entities"."entity_key" = "proj"."expected_entity_key" AND "entities"."write_count" = "proj"."expected_write_count"))"#),
             "{sql}"
         );
-        assert!(!sql.contains(r#""entities"."modified_at" ="#), "{sql}");
-        assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
-        assert!(sql.ends_with(r#"SELECT "id", NOW() FROM "ents""#), "{sql}");
+        assert!(
+            sql.contains(r#""ents" AS (SELECT "entity_key", "id" FROM "stamped" WHERE "latest_instant" IS NULL)"#),
+            "{sql}"
+        );
+        assert!(sql.ends_with(r#"SELECT "id", NOW(), "latest_instant" FROM "stamped""#), "{sql}");
+    }
+
+    /// Clause 4.8: the anchor refuses a write stamped before the latest
+    /// instant the Entity holds, its current state's, its Temporal
+    /// Evolution's or its latest queued intent's, by keeping every column it
+    /// sets, write count included; the row then answers that instant and is
+    /// none of the rows every other relation is written for.
+    #[test]
+    fn the_anchor_refuses_a_write_stamped_before_the_entity_s_latest_instant() {
+        let sql = update();
+        let refused = r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "proj"."queued_at") > $"#;
+        pretty_assertions::assert_eq!(sql.matches(refused).count(), 4, "{sql}");
+        for (column, written) in [
+            ("write_count", r#""entities"."write_count" + 1"#),
+            ("modified_at", "$16"),
+            ("expires_at", r#""proj"."expires_at""#),
+            ("min_attribute_expires_at", r#""proj"."min_attribute_expires_at""#),
+        ] {
+            assert!(
+                sql.contains(&format!(r#"THEN "entities"."{column}" ELSE {written} END)"#)),
+                "{column} keeps its value when refused: {sql}"
+            );
+        }
+        assert!(
+            sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id", (CASE WHEN ("new"."write_count" = "old"."write_count") THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "proj"."queued_at") ELSE NULL END))"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "d"."id" ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1) AS "queued_at""#),
+            "the latest queued intent is read once per row, in the projection: {sql}"
+        );
+    }
+
+    /// A Snapshot branch queues no history, so its anchor reads the identity
+    /// row's instants alone.
+    #[test]
+    fn a_snapshot_anchor_reads_no_queue() {
+        let key = SnapshotKey::try_from(5).expect("positive key");
+        let snapshot = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
+        let sql = update_on(&snapshot);
+        assert!(!sql.contains("temporal_append_intents"), "{sql}");
+        assert!(!sql.contains("queued_at"), "{sql}");
+        assert!(
+            sql.contains(r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at") > $"#),
+            "{sql}"
+        );
     }
 
     /// The attribute instances are written as each entity's edit stages
@@ -493,11 +552,11 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($43::text[]))"#),
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($47::text[]))"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"$39::text[], $40::integer[], $41::text[], $42::integer[]) AS g(id, attribute_name_key, dataset_key, ordinal)"),
+            sql.contains(r"$43::text[], $44::integer[], $45::text[], $46::integer[]) AS g(id, attribute_name_key, dataset_key, ordinal)"),
             "{sql}"
         );
     }

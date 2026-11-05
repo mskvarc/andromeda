@@ -22,6 +22,8 @@ pub mod mapper;
 pub mod params;
 /// Direct implementations of entity policy ports.
 mod port;
+/// One Entity a statement refused to write because it holds a later instant.
+pub mod predated_entity;
 /// Deciding what to ask PostgreSQL for, and what to hand back unanswered.
 pub mod pushdown;
 /// The statements that read one entity's current state.
@@ -46,3 +48,5 @@ pub mod types_present;
 pub(crate) mod unreadable_entity;
 /// The statements that write the three current-state entity relations.
 pub mod write;
+/// What one update or delete statement wrote and refused.
+pub mod written_entities;

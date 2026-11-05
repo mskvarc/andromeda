@@ -13,26 +13,15 @@ use crate::{
         landed_entity::LandedEntity,
         mapper::stored_uri,
         params::PreparedEntityColumns,
+        predated_entity::PredatedEntity,
         repo::EntityRepository,
         staged_geometry::written_column,
         types_present::{entity_write_failure, types_present},
         write::{
+            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates, queued_instant, unless_refused},
             search_image::SearchImage,
-            staging::{
-                Attrs,
-                Established,
-                Ins,
-                Proj,
-                ProjectedWrite,
-                Srch,
-                StagedColumn,
-                entity_arrays,
-                from_inserted,
-                insert_staging_columns,
-                projected,
-                projection_cte,
-                with_staged_alias,
-            },
+            staging::{ProjectedWrite, StagedColumn, entity_arrays, from_inserted, insert_staging_columns, projected, projection_cte, with_staged_alias},
+            statement_ctes::{Attrs, Established, Ins, Proj, Srch, Stamped},
             type_membership::{Mbrs, created_memberships},
             version_guard::next_write_count,
         },
@@ -41,12 +30,13 @@ use crate::{
 };
 use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_query::evolution_horizon::horizon_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     clock::now,
+    conflict_image::Excluded,
     external_arguments::{ExternalArguments, ExternallyBound},
     pg_array::has_elements,
     returning_image::{New, Old},
@@ -77,15 +67,20 @@ use std::collections::HashSet;
 ///
 /// ```sql
 /// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $12::boolean[]) AS d(…)),
-///      ins(entity_key, id, established) AS (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at,
-///                                                    evolution_created_at, evolution_modified_at, evolution_type_name_keys,
-///                                                    evolution_active_until)
+///      stamped(entity_key, id, established, latest_instant) AS
+///              (INSERT INTO entities (id, created_at, modified_at, expires_at, min_attribute_expires_at,
+///                                     evolution_created_at, evolution_modified_at, evolution_type_name_keys,
+///                                     evolution_active_until)
 ///              SELECT proj.id, $accepted_at, $accepted_at, …, CASE WHEN proj.establishes_evolution THEN $accepted_at END, …,
 ///                     CASE WHEN proj.establishes_evolution AND cardinality(proj.attribute_instance_name_keys) > 0
 ///                          THEN date_trunc('hour', $accepted_at, 'UTC') + make_interval(secs => 3600) END FROM proj
-///              ON CONFLICT (id) DO UPDATE SET created_at = excluded.created_at, …,
-///              write_count = entities.write_count + 1 WHERE entities.created_at IS NULL
-///              RETURNING new.entity_key, new.id, old.entity_key IS NULL AND new.evolution_created_at IS NOT NULL),
+///              ON CONFLICT (id) DO UPDATE SET created_at = CASE WHEN <latest of entities> > $accepted_at
+///                                                               THEN entities.created_at ELSE excluded.created_at END, …,
+///              write_count = CASE WHEN … THEN entities.write_count ELSE entities.write_count + 1 END
+///              WHERE entities.created_at IS NULL
+///              RETURNING new.entity_key, new.id, old.entity_key IS NULL AND new.evolution_created_at IS NOT NULL,
+///                        CASE WHEN new.created_at IS NULL THEN <latest of old> END),
+///      ins AS (SELECT entity_key, id, established FROM stamped WHERE latest_instant IS NULL),
 ///      srch(entity_key, new_types, new_instance_names, new_instance_kinds) AS
 ///              (INSERT INTO entity_search (…)
 ///               SELECT ins.entity_key, … FROM ins JOIN proj ON proj.id = ins.id
@@ -100,7 +95,7 @@ use std::collections::HashSet;
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
 ///      census_type_attributes AS (INSERT INTO entity_type_attribute_census … FROM srch …),
 ///      census_attributes AS (INSERT INTO attribute_census … FROM srch …)
-/// SELECT id, established, now() FROM ins
+/// SELECT id, established, now(), latest_instant FROM stamped
 /// ```
 ///
 /// Each written row comes back with `now()`, the transaction timestamp: the
@@ -124,7 +119,11 @@ use std::collections::HashSet;
 /// Temporal Evolution continues under the same key, and its type memberships
 /// gain the current flag. It counts the creation as a write rather than
 /// starting the count over, so a version read before the deletion never
-/// matches the Entity created anew; a new row starts at one.
+/// matches the Entity created anew; a new row starts at one. An identity row
+/// holding an instant later than `accepted_at`, a deletion's or the Temporal
+/// API's, is left as it was: the creation would be recorded before them. Its
+/// current state is still absent once the statement ran, which is how it comes
+/// back with that instant, and why no child insert reads it.
 ///
 /// Every attribute instance is one row, whatever the nesting of its
 /// sub-attributes, so one insert lands every instance of every entity, paired
@@ -160,6 +159,11 @@ pub(super) fn entity_insert_statement<'entities>(
     let instance_arrays = rows.into_arrays(&mut external);
 
     let identity = identity_insert(target, accepted_at)?;
+    let landed = Query::select()
+        .columns([Entities::EntityKey.into_iden(), Entities::Id.into_iden(), Established.into_iden()])
+        .from(Stamped)
+        .and_where(Expr::col(LatestInstant).is_null())
+        .take();
 
     let mut search = Query::insert();
     search
@@ -201,11 +205,17 @@ pub(super) fn entity_insert_statement<'entities>(
     with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Insert))
         .cte(
             CommonTableExpression::new()
-                .table_name(Ins)
-                .columns([Entities::EntityKey.into_iden(), Entities::Id.into_iden(), Established.into_iden()])
+                .table_name(Stamped)
+                .columns([
+                    Entities::EntityKey.into_iden(),
+                    Entities::Id.into_iden(),
+                    Established.into_iden(),
+                    LatestInstant.into_iden(),
+                ])
                 .query(identity)
                 .to_owned(),
         )
+        .cte(CommonTableExpression::new().table_name(Ins).query(landed).to_owned())
         .cte(
             CommonTableExpression::new()
                 .table_name(Srch)
@@ -224,16 +234,25 @@ pub(super) fn entity_insert_statement<'entities>(
     for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::Id).column(Established).expr(now()).from(Ins).take());
+    let statement = with.query(
+        Query::select()
+            .column(Entities::Id)
+            .column(Established)
+            .expr(now())
+            .column(LatestInstant)
+            .from(Stamped)
+            .take(),
+    );
 
     let statement = with_instances_alias(with_staged_alias(UnnestAliased::new(statement), &columns));
     Ok(ExternallyBound::new(statement, external))
 }
 
-/// The identity insert of a create, `ins`: each staged entity created and
+/// The identity insert of a create, `stamped`: each staged entity created and
 /// modified at `accepted_at`, minted with its Temporal Evolution where it is
-/// staged as establishing one, returning its key, its identifier and whether
-/// the insert minted the row with that evolution.
+/// staged as establishing one, returning its key, its identifier, whether the
+/// insert minted the row with that evolution, and the latest instant of an
+/// identity row it left without a current state for holding a later one.
 ///
 /// # Errors
 ///
@@ -269,14 +288,25 @@ fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result
                 .from(Proj)
                 .take(),
         )?;
+    let refused = predates(
+        latest_instant(Entities::Table, queued_instant(target, Expr::col((Entities::Table, Entities::Id)))),
+        accepted_at,
+    );
+    let mut revival = OnConflict::column(Entities::Id);
+    for column in current_state {
+        revival.value(
+            column,
+            unless_refused(&refused, Expr::col((Entities::Table, column)), Expr::col((Excluded, column))),
+        );
+    }
+    revival.value(
+        Entities::WriteCount,
+        unless_refused(&refused, Expr::col((Entities::Table, Entities::WriteCount)), next_write_count(Entities::Table)),
+    );
+    let left_without_state = Expr::col((New, Entities::CreatedAt)).is_null();
+    let latest_held = latest_instant(Old, queued_instant(target, Expr::col((Old, Entities::Id))));
     identity
-        .on_conflict(
-            OnConflict::column(Entities::Id)
-                .update_columns(current_state)
-                .value(Entities::WriteCount, next_write_count(Entities::Table))
-                .action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null())
-                .to_owned(),
-        )
+        .on_conflict(revival.action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null()).to_owned())
         .returning(
             Query::returning().exprs([
                 Expr::col((New, Entities::EntityKey)),
@@ -284,6 +314,7 @@ fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result
                 Expr::col((Old, Entities::EntityKey))
                     .is_null()
                     .and(Expr::col((New, Entities::EvolutionCreatedAt)).is_not_null()),
+                latest_where_refused(left_without_state, latest_held),
             ]),
         );
     Ok(identity)
@@ -296,7 +327,9 @@ impl EntityRepository {
     /// instant its attributes carry (clause 4.8), so every entity one commit
     /// writes shares it. A new identity row of an entity in `establishing` is
     /// minted with its Temporal Evolution too ([`entity_insert_statement`]),
-    /// and those come back as established.
+    /// and those come back as established. An identity row holding a
+    /// Temporal Evolution alone and an instant later than `accepted_at` is
+    /// left without a current state, and comes back as predated.
     ///
     /// # Errors
     ///
@@ -317,13 +350,20 @@ impl EntityRepository {
         types_present(entities)?;
 
         let rows = entity_insert_statement(target, entities, rows, accepted_at, establishing)?
-            .into_query_as::<(String, bool, DateTime<Utc>)>()
+            .into_query_as::<(String, bool, DateTime<Utc>, Option<DateTime<Utc>>)>()
             .fetch_all(&mut **tx);
         let rows = observe_statement(ObservedStatement::EntityInsert, rows).await.map_err(entity_write_failure)?;
 
         let mut created = CreatedEntities::default();
-        for (id, established, committed_at) in &rows {
+        for (id, established, committed_at, latest) in &rows {
             let id = stored_uri(id)?;
+            if let Some(latest) = latest {
+                created.predated.push(PredatedEntity {
+                    id,
+                    latest: SystemInstant::new(*latest),
+                });
+                continue;
+            }
             if *established {
                 // clone: the identifier is both landed and established.
                 created.established.push(id.clone());
@@ -378,7 +418,9 @@ mod tests {
     #[test]
     fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = insert();
-        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 6;
+        // The conflict action binds the write instant once more in the
+        // refusal each of the five columns it sets tests.
+        let binds = insert_staging_columns().len() + ROW_COLUMNS.len() + 1 + 6 + 5;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -404,9 +446,9 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#""instances" AS (SELECT "r"."id" AS "id""#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($18::text[]"), "{sql}");
-        assert!(sql.contains(r"$23::smallint[], $44::numeric[], $24::text[]"), "{sql}");
-        assert!(sql.contains(r"$48::sub_attribute_tree[], $41::text[]) AS r("), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($23::text[]"), "{sql}");
+        assert!(sql.contains(r"$28::smallint[], $49::numeric[], $29::text[]"), "{sql}");
+        assert!(sql.contains(r"$53::sub_attribute_tree[], $46::text[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
@@ -427,7 +469,7 @@ mod tests {
         let sql = insert();
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
         assert!(
-            sql.contains(r#""ins" ("entity_key", "id", "established") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys", "evolution_active_until")"#),
+            sql.contains(r#""stamped" ("entity_key", "id", "established", "latest_instant") AS (INSERT INTO "entities" ("id", "created_at", "modified_at", "expires_at", "min_attribute_expires_at", "evolution_created_at", "evolution_modified_at", "evolution_type_name_keys", "evolution_active_until")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""srch" ("entity_key", "new_types", "new_instance_names", "new_instance_kinds") AS (INSERT INTO "entity_search" ("entity_key", "location_expires_at", "entity_type_name_keys", "attribute_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds", "scope_paths", "verbatim_scope_paths", "location", "location_reach")"#), "{sql}");
@@ -435,7 +477,11 @@ mod tests {
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"SELECT "id", "established", NOW() FROM "ins""#), "{sql}");
+        assert!(
+            sql.contains(r#""ins" AS (SELECT "entity_key", "id", "established" FROM "stamped" WHERE "latest_instant" IS NULL)"#),
+            "{sql}"
+        );
+        assert!(sql.ends_with(r#"SELECT "id", "established", NOW(), "latest_instant" FROM "stamped""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
             2,
@@ -513,14 +559,52 @@ mod tests {
                 r#"(CASE WHEN ("proj"."establishes_evolution") THEN "proj"."entity_type_name_keys" ELSE NULL END), "#,
                 r#"(CASE WHEN ("proj"."establishes_evolution" AND cardinality("proj"."attribute_instance_name_keys") > 0) "#,
                 r#"THEN date_trunc('hour', $16, 'UTC') + (make_interval(secs => $17)) ELSE NULL END) FROM "proj" "#,
-                r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = "excluded"."created_at", "modified_at" = "excluded"."modified_at", "#,
-                r#""expires_at" = "excluded"."expires_at", "min_attribute_expires_at" = "excluded"."min_attribute_expires_at", "#,
-                r#""write_count" = "entities"."write_count" + 1 WHERE "entities"."created_at" IS NULL "#,
-                r#"RETURNING "new"."entity_key", "new"."id", "old"."entity_key" IS NULL AND "new"."evolution_created_at" IS NOT NULL)"#
+                r#"ON CONFLICT ("id") DO UPDATE SET "created_at" = (CASE WHEN"#
             )),
             "{sql}"
         );
+        for (column, written) in [
+            ("created_at", r#""excluded"."created_at""#),
+            ("modified_at", r#""excluded"."modified_at""#),
+            ("expires_at", r#""excluded"."expires_at""#),
+            ("min_attribute_expires_at", r#""excluded"."min_attribute_expires_at""#),
+            ("write_count", r#""entities"."write_count" + 1"#),
+        ] {
+            assert!(
+                sql.contains(&format!(r#"THEN "entities"."{column}" ELSE {written} END)"#)),
+                "{column} is revived unless refused: {sql}"
+            );
+        }
+        assert!(
+            sql.contains(r#"END) WHERE "entities"."created_at" IS NULL RETURNING "new"."entity_key", "new"."id", "old"."entity_key" IS NULL AND "new"."evolution_created_at" IS NOT NULL, "#),
+            "{sql}"
+        );
         assert!(!sql.contains("geography"), "the geography is an index expression, never stored: {sql}");
+    }
+
+    /// Clause 4.8: a revival stamped before the latest instant the identity
+    /// row holds, its Temporal Evolution's or its latest queued intent's (a
+    /// deletion's tombstones may still be queued), leaves the row without a
+    /// current state, and the row answers that instant. A new row is never
+    /// refused, and no refused row reaches a child insert.
+    #[test]
+    fn a_revival_stamped_before_the_identity_row_s_latest_instant_is_refused() {
+        let sql = insert();
+        let refused = concat!(
+            r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "#,
+            r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "entities"."id" "#,
+            r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) > $"#
+        );
+        pretty_assertions::assert_eq!(sql.matches(refused).count(), 5, "{sql}");
+        assert!(
+            sql.contains(concat!(
+                r#"(CASE WHEN ("new"."created_at" IS NULL) THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "#,
+                r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "old"."id" "#,
+                r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) ELSE NULL END))"#
+            )),
+            "{sql}"
+        );
+        pretty_assertions::assert_eq!(sql.matches(r#"FROM "stamped""#).count(), 2, "the landed rows and the answer: {sql}");
     }
 
     /// Every entry a create records is created and modified at `accepted_at`

@@ -5,20 +5,24 @@ use crate::{
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_uri,
+        predated_entity::PredatedEntity,
         removed_entity::RemovedEntity,
         repo::EntityRepository,
         write::{
+            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates, queued_instant},
             search_image::SearchImage,
-            staging::{Doomed, Srch, Staged, StagedColumn, delete_staging_columns, staging_source, with_staged_alias},
+            staging::{Staged, StagedColumn, delete_staging_columns, staging_source, with_staged_alias},
+            statement_ctes::{Doomed, Srch},
             version_guard::{expectation, expectation_arrays, next_write_count},
         },
+        written_entities::WrittenEntities,
     },
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
 };
 use andromeda_context_commit::{deleted_entity::DeletedEntity, entity_version::EntityVersion, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_branch::{schema_iden, table_of};
 use andromeda_postgresql_query::{
     entity_sides::{holds_current_state, holds_evolution},
@@ -31,7 +35,24 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{clock::now, pg_array::text_array, statement::Statement, unnest::UnnestAliased};
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
-use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Iden, IntoIden, JoinType, Keyword, LockType, Query, SimpleExpr, WithClause, WithQuery};
+use chrono::{DateTime, Utc};
+use sea_query::{
+    Alias,
+    CommonTableExpression,
+    Expr,
+    ExprTrait,
+    FunctionCall,
+    Iden,
+    IntoIden,
+    JoinType,
+    Keyword,
+    LockType,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    WithClause,
+    WithQuery,
+};
 use sqlx::{Postgres, Row, Transaction};
 
 /// The column the delete answers its transaction timestamp under.
@@ -47,6 +68,11 @@ struct Gone;
 #[derive(Iden, Clone, Copy)]
 #[iden = "kept"]
 struct Kept;
+
+/// The latest instant a doomed Entity holds, `latest`, a column of `doomed`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "latest"]
+struct Latest;
 
 /// The CTE taking the current state off the identity rows a Temporal
 /// Evolution keeps, `retired`, whose only purpose is to run.
@@ -72,11 +98,13 @@ struct Unflagged;
 #[iden = "strays"]
 struct Strays;
 
-/// Build the batch delete of `ids`, each held to its entry of `expected`.
+/// Build the batch delete of `ids`, each held to its entry of `expected` and
+/// stamped `accepted_at`.
 ///
 /// ```sql
 /// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at,
-///                        e.evolution_created_at IS NOT NULL AS kept
+///                        e.evolution_created_at IS NOT NULL AS kept,
+///                        GREATEST(e.modified_at, e.evolution_modified_at, <latest queued intent of e.id>) AS latest
 ///                 FROM UNNEST(…) AS d(id, expected_entity_key, expected_write_count)
 ///                 JOIN entities e ON e.id = d.id
 ///                 WHERE e.created_at IS NOT NULL
@@ -84,16 +112,17 @@ struct Strays;
 ///                        OR (e.entity_key = d.expected_entity_key AND e.write_count = d.expected_write_count))
 ///                 FOR UPDATE OF e),
 ///      srch(entity_key, old_types, old_instance_names, old_instance_kinds) AS
-///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed)
+///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT latest > $accepted_at)
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
-///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT kept)),
+///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT latest > $accepted_at AND NOT kept)),
 ///      retired AS (UPDATE entities SET write_count = entities.write_count + 1, created_at = NULL, modified_at = NULL,
-///                  expires_at = NULL, min_attribute_expires_at = NULL WHERE entity_key IN (SELECT entity_key FROM doomed WHERE kept)),
-///      retired_attributes AS (DELETE FROM current_attributes WHERE entity_key IN (… WHERE kept)),
-///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… WHERE kept) AND is_evolution_member),
-///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… WHERE kept) AND NOT is_evolution_member),
+///                  expires_at = NULL, min_attribute_expires_at = NULL WHERE entity_key IN (… WHERE NOT latest > $accepted_at AND kept)),
+///      retired_attributes AS (DELETE FROM current_attributes WHERE entity_key IN (… AND kept)),
+///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… AND kept) AND is_evolution_member),
+///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… AND kept) AND NOT is_evolution_member),
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT id, created_at, modified_at, expires_at, now() AS committed_at FROM doomed
+/// SELECT id, created_at, modified_at, expires_at, now() AS committed_at,
+///        CASE WHEN latest > $accepted_at THEN latest END AS latest_instant FROM doomed
 /// ```
 ///
 /// Each written row comes back with `now()`, the transaction timestamp: the
@@ -125,6 +154,12 @@ struct Strays;
 /// and cannot read them once the rows are gone; the attributes do not, because
 /// every caller that needs them read them before the delete.
 ///
+/// A candidate holding an instant later than `accepted_at` is locked and left
+/// standing: the deletion's tombstones are recorded at `accepted_at`, and an
+/// Evolution ending instances before it observed them would show them in
+/// effect after the Entity is gone (clause 4.8). Its row answers that instant,
+/// NULL for a candidate the delete removed.
+///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::StatementBuild`] if a census ledger insert ever stops
@@ -133,33 +168,24 @@ pub(super) fn entity_delete_statement(
     target: &ContextTarget,
     ids: &[Identifier],
     expected: &[Option<EntityVersion>],
+    accepted_at: DateTime<Utc>,
 ) -> Result<UnnestAliased<WithQuery>, ContextStoreError> {
     let columns = delete_staging_columns();
     let ids = ids.iter().map(Identifier::as_str).collect::<Vec<_>>();
     let mut arrays = vec![text_array(&ids)];
     arrays.extend(expectation_arrays(expected));
+    let doomed = doomed_candidates(target, staging_source(&columns, arrays));
 
-    let mut doomed = Query::select();
-    doomed
-        .expr(Expr::col((E, Entities::EntityKey)))
-        .expr(Expr::col((E, Entities::Id)))
-        .expr(Expr::col((E, Entities::CreatedAt)))
-        .expr(Expr::col((E, Entities::ModifiedAt)))
-        .expr(Expr::col((E, Entities::ExpiresAt)))
-        .expr_as(holds_evolution(E), Kept)
-        .from_function(staging_source(&columns, arrays), Staged)
-        .join_as(
-            JoinType::Join,
-            table_of(target, Entities::Table),
-            E,
-            Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
-        )
-        .and_where(holds_current_state(E))
-        .cond_where(expectation(Staged, E))
-        .lock_with_tables(LockType::Update, [E.into_iden()]);
-
-    let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).take();
-    let doomed_keys_where = |kept: SimpleExpr| Query::select().column(Entities::EntityKey).from(Doomed).and_where(kept).take();
+    let refused = || predates(Expr::col(Latest), accepted_at);
+    let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).and_where(refused().not()).take();
+    let doomed_keys_where = |kept: SimpleExpr| {
+        Query::select()
+            .column(Entities::EntityKey)
+            .from(Doomed)
+            .and_where(refused().not())
+            .and_where(kept)
+            .take()
+    };
     let kept_keys = || doomed_keys_where(Expr::col(Kept));
     let unkept_keys = || doomed_keys_where(Expr::col(Kept).not());
     let search = Query::delete()
@@ -201,7 +227,7 @@ pub(super) fn entity_delete_statement(
     );
 
     let mut with = WithClause::new();
-    with.cte(CommonTableExpression::new().table_name(Doomed).query(doomed.take()).to_owned())
+    with.cte(CommonTableExpression::new().table_name(Doomed).query(doomed).to_owned())
         .cte(
             CommonTableExpression::new()
                 .table_name(Srch)
@@ -222,26 +248,63 @@ pub(super) fn entity_delete_statement(
     for census in CensusStatements::of(target, Srch, CensusChange::Removed)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(
-        Query::select()
-            .columns([
-                Entities::Id.into_iden(),
-                Entities::CreatedAt.into_iden(),
-                Entities::ModifiedAt.into_iden(),
-                Entities::ExpiresAt.into_iden(),
-            ])
-            .expr_as(now(), Alias::new(COMMITTED_AT))
-            .from(Doomed)
-            .take(),
-    );
+    let statement = with.query(deletion_answer(refused()));
 
     Ok(with_staged_alias(UnnestAliased::new(statement), &columns))
 }
 
+/// The delete's candidates, `doomed`: each identity row `staging` names that
+/// holds a current state and still stands as its expectation states, locked,
+/// with the system attributes the notification needs, whether its Temporal
+/// Evolution keeps the row, and the latest instant it holds.
+///
+/// The lock reads each row as the writer it waited on left it, so its latest
+/// instant is the one the deletion is compared with.
+fn doomed_candidates(target: &ContextTarget, staging: FunctionCall) -> SelectStatement {
+    Query::select()
+        .expr(Expr::col((E, Entities::EntityKey)))
+        .expr(Expr::col((E, Entities::Id)))
+        .expr(Expr::col((E, Entities::CreatedAt)))
+        .expr(Expr::col((E, Entities::ModifiedAt)))
+        .expr(Expr::col((E, Entities::ExpiresAt)))
+        .expr_as(holds_evolution(E), Kept)
+        .expr_as(latest_instant(E, queued_instant(target, Expr::col((E, Entities::Id)))), Latest)
+        .from_function(staging, Staged)
+        .join_as(
+            JoinType::Join,
+            table_of(target, Entities::Table),
+            E,
+            Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
+        )
+        .and_where(holds_current_state(E))
+        .cond_where(expectation(Staged, E))
+        .lock_with_tables(LockType::Update, [E.into_iden()])
+        .take()
+}
+
+/// What the delete answers for every candidate: its system attributes, the
+/// transaction timestamp, and its latest instant where `refused` left it
+/// standing.
+fn deletion_answer(refused: SimpleExpr) -> SelectStatement {
+    Query::select()
+        .columns([
+            Entities::Id.into_iden(),
+            Entities::CreatedAt.into_iden(),
+            Entities::ModifiedAt.into_iden(),
+            Entities::ExpiresAt.into_iden(),
+        ])
+        .expr_as(now(), Alias::new(COMMITTED_AT))
+        .expr_as(latest_where_refused(refused, Expr::col(Latest)), LatestInstant)
+        .from(Doomed)
+        .take()
+}
+
 impl EntityRepository {
-    /// Delete every entity in `ids` whose expectation still holds, returning
-    /// the system attributes each one held and the instant of the transaction
-    /// that removed it.
+    /// Delete every entity in `ids` whose expectation still holds and that
+    /// holds no instant later than `accepted_at`, returning the system
+    /// attributes each one held and the instant of the transaction that
+    /// removed it, and every entity left standing for holding a later
+    /// instant, with that instant.
     ///
     /// The search row is deleted beside the identity row so the discovery
     /// census can count out what it held; the membership and attribute
@@ -264,9 +327,10 @@ impl EntityRepository {
         target: &ContextTarget,
         ids: &[Identifier],
         expected: &[Option<EntityVersion>],
-    ) -> Result<Vec<RemovedEntity>, ContextStoreError> {
+        accepted_at: DateTime<Utc>,
+    ) -> Result<WrittenEntities<RemovedEntity>, ContextStoreError> {
         if ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(WrittenEntities::none());
         }
         if expected.len() != ids.len() {
             return Err(StoreInvariant::ExpectationCount {
@@ -277,22 +341,29 @@ impl EntityRepository {
             .into());
         }
 
-        let rows = entity_delete_statement(target, ids, expected)?.to_query().fetch_all(&mut **tx);
+        let rows = entity_delete_statement(target, ids, expected, accepted_at)?.to_query().fetch_all(&mut **tx);
         let rows = observe_statement(ObservedStatement::EntityDelete, rows).await?;
 
-        rows.into_iter()
-            .map(|row| {
-                Ok(RemovedEntity {
+        let mut written = WrittenEntities::none();
+        for row in rows {
+            let id = stored_uri(row.try_get("id")?)?;
+            match row.try_get::<Option<DateTime<Utc>>, _>(LatestInstant.to_string().as_str())? {
+                Some(latest) => written.predated.push(PredatedEntity {
+                    id,
+                    latest: SystemInstant::new(latest),
+                }),
+                None => written.landed.push(RemovedEntity {
                     entity: DeletedEntity {
-                        id: stored_uri(row.try_get("id")?)?,
+                        id,
                         created_at: row.try_get("created_at")?,
                         modified_at: row.try_get("modified_at")?,
                         expires_at: row.try_get("expires_at")?,
                     },
                     committed_at: StoreInstant::new(row.try_get(COMMITTED_AT)?),
-                })
-            })
-            .collect()
+                }),
+            }
+        }
+        Ok(written)
     }
 }
 
@@ -304,10 +375,16 @@ impl EntityRepository {
 mod tests {
     use crate::{entity::write::delete::entity_delete_statement, statement_text::text_of};
     use andromeda_context_space::context_target::ContextTarget;
+    use chrono::{DateTime, Utc};
+
+    /// The instant every rendered delete is stamped at.
+    fn accepted_at() -> DateTime<Utc> {
+        "2026-01-01T00:00:00Z".parse().expect("a valid instant")
+    }
 
     /// The rendered delete, unwrapped for assertion.
     fn entity_delete_sql(target: &ContextTarget) -> String {
-        text_of(&entity_delete_statement(target, &[], &[]).expect("the fixed delete builds"))
+        text_of(&entity_delete_statement(target, &[], &[], accepted_at()).expect("the fixed delete builds"))
     }
 
     #[test]
@@ -315,7 +392,7 @@ mod tests {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(sql.contains("UNNEST($1::text[], $2::bigint[], $3::bigint[])"), "{sql}");
         assert!(
-            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "e"."evolution_created_at" IS NOT NULL AS "kept" FROM UNNEST("#),
+            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "e"."evolution_created_at" IS NOT NULL AS "kept", GREATEST("#),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, expected_entity_key, expected_write_count)"), "{sql}");
@@ -336,13 +413,49 @@ mod tests {
     fn the_delete_removes_identity_rows_by_key_and_returns_what_the_notification_needs() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed" WHERE NOT "kept"))"#),
+            sql.contains(
+                r#""gone" AS (DELETE FROM "entities" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed" WHERE (NOT "latest" > $5) AND (NOT "kept")))"#
+            ),
             "{sql}"
         );
         assert!(
-            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at", NOW() AS "committed_at" FROM "doomed""#),
+            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at", NOW() AS "committed_at", (CASE WHEN ("latest" > $10) THEN "latest" ELSE NULL END) AS "latest_instant" FROM "doomed""#),
             "{sql}"
         );
+    }
+
+    /// Clause 4.8: the tombstones are recorded at the deletion's instant, so
+    /// a candidate holding a later instant, its current state's, its Temporal
+    /// Evolution's or its latest queued intent's, is locked and left standing,
+    /// and its row answers that instant.
+    #[test]
+    fn the_delete_leaves_a_candidate_holding_a_later_instant_standing() {
+        let sql = entity_delete_sql(&ContextTarget::Live);
+        assert!(
+            sql.contains(concat!(
+                r#"GREATEST("e"."modified_at", "e"."evolution_modified_at", "#,
+                r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "e"."id" "#,
+                r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) AS "latest" FROM UNNEST("#
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""srch" ("entity_key", "old_types", "old_instance_names", "old_instance_kinds") AS (DELETE FROM "entity_search" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed" WHERE NOT "latest" > $4)"#),
+            "{sql}"
+        );
+        pretty_assertions::assert_eq!(sql.matches(r#"NOT "latest" > $"#).count(), 6, "every removal leaves it: {sql}");
+    }
+
+    /// A Snapshot branch queues no history, so a candidate's latest instant is
+    /// its identity row's.
+    #[test]
+    fn a_snapshot_delete_reads_no_queue() {
+        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+        let key = SnapshotKey::try_from(5).expect("positive key");
+        let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
+        let sql = entity_delete_sql(&target);
+        assert!(!sql.contains("temporal_append_intents"), "{sql}");
+        assert!(sql.contains(r#"GREATEST("e"."modified_at", "e"."evolution_modified_at") AS "latest""#), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the Temporal Evolution standing: an Entity holding
@@ -354,28 +467,32 @@ mod tests {
     #[test]
     fn an_entity_with_a_temporal_evolution_keeps_its_identity_row() {
         let sql = entity_delete_sql(&ContextTarget::Live);
-        let kept = r#"(SELECT "entity_key" FROM "doomed" WHERE "kept")"#;
+        let kept = |placeholder: u8| format!(r#"(SELECT "entity_key" FROM "doomed" WHERE (NOT "latest" > ${placeholder}) AND "kept")"#);
         assert!(
             sql.contains(&format!(
-                r#""retired" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {kept})"#
+                r#""retired" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {})"#,
+                kept(6)
             )),
             "{sql}"
         );
         assert!(
             sql.contains(&format!(
-                r#""retired_attributes" AS (DELETE FROM "current_attributes" WHERE "entity_key" IN {kept})"#
+                r#""retired_attributes" AS (DELETE FROM "current_attributes" WHERE "entity_key" IN {})"#,
+                kept(7)
             )),
             "{sql}"
         );
         assert!(
             sql.contains(&format!(
-                r#""unflagged" AS (UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN {kept} AND "is_evolution_member")"#
+                r#""unflagged" AS (UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN {} AND "is_evolution_member")"#,
+                kept(8)
             )),
             "{sql}"
         );
         assert!(
             sql.contains(&format!(
-                r#""strays" AS (DELETE FROM "entity_type_members" WHERE "entity_key" IN {kept} AND (NOT "is_evolution_member"))"#
+                r#""strays" AS (DELETE FROM "entity_type_members" WHERE "entity_key" IN {} AND (NOT "is_evolution_member"))"#,
+                kept(9)
             )),
             "{sql}"
         );
@@ -390,7 +507,7 @@ mod tests {
     fn the_delete_counts_the_removed_search_rows_out_of_the_census() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
-            sql.contains(r#""srch" ("entity_key", "old_types", "old_instance_names", "old_instance_kinds") AS (DELETE FROM "entity_search" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed") RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
+            sql.contains(r#""srch" ("entity_key", "old_types", "old_instance_names", "old_instance_kinds") AS (DELETE FROM "entity_search" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed" WHERE NOT "latest" > $4) RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
         );
         for ledger in ["entity_type_census", "entity_type_attribute_census", "attribute_census"] {

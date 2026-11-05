@@ -17,9 +17,17 @@
 //! unchanged since that snapshot, and a write built for an absent entity holds
 //! while the entity is still absent.
 //!
-//! Every attempt stamps the one write instant the batch took before its first
-//! round, because "All Entities and Attributes in the batch will get the same
-//! modifiedAt timestamp" (clause 5.5.11.0).
+//! The first attempt stamps the one write instant the batch took before its
+//! first round, because "All Entities and Attributes in the batch will get the
+//! same modifiedAt timestamp" (clause 5.5.11.0). The store also refuses a write
+//! to an entity holding a later instant than the batch's, one another writer
+//! stamped while the batch ran: written at the batch instant, the entity's
+//! `modifiedAt` would move backwards (clause 4.8). Such an entity, like one
+//! another writer superseded, is written as a separate request would write it,
+//! so every later attempt takes its own instant: the clock's, or one
+//! microsecond past the latest instant a refusal answered
+//! ([`AttemptInstant`]). Every entity no other write touched keeps the batch
+//! instant.
 
 use crate::{
     EntityService,
@@ -29,10 +37,25 @@ use crate::{
     error::EntityError,
     side_effect::SideEffectPlacement,
 };
-use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
+use andromeda_context_commit::{attempt_instant::AttemptInstant, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_retry::retry_policy::RetryAttempt;
-use std::{collections::HashSet, mem::take};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::take,
+};
+
+/// What a batch path reads before it builds its writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ChunkRead {
+    /// Every attempt reads the entities it writes, and a refusal a fresh read
+    /// can fix is attempted again.
+    Snapshots,
+    /// No attempt reads: every write creates its entity (clause 5.6.7), so an
+    /// entity that exists is a conflict no read can fix, and only a write the
+    /// store refused as predated is attempted again.
+    Nothing,
+}
 
 /// One batch path's part in a chunk read-modify-write: the write it builds for
 /// one entity against the entity as an attempt read it.
@@ -41,11 +64,15 @@ pub(super) trait ChunkRewrite: Sync {
     /// every write, because a write the store refuses is rebuilt from it.
     type Entry: Send;
 
+    /// What the path reads before it builds its writes.
+    const READ: ChunkRead;
+
     /// The entity `entry` writes.
     fn id(entry: &Self::Entry) -> &Identifier;
 
     /// Build the write of `entry` against `snapshot`, the entity as this
-    /// attempt read it, or `None` when the attempt found it absent.
+    /// attempt read it, or `None` when the attempt found it absent or read
+    /// nothing.
     ///
     /// The write's precondition is the driver's to state: the build only
     /// says what to write.
@@ -62,6 +89,15 @@ pub(super) trait ChunkRewrite: Sync {
     ) -> Result<PlannedWrite<Self::Entry>, Box<(Identifier, EntityError)>>;
 }
 
+/// What the attempts of one chunk carry from one to the next.
+#[derive(Default)]
+struct ChunkProgress {
+    /// Every entity an attempt settled.
+    settled: ChunkOutcome,
+    /// The earliest instant the next attempt may be stamped at.
+    instant: AttemptInstant,
+}
+
 /// The write one attempt built for one entity.
 pub(super) struct PlannedWrite<E> {
     /// What the write is rebuilt from if the store refuses it.
@@ -73,9 +109,9 @@ pub(super) struct PlannedWrite<E> {
 }
 
 impl EntityService {
-    /// Commit every entity of `entries` through `rewrite` at the batch instant
-    /// `now`, re-reading and rebuilding whatever a concurrent writer got to
-    /// first.
+    /// Commit every entity of `entries` through `rewrite`, first at the batch
+    /// instant `now`, re-reading and rebuilding whatever a concurrent writer
+    /// got to first.
     ///
     /// The per-identifier guards are held across every attempt, so a writer in
     /// this process waits rather than burning attempts; the compare-and-set is
@@ -83,9 +119,9 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports a chunk-level read or commit failure. An entity that loses its
-    /// precondition on every attempt is reported in [`ChunkOutcome::errors`]
-    /// as [`EntityError::Contention`].
+    /// Reports a chunk-level read or commit failure. An entity whose write is
+    /// refused on every attempt is reported in [`ChunkOutcome::errors`] as
+    /// [`EntityError::Contention`].
     pub(super) async fn commit_chunk_read_modify_write<R: ChunkRewrite>(
         &self,
         placement: SideEffectPlacement<'_>,
@@ -93,9 +129,9 @@ impl EntityService {
         entries: Vec<R::Entry>,
         now: SystemInstant,
     ) -> Result<ChunkOutcome, EntityError> {
-        let mut settled = ChunkOutcome::default();
+        let mut progress = ChunkProgress::default();
         if entries.is_empty() {
-            return Ok(settled);
+            return Ok(progress.settled);
         }
         let chunk_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the guards and the first read own the identifiers
         let _id_guards = self.acquire_id_locks(placement.target(), &chunk_ids).await;
@@ -105,16 +141,18 @@ impl EntityService {
             .retry_contended(async |attempt| {
                 let entries = take(&mut pending);
                 let remaining = match attempt {
-                    RetryAttempt::First => self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut settled).await?,
+                    RetryAttempt::First => self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut progress).await?,
                     RetryAttempt::Retry(_) => {
                         let pending_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the re-read owns the identifiers
-                        self.rewrite_attempt(placement, rewrite, entries, &pending_ids, now, &mut settled).await?
+                        let now = progress.instant.next();
+                        self.rewrite_attempt(placement, rewrite, entries, &pending_ids, now, &mut progress).await?
                     }
                 };
                 pending = remaining;
                 if pending.is_empty() { Ok(()) } else { Err(ContendedAttempt::Lost) }
             })
             .await;
+        let mut settled = progress.settled;
         match contended {
             Ok(()) => Ok(settled),
             Err(ContendedAttempt::Lost) => {
@@ -129,9 +167,10 @@ impl EntityService {
     }
 
     /// One attempt over the `pending` entities, whose identifiers are `ids`:
-    /// read them, build and commit their writes at the batch instant `now`,
-    /// fold whatever settled into `settled`, and hand back the entries whose
-    /// write the store refused because the entity moved on.
+    /// read them, build and commit their writes at `now`, fold whatever
+    /// settled into `progress` with the latest instant a predated write's
+    /// entity holds, and hand back the entries whose write the store refused
+    /// because the entity moved on or holds a later instant.
     async fn rewrite_attempt<R: ChunkRewrite>(
         &self,
         placement: SideEffectPlacement<'_>,
@@ -139,9 +178,13 @@ impl EntityService {
         pending: Vec<R::Entry>,
         ids: &[Identifier],
         now: SystemInstant,
-        settled: &mut ChunkOutcome,
+        progress: &mut ChunkProgress,
     ) -> Result<Vec<R::Entry>, EntityError> {
-        let mut snapshots = self.reader.get_snapshot_batch(placement.target(), ids).await?;
+        let ChunkProgress { settled, instant } = progress;
+        let mut snapshots = match R::READ {
+            ChunkRead::Snapshots => self.reader.get_snapshot_batch(placement.target(), ids).await?,
+            ChunkRead::Nothing => HashMap::new(),
+        };
 
         let mut writes = Vec::with_capacity(pending.len());
         let mut built = Vec::with_capacity(pending.len());
@@ -167,12 +210,23 @@ impl EntityService {
             created,
             errors,
             retryable,
+            predated,
         } = outcome;
         settled.success.extend(success);
         settled.created.extend(created);
         settled.errors.extend(errors);
 
-        let refused: HashSet<&Identifier> = retryable.iter().map(|(id, _)| id).collect();
+        let mut refused: HashSet<Identifier> = predated
+            .into_iter()
+            .map(|(id, latest)| {
+                instant.refused(latest);
+                id
+            })
+            .collect();
+        match R::READ {
+            ChunkRead::Snapshots => refused.extend(retryable.into_iter().map(|(id, _)| id)),
+            ChunkRead::Nothing => settled.errors.extend(retryable),
+        }
         Ok(built.into_iter().filter(|entry| refused.contains(R::id(entry))).collect())
     }
 }

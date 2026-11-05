@@ -16,7 +16,7 @@ use crate::{
         BatchResult,
         admitted_batch::{AdmittedBatchEntity, prepared_chunk},
         chunk::UpdatedStates,
-        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+        chunk_read_modify_write::{ChunkRead, ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
     },
     entity_snapshot::EntitySnapshot,
@@ -36,6 +36,8 @@ struct MergeRewrite<'a> {
 
 impl ChunkRewrite for MergeRewrite<'_> {
     type Entry = PreparedEntity;
+
+    const READ: ChunkRead = ChunkRead::Snapshots;
 
     fn id(entry: &PreparedEntity) -> &Identifier {
         &entry.id

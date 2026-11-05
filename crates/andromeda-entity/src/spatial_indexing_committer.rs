@@ -197,6 +197,7 @@ impl IndexChange {
                 | WriteOutcome::Superseded
                 | WriteOutcome::Skipped
                 | WriteOutcome::NoEntityChange
+                | WriteOutcome::Predated(_)
                 | WriteOutcome::Refused(_),
             ) => {}
         }

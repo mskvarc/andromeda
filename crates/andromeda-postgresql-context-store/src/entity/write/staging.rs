@@ -13,7 +13,11 @@
 use crate::entity::{
     params::{PreparedEntityColumns, literal_texts},
     staged_geometry::HoistedEwkb,
-    write::version_guard::expectation_columns,
+    write::{
+        latest_instant::QueuedAt,
+        statement_ctes::{Ins, Proj},
+        version_guard::expectation_columns,
+    },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
@@ -35,68 +39,6 @@ use sea_query::{CaseStatement, CommonTableExpression, Expr, ExprTrait, FunctionC
 #[derive(Iden, Clone, Copy)]
 #[iden = "d"]
 pub(super) struct Staged;
-
-/// The projection CTE, `proj`: one row per staged entity, typed as stored.
-#[derive(Iden, Clone, Copy)]
-#[iden = "proj"]
-pub(super) struct Proj;
-
-/// The insert CTE over `entities`, `ins`, whose returned keys drive the child
-/// inserts.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ins"]
-pub(super) struct Ins;
-
-/// The column of `ins` saying whether the create minted the identity row with
-/// the Temporal Evolution it was asked to establish, `established`: false for
-/// an identity row that existed, which keeps the evolution it held.
-#[derive(Iden, Clone, Copy)]
-#[iden = "established"]
-pub(super) struct Established;
-
-/// The `entity_search` CTE, `srch`: the rows a set-write wrote there, returned
-/// as the images ([`SearchImage`](crate::entity::write::search_image::SearchImage))
-/// the memberships and the census are derived from.
-#[derive(Iden, Clone, Copy)]
-#[iden = "srch"]
-pub(crate) struct Srch;
-
-/// The `current_attributes` CTE, `attrs`: the attribute instance rows a
-/// set-write lands.
-#[derive(Iden, Clone, Copy)]
-#[iden = "attrs"]
-pub(super) struct Attrs;
-
-/// The update's `current_attributes` delete CTE, `gone`: the stored instance
-/// rows of an overwritten entity whose grain the written state no longer
-/// holds.
-#[derive(Iden, Clone, Copy)]
-#[iden = "gone"]
-pub(super) struct Gone;
-
-/// The update's `current_attributes` delete CTE, `dropped`: the stored
-/// instance rows whose grain an edit removes.
-#[derive(Iden, Clone, Copy)]
-#[iden = "dropped"]
-pub(super) struct Dropped;
-
-/// The update's `current_attributes` update CTE, `moved`: the stored instance
-/// rows an edit gives a new ordinal and nothing else.
-#[derive(Iden, Clone, Copy)]
-#[iden = "moved"]
-pub(super) struct Moved;
-
-/// The update CTE over `entities`, `ents`: the update's compare-and-set
-/// anchor, whose returned keys drive every other relation the update writes.
-#[derive(Iden, Clone, Copy)]
-#[iden = "ents"]
-pub(super) struct Ents;
-
-/// The delete's candidate CTE, `doomed`: the rows about to go, with what the
-/// deletion notification needs from them.
-#[derive(Iden, Clone, Copy)]
-#[iden = "doomed"]
-pub(super) struct Doomed;
 
 /// The staging columns of the entity set-writes, named as the `AS d(…)` alias
 /// spells them rather than as the columns they land in.
@@ -357,11 +299,14 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, 
         .expr_as(staged(StagedColumn::ExpiresAt), Entities::ExpiresAt)
         .expr_as(staged(StagedColumn::MinAttributeExpiresAt), Entities::MinAttributeExpiresAt);
     match write {
-        ProjectedWrite::Update => {
+        ProjectedWrite::Update { queued } => {
             select
                 .expr(staged(HOISTED_LOCATION.kept))
                 .expr(staged(StagedColumn::ExpectedEntityKey))
                 .expr(staged(StagedColumn::ExpectedWriteCount));
+            if let Some(queued) = queued {
+                select.expr_as(queued, QueuedAt);
+            }
         }
         ProjectedWrite::Insert => {
             select.expr(staged(StagedColumn::EstablishesEvolution));
@@ -378,11 +323,17 @@ pub(super) fn with_staged_alias<S>(statement: UnnestAliased<S>, columns: &[Unnes
 }
 
 /// Which set-write a projection serves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) enum ProjectedWrite {
     /// The update: whether the geometry is kept, and the expectation, are
     /// staged and projected.
-    Update,
+    Update {
+        /// The instant of the Entity's latest queued temporal append intent,
+        /// projected as `queued_at` on a branch that queues history: the
+        /// update compares it in every column it sets, so it is read once per
+        /// row.
+        queued: Option<SimpleExpr>,
+    },
     /// The insert: nothing to compare against and no stored row to keep
     /// from, and whether it establishes the Temporal Evolution is staged and
     /// projected.

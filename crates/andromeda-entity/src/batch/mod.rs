@@ -18,7 +18,9 @@
 //! Each operation reads the clock once, before its first round, and every
 //! chunk of every round commits at that instant: "All Entities and Attributes
 //! in the batch will get the same modifiedAt timestamp" (clause 5.5.11.0), the
-//! instances of one repeated identifier included.
+//! instances of one repeated identifier included. An entity another write
+//! changed while the batch ran, to a later instant than the batch's, is
+//! written after that write instead, as a separate request would write it.
 
 /// The entities of a batch write the admission let through.
 pub mod admitted_batch;
@@ -58,8 +60,18 @@ pub mod execution;
 mod history_recording;
 /// Batch merge-patch.
 mod merge;
+/// Tests that a batch write reaching an entity another writer stamped later is
+/// written after that write.
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+)]
+mod predated_writes;
 /// Expanding and screening the entities of a batch that name one context.
 mod prepare;
+/// The whole state a write stores for one entity, across its attempts.
+mod requested_state;
 /// Ordering the instances an array repeats (clause 5.5.11).
 mod same_id_rounds;
 /// Tests that an entity whose fragment or replacement modifies nothing stores

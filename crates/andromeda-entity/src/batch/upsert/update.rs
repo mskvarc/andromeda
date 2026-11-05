@@ -7,9 +7,10 @@ use crate::{
         BatchResult,
         admitted_batch::{AdmittedBatchEntity, prepared_chunk},
         chunk::{ChunkWrite, UpdatedStates},
-        chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
+        chunk_read_modify_write::{ChunkRead, ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
-        upsert::{UpsertOutcome, stored_state},
+        requested_state::stored_state,
+        upsert::UpsertOutcome,
     },
     entity_snapshot::EntitySnapshot,
     error::EntityError,
@@ -45,6 +46,8 @@ struct UpdateRewrite<'a> {
 
 impl ChunkRewrite for UpdateRewrite<'_> {
     type Entry = UpsertFragment;
+
+    const READ: ChunkRead = ChunkRead::Snapshots;
 
     fn id(entry: &UpsertFragment) -> &Identifier {
         match entry {

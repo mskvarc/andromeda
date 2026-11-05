@@ -1,34 +1,23 @@
 //! An in-memory entity store that applies each write's precondition the way
 //! the PostgreSQL committer does, and lets a test play a concurrent writer.
 //!
-//! A write that states `UnchangedSince` lands only while the entity still
-//! carries that version, and every landed write gives the entity a new one, so
-//! a test that changes an entity between an operation's read and its commit
+//! A test that changes an entity between an operation's read and its commit
 //! sees the operation lose its compare-and-set exactly as it would against
-//! another broker replica. The version is the row's key and write count, as
-//! the PostgreSQL store keeps it: a row is keyed once and counts every write,
-//! and a deleted entity created anew is keyed again. A committed write stamps
-//! its `modifiedAt` with the instant it was accepted at, so two writes
-//! accepted at the same instant leave the same `modifiedAt` and still two
-//! versions.
+//! another broker replica.
 
 use crate::{
     deletion_outline::{DeletionOutline, DeletionWatchers},
     deletion_outline_fixture::outline_of,
     entity_snapshot::EntitySnapshot,
     error::EntityError,
+    in_memory_rows::{StoredRow, StoredRows},
     port::{deletion_outline::DeletionOutlineReader, reader::EntityReader, retrieved_entity::RetrievedEntity},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter},
-    deleted_entity::DeletedEntity,
-    entity_mutation::EntityMutation,
     entity_version::EntityVersion,
-    precondition::Precondition,
-    store_instant::StoreInstant,
-    write_outcome::WriteOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -46,112 +35,12 @@ use std::{
     },
 };
 
-/// One stored entity.
-#[derive(Clone)]
-struct StoredRow {
-    /// The entity's state.
-    state: Arc<EntityState>,
-    /// The version the row stands at.
-    version: EntityVersion,
-    /// The clause 4.8 `modifiedAt` the last write stamped.
-    modified_at: DateTime<Utc>,
-}
-
-/// The stored entities and the last row key handed out.
-#[derive(Default)]
-pub(crate) struct StoredRows {
-    /// Each entity's row.
-    entities: HashMap<Identifier, StoredRow>,
-    /// The key the last new row was given.
-    last_key: i64,
-}
-
-impl StoredRows {
-    /// Store `state` as the entity `id` names, at a new version, modified now.
-    pub(crate) fn put(&mut self, id: &Identifier, state: Arc<EntityState>) {
-        self.write(id, state, Utc::now());
-    }
-
-    /// Store `state` as the entity `id` names, modified at `modified_at`: a
-    /// standing row counts one more write, a new one is keyed afresh.
-    fn write(&mut self, id: &Identifier, state: Arc<EntityState>, modified_at: DateTime<Utc>) {
-        let version = if let Some(row) = self.entities.get(id) {
-            EntityVersion::new(row.version.entity_key(), row.version.write_count() + 1)
-        } else {
-            self.last_key += 1;
-            EntityVersion::new(self.last_key, 1)
-        };
-        // clone: the rows own their keys
-        self.entities.insert(id.clone(), StoredRow { state, version, modified_at });
-    }
-
-    /// Remove the entity `id` names.
-    pub(crate) fn remove(&mut self, id: &Identifier) {
-        self.entities.remove(id);
-    }
-
-    /// The state the entity `id` names, as stored.
-    pub(crate) fn payload(&self, id: &Identifier) -> Option<&Arc<EntityState>> {
-        self.entities.get(id).map(|row| &row.state)
-    }
-
-    /// The version the entity `id` names is stored at.
-    pub(crate) fn version(&self, id: &Identifier) -> Option<EntityVersion> {
-        self.entities.get(id).map(|row| row.version)
-    }
-
-    /// Apply one write accepted at `accepted_at` the way the store's atomic
-    /// commit does.
-    fn apply(&mut self, write: &AtomicWrite, accepted_at: DateTime<Utc>) -> WriteOutcome {
-        let id = &*write.entity_id;
-        let current = self.entities.get(id).map(|row| (row.version, row.modified_at));
-        match (&write.entity, current, write.precondition) {
-            (EntityMutation::Insert(_), Some(_), Precondition::None) => WriteOutcome::Skipped,
-            (EntityMutation::Insert(_), Some(_), Precondition::MustNotExist | Precondition::MustExist | Precondition::UnchangedSince(_)) => {
-                WriteOutcome::AlreadyExists
-            }
-            (EntityMutation::Insert(record), None, _) => {
-                self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
-                WriteOutcome::Created(StoreInstant::new(accepted_at))
-            }
-            // An update or a deletion stating a version matches the row only
-            // while it carries that version, and a missing row carries none.
-            (EntityMutation::Update(_) | EntityMutation::Delete, None, Precondition::UnchangedSince(_)) => WriteOutcome::Superseded,
-            (EntityMutation::Update(_) | EntityMutation::Delete, Some((version, _)), Precondition::UnchangedSince(expected)) if expected != version => {
-                WriteOutcome::Superseded
-            }
-            (EntityMutation::Update(_) | EntityMutation::Delete, None, Precondition::None | Precondition::MustExist | Precondition::MustNotExist) => {
-                WriteOutcome::NotFound
-            }
-            (EntityMutation::Update(record), Some(_), _) => {
-                self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
-                WriteOutcome::Updated(StoreInstant::new(accepted_at))
-            }
-            (EntityMutation::Delete, Some((_, modified_at)), _) => {
-                self.remove(id);
-                WriteOutcome::Deleted(
-                    DeletedEntity {
-                        id: id.clone(), // clone: the outcome owns the identifier
-                        created_at: modified_at,
-                        modified_at,
-                        expires_at: None,
-                    },
-                    StoreInstant::new(accepted_at),
-                )
-            }
-            (EntityMutation::None, _, _) => WriteOutcome::NoEntityChange,
-        }
-    }
-}
-
-impl StoredRow {
-    /// The snapshot a read-modify-write states its precondition against.
-    fn into_snapshot(self) -> EntitySnapshot {
-        EntitySnapshot {
-            state: self.state,
-            version: self.version,
-            sys_attrs: sys_attrs(self.modified_at),
-        }
+/// The snapshot a read-modify-write states its precondition against.
+fn snapshot_of(row: StoredRow) -> EntitySnapshot {
+    EntitySnapshot {
+        state: row.state,
+        version: row.version,
+        sys_attrs: sys_attrs(row.modified_at),
     }
 }
 
@@ -173,6 +62,9 @@ pub(crate) enum ConcurrentWriter {
     BeforeEveryCommit(Box<dyn Fn(&mut StoredRows) + Send>),
 }
 
+/// A write another writer lands just before the next read.
+type BeforeNextRead = Box<dyn FnOnce(&mut StoredRows) + Send>;
+
 /// An in-memory store holding each entity's state and version.
 #[derive(Default)]
 pub(crate) struct InMemoryStore {
@@ -180,6 +72,8 @@ pub(crate) struct InMemoryStore {
     rows: Mutex<StoredRows>,
     /// The writer that interferes with the next commits, if any.
     concurrent: Mutex<Option<ConcurrentWriter>>,
+    /// The writer that lands just before the next read, if any.
+    before_read: Mutex<Option<BeforeNextRead>>,
     /// Every write submitted, in submission order, whether it landed or not.
     submitted: Mutex<Vec<AtomicWrite>>,
     /// How many reads handed out whole states.
@@ -192,9 +86,36 @@ impl InMemoryStore {
         self.rows.lock().expect("the store lock is not poisoned").put(id, Arc::new(state));
     }
 
+    /// Store `state` as the entity `id` names, modified at `modified_at`.
+    pub(crate) fn seed_at(&self, id: &Identifier, state: EntityState, modified_at: DateTime<Utc>) {
+        self.rows
+            .lock()
+            .expect("the store lock is not poisoned")
+            .write(id, Arc::new(state), modified_at);
+    }
+
+    /// Hold a Temporal Evolution of the entity `id` names without a current
+    /// state, at `at`.
+    pub(crate) fn seed_evolution(&self, id: &Identifier, at: DateTime<Utc>) {
+        self.rows.lock().expect("the store lock is not poisoned").retire(id, at);
+    }
+
     /// Have `writer` interfere with the commits that follow.
     pub(crate) fn interfere(&self, writer: ConcurrentWriter) {
         *self.concurrent.lock().expect("the store lock is not poisoned") = Some(writer);
+    }
+
+    /// Have `writer` land just before the next read, as a write another
+    /// replica commits after an operation read its clock and before it read
+    /// the entity.
+    pub(crate) fn interfere_before_read(&self, writer: impl FnOnce(&mut StoredRows) + Send + 'static) {
+        *self.before_read.lock().expect("the store lock is not poisoned") = Some(Box::new(writer));
+    }
+
+    /// The latest instant of the Temporal Evolution the entity `id` names
+    /// holds without a current state.
+    pub(crate) fn evolution_at(&self, id: &Identifier) -> Option<DateTime<Utc>> {
+        self.rows.lock().expect("the store lock is not poisoned").evolution_at(id)
     }
 
     /// The stored state and version of the entity `id` names.
@@ -209,7 +130,7 @@ impl InMemoryStore {
 
     /// The row of the entity `id` names.
     fn row(&self, id: &Identifier) -> Option<StoredRow> {
-        self.rows.lock().expect("the store lock is not poisoned").entities.get(id).cloned() // clone: Arc ref-count bump, the version and the instant
+        self.rows.lock().expect("the store lock is not poisoned").row(id).cloned() // clone: Arc ref-count bump, the version and the instant
     }
 
     /// Every write submitted for the entity `id` names, in submission order.
@@ -225,8 +146,13 @@ impl InMemoryStore {
         self.payload_reads.load(Ordering::Relaxed)
     }
 
-    /// The row of the entity `id` names, counted as a state read.
+    /// The row of the entity `id` names, counted as a state read, after the
+    /// writer set to land before it.
     fn read(&self, id: &Identifier) -> Option<StoredRow> {
+        let before_read = self.before_read.lock().expect("the store lock is not poisoned").take();
+        if let Some(write) = before_read {
+            write(&mut self.rows.lock().expect("the store lock is not poisoned"));
+        }
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         self.row(id)
     }
@@ -297,7 +223,7 @@ impl EntityReader for InMemoryStore {
     }
 
     async fn get_snapshot(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
-        Ok(self.read(id).map(StoredRow::into_snapshot))
+        Ok(self.read(id).map(snapshot_of))
     }
 
     async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, EntitySnapshot>, EntityError> {
@@ -307,7 +233,7 @@ impl EntityReader for InMemoryStore {
                 self.read(id).map(|row| {
                     (
                         id.clone(), // clone: the answer owns the identifiers it is keyed by
-                        row.into_snapshot(),
+                        snapshot_of(row),
                     )
                 })
             })
@@ -353,13 +279,18 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
     /// The instant every write of a test is accepted at.
     fn accepted_at() -> SystemInstant {
         SystemInstant::new(Utc.with_ymd_and_hms(2026, 10, 28, 12, 0, 0).single().expect("a valid instant"))
+    }
+
+    /// An instant `seconds` after [`accepted_at`], or before it when negative.
+    fn offset(seconds: i64) -> DateTime<Utc> {
+        accepted_at().get() + TimeDelta::seconds(seconds)
     }
 
     /// An update of `previous` to the Building `id` holding `attributes`,
@@ -374,10 +305,38 @@ mod tests {
             .build()
     }
 
+    /// The creation of the Building `id` holding `attributes`.
+    fn create(id: &Identifier, attributes: &[&str]) -> AtomicWrite {
+        AtomicWrite::builder()
+            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity(EntityMutation::Insert(
+                EntityRecord::from_state(Arc::new(stored_building(id, attributes))).expect("a projectable state"),
+            ))
+            .precondition(Precondition::MustNotExist)
+            .build()
+    }
+
+    /// The deletion of the Building `id`, stated against `read`.
+    fn delete(id: &Identifier, read: EntityVersion) -> AtomicWrite {
+        AtomicWrite::builder()
+            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity(EntityMutation::Delete)
+            .precondition(Precondition::UnchangedSince(read))
+            .build()
+    }
+
     /// Commit `write` at the shared instant and answer its one outcome.
     async fn commit(store: &InMemoryStore, write: AtomicWrite) -> WriteOutcome {
         let mut outcomes = store.commit(&ContextTarget::Live, accepted_at(), vec![write]).await.expect("the commit runs");
         outcomes.pop().expect("one outcome per write")
+    }
+
+    /// The Building `a`, stored with `seed` at `modified_at`, and its version.
+    fn seeded_at(store: &InMemoryStore, modified_at: DateTime<Utc>) -> (Identifier, Arc<EntityState>, EntityVersion) {
+        let id = building_id("a");
+        store.seed_at(&id, stored_building(&id, &["seed"]), modified_at);
+        let (state, version) = store.stored(&id).expect("the Building is stored");
+        (id, state, version)
     }
 
     /// Writer `b` read the version `a` left and committed in the same instant
@@ -386,9 +345,7 @@ mod tests {
     #[tokio::test]
     async fn a_write_stating_a_version_replaced_in_the_same_instant_is_superseded() {
         let store = InMemoryStore::default();
-        let id = building_id("a");
-        store.seed(&id, stored_building(&id, &["seed"]));
-        let (seeded, seeded_version) = store.stored(&id).expect("the Building is stored");
+        let (id, seeded, seeded_version) = seeded_at(&store, offset(-60));
 
         assert!(commit(&store, update(&id, &seeded, &["a"], seeded_version)).await.is_updated());
         let (read_by_a, version_a) = store.stored(&id).expect("the Building is stored");
@@ -407,22 +364,66 @@ mod tests {
     #[tokio::test]
     async fn a_write_stating_a_version_of_a_deleted_entity_does_not_land_on_its_successor() {
         let store = InMemoryStore::default();
-        let id = building_id("a");
-        store.seed(&id, stored_building(&id, &["first"]));
-        let (first, first_version) = store.stored(&id).expect("the Building is stored");
+        let (id, first, first_version) = seeded_at(&store, offset(-60));
 
-        let deletion = AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
-            .entity(EntityMutation::Delete)
-            .precondition(Precondition::UnchangedSince(first_version))
-            .build();
-        assert!(commit(&store, deletion).await.is_deleted());
-        store.seed(&id, stored_building(&id, &["second"]));
+        assert!(commit(&store, delete(&id, first_version)).await.is_deleted());
+        store.seed_at(&id, stored_building(&id, &["second"]), offset(-30));
         let (_, second_version) = store.stored(&id).expect("the Building is stored again");
         assert_eq!(second_version.write_count(), first_version.write_count());
 
         assert!(commit(&store, update(&id, &first, &["stale"], first_version)).await.is_superseded());
         let (stored, _) = store.stored(&id).expect("the Building is stored");
         assert_eq!(attribute_terms(&stored), vec!["second"]);
+    }
+
+    /// Clause 4.8: a write stamped before the `modifiedAt` the entity holds
+    /// would move it backwards, so it is refused with that instant and the
+    /// entity keeps its state and its version.
+    #[tokio::test]
+    async fn a_write_stamped_before_the_entity_s_modified_at_is_predated_by_it() {
+        let store = InMemoryStore::default();
+        let (id, seeded, version) = seeded_at(&store, offset(5));
+
+        let outcome = commit(&store, update(&id, &seeded, &["late"], version)).await;
+        assert!(matches!(outcome, WriteOutcome::Predated(latest) if latest.get() == offset(5)), "{outcome:?}");
+        assert!(matches!(commit(&store, delete(&id, version)).await, WriteOutcome::Predated(_)));
+        assert_eq!(store.stored(&id).map(|(_, stored)| stored), Some(version));
+        assert_eq!(store.modified_at(&id), Some(offset(5)));
+    }
+
+    /// One batch stamps one `modifiedAt` on every instance of a repeated
+    /// identifier (clause 5.5.11.0), so a write at the entity's own instant
+    /// lands.
+    #[tokio::test]
+    async fn a_write_at_the_entity_s_modified_at_lands() {
+        let store = InMemoryStore::default();
+        let (id, seeded, version) = seeded_at(&store, accepted_at().get());
+        assert!(commit(&store, update(&id, &seeded, &["again"], version)).await.is_updated());
+    }
+
+    /// Clause 5.6.6 leaves the Temporal Evolution standing at the deletion's
+    /// instant, and a creation stamped before it would record its instances
+    /// before the tombstones of their predecessors.
+    #[tokio::test]
+    async fn a_creation_stamped_before_a_deletion_of_the_identifier_is_predated_by_it() {
+        let store = InMemoryStore::default();
+        let id = building_id("a");
+        store.seed_evolution(&id, offset(5));
+
+        let outcome = commit(&store, create(&id, &["created"])).await;
+        assert!(matches!(outcome, WriteOutcome::Predated(latest) if latest.get() == offset(5)), "{outcome:?}");
+        assert!(store.stored(&id).is_none());
+
+        store.seed_evolution(&id, offset(-5));
+        assert!(commit(&store, create(&id, &["created"])).await.is_created());
+        assert!(store.evolution_at(&id).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_deletion_leaves_the_evolution_at_its_instant() {
+        let store = InMemoryStore::default();
+        let (id, _, version) = seeded_at(&store, offset(-60));
+        assert!(commit(&store, delete(&id, version)).await.is_deleted());
+        assert_eq!(store.evolution_at(&id), Some(accepted_at().get()));
     }
 }

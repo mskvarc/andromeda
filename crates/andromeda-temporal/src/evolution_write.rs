@@ -20,6 +20,7 @@
 use crate::{error::TemporalError, service::TemporalService, temporal_invariant::TemporalInvariant, written_evolution::WrittenEvolution};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    attempt_instant::AttemptInstant,
     change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
@@ -37,7 +38,6 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_state;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use chrono::Utc;
 use derive_more::{From, IsVariant};
 use std::sync::Arc;
 
@@ -48,7 +48,9 @@ impl TemporalService {
     /// The fold is computed from current state read outside the writing
     /// transaction, so the write states the version it assumed -- the absence of
     /// the Entity, or its `modifiedAt` -- and is recomputed against a fresh read
-    /// when a concurrent writer got in first.
+    /// when a concurrent writer got in first. An attempt the store refuses for
+    /// being stamped before an instant the Entity holds is stamped again after
+    /// it (clause 4.8).
     ///
     /// # Errors
     ///
@@ -59,6 +61,7 @@ impl TemporalService {
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// write cannot be landed.
     pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: &WrittenEvolution) -> Result<(), TemporalError> {
+        let mut instant = AttemptInstant::default();
         let settled = WRITE_RETRY
             .run(
                 &*self.retry_delay,
@@ -69,7 +72,7 @@ impl TemporalService {
                         .get_snapshot(target, entity_id)
                         .await
                         .map_err(TemporalError::from_entity_failure)?;
-                    let now = SystemInstant::new(Utc::now());
+                    let now = instant.next();
                     let EvolutionWrite { write, events } = evolution_write(
                         &self.notifier,
                         target,
@@ -87,6 +90,10 @@ impl TemporalService {
                         // deleted it, since the read: the fold is recomputed
                         // against what it did.
                         AfterAttempt::Reread | AfterAttempt::Vanished => Err(EvolutionAttempt::Lost),
+                        AfterAttempt::Restamp(latest) => {
+                            instant.refused(latest);
+                            Err(EvolutionAttempt::Lost)
+                        }
                     }
                 },
             )

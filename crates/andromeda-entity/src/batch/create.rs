@@ -1,18 +1,56 @@
 //! Batch entity creation (clause 5.6.7).
+//!
+//! Each entity is created as Create Entity creates it (clause 5.6.7.4), with
+//! nothing read first: a create holds only while the entity does not exist,
+//! so a concurrent create answers 409 for that entity alone. An identifier
+//! whose identity row holds a Temporal Evolution alone is created anew on that
+//! row (clause 5.6.1), and the store refuses the creation when the row holds
+//! an instant later than the batch's, a deletion's that committed while the
+//! batch ran: the instances would be recorded before the tombstones that end
+//! their predecessors. Such an entity is created again after that instant.
 
 use crate::{
     EntityService,
     batch::{
         BatchResult,
         admitted_batch::{AdmittedBatchEntity, prepared_chunk},
-        chunk::GuardedWrite,
+        chunk_read_modify_write::{ChunkRead, ChunkRewrite, PlannedWrite},
+        requested_state::{RequestedState, built},
     },
+    entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
 };
-use andromeda_context_commit::precondition::Precondition;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use std::collections::HashSet;
+
+/// Creating each entity of a chunk (clause 5.6.7.4 runs the behaviour of
+/// clause 5.6.1 per entity).
+struct CreateRewrite<'a> {
+    service: &'a EntityService,
+    target: &'a ContextTarget,
+}
+
+impl ChunkRewrite for CreateRewrite<'_> {
+    type Entry = RequestedState;
+
+    const READ: ChunkRead = ChunkRead::Nothing;
+
+    fn id(entry: &RequestedState) -> &Identifier {
+        entry.id()
+    }
+
+    fn build(
+        &self,
+        entry: RequestedState,
+        _snapshot: Option<&EntitySnapshot>,
+        now: SystemInstant,
+    ) -> Result<PlannedWrite<RequestedState>, Box<(Identifier, EntityError)>> {
+        let (id, state) = entry.into_state()?;
+        built(self.service.chunk_insert(self.target, id, state, now)?)
+    }
+}
 
 impl EntityService {
     /// Reject the second and later appearances of a repeated identifier.
@@ -44,40 +82,26 @@ impl EntityService {
         chunk: Vec<AdmittedBatchEntity>,
         now: SystemInstant,
     ) -> Result<BatchResult, EntityError> {
-        let target = placement.target();
         // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
         // clause 5.5.4 excepts only the fragments of a partial update or a
         // merge from its NGSI-LD Null prohibitions.
-        let prepared = prepared_chunk(chunk);
         let mut errors = Vec::new();
-
-        if prepared.is_empty() {
-            return Ok(BatchResult { success: Vec::new(), errors });
-        }
-
-        let lock_ids: Vec<Identifier> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
-        let _id_guards = self.acquire_id_locks(target, &lock_ids).await;
-
-        let mut seen: HashSet<Identifier> = HashSet::with_capacity(prepared.len());
-        let mut writes = Vec::with_capacity(prepared.len());
-        for entity in prepared {
+        let mut seen: HashSet<Identifier> = HashSet::with_capacity(chunk.len());
+        let mut entries = Vec::with_capacity(chunk.len());
+        for entity in prepared_chunk(chunk) {
             // clone: the set remembers the identifier the entity moves on with
-            if !seen.insert(entity.id.clone()) {
+            if seen.insert(entity.id.clone()) {
+                entries.push(RequestedState::Requested(Box::new(entity)));
+            } else {
                 errors.push((entity.id.clone(), EntityError::already_exists(&entity.id))); // clone: error result owns the entity ID
-                continue;
-            }
-            // A batch insert holds only while the entity does not exist, so a
-            // concurrent create answers 409 for this entity alone.
-            match entity.into_state().and_then(|(id, state)| self.chunk_insert(target, id, state, now)) {
-                Ok(write) => writes.push(GuardedWrite {
-                    write,
-                    precondition: Precondition::MustNotExist,
-                }),
-                Err(failure) => errors.push(*failure),
             }
         }
 
-        let outcome = self.commit_chunk(placement, now, writes).await?.settled();
+        let rewrite = CreateRewrite {
+            service: self,
+            target: placement.target(),
+        };
+        let outcome = self.commit_chunk_read_modify_write(placement, &rewrite, entries, now).await?;
         errors.extend(outcome.errors);
 
         Ok(BatchResult {

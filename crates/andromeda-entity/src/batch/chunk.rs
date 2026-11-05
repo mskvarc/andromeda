@@ -119,16 +119,12 @@ pub(super) struct ChunkOutcome {
     /// Refusals a caller that read the entity first can fix by reading again:
     /// the entity moved on, or an identifier it read as absent now exists.
     /// A caller that read nothing has no reason to retry and folds these into
-    /// [`Self::errors`] with [`Self::settled`].
+    /// [`Self::errors`].
     pub retryable: Vec<(Identifier, EntityError)>,
-}
-
-impl ChunkOutcome {
-    /// Treat every refusal as final.
-    pub(super) fn settled(mut self) -> ChunkOutcome {
-        self.errors.append(&mut self.retryable);
-        self
-    }
+    /// Writes the store refused because their entity holds a later instant
+    /// than the chunk's (clause 4.8), with that instant: each is written again
+    /// after it.
+    pub predated: Vec<(Identifier, SystemInstant)>,
 }
 
 impl EntityService {
@@ -253,6 +249,8 @@ impl EntityService {
 /// The per-entity error an outcome reports, if it reports one.
 ///
 /// `Skipped` answers only an unconditional insert, which no batch path issues.
+/// A predated write is written again after the instant it carries, and is
+/// contention only once no attempt is left.
 /// A write whose content the store refused reports that refusal against its
 /// own entity only (clause 5.6.8.4: "If while processing an Entity there is
 /// any kind of error or abnormal situation, a `BatchEntityError` shall be
@@ -261,7 +259,7 @@ fn error_of(id: &Identifier, outcome: WriteOutcome) -> Option<EntityError> {
     match outcome {
         WriteOutcome::AlreadyExists => Some(EntityError::already_exists(id)),
         WriteOutcome::NotFound => Some(EntityError::not_found(id)),
-        WriteOutcome::Superseded => Some(EntityError::contention(id, WRITE_ATTEMPTS)),
+        WriteOutcome::Superseded | WriteOutcome::Predated(_) => Some(EntityError::contention(id, WRITE_ATTEMPTS)),
         WriteOutcome::Refused(refusal) => Some(EntityError::from(CommitError::Submission(refusal))),
         WriteOutcome::Created(_) | WriteOutcome::Updated(_) | WriteOutcome::Deleted(..) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
     }
@@ -344,6 +342,7 @@ impl EntityService {
             if let Some(error) = error_of(&id, outcome) {
                 match next {
                     AfterAttempt::Reread => chunk.retryable.push((id, error)),
+                    AfterAttempt::Restamp(latest) => chunk.predated.push((id, latest)),
                     AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id, error)),
                 }
                 continue;

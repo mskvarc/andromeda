@@ -37,14 +37,20 @@ mod delete;
 mod evolution_withdrawal;
 /// The batch insert.
 mod insert;
+/// The latest instant an Entity holds, which no write may precede.
+mod latest_instant;
 /// The images of an `entity_search` row a set-write hands on.
 pub(crate) mod search_image;
 /// The staging shape every set-write reads its arrays through.
 pub(crate) mod staging;
+/// The common table expressions the set-writes name.
+pub(crate) mod statement_ctes;
 /// The type-membership rows each set-write keeps in step with the search row.
 pub(crate) mod type_membership;
 /// The batch update.
 mod update;
+/// The batch update's identity row write.
+mod update_anchor;
 /// The version a guarded write compares and the count every write moves.
 mod version_guard;
 

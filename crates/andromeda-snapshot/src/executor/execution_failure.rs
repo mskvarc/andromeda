@@ -52,6 +52,13 @@ pub(super) enum ExecutionFailure<'error> {
         /// The failure committing to the branch.
         cause: &'error CommitError,
     },
+    /// The branch holds a later instant for captured entities than every
+    /// attempt to store them was stamped at (clause 4.8).
+    #[error("{count} captured entities are held by the Snapshot at a later instant than every attempt to store them")]
+    PredatedResults {
+        /// How many captured entities were not stored.
+        count: usize,
+    },
     /// The branch could not store the captured temporal evolutions.
     #[error("failed to store temporal results: {cause}")]
     StoreTemporalResults {

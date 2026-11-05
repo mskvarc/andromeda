@@ -1,6 +1,7 @@
 //! Per-entity outcomes returned by an atomic context commit.
 
 use crate::{deleted_entity::DeletedEntity, error::CommitError, store_instant::StoreInstant, submission_refusal::SubmissionRefusal};
+use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
 use derive_more::IsVariant;
 
 /// What one submitted [`AtomicWrite`](crate::atomic_write::AtomicWrite) did to
@@ -26,6 +27,18 @@ pub enum WriteOutcome {
     Skipped,
     /// The write carried consequences without a current-state mutation.
     NoEntityChange,
+    /// The Entity holds an instant later than the one the write was stamped
+    /// at, and nothing of the write landed: the greatest of its current
+    /// state's and its Temporal Evolution's `modifiedAt` and of the ingestion
+    /// instant of its latest queued history, at least.
+    ///
+    /// Clause 4.8 makes `modifiedAt` the instant of the last modification, so
+    /// a write stamped before an instant the Entity holds would move it
+    /// backwards. The write is stamped again after the instant carried
+    /// ([`AttemptInstant`](crate::attempt_instant::AttemptInstant)), in a
+    /// commit of its own. A write at the Entity's latest instant is not
+    /// refused.
+    Predated(SystemInstant),
     /// The store refused the write's content, and nothing of the write landed.
     ///
     /// Clauses 5.6.7 to 5.6.10 report every entity of a batch on its own, so a
@@ -46,6 +59,7 @@ impl WriteOutcome {
             | WriteOutcome::Superseded
             | WriteOutcome::Skipped
             | WriteOutcome::NoEntityChange
+            | WriteOutcome::Predated(_)
             | WriteOutcome::Refused(_) => None,
         }
     }
@@ -85,6 +99,7 @@ mod tests {
         submission_refusal::SubmissionRefusal,
         write_outcome::{WriteOutcome, single},
     };
+    use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
     use chrono::{TimeZone, Utc};
 
     fn committed() -> StoreInstant {
@@ -141,6 +156,7 @@ mod tests {
             WriteOutcome::Superseded,
             WriteOutcome::Skipped,
             WriteOutcome::NoEntityChange,
+            WriteOutcome::Predated(SystemInstant::new(committed().get())),
             WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
         ] {
             pretty_assertions::assert_eq!(unchanged.changed_at(), None);

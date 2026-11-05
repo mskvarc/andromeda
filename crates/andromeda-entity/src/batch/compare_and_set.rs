@@ -10,33 +10,35 @@
 
 use crate::{
     admission_fixture::admitted_batch,
-    batch::{BatchResult, UpsertPolicy},
+    batch::UpsertPolicy,
     compare_and_set_fixture::{
         ContendedService,
         Watchers,
         adds_attribute,
         attribute_terms,
+        batch_merge,
         building_id,
         contended_service,
         held_version,
         request_building,
+        stamped_modified_at,
         stored_building,
-        term,
         tombstoned_terms,
+        upsert_update,
         written_terms,
     },
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    in_memory_store::{ConcurrentWriter, StoredRows},
+    in_memory_rows::StoredRows,
+    in_memory_store::ConcurrentWriter,
     side_effect::SideEffectPlacement,
-    write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
+    write_kind::{BatchUpdate, BatchUpsert},
 };
-use andromeda_context_commit::{atomic_write::AtomicWrite, entity_version::EntityVersion, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
+use andromeda_context_commit::{entity_version::EntityVersion, precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_entity::{instance::Instance, operation::selection::OverwritePolicy};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::Entity};
+use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{
@@ -83,16 +85,6 @@ fn stored_terms(contended: &ContendedService, id: &Identifier) -> Vec<String> {
 /// The terms `expected` names, as [`attribute_terms`] lists them.
 fn terms(expected: &[&str]) -> Vec<String> {
     expected.iter().map(|name| (*name).to_owned()).collect()
-}
-
-/// Merge `entities` in one batch, inline.
-async fn batch_merge(contended: &ContendedService, entities: Vec<Entity<MergeMember>>) -> BatchResult {
-    let admitted = admitted_batch(&contended.service, BatchMerge, entities, &ContextSpec::core_only()).await;
-    contended
-        .service
-        .batch_merge(SideEffectPlacement::Inline(&LIVE), admitted)
-        .await
-        .expect("the batch completes")
 }
 
 /// Clause 5.6.20.4 runs Merge Entity per entity: the merge another writer's
@@ -178,29 +170,13 @@ async fn a_no_overwrite_append_another_writer_got_to_first_is_reported_once_as_a
     assert_eq!(stored_terms(&contended, &id), terms(&["other", "seed"]));
 }
 
-/// Upsert the Building `id` with `attributes` in update mode, inline.
-async fn upsert_update(contended: &ContendedService, id: &Identifier, attributes: &Value) -> (BatchResult, Vec<Identifier>) {
-    let admitted = admitted_batch(
-        &contended.service,
-        BatchUpsert(UpsertPolicy::Update),
-        vec![request_building(id, attributes)],
-        &ContextSpec::core_only(),
-    )
-    .await;
-    contended
-        .service
-        .batch_upsert(SideEffectPlacement::Inline(&LIVE), admitted)
-        .await
-        .expect("the batch completes")
-}
-
 /// Clause 5.6.8.4 update mode runs clause 5.6.2 on an Entity that exists.
 #[tokio::test]
 async fn an_upsert_update_superseded_by_another_writer_keeps_its_change() {
     let (contended, id, _) = seeded().await;
     another_writer_adds_other(&contended, &id);
 
-    let (result, created) = upsert_update(&contended, &id, &property("u")).await;
+    let (result, created) = upsert_update(&contended, vec![request_building(&id, &property("u"))]).await;
 
     assert_eq!(result.success, vec![id.clone()]);
     assert_eq!(created, Vec::<Identifier>::new());
@@ -218,7 +194,7 @@ async fn an_upsert_update_that_loses_the_create_race_updates_the_created_entity(
     let id = building_id("a");
     let concurrent = another_writer_adds_other(&contended, &id);
 
-    let (result, created) = upsert_update(&contended, &id, &property("u")).await;
+    let (result, created) = upsert_update(&contended, vec![request_building(&id, &property("u"))]).await;
 
     assert_eq!(result.success, vec![id.clone()]);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -243,7 +219,7 @@ async fn an_upsert_update_refuses_a_null_on_the_create_branch_before_writing() {
         "u": {"type": "Property", "value": 3},
         "other": {"type": "Property", "value": "urn:ngsi-ld:null"}
     });
-    let (result, created) = upsert_update(&contended, &id, &attributes).await;
+    let (result, created) = upsert_update(&contended, vec![request_building(&id, &attributes)]).await;
 
     assert!(result.success.is_empty(), "{:?}", result.success);
     assert!(created.is_empty(), "{created:?}");
@@ -365,21 +341,12 @@ async fn a_batch_delete_superseded_by_another_writer_ends_the_instance_it_added(
     assert!(contended.store.stored(&id).is_none());
 }
 
-/// The `modifiedAt` the write stamped on the instance of `attribute`.
-fn stamped_modified_at(write: &AtomicWrite, attribute: &str) -> Option<SystemInstant> {
-    let state = &write.entity.record().expect("the write stores a state").state;
-    state
-        .attributes()
-        .get(&term(attribute))
-        .and_then(|instances| instances.get(None))
-        .and_then(Instance::modified_at)
-}
-
-/// Clause 5.5.11.0: "All Entities and Attributes in the batch will get the
-/// same modifiedAt timestamp", so a retried attempt stamps the instant the
-/// first one did.
+/// Clause 5.5.11.0 treats the entities of a batch "as if they had all
+/// arrived in separate requests": the attempt that follows a write another
+/// writer landed is a request of its own, stamped after that write rather than
+/// at the batch instant the first attempt stamped.
 #[tokio::test]
-async fn a_retried_attempt_stamps_the_batch_instant_the_first_attempt_stamped() {
+async fn a_retried_attempt_is_stamped_after_the_write_that_superseded_it() {
     let (contended, id, _) = seeded().await;
     another_writer_adds_other(&contended, &id);
 
@@ -387,7 +354,8 @@ async fn a_retried_attempt_stamps_the_batch_instant_the_first_attempt_stamped() 
 
     let writes = contended.store.submitted_for(&id);
     assert_eq!(writes.len(), 2);
-    let first = stamped_modified_at(&writes[0], "m");
-    assert!(first.is_some(), "the merged instance is stamped");
-    assert_eq!(stamped_modified_at(&writes[1], "m"), first);
+    let first = stamped_modified_at(&writes[0], "m").expect("the merged instance is stamped");
+    let retried = stamped_modified_at(&writes[1], "m").expect("the merged instance is stamped");
+    assert!(retried > first, "{retried} follows the batch instant {first}");
+    assert_eq!(contended.store.modified_at(&id), Some(retried.get()));
 }

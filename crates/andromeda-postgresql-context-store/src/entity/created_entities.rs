@@ -1,7 +1,7 @@
 //! What one batch create landed, and which Temporal Evolutions it wrote
 //! beside the current state it created.
 
-use crate::entity::landed_entity::LandedEntity;
+use crate::entity::{landed_entity::LandedEntity, predated_entity::PredatedEntity};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// The Entities one batch create landed.
@@ -16,4 +16,8 @@ pub struct CreatedEntities {
     /// membership on both sides. An identity row that existed keeps the
     /// evolution it held, so none of those is here.
     pub established: Vec<Identifier>,
+    /// The identity rows holding a Temporal Evolution alone whose creation
+    /// the create refused, because they hold an instant later than its own
+    /// (clause 4.8), with that instant.
+    pub predated: Vec<PredatedEntity>,
 }

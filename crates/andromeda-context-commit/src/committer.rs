@@ -22,6 +22,11 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// 4.8 system times at, so the history the commit records carries the
     /// same `createdAt`, `modifiedAt` and `deletedAt` as current state.
     ///
+    /// A write that would insert, update or delete an Entity holding an instant
+    /// later than `accepted_at` is reported as [`WriteOutcome::Predated`] at its
+    /// position, and every other write lands without it. A create of an
+    /// identifier no Entity holds is never predated.
+    ///
     /// A write whose own content the store refuses is reported as
     /// [`WriteOutcome::Refused`] at its position, and every other write lands
     /// without it. A refusal the implementation cannot attribute to one write
@@ -92,7 +97,7 @@ pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
 pub const fn consequences_land(outcome: &WriteOutcome) -> bool {
     match outcome {
         WriteOutcome::Created(_) | WriteOutcome::Updated(_) | WriteOutcome::Deleted(..) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,
-        WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded | WriteOutcome::Refused(_) => false,
+        WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded | WriteOutcome::Predated(_) | WriteOutcome::Refused(_) => false,
     }
 }
 
@@ -111,7 +116,7 @@ mod tests {
         submission_refusal::SubmissionRefusal,
         write_outcome::WriteOutcome,
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
     use chrono::Utc;
     use std::sync::Arc;
 
@@ -150,6 +155,7 @@ mod tests {
             WriteOutcome::AlreadyExists,
             WriteOutcome::NotFound,
             WriteOutcome::Superseded,
+            WriteOutcome::Predated(SystemInstant::new(Utc::now())),
             WriteOutcome::Refused(SubmissionRefusal::RelationshipMissingObject),
         ] {
             assert!(!consequences_land(&outcome));
