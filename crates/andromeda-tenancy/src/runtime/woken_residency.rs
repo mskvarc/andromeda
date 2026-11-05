@@ -9,7 +9,7 @@
 
 use crate::{
     due_work::{DueWork, DueWorkSource},
-    runtime::cached_runtime::{EPOCH, now_millis},
+    runtime::process_epoch::{EPOCH, now_millis},
 };
 use std::{
     sync::{

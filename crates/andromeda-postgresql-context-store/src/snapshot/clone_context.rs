@@ -147,10 +147,11 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Id
 /// control record `FOR KEY SHARE`.
 ///
 /// Every path that deletes a Snapshot takes `FOR UPDATE` on its control record
-/// before it drops the branch schema, so a delete, expiry or eviction of the
-/// source waits for the copy, or skips the source, instead of dropping the
-/// relations being copied. Only the control record is fenced: the preparation
-/// row takes the source's last-used touches, which must not conflict with it.
+/// before it drops the branch schema, so no delete, expiry or eviction of the
+/// source drops the relations being copied: a delete or an eviction first ends
+/// the copy, and an expiry waits for it. Only the control record is fenced: the
+/// preparation row takes the source's last-used touches, which must not
+/// conflict with it.
 fn source_key_statement(source_id: &Identifier) -> SelectStatement {
     Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))

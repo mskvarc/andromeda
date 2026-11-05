@@ -8,6 +8,9 @@ authors.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
@@ -23,6 +26,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
+andromeda-retry.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
@@ -44,6 +48,7 @@ url = { version = "2.5.8", features = ["serde"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-number.workspace = true
+andromeda-retry = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1.4.1"
 proptest = "1.12.0"
 tokio = { version = "1.54.1", features = ["macros", "rt"] }

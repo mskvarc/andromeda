@@ -18,30 +18,24 @@ use andromeda_configuration::{
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
-use std::{
-    env,
-    fs,
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{io::Write, time::Duration};
+use tempfile::{Builder, NamedTempFile};
 
-fn write_temp_config(contents: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after unix epoch")
-        .as_nanos();
-    let path = env::temp_dir().join(format!("andromeda-admission-{unique}.toml"));
-    fs::write(&path, contents).expect("temp config should be written");
-    path
+fn write_temp_config(contents: &str) -> NamedTempFile {
+    let mut file = Builder::new()
+        .prefix("andromeda-admission-")
+        .suffix(".toml")
+        .tempfile()
+        .expect("temp config should be created");
+    file.write_all(contents.as_bytes()).expect("temp config should be written");
+    file
 }
 
 /// Load `contents` as the configuration file through the admission the
 /// broker runs at startup.
 fn admitted(contents: &str) -> Result<BrokerConfig, ConfigurationError> {
-    let path = write_temp_config(contents);
-    let result = load_admitted(Some(path.clone()), ListenerOverrides::default()); // clone: the file is removed after loading
-    fs::remove_file(path).expect("temp config should be removed");
-    result.map(|(_, loaded)| loaded.config)
+    let file = write_temp_config(contents);
+    load_admitted(Some(file.path().to_path_buf()), ListenerOverrides::default()).map(|(_, loaded)| loaded.config)
 }
 
 #[test]

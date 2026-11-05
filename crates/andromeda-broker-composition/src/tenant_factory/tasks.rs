@@ -14,6 +14,7 @@ mod periodic_evaluation;
 mod pool_gauges;
 mod retention;
 mod snapshot;
+mod subscription_cache_reconcile;
 mod table_size_gauges;
 mod temporal_retention;
 mod temporal_sweep_failure;

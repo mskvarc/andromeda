@@ -24,6 +24,7 @@ use crate::{
             notification_schedule::{register_notification_schedule, register_periodic_wake},
             notification_worker_failure::{ChangeChannel, channel_closed, evaluation_lane_stopped, worker_notification_failure},
             periodic_evaluation::periodic_pass,
+            subscription_cache_reconcile::register_subscription_cache_reconcile,
         },
     },
 };
@@ -175,6 +176,11 @@ pub(super) fn register_notification_workers(
             lanes: config.evaluation.max_concurrent_changes,
             shutdown_drain: config.evaluation.shutdown_drain(),
         },
+    )?;
+    register_subscription_cache_reconcile(
+        supervisor,
+        Arc::clone(&processor), // clone: the resident processor is also the reconcile pass's reader of the cache.
+        config.evaluation.subscription_reconcile_interval(),
     )?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }
@@ -344,7 +350,7 @@ fn register_notification_processor(
                         return Ok(());
                     }
                     received = subscription_receiver.recv() => match received {
-                        Ok(change) => processor.apply_subscription_change(change).await,
+                        Ok(_) => processor.release_superseded(),
                         Err(RecvError::Lagged(skipped)) => {
                             tracing::debug!(skipped, "notification subscription stream lagged; reloading policy cache");
                             processor.reload_cache().await.map_err(worker_notification_failure)?;
@@ -361,7 +367,7 @@ fn register_notification_processor(
                         };
                         loop {
                             match subscription_receiver.try_recv() {
-                                Ok(change) => processor.apply_subscription_change(change).await,
+                                Ok(_) => processor.release_superseded(),
                                 Err(TryRecvError::Lagged(skipped)) => {
                                     tracing::debug!(skipped, "notification subscription stream lagged before entity evaluation; reloading policy cache");
                                     processor.reload_cache().await.map_err(worker_notification_failure)?;

@@ -51,6 +51,7 @@ typed-builder = "0.23.2"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-retry = { workspace = true, features = ["test-support"] }
 async-trait = "0.1.92"
 pretty_assertions = "1.4.1"
 serde_urlencoded = "0.7.1"

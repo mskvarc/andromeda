@@ -32,7 +32,7 @@ use crate::{
         reader::EntityReader,
         service_ports::EntityServicePorts,
     },
-    recording_ports::{ImmediateRetry, RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
+    recording_ports::{RecordedCommits, RecordingCommitter, SnapshotReader, UnusedAttributeHistory, UnusedBlockingExecutor},
 };
 use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_commit::{
@@ -50,7 +50,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
-use andromeda_retry::retry_delay::RetryDelay;
+use andromeda_retry::{immediate_retry_delay::ImmediateRetryDelay, retry_delay::RetryDelay};
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
@@ -282,7 +282,7 @@ fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: 
                 payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
             }) as Arc<dyn EntityReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
-            retry_delay: Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
+            retry_delay: Arc::new(ImmediateRetryDelay) as Arc<dyn RetryDelay>,
             attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
             writes: Arc::new(committer) as Arc<dyn ContextCommitter>,
             deletion_outline: Arc::new(PayloadOutline {

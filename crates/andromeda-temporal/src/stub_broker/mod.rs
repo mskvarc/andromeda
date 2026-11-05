@@ -52,7 +52,11 @@ use async_trait::async_trait;
 use std::{
     collections::HashMap,
     iter,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -88,6 +92,8 @@ pub(crate) struct StubBroker {
     merged_entities: Mutex<Vec<(Identifier, LocalPart, Vec<EntityTypeName>)>>,
     /// The entity selections each identifier listing ran under, in order.
     listed_selections: Mutex<Vec<EntitySelection>>,
+    /// How many times a read scope was asked for.
+    scope_reads: AtomicUsize,
     /// The page of history an entity reads as in place of its links.
     pages: HashMap<Identifier, Vec<TemporalHistoryRow>>,
     /// What the store reads of a split query's filter leaves over each entity.
@@ -116,6 +122,7 @@ impl StubBroker {
             merged_answers: Mutex::new(Vec::new()),
             merged_entities: Mutex::new(Vec::new()),
             listed_selections: Mutex::new(Vec::new()),
+            scope_reads: AtomicUsize::new(0),
             pages: HashMap::new(),
             leaf_truths: HashMap::new(),
             in_effect: HashMap::new(),
@@ -186,6 +193,11 @@ impl StubBroker {
         self.links.entry(entity_id.clone()).or_default(); // clone: the graph and the page both key by the entity
         self.pages.insert(entity_id, rows);
         self
+    }
+
+    /// How many times a read scope was asked for.
+    pub(crate) fn scope_reads(&self) -> usize {
+        self.scope_reads.load(Ordering::Relaxed)
     }
 
     /// The entity selections the identifier listings ran under, in the order

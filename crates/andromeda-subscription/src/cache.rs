@@ -13,12 +13,14 @@ use crate::{
     compilation::compile_subscription,
     compiled::CompiledSubscription,
     error::SubscriptionError,
+    refresh_order::RefreshOrder,
     store::SubscriptionStore,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
+use andromeda_retry::{growth::Growth, retry_delay::RetryDelay, retry_policy::RetryPolicy, schedule::BackoffSchedule};
 use andromeda_spatial_index::{
     key::SpatialKey,
     subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
@@ -27,8 +29,16 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use iri_rs::IriBuf;
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc};
-use tracing::debug;
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc, time::Duration};
+use tracing::{debug, error, warn};
+
+/// How often, and how far apart, one reconcile pass reads a subscription whose
+/// store could not be reached: four reads, waiting 100, 200 and 400
+/// milliseconds.
+const REFRESH_RETRY: RetryPolicy = RetryPolicy {
+    attempts: NonZeroU32::MIN.saturating_add(3),
+    schedule: BackoffSchedule::new(Duration::from_millis(100), Duration::from_millis(400), Growth::Doubling),
+};
 
 /// Thread-safe subscription cache for fast event matching.
 ///
@@ -43,6 +53,11 @@ pub struct SubscriptionCache {
     /// The broker's mode every cached subscription's target languages select
     /// keys by.
     language_matching: LanguageMatching,
+    /// The order the refreshes of each subscription take effect in, and the
+    /// subscriptions whose newest refresh could not reach the store: their
+    /// cached entry, if any, may be stale, and
+    /// [`SubscriptionCache::reconcile_dirty`] reads them again.
+    refreshes: RefreshOrder,
 }
 
 impl SubscriptionCache {
@@ -61,6 +76,7 @@ impl SubscriptionCache {
             spatial,
             tenant,
             language_matching,
+            refreshes: RefreshOrder::default(),
         }
     }
 
@@ -94,17 +110,24 @@ impl SubscriptionCache {
 
     /// Handle a single subscription change event (upsert or removal).
     ///
-    /// A subscription that cannot be re-read is logged and left as cached: the
-    /// change stream offers no retry, and the next change, reload or refresh
-    /// of the subscription reconciles it.
-    pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) {
+    /// An upsert makes one read, as [`SubscriptionCache::refresh`] does. When
+    /// the store cannot be reached the subscription is marked dirty for
+    /// [`SubscriptionCache::reconcile_dirty`] to read again, because the
+    /// change stream offers no retry and the caller is a request that must not
+    /// wait on the store. A removal takes effect after every refresh of the
+    /// subscription already begun, so none of them can index it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns the read failure, as [`SubscriptionCache::refresh`] reports it.
+    /// The cached entry is left as it was.
+    pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         match change {
-            SubscriptionChange::Upserted { target, id } => {
-                if let Err(error) = self.refresh(target, id, repo).await {
-                    debug!("Failed to load subscription {} for cache update: {}", id, error);
-                }
+            SubscriptionChange::Upserted { target, id } => self.refresh(target, id, repo).await,
+            SubscriptionChange::Deleted { target, id } => {
+                self.refreshes.begin(target, id).answered(|| self.remove(target, id));
+                Ok(())
             }
-            SubscriptionChange::Deleted { target, id } => self.remove(target, id),
         }
     }
 
@@ -112,21 +135,72 @@ impl SubscriptionCache {
     /// compiled while it is notified, dropped once it is not or no longer
     /// exists.
     ///
+    /// A read whose store cannot be reached marks the subscription dirty; an
+    /// answer, or a fault no later read is expected to mend, clears the mark.
+    /// Refreshes of one subscription run concurrently and take effect in the
+    /// order they began, so a slow read neither overwrites a newer answer nor
+    /// clears the mark a newer failed read set.
+    ///
     /// # Errors
     ///
-    /// Returns the store's failure when the subscription cannot be read —
+    /// Returns the store's failure when the subscription cannot be read:
     /// [`SubscriptionError::Persistence`] for an adapter failure,
     /// [`SubscriptionError::Representation`] for a stored row that no longer
     /// reads back as a subscription. The cached entry is left as it was, so a
     /// caller can tell a subscription that is gone from one it could not see.
     pub async fn refresh(&self, target: &ContextTarget, id: &Identifier, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
-        match repo.get(target, id).await? {
-            Some(stored) if stored.subscription.lifecycle.standing.notifies_at(Utc::now()) => {
-                self.insert(target, compile_subscription(&stored, self.language_matching));
+        let read = self.refreshes.begin(target, id);
+        match repo.get(target, id).await {
+            Ok(stored) => {
+                let notified = stored
+                    .filter(|stored| stored.subscription.lifecycle.standing.notifies_at(Utc::now()))
+                    .map(|stored| compile_subscription(&stored, self.language_matching));
+                read.answered(|| match notified {
+                    Some(compiled) => self.insert(target, compiled),
+                    None => self.remove(target, id),
+                });
+                Ok(())
             }
-            Some(_) | None => self.remove(target, id),
+            Err(error) => {
+                read.failed(&error);
+                Err(error)
+            }
         }
-        Ok(())
+    }
+
+    /// Read every dirty subscription again, each through [`REFRESH_RETRY`]
+    /// while the store cannot be reached.
+    ///
+    /// A subscription whose store stays out of reach stays dirty for the next
+    /// pass. One whose read fails with a fault no retry mends (an unreadable
+    /// stored row) is read once and no longer dirty: it stays as cached until
+    /// it changes again or the cache is reloaded.
+    pub async fn reconcile_dirty(&self, repo: &(impl SubscriptionStore + ?Sized), delay: &dyn RetryDelay) {
+        for (target, id) in self.refreshes.unreachable() {
+            let outcome = REFRESH_RETRY
+                .run(
+                    delay,
+                    |error: &SubscriptionError, retry| {
+                        warn!("Failed to load subscription {} for cache reconcile (retry {}): {}", id, retry, error);
+                        error.is_transient()
+                    },
+                    async |_| self.refresh(&target, &id, repo).await,
+                )
+                .await;
+            match outcome {
+                Ok(()) => {}
+                Err(error) if error.is_transient() => warn!("Subscription {} stays as cached until the next reconcile: {}", id, error),
+                Err(error) => error!(
+                    "Subscription {} cannot be read and is no longer reconciled; it stays as cached until it changes or the cache reloads: {}",
+                    id, error
+                ),
+            }
+        }
+    }
+
+    /// Number of subscriptions awaiting [`SubscriptionCache::reconcile_dirty`].
+    pub fn dirty_len(&self) -> usize {
+        self.refreshes.unreachable_len()
     }
 
     /// Index one compiled subscription, replacing any earlier entry with the
@@ -287,15 +361,13 @@ impl SubscriptionCache {
 )]
 mod tests {
     use crate::{
+        answering_store::{AnsweringStore, StoredAnswer},
         cache::SubscriptionCache,
+        change::SubscriptionChange,
         compiled::CompiledSubscription,
         error::SubscriptionError,
         geo_filter::SubscriptionGeoFilter,
-        notification_slot::{NotificationSlot, NotificationSlotGate},
-        notifying_since::{NotifyingRestart, NotifyingSince},
-        outcome_tally::OutcomeTally,
-        store::{SubscriptionFields, SubscriptionStore},
-        stored_subscription::StoredSubscription,
+        notifying_since::NotifyingSince,
     };
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
@@ -307,111 +379,16 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
         notification::ChangeOrigin,
-        subscription::{Subscription, SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, page_window::PageWindow, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_retry::immediate_retry_delay::ImmediateRetryDelay;
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, sync::Arc};
     use url::Url;
-
-    /// What the store double answers when a subscription is read back.
-    #[derive(Clone, Copy)]
-    enum StoredAnswer {
-        /// The store fails the read, as an unreachable database would.
-        Unreadable,
-        /// The store holds no such subscription.
-        Absent,
-    }
-
-    /// A subscription store that answers only `get`, as `answer` says.
-    struct AnsweringStore {
-        answer: StoredAnswer,
-    }
-
-    fn unused(method: &str) -> SubscriptionError {
-        panic!("{}", format!("AnsweringStore::{method} is not exercised by the cache refresh tests"))
-    }
-
-    #[async_trait]
-    impl SubscriptionStore for AnsweringStore {
-        async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
-            match self.answer {
-                StoredAnswer::Unreadable => Err(SubscriptionError::from(PersistenceFailure::Unavailable)),
-                StoredAnswer::Absent => Ok(None),
-            }
-        }
-
-        async fn list(&self, _target: &ContextTarget, _window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-            Err(unused("list"))
-        }
-
-        async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
-            Err(unused("delete"))
-        }
-
-        async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
-            Err(unused("exists"))
-        }
-
-        async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-            Err(unused("list_active"))
-        }
-
-        async fn claim_notification_slot(
-            &self,
-            _target: &ContextTarget,
-            _id: &Identifier,
-            _gate: NotificationSlotGate,
-        ) -> Result<NotificationSlot, SubscriptionError> {
-            Err(unused("claim_notification_slot"))
-        }
-
-        async fn record_outcomes(&self, _target: &ContextTarget, _id: &Identifier, _tally: OutcomeTally) -> Result<(), SubscriptionError> {
-            Err(unused("record_outcomes"))
-        }
-
-        async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
-            Err(unused("expire_due"))
-        }
-
-        async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-            Err(unused("find_due_interval_subscriptions"))
-        }
-
-        async fn next_interval_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
-            Err(unused("next_interval_due"))
-        }
-
-        async fn record_interval_tick(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
-            Err(unused("record_interval_tick"))
-        }
-
-        async fn create_subscription(
-            &self,
-            _target: &ContextTarget,
-            _id: &Identifier,
-            _fields: &SubscriptionFields<'_>,
-            _status: SubscriptionStatus,
-        ) -> Result<(), SubscriptionError> {
-            Err(unused("create_subscription"))
-        }
-
-        async fn update_subscription(
-            &self,
-            _target: &ContextTarget,
-            _id: &Identifier,
-            _fields: &SubscriptionFields<'_>,
-            _status: SubscriptionStatus,
-            _restart: NotifyingRestart,
-        ) -> Result<u64, SubscriptionError> {
-            Err(unused("update_subscription"))
-        }
-    }
 
     fn live_target() -> ContextTarget {
         ContextTarget::Live
@@ -494,30 +471,188 @@ mod tests {
         assert_eq!(cache.get(&target, &id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
     }
 
+    fn upserted(target: &ContextTarget, id: &Identifier) -> SubscriptionChange {
+        SubscriptionChange::Upserted {
+            target: target.clone(), // clone: the change owns its target
+            id: id.clone(),         // clone: the change owns its id
+        }
+    }
+
     /// A subscription the store could not be asked about is not a subscription
-    /// the store no longer holds: the failure is reported, and the cached entry
-    /// stays so a caller that retries still finds it.
+    /// the store no longer holds: the failure is reported, the cached entry
+    /// stays so a caller that retries still finds it, and the subscription is
+    /// marked for the reconcile pass.
     #[tokio::test]
-    async fn a_refresh_the_store_cannot_answer_reports_the_failure_and_keeps_the_entry() -> Result<(), SubscriptionError> {
+    async fn a_refresh_the_store_cannot_answer_reports_the_failure_keeps_the_entry_and_marks_it_dirty() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"]);
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
         cache.insert(&target, subscription);
 
-        let refreshed = cache
-            .refresh(
-                &target,
-                &id,
-                &AnsweringStore {
-                    answer: StoredAnswer::Unreadable,
-                },
-            )
-            .await;
+        let refreshed = cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Unreadable)).await;
 
         assert!(matches!(refreshed, Err(SubscriptionError::StoreUnavailable)), "{refreshed:?}");
         assert!(cache.get(&target, &id).is_some(), "an unanswered refresh must not drop the cached subscription");
+        assert_eq!(cache.dirty_len(), 1);
+    }
+
+    /// A request applies a change with one read: the retry belongs to the
+    /// reconcile pass, so the request never waits on a failing store.
+    #[tokio::test]
+    async fn a_change_whose_read_fails_is_read_once_and_left_dirty_with_its_entry() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let subscription = make_compiled_sub("lost", 6, "Vehicle", vec!["entityCreated"]);
+        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        cache.insert(&target, subscription);
+        let store = AnsweringStore::new(StoredAnswer::Unreadable);
+
+        let handled = cache.handle_change(&upserted(&target, &id), &store).await;
+
+        assert!(matches!(handled, Err(SubscriptionError::StoreUnavailable)), "{handled:?}");
+        assert_eq!(store.reads(), 1);
+        assert_eq!(cache.dirty_len(), 1);
+        assert!(cache.get(&target, &id).is_some());
+    }
+
+    /// The reconcile pass reads a dirty subscription again until the store
+    /// answers, then indexes it and clears the mark.
+    #[tokio::test]
+    async fn a_reconcile_whose_store_recovers_indexes_the_subscription_and_clears_the_dirty_mark() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let id: Identifier = "urn:ngsi-ld:Subscription:recovering".parse().expect("a valid identifier");
+        let store = AnsweringStore::new(StoredAnswer::UnreadableForReads(2));
+        cache.handle_change(&upserted(&target, &id), &store).await.expect_err("the first read fails");
+        assert!(cache.get(&target, &id).is_none());
+
+        cache.reconcile_dirty(&store, &ImmediateRetryDelay).await;
+
+        assert_eq!(cache.dirty_len(), 0);
+        assert_eq!(store.reads(), 3);
+        assert!(cache.get(&target, &id).is_some(), "the third read found the subscription, so it is indexed");
+    }
+
+    /// A subscription whose every read fails stays dirty after the pass spent
+    /// its attempts, for the next pass to try again.
+    #[tokio::test]
+    async fn a_dirty_subscription_whose_every_read_fails_stays_dirty_after_the_attempts() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let id: Identifier = "urn:ngsi-ld:Subscription:unreachable".parse().expect("a valid identifier");
+        let store = AnsweringStore::new(StoredAnswer::Unreadable);
+        cache.handle_change(&upserted(&target, &id), &store).await.expect_err("the read fails");
+
+        cache.reconcile_dirty(&store, &ImmediateRetryDelay).await;
+
+        assert_eq!(cache.dirty_len(), 1);
+        assert_eq!(store.reads(), 1 + super::REFRESH_RETRY.attempts.get());
+    }
+
+    /// A row that cannot be decoded is not mended by reading it again, so no
+    /// pass reads it.
+    #[tokio::test]
+    async fn a_change_whose_row_cannot_be_decoded_is_not_marked_for_reconcile() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let id: Identifier = "urn:ngsi-ld:Subscription:undecodable".parse().expect("a valid identifier");
+        let store = AnsweringStore::new(StoredAnswer::UndecodableRow);
+        let handled = cache.handle_change(&upserted(&target, &id), &store).await;
+        assert!(matches!(handled, Err(SubscriptionError::Representation(_))), "{handled:?}");
+
+        cache.reconcile_dirty(&store, &ImmediateRetryDelay).await;
+
+        assert_eq!(cache.dirty_len(), 0);
+        assert_eq!(store.reads(), 1);
+    }
+
+    /// The reconcile read was sent before the change committed, and the
+    /// change's own read could not reach the store: the older answer must not
+    /// index the subscription, nor clear the mark the change needs.
+    #[tokio::test]
+    async fn a_read_older_than_a_failed_change_neither_indexes_nor_clears_the_dirty_mark() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let stale = make_compiled_sub("raced", 10, "Vehicle", vec!["entityCreated"]);
+        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let reconcile = cache.refreshes.begin(&target, &id);
+
+        cache
+            .handle_change(&upserted(&target, &id), &AnsweringStore::new(StoredAnswer::Unreadable))
+            .await
+            .expect_err("the change's read fails");
+        reconcile.answered(|| cache.insert(&target, stale));
+
+        assert!(cache.get(&target, &id).is_none());
+        assert_eq!(cache.dirty_len(), 1);
+    }
+
+    /// A slow read answers after a newer one found the subscription gone: the
+    /// older version it read is not indexed again.
+    #[tokio::test]
+    async fn a_read_older_than_an_answered_one_does_not_overwrite_it() -> Result<(), SubscriptionError> {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let stale = make_compiled_sub("overtaken", 11, "Vehicle", vec!["entityCreated"]);
+        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let slow = cache.refreshes.begin(&target, &id);
+
+        cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Absent)).await?;
+        slow.answered(|| cache.insert(&target, stale));
+
+        assert!(cache.get(&target, &id).is_none());
         Ok(())
+    }
+
+    /// A refresh begun before the subscription was deleted answers with the
+    /// version it read; the deletion is newer, so the subscription stays gone.
+    #[tokio::test]
+    async fn a_read_begun_before_a_deletion_does_not_index_the_subscription_again() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let stale = make_compiled_sub("deleted-meanwhile", 12, "Vehicle", vec!["entityCreated"]);
+        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let slow = cache.refreshes.begin(&target, &id);
+
+        cache
+            .handle_change(
+                &SubscriptionChange::Deleted {
+                    target: target.clone(), // clone: the change owns its target
+                    id: id.clone(),         // clone: the change owns its id
+                },
+                &AnsweringStore::new(StoredAnswer::Absent),
+            )
+            .await
+            .expect("a delete reads nothing");
+        slow.answered(|| cache.insert(&target, stale));
+
+        assert!(cache.get(&target, &id).is_none());
+    }
+
+    /// A subscription deleted while it was dirty has nothing left to read.
+    #[tokio::test]
+    async fn a_delete_of_a_dirty_subscription_clears_the_dirty_mark() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
+        let target = live_target();
+        let id: Identifier = "urn:ngsi-ld:Subscription:deleted".parse().expect("a valid identifier");
+        let store = AnsweringStore::new(StoredAnswer::Unreadable);
+        cache.handle_change(&upserted(&target, &id), &store).await.expect_err("the read fails");
+        assert_eq!(cache.dirty_len(), 1);
+
+        cache
+            .handle_change(
+                &SubscriptionChange::Deleted {
+                    target: target.clone(), // clone: the change owns its target
+                    id: id.clone(),         // clone: the change owns its id
+                },
+                &store,
+            )
+            .await
+            .expect("a delete reads nothing");
+
+        assert_eq!(cache.dirty_len(), 0);
+        assert_eq!(store.reads(), 1);
     }
 
     /// A subscription the store no longer holds is dropped from the cache.
@@ -529,7 +664,7 @@ mod tests {
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
         cache.insert(&target, subscription);
 
-        cache.refresh(&target, &id, &AnsweringStore { answer: StoredAnswer::Absent }).await?;
+        cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Absent)).await?;
 
         assert!(cache.get(&target, &id).is_none());
         Ok(())

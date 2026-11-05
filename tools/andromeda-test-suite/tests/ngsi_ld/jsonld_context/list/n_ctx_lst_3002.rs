@@ -9,12 +9,17 @@ use andromeda_test_suite::{
     minted_wrapper::minted_at,
     namespace::Namespace,
 };
+use futures::{StreamExt, TryStreamExt, stream};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept},
     model::{Context, ContextEntry, InlineContext, NgsiLdMediaType},
     subscription::{Endpoint, NotificationParams, Subscription, SubscriptionId},
 };
+
+/// How many of the thousand Subscriptions are created at once; their identifiers are distinct, so concurrent
+/// creation changes nothing the listing is asked about.
+const CONCURRENT_CREATES: usize = 16;
 
 /// Pins: List @contexts of kind `ImplicitlyCreated`, with and without details and with no kind filter, walked by
 /// its next pointer from a page of 1000, answers every `ImplicitlyCreated` @context stored, the first and the last
@@ -28,9 +33,12 @@ async fn n_ctx_lst_3002_list_contexts_answers_every_implicitly_created_context_b
     let namespace = Namespace::fresh();
     let tenant = broker::private_tenant(&broker::front()?, &namespace).await?;
     let first = subscribe(&tenant, &namespace, "first").await?;
-    for index in 0..1000 {
-        subscribe(&tenant, &namespace, &format!("many-{index}")).await?;
-    }
+    let (tenant_ref, namespace_ref) = (&tenant, &namespace);
+    stream::iter(0..1000)
+        .map(|index| async move { subscribe(tenant_ref, namespace_ref, &format!("many-{index}")).await })
+        .buffer_unordered(CONCURRENT_CREATES)
+        .try_collect::<Vec<_>>()
+        .await?;
     let last = subscribe(&tenant, &namespace, "last").await?;
     let (first_id, last_id) = (wrapper_id(&tenant, &first).await?, wrapper_id(&tenant, &last).await?);
     // Clause 5.13.3.4 has the broker provide an entry for each @context currently stored, and clause 5.5.9.1 pages

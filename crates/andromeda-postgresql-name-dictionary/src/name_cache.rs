@@ -111,10 +111,22 @@ impl<N: DictionaryRelation> NameCache<N> {
         Ok(())
     }
 
+    /// How many names the cache holds right now.
+    ///
+    /// The cache applies writes lazily and its count lags them until pending
+    /// maintenance runs, so the count is read after running it. Only a write
+    /// pays for that, so the entries gauge follows writes and an eviction shows
+    /// in it at the next one.
+    fn held_entries(&self) -> u64 {
+        self.keys.run_pending_tasks();
+        self.keys.entry_count()
+    }
+
     /// Answer from the cache what it can, and report what it cannot.
     ///
-    /// Every consult counts each name asked as a hit or a miss, and refreshes
-    /// the entries gauge, which therefore also follows evictions.
+    /// Every consult counts each name asked as a hit or a miss. It reports no
+    /// entry count: reading one runs the cache's pending maintenance, which a
+    /// lookup must not pay for.
     fn probe<'a>(&self, names: &'a [N]) -> (Vec<(N, N::Key)>, Vec<&'a N>) {
         let mut resolved = Vec::with_capacity(names.len());
         let mut missing = Vec::new();
@@ -126,7 +138,6 @@ impl<N: DictionaryRelation> NameCache<N> {
             }
         }
         record_lookups(N::KIND.into(), resolved.len(), missing.len());
-        self.entries.report(self.keys.entry_count());
         (resolved, missing)
     }
 
@@ -139,7 +150,7 @@ impl<N: DictionaryRelation> NameCache<N> {
                     self.keys.insert(name.clone(), *id); // clone: the cache keeps its own key
                     self.names.insert(*id, name.clone()); // clone: each direction keeps its own name
                 }
-                self.entries.report(self.keys.entry_count());
+                self.entries.report(self.held_entries());
             }
             CachePublication::Withhold => {}
         }
@@ -352,7 +363,10 @@ mod tests {
     use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
-    use andromeda_telemetry::{names::NAME_DICTIONARY_LOOKUPS_TOTAL, recorder::TelemetryRecorder};
+    use andromeda_telemetry::{
+        names::{NAME_DICTIONARY_ENTRIES, NAME_DICTIONARY_LOOKUPS_TOTAL},
+        recorder::TelemetryRecorder,
+    };
     use sea_query::PostgresQueryBuilder;
     use sqlx::postgres::{PgConnectOptions, PgPool};
     use std::error::Error;
@@ -619,6 +633,34 @@ mod tests {
                 "{rendered}"
             );
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn one_published_name_renders_the_entries_gauge_without_a_second_report() -> Result<(), Box<dyn Error>> {
+        let recorder = TelemetryRecorder::detached()?;
+        let cache = cache::<EntityTypeName>();
+        let published: EntityTypeName = "https://example.com/Vehicle".parse()?;
+        recorder.record_locally(|| cache.absorb(&[(published, EntityTypeNameKey::from(7))], CachePublication::Publish));
+        let rendered = recorder.render();
+        let prefix = format!("{NAME_DICTIONARY_ENTRIES}{{dictionary=\"entity-type-names\"}} ");
+        let held = rendered
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(|value| value.parse::<f64>().ok());
+        assert!(held.is_some_and(|held| held >= 1.0), "{rendered}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_lookup_consult_leaves_the_entries_gauge_to_the_writes() -> Result<(), Box<dyn Error>> {
+        let recorder = TelemetryRecorder::detached()?;
+        let cache = cache::<AttributeName>();
+        let cached: AttributeName = "https://example.com/speed".parse()?;
+        cache.keys.insert(cached.clone(), AttributeNameKey::from(7));
+        recorder.record_locally(|| cache.probe(&[cached]).1.len());
+        let rendered = recorder.render();
+        assert!(!rendered.contains(NAME_DICTIONARY_ENTRIES), "{rendered}");
         Ok(())
     }
 

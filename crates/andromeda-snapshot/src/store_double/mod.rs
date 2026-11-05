@@ -55,6 +55,15 @@ pub(crate) enum Renewal {
     Fails,
 }
 
+/// How the double answers a tenant quota check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QuotaCheck {
+    /// The tenant is within its quotas: nothing is evicted.
+    Within,
+    /// The check fails: the store is saturated.
+    Fails,
+}
+
 /// A terminal status a preparation recorded, with its execution details.
 #[derive(Debug)]
 pub(crate) struct RecordedStatus {
@@ -85,6 +94,7 @@ pub(crate) struct StoreDouble {
     restarts: AtomicU32,
     renewal: Option<Renewal>,
     renewals: AtomicU32,
+    quota: QuotaCheck,
     recorded: Mutex<Vec<RecordedStatus>>,
     copies: Mutex<Vec<CloneCopy>>,
 }
@@ -100,6 +110,7 @@ impl StoreDouble {
             restarts: AtomicU32::new(0),
             renewal: None,
             renewals: AtomicU32::new(0),
+            quota: QuotaCheck::Within,
             recorded: Mutex::new(Vec::new()),
             copies: Mutex::new(Vec::new()),
         }
@@ -112,6 +123,11 @@ impl StoreDouble {
             renewal: Some(renewal),
             ..self
         }
+    }
+
+    /// Answer every tenant quota check as `quota` says.
+    pub(crate) fn with_quota_check(self, quota: QuotaCheck) -> StoreDouble {
+        StoreDouble { quota, ..self }
     }
 
     /// Have another worker hold the waiting Snapshot `id`'s claim.

@@ -17,7 +17,7 @@
 
 use crate::{
     error::TemporalError,
-    port::read_scope::ScopeReach,
+    port::read_scope::TemporalReadScope,
     read::{compacted_history::compact_history, rendered_entity::HistoryPresence},
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
@@ -39,14 +39,17 @@ use indexmap::IndexMap;
 use std::{future::Future, num::NonZeroU32};
 
 /// The Linked Entities of one temporal read: the branch they are read from,
-/// the window they are rendered over, and the context they are compacted
-/// under.
+/// as the reader found it when the read began, the window they are rendered
+/// over, and the context they are compacted under.
 #[derive(Clone, Copy)]
 pub(crate) struct TemporalLinkedSource<'s> {
     /// The service holding the history and the remote half.
     service: &'s TemporalService,
     /// The branch the history is read from.
     target: &'s ContextTarget,
+    /// The branch as the reader found it when the request began, which every
+    /// level of the traversal is answered over.
+    scope: TemporalReadScope<'s>,
     /// The window as this broker's own history answers it.
     compiled: &'s CompiledTemporalQuery,
     /// The same window as a remote holder is asked for it.
@@ -56,11 +59,12 @@ pub(crate) struct TemporalLinkedSource<'s> {
 }
 
 impl<'s> TemporalLinkedSource<'s> {
-    /// The source reading `target` through `service` over `window`, compiled
-    /// as `compiled`, compacting under `context`.
+    /// The source reading `target`, found as `scope`, through `service` over
+    /// `window`, compiled as `compiled`, compacting under `context`.
     pub(crate) const fn new(
         service: &'s TemporalService,
         target: &'s ContextTarget,
+        scope: TemporalReadScope<'s>,
         compiled: &'s CompiledTemporalQuery,
         window: &'s TemporalLinkedWindow,
         context: &'s ContextSpec,
@@ -68,6 +72,7 @@ impl<'s> TemporalLinkedSource<'s> {
         TemporalLinkedSource {
             service,
             target,
+            scope,
             compiled,
             window,
             context,
@@ -86,8 +91,7 @@ impl<'s> TemporalLinkedSource<'s> {
     /// Relationship a plain URI rather than failing the retrieval.
     async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<TemporalBody>, TemporalError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let scope = self.service.reader.read_scope(self.target, ScopeReach::Every).await?;
-        let catalogued = self.service.reader.entity_types(&scope, &ids).await?;
+        let catalogued = self.service.reader.entity_types(&self.scope, &ids).await?;
         let compactor = self.service.engine.compactor(self.context);
         let compactor = EntityCompactor::new(&compactor);
         let mut nodes = IndexMap::with_capacity(candidates.len());
@@ -98,7 +102,7 @@ impl<'s> TemporalLinkedSource<'s> {
             };
             let rendered = self
                 .service
-                .render_one_temporal_entity(&scope, &candidate.id, types, self.compiled, &compactor)
+                .render_one_temporal_entity(&self.scope, &candidate.id, types, self.compiled, &compactor)
                 .await;
             let body = match rendered {
                 Ok(rendered) if rendered.presence == HistoryPresence::Present => compact_history(&compactor, rendered.history).await,

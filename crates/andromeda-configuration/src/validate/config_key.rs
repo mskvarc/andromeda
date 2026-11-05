@@ -228,6 +228,9 @@ pub enum ConfigKey {
     /// `notifications.evaluation.shutdown_drain`.
     #[display("notifications.evaluation.shutdown_drain")]
     NotificationsEvaluationShutdownDrain,
+    /// `notifications.evaluation.subscription_reconcile_interval`.
+    #[display("notifications.evaluation.subscription_reconcile_interval")]
+    NotificationsEvaluationSubscriptionReconcileInterval,
     /// `notifications.delivery.max_http_body`.
     #[display("notifications.delivery.max_http_body")]
     NotificationsDeliveryMaxHttpBody,

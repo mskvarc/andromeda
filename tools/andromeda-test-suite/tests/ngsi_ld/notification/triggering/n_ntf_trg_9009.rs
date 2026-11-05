@@ -16,6 +16,10 @@ use ngsi_ld::{
     model::{Entity, EntityFragment, Lossless, NgsiLdMediaType},
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
+use std::time::Duration;
+
+/// How long the sink is watched for a duplicate once both expected notifications have arrived.
+const SETTLE_WINDOW: Duration = Duration::from_secs(2);
 
 /// Pins: A Replace Entity that updates a, creates d and removes b and c notifies a Subscription listening to
 /// `attributeCreated`, `attributeUpdated` and `attributeDeleted` once, carrying a and d with their new values and b
@@ -56,17 +60,23 @@ async fn n_ntf_trg_9009_a_replace_that_creates_updates_and_deletes_notifies_once
         .property("d", 4)
         .build()?;
     broker.entities().replace(&np_replace_replacement).send().await?.done()?;
-    // The barrier update is owed the next notification; notifications of one subscription are delivered in order, so a second notification of the write under test would be in the journal before it.
+    // The barrier update is owed its own notification; delivery order is not promised, so each notification is picked by its body.
     let fragment = EntityFragment::builder().property("a", "barrier").build()?;
     broker.entities().update_attributes(&np_replace_id, &fragment).send().await?.done()?;
-    let selected = [BodyPattern::Contains("\"barrier\"".to_owned())];
-    sink.wait_for_at_least_where("np-replace", &selected, 1).await?;
-    let notifications = sink.received("np-replace").await?;
-    expect_that!(notifications, len(eq(2)));
-    let notification = notifications.get(1).or_fail()?.entities(Lossless::Normalized)?;
+    let barrier = sink
+        .wait_for_at_least_where("np-replace", &[BodyPattern::Contains("\"barrier\"".to_owned())], 1)
+        .await?;
+    let replaced = sink
+        .wait_for_at_least_where("np-replace", &[BodyPattern::Contains("urn:ngsi-ld:null".to_owned())], 1)
+        .await?;
+    expect_that!(sink.count_after("np-replace", SETTLE_WINDOW).await?, eq(2));
+    let replaced_after_settling = sink
+        .received_where("np-replace", &[BodyPattern::Contains("urn:ngsi-ld:null".to_owned())])
+        .await?;
+    expect_that!(replaced_after_settling, len(eq(1)));
+    let notification = barrier.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.data().as_slice(), nth(0, has_attribute("a", any_attribute().value("barrier"))));
-    let notifications_2 = sink.received("np-replace").await?;
-    let notification_2 = notifications_2.first().or_fail()?.entities(Lossless::Normalized)?;
+    let notification_2 = replaced.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_2.data().as_slice(), len(eq(1)));
     expect_that!(
         notification_2.data().as_slice(),

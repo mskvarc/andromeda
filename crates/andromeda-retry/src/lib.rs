@@ -17,6 +17,9 @@
 pub mod cursor;
 /// How the delay grows from one retry to the next.
 pub mod growth;
+/// A wait that returns at once, for tests.
+#[cfg(feature = "test-support")]
+pub mod immediate_retry_delay;
 /// How a delay is spread below or above its bound.
 pub mod jitter;
 /// The runtime-neutral port that waits out a delay.

@@ -21,7 +21,7 @@ use ngsi_ld::{
 /// notify a Subscription without expiry and not it
 /// Clause: 5.8.1.4, 5.8.6
 ///
-/// A sentinel Subscription without an expiry is seen notifying at or after `expiresAt`, so the broker has passed
+/// The window is read after the Entity exists, so the first request of a cold tenant cannot spend it. A sentinel Subscription without an expiry is seen notifying at or after `expiresAt`, so the broker has passed
 /// that instant; `notifiedAt` and `expiresAt` compare as instants.
 #[gtest]
 #[tokio::test]
@@ -29,7 +29,6 @@ async fn n_sub_lif_9002_a_change_after_expires_at_notifies_only_the_unexpired_su
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let sink = NotificationSink::start().await?;
-    let expires_at = seconds_ahead(3).parse::<DateTime>()?;
     let vehicle_id = namespace.urn("Vehicle", "change")?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let expiring_id = namespace.subscription_id("change-expiring")?;
@@ -40,6 +39,7 @@ async fn n_sub_lif_9002_a_change_after_expires_at_notifies_only_the_unexpired_su
         .property("speed", 1)
         .build()?;
     broker.entities().create(&vehicle).send().await?.done()?;
+    let expires_at = seconds_ahead(3).parse::<DateTime>()?;
     let selector = EntitySelector::new(SelectorTypeBuilder::from(&vehicle_type).build()?).with_ids(vehicle_id.clone());
     let expiring = Subscription::builder()
         .id(expiring_id.clone())

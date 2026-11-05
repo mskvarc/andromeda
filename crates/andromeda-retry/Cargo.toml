@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [features]
+test-support = []
 tokio = ["dep:tokio"]
 
 [dependencies]

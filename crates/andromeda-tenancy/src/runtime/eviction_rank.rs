@@ -7,7 +7,8 @@
 //! only after every runtime without imminent periodic work, and among runtimes
 //! of one kind the least recently used goes first.
 
-use std::time::{Instant, SystemTime};
+use crate::runtime::last_used::LastUsed;
+use std::time::SystemTime;
 
 /// Whether a runtime's next periodic notification falls due before it could be
 /// woken again once unloaded.
@@ -67,13 +68,16 @@ pub(super) struct EvictionRank {
     /// Whether the runtime has periodic work due before it could be woken.
     pub(super) work: PeriodicWork,
     /// When the runtime was last used.
-    pub(super) last_used: Instant,
+    pub(super) last_used: LastUsed,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::eviction_rank::{Backlog, EvictionRank, PeriodicWork};
-    use std::time::{Duration, Instant, SystemTime};
+    use crate::runtime::{
+        eviction_rank::{Backlog, EvictionRank, PeriodicWork},
+        last_used::LastUsed,
+    };
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn a_due_instant_before_the_horizon_is_imminent() {
@@ -91,8 +95,8 @@ mod tests {
 
     #[test]
     fn distant_work_ranks_before_imminent_work_however_recently_used() {
-        let earlier = Instant::now();
-        let later = earlier + Duration::from_secs(60);
+        let earlier = LastUsed::aged(Duration::from_secs(60));
+        let later = LastUsed::now();
         let imminent_and_cold = EvictionRank {
             backlog: Backlog::Clear,
             work: PeriodicWork::Imminent,
@@ -108,8 +112,8 @@ mod tests {
 
     #[test]
     fn runtimes_of_one_kind_rank_by_last_use() {
-        let earlier = Instant::now();
-        let later = earlier + Duration::from_secs(60);
+        let earlier = LastUsed::aged(Duration::from_secs(60));
+        let later = LastUsed::now();
         for work in [PeriodicWork::Distant, PeriodicWork::Imminent] {
             assert!(
                 EvictionRank {
@@ -127,8 +131,8 @@ mod tests {
 
     #[test]
     fn a_runtime_holding_changes_ranks_after_one_holding_none_whatever_else_it_has() {
-        let earlier = Instant::now();
-        let later = earlier + Duration::from_secs(60);
+        let earlier = LastUsed::aged(Duration::from_secs(60));
+        let later = LastUsed::now();
         let held_and_cold = EvictionRank {
             backlog: Backlog::of(3),
             work: PeriodicWork::Distant,

@@ -97,7 +97,7 @@ async fn three_thousand_identifiers_reach_a_query_entity_source_in_urls_within_t
     for request in &requests {
         assert!(request.url.as_str().len() <= FORWARDED_URL_BUDGET, "{} bytes", request.url.as_str().len());
     }
-    let sent = requests
+    let mut sent = requests
         .iter()
         .flat_map(|request| {
             request
@@ -108,6 +108,7 @@ async fn three_thousand_identifiers_reach_a_query_entity_source_in_urls_within_t
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    sent.sort();
     pretty_assertions::assert_eq!(sent, ids);
     assert!(
         outcome.results.iter().all(|result| result.warnings.is_empty()),

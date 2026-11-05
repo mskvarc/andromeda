@@ -49,6 +49,17 @@ pub struct EvaluationConfig {
         description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. Must be at least `notifications.delivery.request_timeout`. Set it below the grace period your orchestrator gives the broker to stop, or the process is killed before the bound applies. `\"durable\"` delivery records notifications in the commit and is not affected."
     )]
     pub shutdown_drain: HumanDuration,
+    /// How often a tenant reads again the subscriptions whose change it could
+    /// not read, in human-readable form (`"5s"`).
+    ///
+    /// A subscription change is applied to the matching cache with one read
+    /// of the store. When that read fails, the subscription is marked and
+    /// matches nothing new until a later pass reads it again; this is the
+    /// cadence of that pass, which retries only transient store failures.
+    #[schemars(
+        description = "How often a tenant reads again the subscriptions whose change it could not read from the database. A subscription changed while the database was unreachable is not matched against new entity changes until this pass reads it again, so this bounds that gap. A pass with nothing to retry reads nothing."
+    )]
+    pub subscription_reconcile_interval: HumanDuration,
 }
 
 impl EvaluationConfig {
@@ -56,6 +67,12 @@ impl EvaluationConfig {
     #[must_use]
     pub const fn shutdown_drain(&self) -> Duration {
         self.shutdown_drain.duration()
+    }
+
+    /// How often subscriptions whose change could not be read are read again.
+    #[must_use]
+    pub const fn subscription_reconcile_interval(&self) -> Duration {
+        self.subscription_reconcile_interval.duration()
     }
 }
 
@@ -65,6 +82,7 @@ impl Default for EvaluationConfig {
             max_queued_changes: NonZeroUsize::MIN.saturating_add(8191),
             max_concurrent_changes: NonZeroUsize::MIN.saturating_add(31),
             shutdown_drain: HumanDuration::from_secs(30),
+            subscription_reconcile_interval: HumanDuration::from_secs(5),
         }
     }
 }

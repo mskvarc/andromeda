@@ -3,7 +3,7 @@ use crate::{
     error::SnapshotError,
     service::{SnapshotService, SnapshotServiceConfig},
     snapshot_validation_reason::SnapshotValidationReason,
-    store_double::{ClaimHold, StoreDouble},
+    store_double::{ClaimHold, QuotaCheck, StoreDouble},
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -52,8 +52,12 @@ fn bad_pair() -> KeyValuePair {
 }
 
 fn service_holding(snapshot: Snapshot, condition: BranchCondition) -> SnapshotService {
+    service_over(StoreDouble::new(snapshot, condition, ClaimHold::Held))
+}
+
+fn service_over(store: StoreDouble) -> SnapshotService {
     SnapshotService::new(
-        Arc::new(StoreDouble::new(snapshot, condition, ClaimHold::Held)),
+        Arc::new(store),
         None,
         None,
         SnapshotServiceConfig {
@@ -130,6 +134,38 @@ async fn a_cloned_snapshot_answers_with_the_system_times_a_read_returns() {
         "{cloned:?}"
     );
     pretty_assertions::assert_eq!((read.created_at, read.modified_at), (cloned.created_at, cloned.modified_at));
+}
+
+/// The Snapshot is committed before the quota check runs, so a check that
+/// fails cannot undo the create: answering an error would invite a retry that
+/// creates a second Snapshot.
+#[tokio::test]
+async fn a_create_whose_quota_check_fails_answers_the_created_snapshot() {
+    let service = service_over(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
+    let created = service
+        .create(
+            serde_json::from_str::<SnapshotInput>(
+                r#"{"type": "Snapshot", "id": "urn:ngsi-ld:Snapshot:created", "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}]}"#,
+            )
+            .expect("a Snapshot body"),
+            AdmittedContext::core_only(),
+        )
+        .await
+        .expect("the create succeeded");
+    assert!(service.get(&created.id).await.is_ok(), "{created:?}");
+}
+
+#[tokio::test]
+async fn a_clone_whose_quota_check_fails_answers_the_clone() {
+    let service = service_over(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
+    let cloned = service
+        .clone_snapshot(
+            &snapshot_id(),
+            serde_json::from_str::<SnapshotCloneInput>(r#"{"type": "Snapshot", "id": "urn:ngsi-ld:Snapshot:cloned"}"#).expect("a clone body"),
+        )
+        .await
+        .expect("the clone succeeded");
+    assert!(service.get(&cloned.id).await.is_ok(), "{cloned:?}");
 }
 
 async fn create_with(endpoint: &str, receiver_info: &str) -> Result<Snapshot, SnapshotError> {

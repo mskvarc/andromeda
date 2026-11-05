@@ -55,6 +55,7 @@ pub mod json_type;
 pub mod jsonb;
 pub mod keyed_lookup;
 pub mod literal;
+pub mod lock_wait_bound;
 pub mod ltree;
 pub mod maintenance;
 pub mod numeric_special;

@@ -97,6 +97,7 @@ shadow-rs = "2.0.0"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-server-tls = { workspace = true, features = ["test-identity"] }
+andromeda-subscription = { workspace = true, features = ["test-support"] }
 axum = "0.8.9"
 bytes = "1.12.1"
 h3 = "0.0.8"
@@ -108,6 +109,7 @@ reqwest = { version = "0.13.5", features = ["http2"] }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 serial_test = "4.0.1"
+tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["full", "test-util"] }
 url-macro = "0.2.5"
 uuid = "1.29.0"

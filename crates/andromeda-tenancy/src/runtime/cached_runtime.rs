@@ -5,6 +5,7 @@ use crate::{
     due_work::DueWorkSource,
     runtime::{
         eviction_rank::{Backlog, EvictionRank, PeriodicWork},
+        last_used::LastUsed,
         lease::LeaseOrigin,
         woken_residency::WokenResidency,
     },
@@ -15,27 +16,10 @@ use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use std::{
     sync::{
         Arc,
-        LazyLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
-
-/// The instant every last-used stamp is measured from.
-///
-/// `Instant` is not `Copy`-into-an-atomic, and a runtime's last use is written
-/// on every request. Storing an offset in milliseconds from a process-wide
-/// epoch makes the write a relaxed atomic store rather than a lock.
-pub(super) static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
-
-/// Milliseconds elapsed since the process epoch.
-pub(super) fn now_millis() -> u64 {
-    // `Duration::as_millis` answers in `u128`. The whole-second and sub-second
-    // halves are each `u64`-representable on their own, so the stamp is
-    // assembled from them rather than narrowed from a wider integer.
-    let elapsed = EPOCH.elapsed();
-    elapsed.as_secs() * 1_000 + u64::from(elapsed.subsec_millis())
-}
 
 /// One tenant's live runtime, and when it was last reached for.
 pub(super) struct CachedRuntime<S, R> {
@@ -46,8 +30,8 @@ pub(super) struct CachedRuntime<S, R> {
     /// The database this tenant's data lives in, kept so the janitor can probe
     /// it for due work after evicting the runtime.
     database: TenantDatabaseName,
-    /// Milliseconds since [`EPOCH`] at the last use.
-    pub(super) last_used: AtomicU64,
+    /// The [`LastUsed`] stamp of the last use, in its stored form.
+    last_used: AtomicI64,
     /// The eviction hold's origin.
     ///
     /// A request cloning this into a [`RuntimeLease`](super::lease::RuntimeLease)
@@ -68,7 +52,7 @@ pub(super) struct CachedRuntime<S, R> {
 impl<S, R> CachedRuntime<S, R> {
     /// Record that this runtime was just used, and tell the runtime so.
     pub(super) fn touch(&self) {
-        self.last_used.store(now_millis(), Ordering::Relaxed);
+        self.last_used.store(LastUsed::now().to_stored(), Ordering::Relaxed);
         self.origin.record_activity();
     }
 
@@ -93,7 +77,7 @@ impl<S, R> CachedRuntime<S, R> {
                 state,
                 runtime,
                 database,
-                last_used: AtomicU64::new(now_millis()),
+                last_used: AtomicI64::new(LastUsed::now().to_stored()),
                 origin,
                 established: AtomicBool::new(existence == TenantExistence::Established),
                 woken: None,
@@ -124,7 +108,7 @@ impl<S, R> CachedRuntime<S, R> {
             state,
             runtime,
             database,
-            last_used: AtomicU64::new(now_millis()),
+            last_used: AtomicI64::new(LastUsed::now().to_stored()),
             origin,
             established: AtomicBool::new(existence == TenantExistence::Established),
             woken: WokenResidency::new(residency, due_work).map(Arc::new),
@@ -176,13 +160,12 @@ impl<S, R> CachedRuntime<S, R> {
     /// A woken runtime is backdated by the idle TTL minus its residency, leaving
     /// it exactly the residency of idle life before a sweep reclaims it.
     pub(super) fn backdate(&self, age: Duration) {
-        let age_millis = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
-        self.last_used.store(now_millis().saturating_sub(age_millis), Ordering::Relaxed);
+        self.last_used.store(LastUsed::aged(age).to_stored(), Ordering::Relaxed);
     }
 
     /// When this runtime was last used.
-    pub(super) fn last_used_instant(&self) -> Instant {
-        *EPOCH + Duration::from_millis(self.last_used.load(Ordering::Relaxed))
+    pub(super) fn last_used(&self) -> LastUsed {
+        LastUsed::from_stored(self.last_used.load(Ordering::Relaxed))
     }
 
     /// The database this tenant's data lives in.
@@ -214,7 +197,7 @@ impl<S, R: TenantRuntime> CachedRuntime<S, R> {
         EvictionRank {
             backlog: Backlog::of(self.runtime.undelivered_changes()),
             work: PeriodicWork::of(self.runtime.next_periodic_due(), horizon),
-            last_used: self.last_used_instant(),
+            last_used: self.last_used(),
         }
     }
 }
@@ -371,6 +354,25 @@ mod tests {
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 1);
         drop(lease);
         pretty_assertions::assert_eq!(activity.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_backdated_runtime_sorts_strictly_older_than_one_touched_in_the_same_millisecond() {
+        let activity = Arc::new(ActivityCount::default());
+        let woken = cached_reporting_to(&activity, TenantExistence::Established);
+        let touched = cached_reporting_to(&activity, TenantExistence::Established);
+        woken.backdate(Duration::from_secs(600));
+        touched.touch();
+        assert!(woken.last_used() < touched.last_used());
+    }
+
+    #[test]
+    fn a_stamp_before_the_process_epoch_reads_back_as_an_earlier_instant() {
+        let cached = cached_reporting_to(&Arc::new(ActivityCount::default()), TenantExistence::Established);
+        cached.backdate(Duration::from_secs(5));
+        let backdated = cached.last_used();
+        cached.backdate(Duration::from_secs(10));
+        assert!(cached.last_used() < backdated);
     }
 
     #[test]

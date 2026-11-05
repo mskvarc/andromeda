@@ -4,7 +4,7 @@
 use crate::{
     database::TenantDatabase,
     pending_work::PendingWork,
-    runtime::{TenantRuntimeManager, eviction_rank::EvictionRank, teardown::next_wake_at},
+    runtime::{TenantRuntimeManager, eviction_rank::EvictionRank, last_used::LastUsed, teardown::next_wake_at},
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
 };
@@ -141,7 +141,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         };
         let registered: HashSet<&TenantName> = registered.iter().collect();
 
-        let orphans: Vec<(TenantRef, Instant)> = self
+        let orphans: Vec<(TenantRef, LastUsed)> = self
             .runtimes
             .iter()
             .filter_map(|entry| match entry.key() {
@@ -150,7 +150,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 // clone: the eviction list outlives the iteration. The last-used
                 // stamp is captured so a request that touches this runtime after
                 // it is judged an orphan spares it from removal.
-                orphan @ TenantRef::Named(_) => Some((orphan.clone(), entry.value().last_used_instant())),
+                orphan @ TenantRef::Named(_) => Some((orphan.clone(), entry.value().last_used())),
             })
             .collect();
 
@@ -164,12 +164,12 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Like the suspend itself, never schedules a wake: a suspended tenant must
     /// not be woken.
     pub(super) async fn evict_retired_runtimes(&self) -> usize {
-        let retired: Vec<(TenantRef, Instant)> = self
+        let retired: Vec<(TenantRef, LastUsed)> = self
             .runtimes
             .iter()
             .filter(|entry| entry.value().is_retired() && !entry.value().is_leased())
             // clone: the eviction list outlives the iteration.
-            .map(|entry| (entry.key().clone(), entry.value().last_used_instant()))
+            .map(|entry| (entry.key().clone(), entry.value().last_used()))
             .collect();
         if retired.is_empty() {
             return 0;
@@ -190,7 +190,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// end. The candidates are taken in [`EvictionRank`] order, so a runtime
     /// with a periodic notification due within `min_wake_interval` goes only
     /// once every runtime without one has.
-    pub(super) fn excess_runtimes(&self) -> Vec<(TenantRef, Instant)> {
+    pub(super) fn excess_runtimes(&self) -> Vec<(TenantRef, LastUsed)> {
         let over = self.runtimes.len().saturating_sub(self.config.residency.max_resident.get());
         if over == 0 {
             return Vec::new();
@@ -240,7 +240,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// notification due within `min_wake_interval` is chosen only when every
     /// candidate has one, and then the least recently used of them, so
     /// `max_resident` stays a hard bound.
-    pub(super) fn lru_unleased_named(&self, exclude: &TenantRef) -> Option<(TenantRef, Instant)> {
+    pub(super) fn lru_unleased_named(&self, exclude: &TenantRef) -> Option<(TenantRef, LastUsed)> {
         let now = Instant::now();
         let horizon = self.eviction_horizon();
         self.runtimes
@@ -297,7 +297,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // awaiting; a request that touches the runtime after this snapshot bumps
         // the stamp and the conditional removal spares it, so an in-flight request
         // is never handed a torn-down runtime.
-        let Some(chosen_at) = self.runtimes.get(tenant).map(|cached| cached.last_used_instant()) else {
+        let Some(chosen_at) = self.runtimes.get(tenant).map(|cached| cached.last_used()) else {
             return false;
         };
         self.evict_all(vec![(tenant.clone(), chosen_at)], EvictionReason::Suspended).await > 0 // clone: the eviction list owns the key
@@ -305,12 +305,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// Tenants whose runtime has not been used within `ttl`, each with the
     /// last-used instant it was chosen at.
-    pub(super) fn idle_runtimes(&self, ttl: Duration) -> Vec<(TenantRef, Instant)> {
-        let now = Instant::now();
+    pub(super) fn idle_runtimes(&self, ttl: Duration) -> Vec<(TenantRef, LastUsed)> {
         self.runtimes
             .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && now.duration_since(entry.value().last_used_instant()) > ttl)
-            .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the eviction list outlives the iteration
+            .filter(|entry| !entry.key().is_unnamed_default() && entry.value().last_used().has_been_idle_for(ttl))
+            .map(|entry| (entry.key().clone(), entry.value().last_used())) // clone: the eviction list outlives the iteration
             .collect()
     }
 }

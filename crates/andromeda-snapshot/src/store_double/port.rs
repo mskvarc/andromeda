@@ -5,7 +5,7 @@ use crate::{
     error::SnapshotError,
     snapshot_invariant::SnapshotInvariant,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
-    store_double::{ClaimHold, Renewal, StoreDouble, entry::Stage},
+    store_double::{ClaimHold, QuotaCheck, Renewal, StoreDouble, entry::Stage},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
@@ -315,6 +315,10 @@ impl SnapshotStore for StoreDouble {
     where
         'life0: 'async_trait,
     {
-        Box::pin(async { Ok(Vec::new()) })
+        let answer = match self.quota {
+            QuotaCheck::Within => Ok(Vec::new()),
+            QuotaCheck::Fails => Err(SnapshotError::StoreSaturated),
+        };
+        Box::pin(async { answer })
     }
 }

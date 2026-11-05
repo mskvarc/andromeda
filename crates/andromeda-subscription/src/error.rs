@@ -93,6 +93,25 @@ impl From<PersistenceFailure> for SubscriptionError {
 }
 
 impl SubscriptionError {
+    /// Whether the failure is the store being briefly out of reach, so the
+    /// same operation can succeed when run again.
+    #[must_use]
+    pub const fn is_transient(&self) -> bool {
+        match self {
+            SubscriptionError::StoreSaturated | SubscriptionError::StoreUnavailable => true,
+            SubscriptionError::Validation(_)
+            | SubscriptionError::NotFound { .. }
+            | SubscriptionError::AlreadyExists { .. }
+            | SubscriptionError::GeoQTooLarge { .. }
+            | SubscriptionError::JsonLd(_)
+            | SubscriptionError::ContextHosting(_)
+            | SubscriptionError::Query(_)
+            | SubscriptionError::Representation(_)
+            | SubscriptionError::Persistence(_)
+            | SubscriptionError::Internal(_) => false,
+        }
+    }
+
     /// Construct a missing-subscription error.
     #[must_use]
     pub fn not_found(identifier: &Identifier) -> SubscriptionError {

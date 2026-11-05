@@ -2,6 +2,13 @@
 
 #![deny(missing_docs)]
 
+/// A subscription store answering only reads, for tests.
+#[cfg(any(test, feature = "test-support"))]
+#[expect(
+    clippy::expect_used,
+    reason = "test support unwraps and expects on fixtures on purpose; migrating it to typed assertions is pending"
+)]
+pub mod answering_store;
 /// Shared compiled subscription cache.
 pub mod cache;
 /// The outcome of one matching pass.
@@ -77,6 +84,8 @@ pub mod notifying_since;
 pub mod outcome_tally;
 /// Expansion of the projection lists of a subscription's notification.
 mod projection_expansion;
+/// The order in which the reads of one cached subscription take effect.
+mod refresh_order;
 /// Subscription request validation.
 mod request_validation;
 /// Spelling a stored subscription in the terms of the reader's `@context`.
@@ -127,12 +136,14 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
+        "andromeda-retry",
         "andromeda-spatial-index",
         "andromeda-telemetry",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-number",
+        "andromeda-retry",
     ],
     allow_production_dependencies: [],
 }

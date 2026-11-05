@@ -130,7 +130,7 @@ impl SnapshotService {
     /// requested identifier is already taken; [`SnapshotError::Internal`] when a
     /// generated identifier, the configured default lifetime or the request
     /// context cannot be materialised; and the store's own failure when the
-    /// record cannot be persisted or the tenant quotas cannot be enforced.
+    /// record cannot be persisted.
     pub async fn create(&self, input: SnapshotInput, context: AdmittedContext) -> Result<Snapshot, SnapshotError> {
         if input.snapshot_queries.is_none() && input.snapshot_temporal_queries.is_none() {
             return Err(SnapshotValidationReason::QueryCollectionsMissing.into());
@@ -178,7 +178,7 @@ impl SnapshotService {
 
         let query_context = JsonLiteral::admit(context.resolved_context().text()).map_err(SnapshotInvariant::QueryContextText)?;
         self.repo.create(to_insert_params(&snapshot, query_context)).await?;
-        self.enforce_quotas().await?;
+        self.enforce_quotas(&snapshot.id).await;
 
         Ok(snapshot)
     }
@@ -299,7 +299,7 @@ impl SnapshotService {
     /// resolved lifetime is not positive, [`SnapshotError::Internal`] when a
     /// generated identifier or the configured default lifetime cannot be
     /// materialised, and the store's own failure when the clone job cannot be
-    /// persisted or the tenant quotas cannot be enforced.
+    /// persisted.
     pub async fn clone_snapshot(&self, source_id: &Identifier, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
         let source = self.get(source_id).await?;
         // A quarantined source cannot be copied column for column into a
@@ -344,18 +344,25 @@ impl SnapshotService {
         let mut params = to_insert_params(&cloned, query_context);
         params.clone_source_id = Some(source_id);
         self.repo.create(params).await?;
-        self.enforce_quotas().await?;
+        self.enforce_quotas(&cloned.id).await;
 
         Ok(cloned)
     }
 
     /// Evict Snapshots beyond the tenant quotas, logging each victim.
-    async fn enforce_quotas(&self) -> Result<(), SnapshotError> {
-        let evicted = self.repo.enforce_quotas(self.config.tenant_count_quota, self.config.tenant_byte_quota).await?;
-        for id in evicted {
-            info!(snapshot_id = %id, "Snapshot evicted by tenant resource quota");
+    ///
+    /// The Snapshot `created` is committed before the check runs, so a check
+    /// that fails is logged rather than answered: the create or clone itself
+    /// succeeded, and the next create, clone or preparation checks again.
+    async fn enforce_quotas(&self, created: &Identifier) {
+        match self.repo.enforce_quotas(self.config.tenant_count_quota, self.config.tenant_byte_quota).await {
+            Ok(evicted) => {
+                for id in evicted {
+                    info!(snapshot_id = %id, "Snapshot evicted by tenant resource quota");
+                }
+            }
+            Err(error) => warn!(snapshot_id = %created, %error, "Snapshot quota enforcement after a create or clone failed"),
         }
-        Ok(())
     }
 }
 

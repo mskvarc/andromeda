@@ -13,6 +13,7 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 metrics-util = { version = "0.20.4", default-features = false }
+parking_lot = "0.13.0"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 

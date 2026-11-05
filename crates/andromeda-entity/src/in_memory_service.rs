@@ -14,12 +14,12 @@ use crate::{
         reader::EntityReader,
         service_ports::EntityServicePorts,
     },
-    recording_ports::{ImmediateRetry, UnusedAttributeHistory, UnusedBlockingExecutor},
+    recording_ports::{UnusedAttributeHistory, UnusedBlockingExecutor},
 };
 use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_retry::retry_delay::RetryDelay;
+use andromeda_retry::{immediate_retry_delay::ImmediateRetryDelay, retry_delay::RetryDelay};
 use std::sync::Arc;
 
 /// An entity service reading and outlining `store`, committing through
@@ -33,7 +33,7 @@ pub(crate) fn in_memory_service(store: &Arc<InMemoryStore>, writes: Arc<dyn Cont
             reader: Arc::clone(store) as Arc<dyn EntityReader>, // clone: the service reads the store the test inspects
             deletion_outline: Arc::clone(store) as Arc<dyn DeletionOutlineReader>, // clone: the service outlines the store the test inspects
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
-            retry_delay: Arc::new(ImmediateRetry) as Arc<dyn RetryDelay>,
+            retry_delay: Arc::new(ImmediateRetryDelay) as Arc<dyn RetryDelay>,
             attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,
             writes,
         },

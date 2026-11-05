@@ -1,5 +1,9 @@
 # The default profile is nextest's own; the profiles below belong to andromeda-test-suite.
 
+# An inheriting profile takes its parent's overrides from nextest 0.9.145 on; an older nextest would run `suite-verdict`
+# with no test group at all.
+nextest-version = { required = "0.9.145" }
+
 [test-groups]
 # An exclusive registration conflicts with every exclusive or redirect registration of the same broker that matches its
 # entity id and any of its Attributes, whatever the entity type (ETSI GS CIM 009 v1.9.1 clauses 4.3.6.3 and 5.9.2.4), so
@@ -63,7 +67,7 @@ package(andromeda-test-suite) & binary(~ngsi_ld_) & (
   | test(/(^|::)(n_qry_pag_9008|n_qry_qlg_0002|n_qry_qlg_0003|n_qry_typ_9004|n_snp_cln_9169|n_snp_cre_8126|n_snp_del_8101|n_snp_qry_8110)_/)
   | test(/(^|::)(n_snp_qry_8121|n_snp_qry_8124|n_snp_sta_8104|n_sub_qry_0001|n_sub_qry_0004|n_sub_qry_0012|n_sub_qry_0013|n_sub_qry_0015)_/)
   | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
-  | test(/(^|::)(n_tmp_qry_9007|o_cmn_err_9002|o_css_qry_0004|o_css_qry_0005|o_css_qry_0007|o_css_qry_0008|o_css_qry_9002|o_ctx_add_0007)_/)
+  | test(/(^|::)(n_tmp_qry_9007|o_css_qry_0004|o_css_qry_0005|o_css_qry_0007|o_css_qry_0008|o_css_qry_9002|o_ctx_add_0007)_/)
   | test(/(^|::)(o_ctx_add_0008|o_ctx_add_0009|o_ctx_add_0011|o_ctx_add_0012|o_ctx_add_0013|o_ctx_cmp_0003|o_ctx_cmp_0004|o_ctx_cmp_0005)_/)
   | test(/(^|::)(o_ctx_cmp_0006|o_ctx_cmp_0008|o_ctx_cmp_0009|o_ctx_cmp_0010|o_ctx_cmp_0011|o_ctx_cmp_0014|o_ctx_cmp_0015|o_ctx_cmp_0016)_/)
   | test(/(^|::)(o_ctx_cmp_0017|o_ctx_cmp_0019|o_ctx_cmp_0021|o_ctx_cmp_0022|o_ctx_cmp_0023|o_ctx_cmp_0024|o_ctx_cmp_0025|o_ctx_cmp_0026)_/)
@@ -87,77 +91,25 @@ filter = '''
 package(andromeda-test-suite) & binary(~andromeda_) & (
     test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012)_/)
   | test(/(^|::)(a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015)_/)
-  | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
-  | test(/(^|::)(a_ntf_dlv_9007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)
+  | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_lim_8140|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
+  | test(/(^|::)(a_ntf_dlv_9007|a_ntf_dlv_9009|a_ntf_trg_9017|a_obs_wbk_9001|a_obs_wbk_9002|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)
 )'''
 test-group = 'private-tenants'
 
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(~distributed_) & (
+    test(/(^|::)(n_csr_cre_6402|n_csr_mat_6600|n_fed_qry_6419|n_fed_qry_7608|n_fed_qry_8007|n_fed_wrt_9312|n_fed_wrt_9313|n_fed_wrt_9314)_/)
+  | test(/(^|::)(n_fed_wrt_9315|n_fed_wrt_9316|n_inf_ret_6004|n_inf_ret_7000|n_map_qen_9312|n_map_qen_9313|n_map_qen_9314|n_map_qen_9315)_/)
+  | test(/(^|::)(n_map_qen_9316|n_map_qen_9317|n_map_qen_9397|n_map_qte_9312|n_map_qte_9313|n_map_qte_9314|n_map_qte_9315|n_map_qte_9397)_/)
+  | test(/(^|::)(n_ntf_dlv_7600|n_ntf_trg_6800|n_snp_qry_6402|n_ten_hdr_7200|n_ten_iso_6001|o_fed_dsc_7400|o_fed_dsc_7401|o_fed_dsc_7402)_/)
+  | test(/(^|::)(o_fed_dsc_7403|o_snp_qry_6403)_/)
+)'''
+test-group = 'private-tenants'
+
+# The verdict run is the suite run plus a JUnit report, so it inherits every setting and override of `suite`.
 [profile.suite-verdict]
-retries = 0
-fail-fast = false
-test-threads = 64
-slow-timeout = { period = "30s", terminate-after = 4 }
-
-[[profile.suite-verdict.overrides]]
-filter = 'binary_id(andromeda-test-suite::interoperability)'
-test-group = 'interoperability'
-
-[[profile.suite-verdict.overrides]]
-filter = 'package(andromeda-test-suite) & binary(~pgbouncer_)'
-test-group = 'pgbouncer'
-slow-timeout = { period = "60s", terminate-after = 10 }
-
-[[profile.suite-verdict.overrides]]
-filter = 'package(andromeda-test-suite) & binary(=andromeda_observability) & test(/(^|::)a_obs_met_9001_/)'
-slow-timeout = { period = "60s", terminate-after = 10 }
-
-[[profile.suite-verdict.overrides]]
-filter = '''
-package(andromeda-test-suite) & binary(~ngsi_ld_) & (
-    test(/(^|::)(n_csr_cre_0018|n_csr_cre_9005|n_csr_qry_0011|n_csr_qry_0014|n_csr_qry_0015|n_csr_qry_9001|n_css_qry_0003|n_css_qry_0006)_/)
-  | test(/(^|::)(n_css_qry_0011|n_css_qry_9001|n_css_qry_9003|n_ctx_add_0002|n_ctx_add_0003|n_ctx_add_0004|n_ctx_add_0005|n_ctx_add_0006)_/)
-  | test(/(^|::)(n_ctx_cmp_0018|n_ctx_cmp_0020|n_ctx_cmp_0029|n_ctx_cmp_0039|n_ctx_lst_0002|n_ctx_lst_0003|n_ctx_lst_0006|n_ctx_lst_0007)_/)
-  | test(/(^|::)(n_ctx_lst_0009|n_ctx_lst_3001|n_ctx_lst_3002|n_ctx_lst_3003|n_ctx_srv_0008|n_ctx_srv_0019|n_ctx_srv_0020|n_dsc_atd_0001)_/)
-  | test(/(^|::)(n_dsc_atd_9001|n_dsc_atd_9002|n_dsc_att_0001|n_dsc_att_0002|n_dsc_att_0003|n_dsc_att_9001|n_dsc_tyi_0010|n_dsc_typ_0001)_/)
-  | test(/(^|::)(n_ent_prg_0008|n_fed_bat_5001|n_fed_bat_5002|n_fed_bat_5003|n_fed_bat_5201|n_fed_bat_5202|n_fed_qry_0009|n_fed_qry_5201)_/)
-  | test(/(^|::)(n_fed_qry_9019|n_fed_qry_9021|n_fed_qry_9022|n_fed_ret_0002|n_fed_ret_0003|n_fed_ret_0004|n_fed_ret_0005|n_fed_ret_0006)_/)
-  | test(/(^|::)(n_fed_ret_0007|n_fed_ret_0010|n_fed_tmp_0004|n_fed_tmp_0007|n_fed_tmp_0009|n_fed_tmp_0014|n_fed_wrt_0004|n_fed_wrt_0009)_/)
-  | test(/(^|::)(n_fed_wrt_0010|n_fed_wrt_0015|n_fed_wrt_0018|n_fed_wrt_0020|n_fed_wrt_0022|n_fed_wrt_5001|n_fed_wrt_5002|n_fed_wrt_5003)_/)
-  | test(/(^|::)(n_fed_wrt_5004|n_fed_wrt_5005|n_fed_wrt_5006|n_fed_wrt_5203|n_fed_wrt_5204|n_fed_wrt_9001|n_fed_wrt_9011|n_fed_wrt_9016)_/)
-  | test(/(^|::)(n_inf_ret_9001|n_inf_ret_9003|n_inf_ret_9004|n_map_qen_3080|n_map_qen_9001|n_map_qen_9002|n_map_qen_9003|n_map_qen_9006)_/)
-  | test(/(^|::)(n_map_qen_9007|n_ntf_dlv_0004|n_ntf_dlv_9001|n_ntf_trg_0019|n_ntf_trg_9029|n_ntf_trg_9030|n_qry_ent_0003|n_qry_ent_0013)_/)
-  | test(/(^|::)(n_qry_ent_0014|n_qry_ent_0018|n_qry_ent_3021|n_qry_ent_3050|n_qry_ent_3051|n_qry_ent_3052|n_qry_ent_9003|n_qry_ent_9005)_/)
-  | test(/(^|::)(n_qry_pag_9008|n_qry_qlg_0002|n_qry_qlg_0003|n_qry_typ_9004|n_snp_cln_9169|n_snp_cre_8126|n_snp_del_8101|n_snp_qry_8110)_/)
-  | test(/(^|::)(n_snp_qry_8121|n_snp_qry_8124|n_snp_sta_8104|n_sub_qry_0001|n_sub_qry_0004|n_sub_qry_0012|n_sub_qry_0013|n_sub_qry_0015)_/)
-  | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
-  | test(/(^|::)(n_tmp_qry_9007|o_cmn_err_9002|o_css_qry_0004|o_css_qry_0005|o_css_qry_0007|o_css_qry_0008|o_css_qry_9002|o_ctx_add_0007)_/)
-  | test(/(^|::)(o_ctx_add_0008|o_ctx_add_0009|o_ctx_add_0011|o_ctx_add_0012|o_ctx_add_0013|o_ctx_cmp_0003|o_ctx_cmp_0004|o_ctx_cmp_0005)_/)
-  | test(/(^|::)(o_ctx_cmp_0006|o_ctx_cmp_0008|o_ctx_cmp_0009|o_ctx_cmp_0010|o_ctx_cmp_0011|o_ctx_cmp_0014|o_ctx_cmp_0015|o_ctx_cmp_0016)_/)
-  | test(/(^|::)(o_ctx_cmp_0017|o_ctx_cmp_0019|o_ctx_cmp_0021|o_ctx_cmp_0022|o_ctx_cmp_0023|o_ctx_cmp_0024|o_ctx_cmp_0025|o_ctx_cmp_0026)_/)
-  | test(/(^|::)(o_ctx_cmp_0027|o_ctx_cmp_0028|o_ctx_cmp_0030|o_ctx_cmp_0031|o_ctx_cmp_0032|o_ctx_cmp_0033|o_ctx_cmp_0034|o_ctx_cmp_0035)_/)
-  | test(/(^|::)(o_ctx_cmp_0036|o_ctx_cmp_0037|o_ctx_cmp_0038|o_ctx_cmp_0040|o_ctx_cmp_0047|o_ctx_cmp_0048|o_ctx_cmp_0049|o_ctx_cmp_0050)_/)
-  | test(/(^|::)(o_ctx_del_0002|o_ctx_del_0003|o_ctx_del_0004|o_ctx_del_0007|o_ctx_del_9006|o_ctx_exp_0014|o_ctx_exp_0015|o_ctx_exp_0016)_/)
-  | test(/(^|::)(o_ctx_exp_0018|o_ctx_exp_0037|o_ctx_exp_0038|o_ctx_exp_0039|o_ctx_exp_0042|o_ctx_exp_9027|o_ctx_lst_0001|o_ctx_lst_0004)_/)
-  | test(/(^|::)(o_ctx_lst_0005|o_ctx_lst_0008|o_ctx_lst_0010|o_ctx_lst_0011|o_ctx_lst_0012|o_ctx_lst_0013|o_ctx_lst_0014|o_ctx_lst_0015)_/)
-  | test(/(^|::)(o_ctx_lst_0016|o_ctx_lst_0017|o_ctx_lst_0018|o_ctx_lst_0019|o_ctx_srv_0004|o_ctx_srv_0005|o_ctx_srv_0021|o_ctx_srv_0022)_/)
-  | test(/(^|::)(o_ctx_srv_0029|o_fed_dsc_0001|o_fed_dsc_0002|o_fed_dsc_0003|o_fed_dsc_0004|o_fed_dsc_0005|o_fed_dsc_0006|o_map_qen_9004)_/)
-  | test(/(^|::)(o_qry_pag_0027|o_qry_pag_0028|o_qry_pag_0029|o_qry_pag_0032|o_snp_qry_8113|o_snp_qry_8123|o_sub_qry_0002|o_sub_qry_0003)_/)
-  | test(/(^|::)(o_sub_qry_0005|o_sub_qry_0006|o_sub_qry_0009|o_sub_qry_0010|o_sub_qry_0011|o_sub_qry_0014|o_sub_qry_0016|o_sub_qry_9002)_/)
-  | test(/(^|::)(o_ten_imp_0001|o_ten_imp_0002|o_ten_imp_0003|o_ten_imp_0004|o_ten_imp_0005|o_ten_imp_9001|o_ten_imp_9002|o_ten_imp_9003)_/)
-  | test(/(^|::)(o_ten_imp_9004|o_ten_imp_9005|o_ten_imp_9006|o_ten_imp_9007|o_ten_imp_9008|o_ten_iso_0001|o_ten_iso_0002|o_tmp_qry_0025)_/)
-  | test(/(^|::)(o_tmp_qry_0026|o_tmp_qry_0027|o_tmp_qry_9079)_/)
-)'''
-test-group = 'private-tenants'
-
-[[profile.suite-verdict.overrides]]
-filter = '''
-package(andromeda-test-suite) & binary(~andromeda_) & (
-    test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012)_/)
-  | test(/(^|::)(a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015)_/)
-  | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_cre_8140|a_snp_lim_8140|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
-  | test(/(^|::)(a_ntf_dlv_9007|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)
-)'''
-test-group = 'private-tenants'
+inherits = "suite"
 
 [profile.suite-verdict.junit]
 path = "junit.xml"

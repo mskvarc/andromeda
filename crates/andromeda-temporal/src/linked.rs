@@ -16,6 +16,7 @@ use crate::{
     compilation::compile_projection,
     error::TemporalError,
     linked::temporal_linked_source::TemporalLinkedSource,
+    port::read_scope::ScopeReach,
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
 };
@@ -100,7 +101,8 @@ impl TemporalService {
         };
         let window = TemporalLinkedWindow::of_request(params);
         let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
-        let source = TemporalLinkedSource::new(self, target, &compiled, &window, context);
+        let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
+        let source = TemporalLinkedSource::new(self, target, scope, &compiled, &window, context);
         let bounds = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
         let graph = traverse(&source, RootEdges::of::<TemporalEvolutions>(roots), &bounds).await?;
 

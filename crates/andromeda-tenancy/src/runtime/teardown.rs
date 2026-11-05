@@ -5,17 +5,14 @@
 use crate::{
     database::TenantDatabase,
     pending_work::{PendingWork, PendingWorkError},
-    runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime},
+    runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime, last_used::LastUsed},
     state_factory::{TenantRuntime, TenantStateFactory},
     tenant_ref::TenantRef,
     waker::WakerPolicy,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
-use std::{
-    sync::Arc,
-    time::{Instant, SystemTime},
-};
+use std::{sync::Arc, time::SystemTime};
 use tokio::{sync::OwnedSemaphorePermit, task::JoinSet};
 use tracing::debug;
 
@@ -65,7 +62,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// its pool is closed once it answers), so they settle the teardown here.
     /// An excess eviction of a named tenant instead detaches its teardown and the
     /// wake probe that follows it.
-    pub(super) async fn evict_all(&self, candidates: Vec<(TenantRef, Instant)>, reason: EvictionReason) -> usize {
+    pub(super) async fn evict_all(&self, candidates: Vec<(TenantRef, LastUsed)>, reason: EvictionReason) -> usize {
         let mut teardowns = JoinSet::new();
         let mut evicted = 0;
         for (tenant, chosen_at) in candidates {
@@ -102,7 +99,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// The removal is conditional exactly as in [`evict_all`](Self::evict_all);
     /// the teardown, and for a named tenant the wake probe after it, is
     /// detached so the caller waits on neither.
-    pub(super) async fn evict_holding(&self, permit: Option<OwnedSemaphorePermit>, tenant: TenantRef, chosen_at: Instant) -> bool {
+    pub(super) async fn evict_holding(&self, permit: Option<OwnedSemaphorePermit>, tenant: TenantRef, chosen_at: LastUsed) -> bool {
         let Some(cached) = self.remove_unleased(&tenant, chosen_at) else {
             return false;
         };
@@ -128,7 +125,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// runtimes alive behind the teardowns, and the next cold build's room-making
     /// or the janitor's trim picks the overshoot up.
     pub(super) async fn detach_trim_excess_runtimes(&self, protect: &TenantRef) {
-        let excess: Vec<(TenantRef, Instant)> = self.excess_runtimes().into_iter().filter(|(tenant, _)| tenant != protect).collect();
+        let excess: Vec<(TenantRef, LastUsed)> = self.excess_runtimes().into_iter().filter(|(tenant, _)| tenant != protect).collect();
         for (tenant, chosen_at) in excess {
             let Ok(permit) = Arc::clone(&self.eviction_permits).try_acquire_owned() else {
                 break;
@@ -141,10 +138,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Remove a cached runtime if it is still unleased and untouched since it
     /// was chosen at `chosen_at`, telling a waker sleeping for room that a
     /// place freed.
-    pub(super) fn remove_unleased(&self, tenant: &TenantRef, chosen_at: Instant) -> Option<CachedRuntime<F::State, F::Runtime>> {
+    pub(super) fn remove_unleased(&self, tenant: &TenantRef, chosen_at: LastUsed) -> Option<CachedRuntime<F::State, F::Runtime>> {
         let removed = self
             .runtimes
-            .remove_if(tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased())
+            .remove_if(tenant, |_, cached| cached.last_used() == chosen_at && !cached.is_leased())
             .map(|(_, cached)| cached);
         if removed.is_some() {
             self.alarm.room_opened();

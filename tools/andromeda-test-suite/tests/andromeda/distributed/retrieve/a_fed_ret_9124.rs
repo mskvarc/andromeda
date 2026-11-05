@@ -3,11 +3,11 @@
 use andromeda_test_suite::{
     attribute_matcher::{any_attribute, relationship},
     broker,
+    cleanup::Cleanup,
     context_source::ContextSource,
     entity_lookup::with_id,
     entity_matcher::{has_attribute, lacks_attribute},
     forwarded_query::query_values,
-    header_matcher::absent,
     namespace::Namespace,
     outcome::Done,
     source_answer,
@@ -23,7 +23,7 @@ use ngsi_ld::{
 
 /// Pins: Retrieve Entity with join=flat of a local entity whose inclusive source answers the entity beside a Linked
 /// Entity answers a collection of the entity and the Linked Entity, the entity without the Linked Entity's attributes,
-/// and no NGSILD-Warning
+/// and no NGSILD-Warning about the source
 /// Clause: 4.5.23, 5.7.1.4
 /// Recorded: clause 4.5.23 places the Linked Entities of a flat join beside the entity; a source's flat answer is read
 /// the same way, its other elements joined to the entity and not merged into it
@@ -66,6 +66,7 @@ async fn a_fed_ret_9124_a_flat_join_answer_of_a_source_joins_the_linked_entity_w
         .mode(RegistrationMode::Inclusive)
         .operations([DistributedOperation::RetrieveEntity])
         .build()?;
+    let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
     broker.registrations().register(&registration).send().await?;
     let retrieved = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
@@ -83,7 +84,16 @@ async fn a_fed_ret_9124_a_flat_join_answer_of_a_source_joins_the_linked_entity_w
     expect_that!(joined_car, lacks_attribute("name"));
     let person = with_id(entities, &person_1).or_fail()?;
     expect_that!(person, has_attribute("name", any_attribute().value("P")));
-    expect_that!(retrieved.warnings(), absent());
+    // The Linked Entity lookup is by identifier, so it reaches every registration of the tenant that serves the type, whichever test
+    // registered it. Only a warning about this test's own registration is the subject.
+    let warnings_naming_registration = retrieved
+        .warnings()
+        .valid()
+        .into_iter()
+        .flat_map(|warnings| warnings.iter().map(|warning| warning.text().to_string()).collect::<Vec<_>>())
+        .filter(|text| text.contains(&registration_id.to_string()))
+        .collect::<Vec<_>>();
+    expect_that!(warnings_naming_registration, is_empty());
     let forwarded = source.received_on(Method::GET, &path).await?;
     expect_that!(forwarded, len(eq(1)));
     let forwarded_one = forwarded.first().or_fail()?;

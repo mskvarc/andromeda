@@ -63,7 +63,7 @@ impl SubscriptionStanding {
 )]
 mod tests {
     use crate::subscription::{SubscriptionStatus, standing::SubscriptionStanding};
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeDelta, Utc};
 
     fn at(unix_seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(unix_seconds, 0).expect("a fixture timestamp in range")
@@ -83,6 +83,16 @@ mod tests {
         assert!(!standing(SubscriptionStatus::Active, Some(at(2_000))).notifies_at(at(2_001)));
         assert!(!standing(SubscriptionStatus::Paused, None).notifies_at(at(1_000)));
         assert!(!standing(SubscriptionStatus::Expired, None).notifies_at(at(1_000)));
+    }
+
+    /// The boundary is the instant, not the second: a notification generated a
+    /// millisecond before `expiresAt` is still sent.
+    #[test]
+    fn standing_notifies_a_millisecond_before_expires_at_and_not_at_it() {
+        let expires_at = at(2_000);
+        let active = standing(SubscriptionStatus::Active, Some(expires_at));
+        assert!(active.notifies_at(expires_at - TimeDelta::milliseconds(1)));
+        assert!(!active.notifies_at(expires_at));
     }
 
     /// Table 5.2.12-2: `expired` once `expiresAt` has passed, whatever status

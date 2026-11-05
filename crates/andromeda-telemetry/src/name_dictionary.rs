@@ -18,6 +18,7 @@ use crate::{
     sample_value::SampleValue,
 };
 use metrics::{counter, gauge};
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use strum::IntoStaticStr;
 
@@ -116,8 +117,9 @@ pub fn record_inserted(dictionary: NameDictionary, count: u64) {
 pub struct DictionaryEntries {
     /// The dictionary whose total this share moves.
     dictionary: NameDictionary,
-    /// The entry count this cache last reported.
-    reported: AtomicU64,
+    /// The entry count this cache last reported, `None` before its first
+    /// report so that a first report of zero still publishes the series.
+    reported: Mutex<Option<u64>>,
 }
 
 impl DictionaryEntries {
@@ -126,22 +128,26 @@ impl DictionaryEntries {
     pub const fn new(dictionary: NameDictionary) -> DictionaryEntries {
         DictionaryEntries {
             dictionary,
-            reported: AtomicU64::new(0),
+            reported: Mutex::new(None),
         }
     }
 
     /// Report that this cache holds `count` entries.
+    ///
+    /// Caches report on writes only, so the lock is never taken on a lookup.
     pub fn report(&self, count: u64) {
-        let previous = self.reported.swap(count, Ordering::Relaxed);
-        self.publish(previous, count);
+        let mut reported = self.reported.lock();
+        let previous = *reported;
+        if previous == Some(count) {
+            return;
+        }
+        *reported = Some(count);
+        self.publish(previous.unwrap_or(0), count);
     }
 
     /// Move the total from this share's `previous` count to `current` and set
     /// the gauge to the result.
     fn publish(&self, previous: u64, current: u64) {
-        if previous == current {
-            return;
-        }
         let total = self.dictionary.entry_total();
         let moved = |held: u64| held.saturating_sub(previous).saturating_add(current);
         // The closure never declines, so both arms carry the total it moved.
@@ -155,8 +161,9 @@ impl DictionaryEntries {
 
 impl Drop for DictionaryEntries {
     fn drop(&mut self) {
-        let previous = self.reported.swap(0, Ordering::Relaxed);
-        self.publish(previous, 0);
+        if let Some(previous @ 1..) = self.reported.get_mut().take() {
+            self.publish(previous, 0);
+        }
     }
 }
 
@@ -229,7 +236,22 @@ mod tests {
         Ok(())
     }
 
-    /// The only test that moves the process-wide totals, so no other test can
+    #[test]
+    fn a_first_report_of_zero_publishes_the_series() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            let share = DictionaryEntries::new(NameDictionary::EntityTypeNames);
+            share.report(0);
+            let rendered = recorder.render();
+            assert!(
+                rendered.contains(&format!("{NAME_DICTIONARY_ENTRIES}{{dictionary=\"entity-type-names\"}} ")),
+                "{rendered}"
+            );
+        });
+        Ok(())
+    }
+
+    /// The only test that moves the attribute-names total, so no other test can
     /// race the values it asserts. The last value is still rendered past the
     /// idle timeout.
     #[test]

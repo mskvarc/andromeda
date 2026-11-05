@@ -27,7 +27,6 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
-use andromeda_retry::retry_delay::RetryDelay;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
@@ -38,7 +37,6 @@ use std::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 /// What a [`RecordingCommitter`] saw: every write it was handed, the instant
@@ -209,14 +207,6 @@ impl EntityReader for SnapshotReader {
     async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, SysAttrsSnapshot>, EntityError> {
         Ok(ids.iter().map(|id| (id.clone(), self.sys_attrs())).collect())
     }
-}
-
-/// A retry delay that never waits, because the recording committer never loses.
-pub(crate) struct ImmediateRetry;
-
-#[async_trait]
-impl RetryDelay for ImmediateRetry {
-    async fn wait(&self, _delay: Duration) {}
 }
 
 /// A blocking executor the operations under test never reach.

@@ -279,6 +279,23 @@ async fn breadth_first_traversal_keeps_first_encounter_order() {
     pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B", "urn:ngsi-ld:T:D"]);
 }
 
+/// The branch is scoped once per request, whatever the number of levels the
+/// join walks.
+#[tokio::test]
+async fn a_deep_chain_asks_for_its_read_scope_once() {
+    let broker = Arc::new(StubBroker::new([
+        (uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:C")]),
+        (uri("urn:ngsi-ld:T:C"), vec![uri("urn:ngsi-ld:T:D")]),
+        (uri("urn:ngsi-ld:T:D"), Vec::new()),
+    ]));
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service_over(Arc::clone(&broker), None), &roots, &flat_join(5)).await; // clone: the test keeps its handle on the counting broker
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C", "urn:ngsi-ld:T:D"]);
+    pretty_assertions::assert_eq!(broker.scope_reads(), 1);
+}
+
 /// A cycle A -> B -> A terminates: the root is never a Linked Entity.
 #[tokio::test]
 async fn a_cycle_back_to_the_root_terminates() {

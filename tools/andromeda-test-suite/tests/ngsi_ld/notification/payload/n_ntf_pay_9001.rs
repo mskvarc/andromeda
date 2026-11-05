@@ -61,16 +61,16 @@ async fn n_ntf_pay_9001_a_batch_merge_removing_a_member_notifies_every_removed_i
     broker.subscriptions().create(&subscription).send().await?;
     let removal = [EntityFragment::for_entity(notified_id.clone(), notified_type.clone()).delete("speed").build()?];
     broker.entities().batch_merge(&removal).send().await?.done()?;
-    // The removal from the second entity is notified after every notification of the first.
+    // Notifications of different entities arrive in no promised order, so each is awaited by its body.
     let removal_2 = [EntityFragment::for_entity(notified_2_id.clone(), notified_type.clone())
         .delete("speed")
         .build()?];
     broker.entities().batch_merge(&removal_2).send().await?.done()?;
     let second = sink.wait_for_at_least_where(1, &[BodyPattern::Contains(notified_2_id.to_string())], 1).await?;
     expect_that!(second, len(eq(1)));
-    expect_that!(sink.received(1).await?, len(eq(2)));
-    let first = sink.received_where(1, &[BodyPattern::Contains(notified_id.to_string())]).await?;
+    let first = sink.wait_for_at_least_where(1, &[BodyPattern::Contains(notified_id.to_string())], 1).await?;
     expect_that!(first, len(eq(1)));
+    expect_that!(sink.received(1).await?, len(eq(2)));
     let notification = first.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(
         notification.data(),

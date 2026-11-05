@@ -59,7 +59,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 fn unsupported(method: &str) -> TemporalError {
@@ -76,6 +76,7 @@ impl TemporalHistoryReader for StubBroker {
     }
 
     async fn read_scope<'a>(&self, target: &'a ContextTarget, _reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
+        self.scope_reads.fetch_add(1, Ordering::Relaxed);
         Ok(TemporalReadScope::new(target, UnrecordedHistory::Absent))
     }
 

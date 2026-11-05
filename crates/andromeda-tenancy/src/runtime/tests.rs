@@ -11,7 +11,7 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
-    runtime::{TenantRuntimeManager, provisional_sweep::ProvisionalSettlement},
+    runtime::{TenantRuntimeManager, last_used::LastUsed, provisional_sweep::ProvisionalSettlement},
     runtime_build_failure::RuntimeBuildFailure,
     saturated_wait::SaturatedWait,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
@@ -42,7 +42,7 @@ use std::{
         Mutex as StdMutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 use tokio::{
     sync::{Notify, Semaphore},
@@ -895,7 +895,9 @@ async fn eviction_spares_a_runtime_used_since_it_was_chosen() {
 
     // A snapshot that no longer matches the runtime's last_used stands in for
     // a request that touched it after the sweep chose it: it must not evict.
-    let evicted = manager.evict_all(vec![(tenant.clone(), Instant::now())], EvictionReason::Idle).await;
+    let evicted = manager
+        .evict_all(vec![(tenant.clone(), LastUsed::aged(Duration::from_secs(1)))], EvictionReason::Idle)
+        .await;
     pretty_assertions::assert_eq!(evicted, 0, "a runtime used since the snapshot must be spared");
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
     assert!(manager.runtimes.contains_key(&tenant), "the runtime is still held open");
@@ -1711,12 +1713,12 @@ async fn waking_a_cached_tenant_settles_the_row_without_touching_last_used() {
     let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::none()), Arc::clone(&schedule));
     let acme = TenantRef::Named(named("acme"));
     drop(manager.resolve_state(&acme, TenantCreationPolicy::MustExist).await.expect("resolves"));
-    let before = manager.runtimes.get(&acme).expect("cached").last_used_instant();
+    let before = manager.runtimes.get(&acme).expect("cached").last_used();
     sleep(Duration::from_millis(5)).await;
 
     let outcome = manager.wake(&named("acme")).await;
     pretty_assertions::assert_eq!(outcome, WakeOutcome::AlreadyCached);
-    let after = manager.runtimes.get(&acme).expect("still cached").last_used_instant();
+    let after = manager.runtimes.get(&acme).expect("still cached").last_used();
     pretty_assertions::assert_eq!(before, after, "waking a cached tenant does not touch its last use");
     pretty_assertions::assert_eq!(schedule.settle_count(), 1, "the schedule row is settled");
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "a cached tenant is not rebuilt");
@@ -1977,12 +1979,8 @@ async fn a_woken_runtime_is_the_first_lru_victim() {
     pretty_assertions::assert_eq!(outcome, WakeOutcome::Loaded);
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 2, "the woken tenant is built");
 
-    let woken_used = manager
-        .runtimes
-        .get(&TenantRef::Named(named("woken")))
-        .expect("woken cached")
-        .last_used_instant();
-    let fresh_used = manager.runtimes.get(&fresh).expect("fresh cached").last_used_instant();
+    let woken_used = manager.runtimes.get(&TenantRef::Named(named("woken"))).expect("woken cached").last_used();
+    let fresh_used = manager.runtimes.get(&fresh).expect("fresh cached").last_used();
     assert!(
         woken_used < fresh_used,
         "the woken runtime sorts older than a request-touched one, so it is the first victim"

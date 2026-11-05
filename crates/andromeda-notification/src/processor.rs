@@ -44,9 +44,9 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::queried::linked_states::LinkedStates;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::{
     cache::SubscriptionCache,
-    change::SubscriptionChange,
     change_filters::ChangedStates,
     compiled::CompiledSubscription,
     error::SubscriptionError,
@@ -161,10 +161,10 @@ impl NotificationProcessor {
         self.cache.reload(&self.live_target, self.sub_repo.as_ref()).await.map_err(Into::into)
     }
 
-    /// Apply one committed subscription lifecycle change to matching state.
-    pub async fn apply_subscription_change(&self, change: SubscriptionChange) {
-        self.cache.handle_change(&change, self.sub_repo.as_ref()).await;
-        self.release_superseded();
+    /// Read again the subscriptions whose store the cache could not reach
+    /// when they changed, retrying on `delay`.
+    pub async fn reconcile_subscriptions(&self, delay: &dyn RetryDelay) {
+        self.cache.reconcile_dirty(self.sub_repo.as_ref(), delay).await;
     }
 
     /// Evaluate and deliver notifications for one committed entity change,
@@ -182,7 +182,10 @@ impl NotificationProcessor {
 
     /// Drop the superseded selections no change still held for evaluation can
     /// have committed under.
-    fn release_superseded(&self) {
+    ///
+    /// Subscription changes reach the cache through the change sink that
+    /// published them, so the processor only releases what they superseded.
+    pub fn release_superseded(&self) {
         self.cache.release_superseded(self.pending_commits.floor());
     }
 
