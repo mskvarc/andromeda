@@ -18,19 +18,9 @@ use crate::{
         staged_geometry::{kept_column, staged_column},
         types_present::{entity_write_failure, types_present},
         write::{
-            latest_instant::{LatestInstant, QueuedAt, queued_instant},
+            latest_instant::LatestInstant,
             search_image::SearchImage,
-            staging::{
-                HOISTED_LOCATION,
-                ProjectedWrite,
-                StagedColumn,
-                entity_arrays,
-                projected,
-                projection_cte,
-                staged,
-                update_staging_columns,
-                with_staged_alias,
-            },
+            staging::{HOISTED_LOCATION, ProjectedWrite, entity_arrays, projected, projection_cte, update_staging_columns, with_staged_alias},
             statement_ctes::{Attrs, Dropped, Ents, Gone, Moved, Proj, Srch, Stamped},
             type_membership::{Mbrs, Strays, Unflagged, added_memberships, dropped_memberships},
             update_anchor::update_anchor,
@@ -67,7 +57,7 @@ use sqlx::{Postgres, Transaction};
 /// instance rows `rows` and the grains `grains` stage for them.
 ///
 /// ```sql
-/// WITH proj AS (SELECT …, <latest queued intent of d.id> AS queued_at FROM UNNEST($1::text[], …, $14::bigint[]) AS d(…)),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $14::bigint[]) AS d(…)),
 ///      stamped AS (UPDATE entities SET write_count = CASE WHEN <refused> THEN entities.write_count ELSE entities.write_count + 1 END,
 ///                                      modified_at = CASE WHEN <refused> THEN entities.modified_at ELSE $accepted_at END,
 ///                                      expires_at = CASE WHEN <refused> THEN entities.expires_at ELSE proj.expires_at END, …
@@ -163,8 +153,6 @@ pub(super) fn entity_update_statement<'entities>(
     accepted_at: DateTime<Utc>,
 ) -> Result<ExternallyBound<'entities, UnnestAliased<WithQuery>>, ContextStoreError> {
     let columns = update_staging_columns();
-    let queued = queued_instant(target, staged(StagedColumn::Id));
-    let projected_queued = queued.is_some().then(|| projected(QueuedAt));
     let mut external = ExternalArguments::default();
     let mut staged_entities = entity_arrays(entities, &staged_column(&entities.locations), &mut external);
     staged_entities.push(Expr::val(kept_column(&entities.locations)));
@@ -208,12 +196,12 @@ pub(super) fn entity_update_statement<'entities>(
 
     let dropped = dropped_memberships(target);
     let mut with = WithClause::new();
-    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update { queued }))
+    with.cte(projection_cte(&columns, staged_entities, ProjectedWrite::Update))
         .cte(
             CommonTableExpression::new()
                 .table_name(Stamped)
                 .columns([Entities::EntityKey.into_iden(), Entities::Id.into_iden(), LatestInstant.into_iden()])
-                .query(update_anchor(target, accepted_at, projected_queued))
+                .query(update_anchor(target, accepted_at))
                 .to_owned(),
         )
         .cte(
@@ -468,13 +456,13 @@ mod tests {
 
     /// Clause 4.8: the anchor refuses a write stamped before the latest
     /// instant the Entity holds, its current state's, its Temporal
-    /// Evolution's or its latest queued intent's, by keeping every column it
-    /// sets, write count included; the row then answers that instant and is
+    /// Evolution's or a queued write's, read from the row the anchor writes, by
+    /// keeping every column it sets, write count included; the row then answers that instant and is
     /// none of the rows every other relation is written for.
     #[test]
     fn the_anchor_refuses_a_write_stamped_before_the_entity_s_latest_instant() {
         let sql = update();
-        let refused = r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "proj"."queued_at") > $"#;
+        let refused = r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "entities"."deleted_or_queued_at") > $"#;
         pretty_assertions::assert_eq!(sql.matches(refused).count(), 4, "{sql}");
         for (column, written) in [
             ("write_count", r#""entities"."write_count" + 1"#),
@@ -488,26 +476,20 @@ mod tests {
             );
         }
         assert!(
-            sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id", (CASE WHEN ("new"."write_count" = "old"."write_count") THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "proj"."queued_at") ELSE NULL END))"#),
+            sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id", (CASE WHEN ("new"."write_count" = "old"."write_count") THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "old"."deleted_or_queued_at") ELSE NULL END))"#),
             "{sql}"
         );
-        assert!(
-            sql.contains(r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "d"."id" ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1) AS "queued_at""#),
-            "the latest queued intent is read once per row, in the projection: {sql}"
-        );
+        assert!(!sql.contains("temporal_append_intents"), "{sql}");
     }
 
-    /// A Snapshot branch queues no history, so its anchor reads the identity
-    /// row's instants alone.
+    /// A Snapshot branch's anchor refuses as the live branch's does.
     #[test]
-    fn a_snapshot_anchor_reads_no_queue() {
+    fn a_snapshot_anchor_reads_its_own_identity_rows() {
         let key = SnapshotKey::try_from(5).expect("positive key");
         let snapshot = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
         let sql = update_on(&snapshot);
-        assert!(!sql.contains("temporal_append_intents"), "{sql}");
-        assert!(!sql.contains("queued_at"), "{sql}");
         assert!(
-            sql.contains(r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at") > $"#),
+            sql.contains(r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "entities"."deleted_or_queued_at") > $"#),
             "{sql}"
         );
     }

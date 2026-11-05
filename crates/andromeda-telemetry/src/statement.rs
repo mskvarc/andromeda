@@ -18,6 +18,9 @@ pub enum ObservedStatement {
     EntityDelete,
     /// Withdrawing the Temporal Evolution an entity creation established.
     EntityEvolutionWithdrawal,
+    /// Locking the identity rows of writes that record history and leave
+    /// current state as it was.
+    EntityHistoryLock,
     /// Claiming queued notification deliveries.
     NotificationDeliveryClaim,
     /// Recording the outcome of claimed notification deliveries: delivered,
@@ -155,6 +158,7 @@ mod tests {
                 "entity-update",
                 "entity-delete",
                 "entity-evolution-withdrawal",
+                "entity-history-lock",
                 "notification-delivery-claim",
                 "notification-delivery-acknowledge",
                 "notification-delivery-hold",

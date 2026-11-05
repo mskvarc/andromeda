@@ -23,8 +23,10 @@
 -- the two each type belongs to.
 -- ============================================================================
 -- Identity and lifecycle. The fillfactor leaves the room on each page that
--- keeps the `write_count` and `modified_at` update of every core write and the
--- `evolution_modified_at` update of every recording write heap-only.
+-- keeps the `write_count` and `modified_at` update of every core write, the
+-- `evolution_modified_at` update of every recording write and the
+-- `deleted_or_queued_at` update of every deletion and queueing write
+-- heap-only.
 create table entities (
     entity_key bigint generated always as identity (cache 32),
     -- How many writes of the current state the row has taken. Every core
@@ -60,6 +62,15 @@ create table entities (
     -- out of almost every recording write: one moves it only when it passes
     -- into a later hour. NULL while the Evolution holds no attribute instance.
     evolution_active_until timestamptz,
+    -- The latest instant of a write the other two instants may not hold, NULL
+    -- while there was none: a core deletion clears `modified_at`, and its
+    -- tombstones state no type, so they leave `evolution_modified_at` as it
+    -- was; a queued write's history reaches `evolution_modified_at` only when
+    -- the drain applies it. The deletion and every enqueue raise it in their
+    -- own transaction, under the row lock, and nothing lowers it. A write of
+    -- the current state is held after the greatest of the three (clause 4.8),
+    -- read from the row it writes or locks.
+    deleted_or_queued_at timestamptz,
     -- The `entity_type_names` keys the Temporal Evolution is recorded under.
     -- Clauses 5.6.11.4 and 5.6.12.4 add the types a write states that it
     -- lacks and no operation removes one, so the list only grows; a core

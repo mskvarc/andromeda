@@ -35,6 +35,8 @@ use std::collections::BTreeSet;
 mod delete;
 /// Taking back the Temporal Evolution a create established.
 mod evolution_withdrawal;
+/// Locking the identity rows of writes that only record history.
+mod history_lock;
 /// The batch insert.
 mod insert;
 /// The latest instant an Entity holds, which no write may precede.

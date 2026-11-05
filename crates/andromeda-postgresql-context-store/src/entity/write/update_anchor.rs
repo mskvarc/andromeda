@@ -14,21 +14,20 @@ use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::returning_image::{New, Old};
 use chrono::{DateTime, Utc};
-use sea_query::{Cond, Expr, ExprTrait, Query, SimpleExpr, UpdateStatement};
+use sea_query::{Cond, Expr, ExprTrait, Query, UpdateStatement};
 
 /// The update's anchor, `stamped`: each identity row holding a current state
 /// whose expectation still holds, stamped and given its new expiries unless
 /// it holds an instant later than `accepted_at`, with the key and identifier
-/// of every row it met and the latest instant of each it refused. `queued` is
-/// the projected instant of the Entity's latest queued intent, on a branch
-/// that queues history. A row whose current state a core deletion removed
+/// of every row it met and the latest instant of each it refused. A row whose
+/// current state a core deletion removed
 /// keeps only its Temporal Evolution, which no core update reaches.
 ///
 /// It finds each row through the unique identifier index, so its cost grows
 /// with the batch whatever row estimate the plan was made for. A refused row
 /// keeps its write count, which is how the returned images tell it apart.
-pub(super) fn update_anchor(target: &ContextTarget, accepted_at: DateTime<Utc>, queued: Option<SimpleExpr>) -> UpdateStatement {
-    let refused = predates(latest_instant(Entities::Table, queued.clone()), accepted_at); // clone: the returned images compare the same instant
+pub(super) fn update_anchor(target: &ContextTarget, accepted_at: DateTime<Utc>) -> UpdateStatement {
+    let refused = predates(latest_instant(Entities::Table), accepted_at);
     let kept = |column: Entities| Expr::col((Entities::Table, column));
     let unchanged_count = Expr::col((New, Entities::WriteCount)).equals((Old, Entities::WriteCount));
     Query::update()
@@ -59,7 +58,7 @@ pub(super) fn update_anchor(target: &ContextTarget, accepted_at: DateTime<Utc>, 
         .returning(Query::returning().exprs([
             Expr::col((Entities::Table, Entities::EntityKey)),
             Expr::col((Entities::Table, Entities::Id)),
-            latest_where_refused(unchanged_count, latest_instant(Old, queued)),
+            latest_where_refused(unchanged_count, latest_instant(Old)),
         ]))
         .take()
 }

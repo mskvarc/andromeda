@@ -14,7 +14,6 @@ use crate::entity::{
     params::{PreparedEntityColumns, literal_texts},
     staged_geometry::HoistedEwkb,
     write::{
-        latest_instant::QueuedAt,
         statement_ctes::{Ins, Proj},
         version_guard::expectation_columns,
     },
@@ -299,14 +298,11 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], arrays: Vec<SimpleExpr>, 
         .expr_as(staged(StagedColumn::ExpiresAt), Entities::ExpiresAt)
         .expr_as(staged(StagedColumn::MinAttributeExpiresAt), Entities::MinAttributeExpiresAt);
     match write {
-        ProjectedWrite::Update { queued } => {
+        ProjectedWrite::Update => {
             select
                 .expr(staged(HOISTED_LOCATION.kept))
                 .expr(staged(StagedColumn::ExpectedEntityKey))
                 .expr(staged(StagedColumn::ExpectedWriteCount));
-            if let Some(queued) = queued {
-                select.expr_as(queued, QueuedAt);
-            }
         }
         ProjectedWrite::Insert => {
             select.expr(staged(StagedColumn::EstablishesEvolution));
@@ -323,17 +319,11 @@ pub(super) fn with_staged_alias<S>(statement: UnnestAliased<S>, columns: &[Unnes
 }
 
 /// Which set-write a projection serves.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProjectedWrite {
     /// The update: whether the geometry is kept, and the expectation, are
     /// staged and projected.
-    Update {
-        /// The instant of the Entity's latest queued temporal append intent,
-        /// projected as `queued_at` on a branch that queues history: the
-        /// update compares it in every column it sets, so it is read once per
-        /// row.
-        queued: Option<SimpleExpr>,
-    },
+    Update,
     /// The insert: nothing to compare against and no stored row to keep
     /// from, and whether it establishes the Temporal Evolution is staged and
     /// projected.

@@ -31,6 +31,8 @@ mod history;
 mod history_interpretation;
 /// Whether a commit records its temporal history inline or queues it.
 pub mod history_mode;
+/// Locking the identity row of a write that only records history.
+mod history_only_lock;
 /// PostgreSQL durable temporal intent queue.
 pub mod intent_store;
 /// Removing the side-effect job a replayed commit settles.

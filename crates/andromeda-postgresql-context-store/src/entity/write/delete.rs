@@ -9,7 +9,7 @@ use crate::{
         removed_entity::RemovedEntity,
         repo::EntityRepository,
         write::{
-            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates, queued_instant},
+            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates},
             search_image::SearchImage,
             staging::{Staged, StagedColumn, delete_staging_columns, staging_source, with_staged_alias},
             statement_ctes::{Doomed, Srch},
@@ -41,6 +41,7 @@ use sea_query::{
     CommonTableExpression,
     Expr,
     ExprTrait,
+    Func,
     FunctionCall,
     Iden,
     IntoIden,
@@ -104,7 +105,7 @@ struct Strays;
 /// ```sql
 /// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at,
 ///                        e.evolution_created_at IS NOT NULL AS kept,
-///                        GREATEST(e.modified_at, e.evolution_modified_at, <latest queued intent of e.id>) AS latest
+///                        GREATEST(e.modified_at, e.evolution_modified_at, e.deleted_or_queued_at) AS latest
 ///                 FROM UNNEST(…) AS d(id, expected_entity_key, expected_write_count)
 ///                 JOIN entities e ON e.id = d.id
 ///                 WHERE e.created_at IS NOT NULL
@@ -116,7 +117,9 @@ struct Strays;
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
 ///      gone AS (DELETE FROM entities WHERE entity_key IN (SELECT entity_key FROM doomed WHERE NOT latest > $accepted_at AND NOT kept)),
 ///      retired AS (UPDATE entities SET write_count = entities.write_count + 1, created_at = NULL, modified_at = NULL,
-///                  expires_at = NULL, min_attribute_expires_at = NULL WHERE entity_key IN (… WHERE NOT latest > $accepted_at AND kept)),
+///                  expires_at = NULL, min_attribute_expires_at = NULL,
+///                  deleted_or_queued_at = GREATEST(entities.deleted_or_queued_at, $accepted_at)
+///                  WHERE entity_key IN (… WHERE NOT latest > $accepted_at AND kept)),
 ///      retired_attributes AS (DELETE FROM current_attributes WHERE entity_key IN (… AND kept)),
 ///      unflagged AS (UPDATE entity_type_members SET is_current_member = FALSE WHERE entity_key IN (… AND kept) AND is_evolution_member),
 ///      strays AS (DELETE FROM entity_type_members WHERE entity_key IN (… AND kept) AND NOT is_evolution_member),
@@ -158,7 +161,10 @@ struct Strays;
 /// standing: the deletion's tombstones are recorded at `accepted_at`, and an
 /// Evolution ending instances before it observed them would show them in
 /// effect after the Entity is gone (clause 4.8). Its row answers that instant,
-/// NULL for a candidate the delete removed.
+/// NULL for a candidate the delete removed. A row the Temporal Evolution keeps
+/// raises `deleted_or_queued_at` to `accepted_at`: it clears `modified_at`, and
+/// the tombstones state no type, so `evolution_modified_at` stays as it was
+/// and the row would otherwise hold no instant of the deletion.
 ///
 /// # Errors
 ///
@@ -210,6 +216,10 @@ pub(super) fn entity_delete_statement(
             (Entities::ModifiedAt, Keyword::Null.into()),
             (Entities::ExpiresAt, Keyword::Null.into()),
             (Entities::MinAttributeExpiresAt, Keyword::Null.into()),
+            (
+                Entities::DeletedOrQueuedAt,
+                Func::greatest([Expr::col((Entities::Table, Entities::DeletedOrQueuedAt)), Expr::val(accepted_at)]).into(),
+            ),
         ])
         .and_where(Expr::col(Entities::EntityKey).in_subquery(kept_keys()))
         .take();
@@ -268,7 +278,7 @@ fn doomed_candidates(target: &ContextTarget, staging: FunctionCall) -> SelectSta
         .expr(Expr::col((E, Entities::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
         .expr_as(holds_evolution(E), Kept)
-        .expr_as(latest_instant(E, queued_instant(target, Expr::col((E, Entities::Id)))), Latest)
+        .expr_as(latest_instant(E), Latest)
         .from_function(staging, Staged)
         .join_as(
             JoinType::Join,
@@ -419,24 +429,20 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at", NOW() AS "committed_at", (CASE WHEN ("latest" > $10) THEN "latest" ELSE NULL END) AS "latest_instant" FROM "doomed""#),
+            sql.ends_with(r#"SELECT "id", "created_at", "modified_at", "expires_at", NOW() AS "committed_at", (CASE WHEN ("latest" > $11) THEN "latest" ELSE NULL END) AS "latest_instant" FROM "doomed""#),
             "{sql}"
         );
     }
 
     /// Clause 4.8: the tombstones are recorded at the deletion's instant, so
     /// a candidate holding a later instant, its current state's, its Temporal
-    /// Evolution's or its latest queued intent's, is locked and left standing,
-    /// and its row answers that instant.
+    /// Evolution's, or an earlier deletion's or queued write's, is locked and
+    /// left standing, and its row answers that instant.
     #[test]
     fn the_delete_leaves_a_candidate_holding_a_later_instant_standing() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(
-            sql.contains(concat!(
-                r#"GREATEST("e"."modified_at", "e"."evolution_modified_at", "#,
-                r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "e"."id" "#,
-                r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) AS "latest" FROM UNNEST("#
-            )),
+            sql.contains(r#"GREATEST("e"."modified_at", "e"."evolution_modified_at", "e"."deleted_or_queued_at") AS "latest" FROM UNNEST("#),
             "{sql}"
         );
         assert!(
@@ -446,16 +452,13 @@ mod tests {
         pretty_assertions::assert_eq!(sql.matches(r#"NOT "latest" > $"#).count(), 6, "every removal leaves it: {sql}");
     }
 
-    /// A Snapshot branch queues no history, so a candidate's latest instant is
-    /// its identity row's.
+    /// The queue is read under the statement's snapshot, which a deletion
+    /// committed while the statement waited on its row is not in, so the
+    /// latest instant comes from the locked row alone.
     #[test]
-    fn a_snapshot_delete_reads_no_queue() {
-        use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-        let key = SnapshotKey::try_from(5).expect("positive key");
-        let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
-        let sql = entity_delete_sql(&target);
+    fn the_delete_reads_no_queue() {
+        let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(!sql.contains("temporal_append_intents"), "{sql}");
-        assert!(sql.contains(r#"GREATEST("e"."modified_at", "e"."evolution_modified_at") AS "latest""#), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the Temporal Evolution standing: an Entity holding
@@ -463,36 +466,37 @@ mod tests {
     /// attribute instances removed and its memberships kept for the
     /// Evolution alone. No history relation is touched. The deletion moves the
     /// row's write count, so a version read before it never matches the Entity
-    /// clause 5.6.1 creates anew on the same row.
+    /// clause 5.6.1 creates anew on the same row, and leaves its instant on the
+    /// row, which no later write of the current state may precede (clause 4.8).
     #[test]
     fn an_entity_with_a_temporal_evolution_keeps_its_identity_row() {
         let sql = entity_delete_sql(&ContextTarget::Live);
         let kept = |placeholder: u8| format!(r#"(SELECT "entity_key" FROM "doomed" WHERE (NOT "latest" > ${placeholder}) AND "kept")"#);
         assert!(
             sql.contains(&format!(
-                r#""retired" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL WHERE "entity_key" IN {})"#,
-                kept(6)
-            )),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(&format!(
-                r#""retired_attributes" AS (DELETE FROM "current_attributes" WHERE "entity_key" IN {})"#,
+                r#""retired" AS (UPDATE "entities" SET "write_count" = "entities"."write_count" + 1, "created_at" = NULL, "modified_at" = NULL, "expires_at" = NULL, "min_attribute_expires_at" = NULL, "deleted_or_queued_at" = GREATEST("entities"."deleted_or_queued_at", $6) WHERE "entity_key" IN {})"#,
                 kept(7)
             )),
             "{sql}"
         );
         assert!(
             sql.contains(&format!(
-                r#""unflagged" AS (UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN {} AND "is_evolution_member")"#,
+                r#""retired_attributes" AS (DELETE FROM "current_attributes" WHERE "entity_key" IN {})"#,
                 kept(8)
             )),
             "{sql}"
         );
         assert!(
             sql.contains(&format!(
-                r#""strays" AS (DELETE FROM "entity_type_members" WHERE "entity_key" IN {} AND (NOT "is_evolution_member"))"#,
+                r#""unflagged" AS (UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN {} AND "is_evolution_member")"#,
                 kept(9)
+            )),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(&format!(
+                r#""strays" AS (DELETE FROM "entity_type_members" WHERE "entity_key" IN {} AND (NOT "is_evolution_member"))"#,
+                kept(10)
             )),
             "{sql}"
         );

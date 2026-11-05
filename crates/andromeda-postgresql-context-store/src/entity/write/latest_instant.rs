@@ -12,23 +12,24 @@
 //! one `modifiedAt` (clause 5.5.11.0), the instances of a repeated identifier
 //! included.
 //!
-//! The latest instant is the greatest of the identity row's `modified_at` and
-//! `evolution_modified_at` and, on the live branch, the `recorded_at` of the
-//! Entity's latest queued temporal append intent: a deletion clears
-//! `modified_at`, and the tombstones it recorded may still be queued. Every
-//! identity row holds a current state or a Temporal Evolution, so the greatest
-//! is never NULL. The row is read as the statement writes or locks it, after
-//! any writer it waited on.
+//! The latest instant is the greatest of the identity row's `modified_at`,
+//! `evolution_modified_at` and `deleted_or_queued_at`. A deletion clears
+//! `modified_at`, and its tombstones state no type, so they leave
+//! `evolution_modified_at` as it was; a queued write's history reaches
+//! `evolution_modified_at` only when the drain applies it. Both raise
+//! `deleted_or_queued_at` to their instant. Every identity row holds a current
+//! state or a Temporal Evolution, so the greatest is never NULL. All three are
+//! read from the row the statement writes or locks, after any writer it waited
+//! on, so a write committed after the statement's snapshot is compared with as
+//! well.
 //!
 //! A refused write lands nothing, and its statement answers the latest instant
 //! beside the Entity's identifier, so the caller stamps the write again after
 //! it.
 
-use andromeda_context_space::context_target::ContextTarget;
-use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents};
-use andromeda_postgresql_seaquery::scalar_subquery::scalar_subquery;
+use andromeda_postgresql_schema::current::Entities;
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Keyword, Order, Query, SimpleExpr};
+use sea_query::{CaseStatement, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Keyword, SimpleExpr};
 
 /// The column a statement answers a refused write's latest instant under,
 /// `latest_instant`, NULL for a write that landed.
@@ -36,47 +37,17 @@ use sea_query::{CaseStatement, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, K
 #[iden = "latest_instant"]
 pub(super) struct LatestInstant;
 
-/// The column the update projects the Entity's latest queued instant under,
-/// `queued_at`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "queued_at"]
-pub(super) struct QueuedAt;
-
-/// The `recorded_at` of the latest temporal append intent queued for the
-/// Entity `id` names, or `None` on a Snapshot branch, which queues no history:
-/// `(SELECT temporal_append_intents.recorded_at FROM temporal_append_intents
-/// WHERE temporal_append_intents.entity_id = <id> ORDER BY
-/// temporal_append_intents.intent_key DESC LIMIT 1)`.
-///
-/// The intents of one Entity take their keys in the order its writes commit,
-/// so the latest is the one with the greatest key, read backwards from the
-/// per-Entity index.
-pub(super) fn queued_instant(target: &ContextTarget, id: SimpleExpr) -> Option<SimpleExpr> {
-    match target {
-        ContextTarget::Live => Some(scalar_subquery(
-            Query::select()
-                .column((TemporalAppendIntents::Table, TemporalAppendIntents::RecordedAt))
-                .from(TemporalAppendIntents::Table)
-                .and_where(Expr::col((TemporalAppendIntents::Table, TemporalAppendIntents::EntityId)).eq(id))
-                .order_by((TemporalAppendIntents::Table, TemporalAppendIntents::IntentKey), Order::Desc)
-                .limit(1)
-                .take(),
-        )),
-        ContextTarget::Snapshot(_) => None,
-    }
-}
-
-/// The latest instant the identity row `row` names holds, with `queued` the
-/// instant of its latest queued intent where the branch queues any:
-/// `GREATEST(<row>.modified_at, <row>.evolution_modified_at[, <queued>])`.
-pub(super) fn latest_instant(row: impl IntoIden, queued: Option<SimpleExpr>) -> SimpleExpr {
+/// The latest instant the identity row `row` names holds:
+/// `GREATEST(<row>.modified_at, <row>.evolution_modified_at,
+/// <row>.deleted_or_queued_at)`.
+pub(super) fn latest_instant(row: impl IntoIden) -> SimpleExpr {
     let row: DynIden = row.into_iden();
-    let mut instants: Vec<SimpleExpr> = vec![
-        Expr::col((row.clone(), Entities::ModifiedAt)), // clone: the alias qualifies both columns
-        Expr::col((row, Entities::EvolutionModifiedAt)),
-    ];
-    instants.extend(queued);
-    Func::greatest(instants).into()
+    Func::greatest([
+        Expr::col((row.clone(), Entities::ModifiedAt)),          // clone: the alias qualifies every column
+        Expr::col((row.clone(), Entities::EvolutionModifiedAt)), // clone: the alias qualifies every column
+        Expr::col((row, Entities::DeletedOrQueuedAt)),
+    ])
+    .into()
 }
 
 /// Whether `latest` is later than `accepted_at`, the instant the write was
@@ -107,9 +78,8 @@ pub(super) fn latest_where_refused(refused: SimpleExpr, latest: SimpleExpr) -> S
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::entity::write::latest_instant::{latest_instant, latest_where_refused, predates, queued_instant, unless_refused};
-    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-    use andromeda_postgresql_schema::current::{E, Entities};
+    use crate::entity::write::latest_instant::{latest_instant, latest_where_refused, predates, unless_refused};
+    use andromeda_postgresql_schema::current::E;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query, SimpleExpr};
@@ -122,33 +92,14 @@ mod tests {
         "2026-11-05T10:00:00Z".parse().expect("a valid instant")
     }
 
-    /// A deletion's tombstones may still be queued while its identity row
-    /// holds no `modified_at`, so the live branch reads the latest intent.
+    /// A deletion clears `modified_at` and leaves `evolution_modified_at` as
+    /// it was, so its instant is read from the row beside the other two, as
+    /// the statement locked it.
     #[test]
-    fn the_live_branch_reads_the_latest_queued_intent_of_the_entity() {
-        let queued = queued_instant(&ContextTarget::Live, Expr::col((E, Entities::Id)));
+    fn the_latest_instant_is_read_from_the_identity_row_alone() {
         assert_eq!(
-            render(latest_instant(E, queued)),
-            concat!(
-                r#"SELECT GREATEST("e"."modified_at", "e"."evolution_modified_at", "#,
-                r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" "#,
-                r#"WHERE "temporal_append_intents"."entity_id" = "e"."id" "#,
-                r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1))"#
-            )
-        );
-    }
-
-    /// A Snapshot branch records its history in the write's own transaction,
-    /// so its identity rows hold every instant.
-    #[test]
-    fn a_snapshot_branch_reads_the_identity_row_alone() {
-        let key = SnapshotKey::try_from(5).expect("positive key");
-        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
-        let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, id));
-        assert!(queued_instant(&target, Expr::col((E, Entities::Id))).is_none());
-        assert_eq!(
-            render(latest_instant(E, None)),
-            r#"SELECT GREATEST("e"."modified_at", "e"."evolution_modified_at")"#
+            render(latest_instant(E)),
+            r#"SELECT GREATEST("e"."modified_at", "e"."evolution_modified_at", "e"."deleted_or_queued_at")"#
         );
     }
 
@@ -158,12 +109,12 @@ mod tests {
     #[test]
     fn only_a_later_instant_predates_the_write() {
         let sql = Query::select()
-            .expr(predates(latest_instant(E, None), accepted_at()))
+            .expr(predates(latest_instant(E), accepted_at()))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"SELECT GREATEST("e"."modified_at", "e"."evolution_modified_at") > '2026-11-05 10:00:00.000000 +00:00'"#
+            r#"SELECT GREATEST("e"."modified_at", "e"."evolution_modified_at", "e"."deleted_or_queued_at") > '2026-11-05 10:00:00.000000 +00:00'"#
         );
     }
 

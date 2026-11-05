@@ -55,6 +55,11 @@ pub enum Entities {
     /// which only grow (clauses 5.6.11.4 and 5.6.12.4); NULL while the Entity
     /// has no Temporal Evolution
     EvolutionTypeNameKeys,
+    /// The latest instant of a core deletion of the Entity or of a write that
+    /// queued its history, which neither `modified_at` nor
+    /// `evolution_modified_at` may hold; never lowered, NULL while there was
+    /// none. Not indexed, so its update stays a heap-only-tuple update.
+    DeletedOrQueuedAt,
 }
 
 /// The `entity_search` table - the indexed query axes of one current Entity.
@@ -314,6 +319,7 @@ mod tests {
         assert_eq!(Entities::EvolutionCreatedAt.to_string(), "evolution_created_at");
         assert_eq!(Entities::EvolutionModifiedAt.to_string(), "evolution_modified_at");
         assert_eq!(Entities::EvolutionActiveUntil.to_string(), "evolution_active_until");
+        assert_eq!(Entities::DeletedOrQueuedAt.to_string(), "deleted_or_queued_at");
         assert_eq!(Entities::EvolutionTypeNameKeys.to_string(), "evolution_type_name_keys");
     }
 

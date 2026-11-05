@@ -18,7 +18,7 @@ use crate::{
         staged_geometry::written_column,
         types_present::{entity_write_failure, types_present},
         write::{
-            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates, queued_instant, unless_refused},
+            latest_instant::{LatestInstant, latest_instant, latest_where_refused, predates, unless_refused},
             search_image::SearchImage,
             staging::{ProjectedWrite, StagedColumn, entity_arrays, from_inserted, insert_staging_columns, projected, projection_cte, with_staged_alias},
             statement_ctes::{Attrs, Established, Ins, Proj, Srch, Stamped},
@@ -288,10 +288,7 @@ fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result
                 .from(Proj)
                 .take(),
         )?;
-    let refused = predates(
-        latest_instant(Entities::Table, queued_instant(target, Expr::col((Entities::Table, Entities::Id)))),
-        accepted_at,
-    );
+    let refused = predates(latest_instant(Entities::Table), accepted_at);
     let mut revival = OnConflict::column(Entities::Id);
     for column in current_state {
         revival.value(
@@ -304,7 +301,7 @@ fn identity_insert(target: &ContextTarget, accepted_at: DateTime<Utc>) -> Result
         unless_refused(&refused, Expr::col((Entities::Table, Entities::WriteCount)), next_write_count(Entities::Table)),
     );
     let left_without_state = Expr::col((New, Entities::CreatedAt)).is_null();
-    let latest_held = latest_instant(Old, queued_instant(target, Expr::col((Old, Entities::Id))));
+    let latest_held = latest_instant(Old);
     identity
         .on_conflict(revival.action_and_where(Expr::col((Entities::Table, Entities::CreatedAt)).is_null()).to_owned())
         .returning(
@@ -583,28 +580,24 @@ mod tests {
     }
 
     /// Clause 4.8: a revival stamped before the latest instant the identity
-    /// row holds, its Temporal Evolution's or its latest queued intent's (a
-    /// deletion's tombstones may still be queued), leaves the row without a
-    /// current state, and the row answers that instant. A new row is never
-    /// refused, and no refused row reaches a child insert.
+    /// row holds, its Temporal Evolution's or its deletion's (whose
+    /// tombstones may still be queued), leaves the row without a current
+    /// state, and the row answers that instant. The instants are read from the
+    /// row the conflict locked, never from the queue under the statement's
+    /// snapshot, which a write committed while the insert waited on the row is
+    /// not in. A new row is never refused, and
+    /// no refused row reaches a child insert.
     #[test]
     fn a_revival_stamped_before_the_identity_row_s_latest_instant_is_refused() {
         let sql = insert();
-        let refused = concat!(
-            r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "#,
-            r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "entities"."id" "#,
-            r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) > $"#
-        );
+        let refused = r#"GREATEST("entities"."modified_at", "entities"."evolution_modified_at", "entities"."deleted_or_queued_at") > $"#;
         pretty_assertions::assert_eq!(sql.matches(refused).count(), 5, "{sql}");
         assert!(
-            sql.contains(concat!(
-                r#"(CASE WHEN ("new"."created_at" IS NULL) THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "#,
-                r#"(SELECT "temporal_append_intents"."recorded_at" FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "old"."id" "#,
-                r#"ORDER BY "temporal_append_intents"."intent_key" DESC LIMIT 1)) ELSE NULL END))"#
-            )),
+            sql.contains(r#"(CASE WHEN ("new"."created_at" IS NULL) THEN GREATEST("old"."modified_at", "old"."evolution_modified_at", "old"."deleted_or_queued_at") ELSE NULL END))"#),
             "{sql}"
         );
         pretty_assertions::assert_eq!(sql.matches(r#"FROM "stamped""#).count(), 2, "the landed rows and the answer: {sql}");
+        assert!(!sql.contains("temporal_append_intents"), "{sql}");
     }
 
     /// Every entry a create records is created and modified at `accepted_at`

@@ -18,6 +18,7 @@ use crate::{
     evolution_establishment,
     history,
     history_mode::{CommitResponse, HistoryPlacement, TemporalHistoryCommitMode},
+    history_only_lock,
     job_settlement::settle,
     name_resolution::resolve_write_names,
     write_isolation::IsolatedSubmission,
@@ -269,6 +270,7 @@ impl PostgresAtomicCommitter {
             tx.commit().await.map_err(|error| database(&error))?;
             return Ok(Vec::new());
         }
+        history_only_lock::apply(&mut tx, target, writes).await?;
         let placement = self.history_mode.placement(target, response);
         let establishing = evolution_establishment::establishing(placement.inline_recording(), writes, self.core_write_history);
         let EntityMutations { outcomes, established } = self.apply_entities(&mut tx, target, writes, record.recorded_at(), &establishing).await?;

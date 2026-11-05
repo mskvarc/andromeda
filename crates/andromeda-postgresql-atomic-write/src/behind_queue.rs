@@ -8,8 +8,8 @@
 //! modification instant would land before an earlier one. Its intents join
 //! the queue behind the earlier ones, and the drain applies them in order.
 //!
-//! The probe runs after the commit has written its Entity rows, so the row
-//! locks are held: every earlier writer of each Entity has committed its
+//! The probe runs after the commit has written or locked its Entity rows, so
+//! the row locks are held: every earlier writer of each Entity has committed its
 //! intents, and an intent a drain is applying but has not committed is still
 //! seen queued. Each intent is numbered from its own base ordinal, so splitting
 //! the commit's intents by Entity leaves every history row's identity as it
