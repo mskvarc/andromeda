@@ -14,7 +14,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::headers::Accept,
+    http::{headers::Accept, operation::SystemAttributes},
     model::{AttributeName, Entity, EntityFragment, EntityId, NgsiLdMediaType},
     query::temporal_query::{self, TemporalProperty},
 };
@@ -83,6 +83,7 @@ async fn n_bat_del_9005_a_batch_delete_reaching_an_entity_after_a_later_write_re
             .retrieve(&contested_id)
             .temporal_q(temporal_query::after("2020-01-01T00:00:00Z".parse()?).time_property(TemporalProperty::ModifiedAt))
             .attrs(vec!["level".parse()?])
+            .system_attributes(SystemAttributes::Include)
             .send()
             .await?;
         let appended_at = instance_time_where(observed.body(), &level, property().value(2), SystemMember::ModifiedAt)?;
@@ -92,6 +93,7 @@ async fn n_bat_del_9005_a_batch_delete_reaching_an_entity_after_a_later_write_re
             .retrieve(&contested_id)
             .temporal_q(temporal_query::after("2020-01-01T00:00:00Z".parse()?).time_property(TemporalProperty::DeletedAt))
             .attrs(vec!["level".parse()?])
+            .system_attributes(SystemAttributes::Include)
             .send()
             .await?;
         let deleted_at = instance_time_where(ended.body(), &level, deleted_instance(), SystemMember::DeletedAt)?;

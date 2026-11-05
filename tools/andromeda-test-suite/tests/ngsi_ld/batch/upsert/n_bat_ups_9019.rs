@@ -104,6 +104,7 @@ async fn n_bat_ups_9019_a_batch_upsert_reaching_an_entity_after_a_later_append_w
         .retrieve(&contested_id)
         .temporal_q(temporal_query::after("2020-01-01T00:00:00Z".parse()?).time_property(TemporalProperty::ModifiedAt))
         .attrs(vec!["level".parse()?])
+        .system_attributes(SystemAttributes::Include)
         .send()
         .await?;
     let appended_at = instance_time_where(history.body(), &level, property().value(2), SystemMember::ModifiedAt)?;
