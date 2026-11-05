@@ -1,10 +1,19 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::tenant_factory::{background_pacer::BackgroundPacer, periodic_due::PeriodicDue, storage::TenantContextWorkers, tasks::TaskSupervision};
+use crate::tenant_factory::{
+    background_pacer::{BackgroundPacer, TenantObligations},
+    due_work_check::TenantDueWork,
+    periodic_due::PeriodicDue,
+    storage::TenantContextWorkers,
+    tasks::TaskSupervision,
+};
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_notification::pending_change::PendingCommits;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
-use andromeda_tenancy::state_factory::{RuntimeActivity, TenantRuntime};
+use andromeda_tenancy::{
+    due_work::DueWorkSource,
+    state_factory::{RuntimeActivity, TenantRuntime},
+};
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::{sync::Arc, time::SystemTime};
@@ -103,6 +112,13 @@ impl TenantRuntime for BrokerTenantRuntime {
 
     fn undelivered_changes(&self) -> usize {
         self.commits.count()
+    }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(TenantDueWork::new(
+            Arc::new(TenantObligations::new(&self.pool)),
+            Arc::clone(&self.commits), // clone: the answer reads the changes this runtime still holds.
+        ))
     }
 }
 

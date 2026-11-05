@@ -5,6 +5,7 @@ use crate::{
     administration::TenantAdministration,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
+    due_work::{DueWork, DueWorkSource},
     error::TenancyError,
     lifecycle::TenantLifecycle,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
@@ -45,14 +46,18 @@ use std::{
 };
 use tokio::{
     sync::{Notify, Semaphore},
+    task::spawn_blocking,
     time::{sleep, timeout},
 };
 
 mod backlog_eviction;
 mod overdue_wakes;
 mod periodic_eviction;
+mod reconcile;
 mod wake_pass;
+mod wake_room;
 mod wake_timing;
+mod woken_release;
 
 /// What a [`FakeProbe`] answers with for every database.
 enum FakeProbeOutcome {
@@ -523,15 +528,19 @@ struct FakeRuntime {
     periodic_due: PeriodicDueCell,
     /// What [`TenantRuntime::undelivered_changes`] answers.
     backlog: BacklogCell,
+    /// What [`TenantRuntime::due_work`] hands the cache.
+    due_work: Arc<FakeDueWork>,
 }
 
 impl FakeRuntime {
-    /// A runtime with no periodic notification scheduled.
+    /// A runtime with no periodic notification scheduled, whose work is never
+    /// done.
     fn unscheduled(shutdowns: &Arc<AtomicUsize>) -> FakeRuntime {
         FakeRuntime {
             shutdowns: Arc::clone(shutdowns),
             periodic_due: PeriodicDueCell::default(),
             backlog: BacklogCell::default(),
+            due_work: Arc::new(FakeDueWork::answering(DueWork::Outstanding)),
         }
     }
 }
@@ -553,6 +562,48 @@ impl TenantRuntime for FakeRuntime {
     fn undelivered_changes(&self) -> usize {
         self.backlog.load(Ordering::Relaxed)
     }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::clone(&self.due_work) as Arc<dyn DueWorkSource>
+    }
+}
+
+/// A due-work source answering a settable verdict and counting the asks.
+struct FakeDueWork {
+    /// What it answers.
+    answer: StdMutex<DueWork>,
+    /// How often it was asked.
+    asked: AtomicUsize,
+}
+
+impl FakeDueWork {
+    /// A source answering `answer` until told otherwise.
+    const fn answering(answer: DueWork) -> FakeDueWork {
+        FakeDueWork {
+            answer: StdMutex::new(answer),
+            asked: AtomicUsize::new(0),
+        }
+    }
+
+    /// Answer `answer` from now on.
+    fn answer(&self, answer: DueWork) {
+        if let Ok(mut held) = self.answer.lock() {
+            *held = answer;
+        }
+    }
+
+    /// How often it was asked.
+    fn asked(&self) -> usize {
+        self.asked.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl DueWorkSource for FakeDueWork {
+    async fn due_work(&self) -> DueWork {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        self.answer.lock().map_or(DueWork::Outstanding, |answer| *answer)
+    }
 }
 
 /// A factory recording which database each runtime was built against.
@@ -566,6 +617,9 @@ struct FakeFactory {
     periodic_due: StdMutex<Vec<(TenantRef, PeriodicDueCell)>>,
     /// The backlog cell of each tenant, shared with every runtime built for it.
     backlogs: StdMutex<Vec<(TenantRef, BacklogCell)>>,
+    /// The due-work source of each tenant, shared with every runtime built for
+    /// it; a tenant without one answers its work is outstanding.
+    due_works: StdMutex<Vec<(TenantRef, Arc<FakeDueWork>)>>,
 }
 
 impl FakeFactory {
@@ -576,7 +630,20 @@ impl FakeFactory {
             built: AtomicUsize::new(0),
             periodic_due: StdMutex::new(Vec::new()),
             backlogs: StdMutex::new(Vec::new()),
+            due_works: StdMutex::new(Vec::new()),
         }
+    }
+
+    /// The due-work source of `tenant`, created answering outstanding on first
+    /// use.
+    fn due_work(&self, tenant: &TenantRef) -> Arc<FakeDueWork> {
+        let mut sources = self.due_works.lock().expect("the due-work sources are readable");
+        if let Some((_, source)) = sources.iter().find(|(held, _)| held == tenant) {
+            return Arc::clone(source);
+        }
+        let source = Arc::new(FakeDueWork::answering(DueWork::Outstanding));
+        sources.push((tenant.clone(), Arc::clone(&source)));
+        source
     }
 
     /// The backlog cell of `tenant`, created on first use.
@@ -626,6 +693,7 @@ impl TenantStateFactory for FakeFactory {
                 shutdowns: Arc::clone(&self.shutdowns),
                 periodic_due: self.periodic_due_cell(tenant),
                 backlog: self.backlog_cell(tenant),
+                due_work: self.due_work(tenant),
             },
         ))
     }
@@ -1359,6 +1427,10 @@ impl TenantRuntime for ShutdownConcurrencyProbe {
     fn undelivered_changes(&self) -> usize {
         0
     }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(FakeDueWork::answering(DueWork::Outstanding))
+    }
 }
 
 /// A factory that builds [`ShutdownConcurrencyProbe`] runtimes sharing one pair
@@ -1460,6 +1532,10 @@ impl TenantRuntime for GatedShutdownRuntime {
     fn undelivered_changes(&self) -> usize {
         0
     }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(FakeDueWork::answering(DueWork::Outstanding))
+    }
 }
 
 /// A factory building [`GatedShutdownRuntime`]s that share one gate.
@@ -1540,6 +1616,61 @@ async fn insert_trim_does_not_await_victim_shutdown() {
     gate.notify_one();
     manager.await_evictions().await;
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "the detached teardown eventually runs");
+}
+
+/// A woken build that loses to a request releases the cache before it shuts
+/// its own runtime down, so a thread reaching the tenant's cache shard meanwhile
+/// is never blocked behind that shutdown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_woken_build_that_lost_to_a_request_holds_no_cache_shard_while_its_runtime_shuts_down() {
+    let gate = Arc::new(Notify::new());
+    let manager = TenantRuntimeManager::new(
+        config(true, 4),
+        Arc::new(FakeRegistry::new(&["raced"])),
+        Arc::new(GatedShutdownFactory {
+            gate: Arc::clone(&gate),
+            shutdowns: Arc::new(AtomicUsize::new(0)),
+        }),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+    );
+    let tenant = TenantRef::Named(named("raced"));
+    drop(
+        manager
+            .resolve_state(&tenant, TenantCreationPolicy::MustExist)
+            .await
+            .expect("the request loads the tenant first"),
+    );
+    let woken = {
+        let manager = Arc::clone(&manager);
+        let tenant = tenant.clone();
+        tokio::spawn(async move {
+            manager
+                .build_woken(
+                    &tenant,
+                    TenantDatabaseName::from("andromeda_tenant_raced".to_owned()),
+                    TenantExistence::Established,
+                    &named("raced"),
+                )
+                .await
+        })
+    };
+    sleep(Duration::from_millis(50)).await;
+
+    let read = {
+        let manager = Arc::clone(&manager);
+        let tenant = tenant.clone();
+        spawn_blocking(move || manager.runtimes.contains_key(&tenant))
+    };
+    let answered = timeout(Duration::from_millis(500), read).await;
+    gate.notify_waiters();
+    gate.notify_one();
+
+    assert!(
+        matches!(answered, Ok(Ok(true))),
+        "the cache answered while the losing runtime's shutdown was held"
+    );
+    pretty_assertions::assert_eq!(woken.await.expect("the wake completes"), WakeOutcome::AlreadyCached);
 }
 
 /// A manager over the given probe and schedule, plus its factory and shutdown
@@ -1785,10 +1916,12 @@ async fn a_due_wake_does_not_displace_a_woken_runtime_within_its_wake_residency(
     );
 }
 
-/// The deferred wake is retried as the woken lifetime that blocked it ends,
-/// well before the default `min_wake_interval` of 30 s.
+/// The deferred wake is retried no later than the woken lifetime that blocked
+/// it ends, well before the default `min_wake_interval` of 30 s. The woken
+/// runtime was never asked whether its work has run, so its place may free at
+/// once.
 #[tokio::test]
-async fn a_wake_deferred_by_a_woken_runtime_is_retried_when_its_woken_lifetime_ends() {
+async fn a_wake_deferred_by_a_woken_runtime_is_retried_no_later_than_its_woken_lifetime_ends() {
     let base = config(true, 1);
     let tenancy = TenancyConfig {
         residency: ResidencyConfig {
@@ -1816,10 +1949,10 @@ async fn a_wake_deferred_by_a_woken_runtime_is_retried_when_its_woken_lifetime_e
         .find_map(|(tenant, wake_at)| (tenant == "second").then_some(*wake_at))
         .flatten()
         .expect("the deferred wake is re-armed");
-    let wait = retry.duration_since(deferred_at).expect("the retry is ahead");
+    let wait = retry.duration_since(deferred_at).unwrap_or_default();
     assert!(
-        wait > Duration::from_secs(1) && wait <= Duration::from_secs(2),
-        "retried as the first runtime's woken lifetime ends, got {wait:?}"
+        wait <= Duration::from_secs(2),
+        "retried by the first runtime's woken lifetime end, got {wait:?}"
     );
 }
 
@@ -2022,6 +2155,10 @@ impl TenantRuntime for CommitOnShutdownRuntime {
     fn undelivered_changes(&self) -> usize {
         0
     }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(FakeDueWork::answering(DueWork::Outstanding))
+    }
 }
 
 /// A factory building [`CommitOnShutdownRuntime`]s that share one commit flag.
@@ -2148,6 +2285,10 @@ impl TenantRuntime for LatchedShutdownRuntime {
 
     fn undelivered_changes(&self) -> usize {
         0
+    }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(FakeDueWork::answering(DueWork::Outstanding))
     }
 }
 

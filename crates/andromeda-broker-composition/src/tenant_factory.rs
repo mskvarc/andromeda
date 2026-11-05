@@ -59,7 +59,11 @@ use url::Url;
 mod assembly_invariant;
 mod background_pacer;
 mod commit_consequence;
+mod due_work_check;
 mod error;
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code expects on purpose")]
+mod held_change_fixture;
 mod periodic_due;
 /// Runtime ownership and ordered shutdown.
 pub mod runtime;

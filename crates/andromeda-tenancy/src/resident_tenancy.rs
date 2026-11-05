@@ -14,6 +14,7 @@
 use crate::{
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
+    due_work::{DueWork, DueWorkSource},
     error::TenancyError,
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
@@ -166,10 +167,21 @@ impl TenantRuntime for InertRuntime {
     fn undelivered_changes(&self) -> usize {
         0
     }
+
+    fn due_work(&self) -> Arc<dyn DueWorkSource> {
+        Arc::new(InertRuntime)
+    }
 }
 
 impl RuntimeActivity for InertRuntime {
     fn record_activity(&self) {}
+}
+
+#[async_trait]
+impl DueWorkSource for InertRuntime {
+    async fn due_work(&self) -> DueWork {
+        DueWork::Drained
+    }
 }
 
 /// A probe finding nothing due in any tenant.

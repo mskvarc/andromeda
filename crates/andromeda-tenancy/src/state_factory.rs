@@ -1,6 +1,6 @@
 //! Building one tenant's runtime, which this crate asks for and cannot do.
 
-use crate::{error::TenancyError, tenant_ref::TenantRef};
+use crate::{due_work::DueWorkSource, error::TenancyError, tenant_ref::TenantRef};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
 use std::{sync::Arc, time::SystemTime};
@@ -48,6 +48,15 @@ pub trait TenantRuntime: Send + Sync + 'static {
     /// memory. A runtime holding any is unloaded only after every runtime
     /// holding none.
     fn undelivered_changes(&self) -> usize;
+
+    /// Where the cache asks whether the work this runtime owes has run.
+    ///
+    /// Taken once, as the waker inserts a runtime it loaded for due work, and
+    /// asked only while every place in the cache is taken: a runtime that
+    /// answers its work has run gives up its place before its woken lifetime
+    /// ends. The answer is read outside the cache's guards, so it may reach the
+    /// tenant's database.
+    fn due_work(&self) -> Arc<dyn DueWorkSource>;
 }
 
 /// Told when requests reach for, and let go of, one tenant runtime.

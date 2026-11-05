@@ -8,19 +8,30 @@
 //! takes only a free cache slot and never unloads another tenant to make room,
 //! so it cannot push out a tenant a request is using.
 //!
+//! The budget is also capped by the room the cache has for woken tenants: a
+//! tenant claimed past that room would be probed and then deferred, so it is
+//! left unclaimed with its due instant, and is claimed in turn once room opens.
+//! A pass that finds every place taken while wakes are due first asks the
+//! woken runtimes whether their work has run, and those that have give up
+//! their places. A pass that still finds no room claims and probes nothing and
+//! sleeps until a place frees.
+//!
 //! A pass that claims its whole budget may leave due tenants unclaimed, so the
 //! next pass runs at once and a backlog is worked off as fast as tenants are
-//! built. Any other pass leaves nothing due, and the next runs at the earliest
-//! wake the schedule holds.
+//! built and room opens. Any other pass leaves nothing due, and the next runs
+//! at the earliest wake the schedule holds.
 //!
 //! Every pass reports the wakes it leaves overdue: those it left unclaimed and
-//! those deferred because no loaded tenant could be unloaded.
+//! those deferred because a request took the room the pass counted on.
 
 use crate::{
     catch_up::{CatchUpCandidates, CatchUpError},
     database::TenantDatabase,
     registered_tenant::RegisteredTenant,
-    runtime::TenantRuntimeManager,
+    runtime::{
+        TenantRuntimeManager,
+        wake_room::{RoomOpening, WakeRoom},
+    },
     state_factory::TenantStateFactory,
     status::TenantStatus,
     tenant_existence::TenantExistence,
@@ -30,7 +41,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::record_wake;
-use std::time::SystemTime;
+use std::{num::NonZeroUsize, time::SystemTime};
 use thiserror::Error;
 
 /// Why a wake pass stopped before it was done.
@@ -67,15 +78,29 @@ pub enum NextWakePass {
     At(SystemTime),
     /// When a wake is recorded: the schedule holds none.
     WhenRecorded,
+    /// When a request lets go of a loaded tenant: no tenant may be loaded, and
+    /// no woken lifetime ends to make room.
+    WhenRoomOpens,
 }
 
 /// Whether a pass claimed as many due wakes as its budget allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BudgetUse {
-    /// It claimed its whole budget, so more wakes may be due.
+    /// It claimed its whole budget, or had none for want of room, so more
+    /// wakes may be due.
     Spent,
     /// It claimed fewer, so it claimed every wake that was due.
     LeftOver,
+}
+
+/// What a pass that found every place taken came to.
+enum FullCache {
+    /// Woken runtimes whose work has run gave up this many places, which the
+    /// pass fills.
+    Made(NonZeroUsize),
+    /// No place could be made, or no wake was due to take one: the pass ends
+    /// with this report.
+    Waiting(WakePassReport),
 }
 
 /// What one catch-up candidate came to.
@@ -90,8 +115,9 @@ enum CatchUpAttempt {
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
-    /// Wake the tenants due at `now`, leasing each claim to `lease_until`, then
-    /// spend what is left of the pass budget on the tenants `catch_up` lists.
+    /// Wake the tenants due at `now`, as many as the cache has room for,
+    /// leasing each claim to `lease_until`, then spend what is left of the pass
+    /// budget on the tenants `catch_up` lists.
     ///
     /// # Errors
     ///
@@ -101,7 +127,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// fails, after the scheduled wakes ran and the overdue ones were reported.
     pub async fn run_wake_pass(&self, catch_up: &dyn CatchUpCandidates, now: SystemTime, lease_until: SystemTime) -> Result<WakePassReport, WakePassError> {
         self.alarm.begin_pass();
-        let budget = self.waker.max_wakes_per_pass();
+        let places = match self.wake_room() {
+            WakeRoom::Free(places) => places,
+            WakeRoom::Full(_) => match self.make_room_for_due_wakes(now).await? {
+                FullCache::Made(places) => places,
+                FullCache::Waiting(report) => return Ok(report),
+            },
+        };
+        let budget = self.waker.max_wakes_per_pass().min(places.get());
         let due = self.schedule.claim_due(now, lease_until, budget).await?;
         for tenant in &due {
             self.wake(tenant).await;
@@ -128,6 +161,61 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             overdue,
             next,
         })
+    }
+
+    /// The part of a pass at `now` that found every place taken.
+    ///
+    /// With no wake due, nothing would use a place, so no woken runtime is
+    /// asked and the waker sleeps until the earliest wake as after any pass
+    /// that served every due wake. With wakes due, the woken runtimes whose
+    /// work has run give up their places; if none does, the pass claims and
+    /// probes nothing, so no tenant is probed only to be deferred, every due
+    /// wake keeps its instant and the one due longest is claimed first once a
+    /// place frees.
+    async fn make_room_for_due_wakes(&self, now: SystemTime) -> Result<FullCache, WakePassError> {
+        let overdue = self.overdue_after_pass(now, BudgetUse::Spent).await?;
+        if overdue.is_none() {
+            self.overdue_report.publish(now, overdue);
+            let next = match self.alarm.sleep_until(self.schedule.earliest_wake().await?) {
+                Some(at) => NextWakePass::At(at),
+                None => NextWakePass::WhenRecorded,
+            };
+            return Ok(FullCache::Waiting(WakePassReport {
+                scheduled: 0,
+                caught_up: 0,
+                overdue,
+                next,
+            }));
+        }
+        self.release_drained_woken(self.waker.max_wakes_per_pass()).await;
+        let opening = match self.wake_room() {
+            WakeRoom::Free(places) => return Ok(FullCache::Made(places)),
+            WakeRoom::Full(opening) => opening,
+        };
+        self.overdue_report.publish(now, overdue);
+        Ok(FullCache::Waiting(WakePassReport {
+            scheduled: 0,
+            caught_up: 0,
+            overdue,
+            next: self.sleep_for_room(now, opening),
+        }))
+    }
+
+    /// Sleep until `opening`, counted from `now`, or until a place frees.
+    ///
+    /// A place freed between the room read and the sleep rang no waker, so the
+    /// room is read again after the sleep is set and a freed place rings the
+    /// alarm, which the waker then answers at once.
+    fn sleep_for_room(&self, now: SystemTime, opening: RoomOpening) -> NextWakePass {
+        let next = match self.alarm.sleep_for_room(opening.at(now)) {
+            Some(at) => NextWakePass::At(at),
+            None => NextWakePass::WhenRoomOpens,
+        };
+        match self.wake_room() {
+            WakeRoom::Free(_) => self.alarm.room_opened(),
+            WakeRoom::Full(_) => {}
+        }
+        next
     }
 
     /// The wakes overdue after a pass that ran at `now`: those this process

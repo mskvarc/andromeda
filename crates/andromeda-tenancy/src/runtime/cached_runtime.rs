@@ -2,9 +2,11 @@
 //! request takes against its eviction.
 
 use crate::{
+    due_work::DueWorkSource,
     runtime::{
         eviction_rank::{Backlog, EvictionRank, PeriodicWork},
         lease::LeaseOrigin,
+        woken_residency::WokenResidency,
     },
     state_factory::TenantRuntime,
     tenant_existence::TenantExistence,
@@ -57,9 +59,10 @@ pub(super) struct CachedRuntime<S, R> {
     /// established once and never back: an established tenant stays so until
     /// it is removed from the registry.
     established: AtomicBool,
-    /// Until when a runtime the waker loaded for due work is spared from
-    /// being unloaded to make room; `None` for a runtime a request loaded.
-    wake_residency_end: Option<Instant>,
+    /// The place a runtime the waker loaded for due work holds until its work
+    /// has run or its woken lifetime ends; `None` for a runtime a request
+    /// loaded.
+    woken: Option<Arc<WokenResidency>>,
 }
 
 impl<S, R> CachedRuntime<S, R> {
@@ -93,7 +96,7 @@ impl<S, R> CachedRuntime<S, R> {
                 last_used: AtomicU64::new(now_millis()),
                 origin,
                 established: AtomicBool::new(existence == TenantExistence::Established),
-                wake_residency_end: None,
+                woken: None,
             },
             leased,
         )
@@ -106,7 +109,8 @@ impl<S, R> CachedRuntime<S, R> {
     /// its residency; the waker backdates its last use so it is the first idle
     /// victim and never displaces a request-touched runtime. For `residency`
     /// it is not unloaded to make room either, so the work it was woken for
-    /// runs before anything can take it away again.
+    /// runs before anything can take it away again, unless it answers through
+    /// `due_work` that the work has run.
     pub(super) fn woken(
         state: Arc<S>,
         runtime: R,
@@ -114,6 +118,7 @@ impl<S, R> CachedRuntime<S, R> {
         existence: TenantExistence,
         origin: Arc<LeaseOrigin>,
         residency: Duration,
+        due_work: Arc<dyn DueWorkSource>,
     ) -> CachedRuntime<S, R> {
         CachedRuntime {
             state,
@@ -122,22 +127,34 @@ impl<S, R> CachedRuntime<S, R> {
             last_used: AtomicU64::new(now_millis()),
             origin,
             established: AtomicBool::new(existence == TenantExistence::Established),
-            wake_residency_end: Instant::now().checked_add(residency),
+            woken: WokenResidency::new(residency, due_work).map(Arc::new),
         }
     }
 
     /// Whether this runtime was loaded for due work less than its residency
-    /// ago, and so is not unloaded to make room.
+    /// ago and has not answered that the work has run, and so is not unloaded
+    /// to make room.
     pub(super) fn is_within_wake_residency(&self, now: Instant) -> bool {
-        self.wake_residency_end.is_some_and(|end| now < end)
+        self.woken.as_ref().is_some_and(|woken| woken.holds_place(now))
     }
 
-    /// How long until this runtime's woken lifetime ends, or `None` when it has
-    /// none left at `now`.
-    pub(super) fn wake_residency_left(&self, now: Instant) -> Option<Duration> {
-        self.wake_residency_end
-            .and_then(|end| end.checked_duration_since(now))
-            .filter(|left| !left.is_zero())
+    /// The place this runtime holds as one the waker loaded, `None` for a
+    /// runtime a request loaded.
+    pub(super) const fn woken_residency(&self) -> Option<&Arc<WokenResidency>> {
+        self.woken.as_ref()
+    }
+
+    /// Whether this runtime may be unloaded at `now` to make room: no request
+    /// holds it and it is past any woken lifetime.
+    pub(super) fn is_unloadable(&self, now: Instant) -> bool {
+        !self.is_leased() && !self.is_within_wake_residency(now)
+    }
+
+    /// How long from `now` until this runtime's place may free: its woken
+    /// lifetime ends, or it may next be asked whether its work has run. `None`
+    /// when it holds no place as a woken runtime.
+    pub(super) fn place_frees_in(&self, now: Instant) -> Option<Duration> {
+        self.woken.as_ref().and_then(|woken| woken.frees_in(now))
     }
 
     /// Whether the tenant this runtime serves was seen to exist.
@@ -205,14 +222,17 @@ impl<S, R: TenantRuntime> CachedRuntime<S, R> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        due_work::{DueWork, DueWorkSource},
         runtime::{
             cached_runtime::CachedRuntime,
             lease::{LeaseOrigin, RuntimeLease},
         },
         state_factory::RuntimeActivity,
         tenant_existence::TenantExistence,
+        wake_alarm::WakeAlarm,
     };
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
+    use async_trait::async_trait;
     use std::{
         sync::{
             Arc,
@@ -220,7 +240,7 @@ mod tests {
         },
         time::{Duration, Instant},
     };
-    use tokio::sync::Notify;
+    use tokio::{sync::Notify, time::timeout};
 
     /// Counts every use reported to a runtime.
     #[derive(Default)]
@@ -236,14 +256,29 @@ mod tests {
         woken_for(activity, existence, Duration::from_secs(60))
     }
 
+    /// A runtime whose work is never done.
+    struct StillWorking;
+
+    #[async_trait]
+    impl DueWorkSource for StillWorking {
+        async fn due_work(&self) -> DueWork {
+            DueWork::Outstanding
+        }
+    }
+
     fn woken_for(activity: &Arc<ActivityCount>, existence: TenantExistence, residency: Duration) -> CachedRuntime<(), ()> {
         CachedRuntime::woken(
             Arc::new(()),
             (),
             TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
             existence,
-            LeaseOrigin::new(Arc::new(Notify::new()), Arc::clone(activity) as Arc<dyn RuntimeActivity>),
+            LeaseOrigin::new(
+                Arc::new(Notify::new()),
+                Arc::new(WakeAlarm::new()),
+                Arc::clone(activity) as Arc<dyn RuntimeActivity>,
+            ),
             residency,
+            Arc::new(StillWorking),
         )
     }
 
@@ -257,13 +292,58 @@ mod tests {
     }
 
     #[test]
+    fn a_runtime_is_unloadable_once_no_lease_holds_it_and_its_woken_lifetime_ended() {
+        let cached = woken_for(&Arc::new(ActivityCount::default()), TenantExistence::Established, Duration::from_secs(60));
+        let now = Instant::now();
+        let after_lifetime = now + Duration::from_secs(61);
+        assert!(!cached.is_unloadable(now), "within its woken lifetime");
+        assert!(cached.is_unloadable(after_lifetime));
+        let lease = RuntimeLease::clone_from(&cached.origin);
+        assert!(!cached.is_unloadable(after_lifetime), "a request holds it");
+        drop(lease);
+        assert!(cached.is_unloadable(after_lifetime));
+    }
+
+    #[tokio::test]
+    async fn letting_the_last_lease_go_rings_a_waker_sleeping_for_room() {
+        let alarm = Arc::new(WakeAlarm::new());
+        let (cached, held) = CachedRuntime::<(), ()>::newly_leased(
+            Arc::new(()),
+            (),
+            TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
+            TenantExistence::Established,
+            LeaseOrigin::new(
+                Arc::new(Notify::new()),
+                Arc::clone(&alarm),
+                Arc::new(ActivityCount::default()) as Arc<dyn RuntimeActivity>,
+            ),
+        );
+        let first = RuntimeLease::hold(held);
+        let second = RuntimeLease::clone_from(&cached.origin);
+        alarm.begin_pass();
+        alarm.sleep_for_room(None);
+
+        drop(first);
+        assert!(
+            timeout(Duration::from_millis(50), alarm.rung()).await.is_err(),
+            "another request still holds the runtime"
+        );
+        drop(second);
+        assert!(timeout(Duration::from_millis(50), alarm.rung()).await.is_ok());
+    }
+
+    #[test]
     fn a_runtime_a_request_loaded_holds_no_wake_residency() {
         let (cached, _lease) = CachedRuntime::newly_leased(
             Arc::new(()),
             (),
             TenantDatabaseName::from("andromeda_tenant_acme".to_string()),
             TenantExistence::Established,
-            LeaseOrigin::new(Arc::new(Notify::new()), Arc::new(ActivityCount::default()) as Arc<dyn RuntimeActivity>),
+            LeaseOrigin::new(
+                Arc::new(Notify::new()),
+                Arc::new(WakeAlarm::new()),
+                Arc::new(ActivityCount::default()) as Arc<dyn RuntimeActivity>,
+            ),
         );
         assert!(!cached.is_within_wake_residency(Instant::now()));
     }

@@ -201,7 +201,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let mut candidates: Vec<(TenantRef, EvictionRank)> = self
             .runtimes
             .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now))
+            .filter(|entry| !entry.key().is_unnamed_default() && entry.value().is_unloadable(now))
             .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the eviction list outlives the iteration
             .collect();
         candidates.sort_by_key(|(_, rank)| *rank);
@@ -245,24 +245,10 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let horizon = self.eviction_horizon();
         self.runtimes
             .iter()
-            .filter(|entry| {
-                !entry.key().is_unnamed_default() && entry.key() != exclude && !entry.value().is_leased() && !entry.value().is_within_wake_residency(now)
-            })
+            .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != exclude && entry.value().is_unloadable(now))
             .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the choice outlives the iteration
             .min_by_key(|(_, rank)| *rank)
             .map(|(tenant, rank)| (tenant, rank.last_used))
-    }
-
-    /// How long until a runtime that only its woken lifetime keeps from being
-    /// unloaded may be unloaded to make room for `woken`, or `None` when no
-    /// runtime is waiting out a woken lifetime.
-    pub(super) fn room_for_wake_in(&self, woken: &TenantRef) -> Option<Duration> {
-        let now = Instant::now();
-        self.runtimes
-            .iter()
-            .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != woken && !entry.value().is_leased())
-            .filter_map(|entry| entry.value().wake_residency_left(now))
-            .min()
     }
 
     /// The instant before which a tenant unloaded now would not be woken
@@ -279,11 +265,21 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// trim uses, so nothing it still owes is lost. Returns `false` when there is
     /// no unleased victim to take (every runtime is held by an in-flight request),
     /// so the caller defers rather than exceeding the connection budget.
+    ///
+    /// A victim used between its choice and its removal is spared, as is an
+    /// idle runtime the janitor finds with work falling due soon; the next
+    /// victim is then tried, at most once per place, so a wake is deferred only
+    /// when no runtime may be unloaded.
     pub(super) async fn evict_one_for_wake(&self, woken: &TenantRef) -> bool {
-        match self.lru_unleased_named(woken) {
-            Some(victim) => self.evict_all(vec![victim], EvictionReason::Excess).await > 0,
-            None => false,
+        for _ in 0..self.config.residency.max_resident.get() {
+            let Some(victim) = self.lru_unleased_named(woken) else {
+                return false;
+            };
+            if self.evict_all(vec![victim], EvictionReason::Excess).await > 0 {
+                return true;
+            }
         }
+        false
     }
 
     /// Evict the named tenant's runtime at once, returning whether one was

@@ -24,6 +24,7 @@ pub mod catch_up;
 pub mod context_source_alias;
 pub mod creation_policy;
 pub mod database;
+pub mod due_work;
 pub mod error;
 pub mod lifecycle;
 pub mod pending_work;

@@ -92,12 +92,16 @@ pub enum BrokerRole {
     /// earlier than five seconds after it was unloaded and keeping a woken tenant loaded for one second.
     Waker,
     /// The andromeda stack broker keeping four tenants loaded, the default tenant among them, waking a tenant no
-    /// earlier than five seconds after it was unloaded and keeping a woken tenant loaded for five seconds, only the
-    /// test of a wake load it cannot serve uses.
+    /// earlier than a second after it was unloaded and keeping a woken tenant loaded for five seconds, only the test of
+    /// a wake load it cannot serve uses.
     Backlog,
-    /// The andromeda stack broker keeping 41 tenants loaded, the default tenant among them, with the backlog broker's
-    /// wake timings, only the test of a wake load it can serve uses.
+    /// The andromeda stack broker keeping 41 tenants loaded, the default tenant among them, waking a tenant no earlier
+    /// than five seconds after it was unloaded and keeping a woken tenant loaded for five seconds, only the test of a
+    /// wake load it can serve uses.
     Roomy,
+    /// The andromeda stack broker with the backlog broker's places and wake timings, only the test of what its waker
+    /// does while no place is free uses.
+    Overloaded,
     /// The andromeda stack broker serving its Prometheus metrics, only the test of notifications refused for their
     /// size uses, so the oversized-notification counter moves only with what that test sends.
     Oversized,

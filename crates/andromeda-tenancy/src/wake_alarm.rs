@@ -7,9 +7,19 @@
 //! at its own instant and not at the waker's. A wake recorded while a pass
 //! runs lowers the instant that pass reports instead, since the waker is not
 //! asleep to be woken.
+//!
+//! A pass that finds no place a woken tenant could take claims nothing and
+//! sleeps for room. A place that frees before that sleep ends, as a request
+//! lets go of a tenant or a runtime is unloaded, rings the alarm too, so the
+//! longest-overdue wake is served the moment room opens.
 
 use std::{
-    sync::{Mutex, MutexGuard, PoisonError},
+    sync::{
+        Mutex,
+        MutexGuard,
+        PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::SystemTime,
 };
 use tokio::sync::Notify;
@@ -36,6 +46,13 @@ enum WakerState {
 pub struct WakeAlarm {
     /// What the waker is doing.
     state: Mutex<WakerState>,
+    /// Set while the waker sleeps for room, cleared by the first ring of a
+    /// freed place and by any pass or sleep that is not for room.
+    ///
+    /// Outside the state lock because every request that lets go of a tenant
+    /// reads it: while the waker is not waiting for room, that read is all the
+    /// release costs.
+    room_awaited: AtomicBool,
     /// Rung once per wake that ends a sleep early. A ring with no one waiting
     /// is kept for the next wait.
     ring: Notify,
@@ -47,6 +64,7 @@ impl WakeAlarm {
     pub(crate) fn new() -> WakeAlarm {
         WakeAlarm {
             state: Mutex::new(WakerState::Sleeping { until: None }),
+            room_awaited: AtomicBool::new(false),
             ring: Notify::new(),
         }
     }
@@ -55,6 +73,7 @@ impl WakeAlarm {
     /// [`sleep_until`](Self::sleep_until) rather than rung.
     pub(crate) fn begin_pass(&self) {
         *self.lock() = WakerState::Passing { recorded: None };
+        self.room_awaited.store(false, Ordering::Release);
     }
 
     /// Note that the pass ended and the waker sleeps until `read`, the
@@ -67,7 +86,31 @@ impl WakeAlarm {
             WakerState::Sleeping { .. } => read,
         };
         *state = WakerState::Sleeping { until };
+        self.room_awaited.store(false, Ordering::Release);
         until
+    }
+
+    /// Note that the pass found no room and the waker sleeps until `opens`, the
+    /// instant the first woken lifetime ends, or until a place is freed when
+    /// `opens` is `None`. Returns the instant it sleeps until, as
+    /// [`sleep_until`](Self::sleep_until) does; a freed place rings it sooner.
+    pub(crate) fn sleep_for_room(&self, opens: Option<SystemTime>) -> Option<SystemTime> {
+        let mut state = self.lock();
+        let until = match *state {
+            WakerState::Passing { recorded } => earliest(opens, recorded),
+            WakerState::Sleeping { .. } => opens,
+        };
+        *state = WakerState::Sleeping { until };
+        self.room_awaited.store(true, Ordering::Release);
+        until
+    }
+
+    /// Note that a place a woken tenant could take was freed, ringing the
+    /// alarm when the waker sleeps for room. Rings once per sleep for room.
+    pub(crate) fn room_opened(&self) {
+        if self.room_awaited.load(Ordering::Acquire) && self.room_awaited.swap(false, Ordering::AcqRel) {
+            self.ring.notify_one();
+        }
     }
 
     /// Note that this process recorded a wake at `at`, ringing the alarm when
@@ -192,5 +235,61 @@ mod tests {
         alarm.recorded(at(70));
 
         assert_eq!(alarm.sleep_until(None), Some(at(70)));
+    }
+
+    #[tokio::test]
+    async fn a_freed_place_rings_a_waker_sleeping_for_room() {
+        let alarm = WakeAlarm::new();
+        alarm.begin_pass();
+        assert_eq!(alarm.sleep_for_room(Some(at(100))), Some(at(100)));
+
+        alarm.room_opened();
+
+        assert!(rings(&alarm).await);
+    }
+
+    #[tokio::test]
+    async fn a_freed_place_rings_a_waker_sleeping_for_room_once() {
+        let alarm = WakeAlarm::new();
+        alarm.begin_pass();
+        alarm.sleep_for_room(None);
+        alarm.room_opened();
+        assert!(rings(&alarm).await);
+
+        alarm.room_opened();
+
+        assert!(!rings(&alarm).await, "the waker is already woken to use the first freed place");
+    }
+
+    #[tokio::test]
+    async fn a_freed_place_does_not_ring_a_waker_sleeping_until_a_wake() {
+        let alarm = WakeAlarm::new();
+        alarm.begin_pass();
+        alarm.sleep_until(Some(at(100)));
+
+        alarm.room_opened();
+
+        assert!(!rings(&alarm).await);
+    }
+
+    #[tokio::test]
+    async fn a_freed_place_does_not_ring_during_a_pass() {
+        let alarm = WakeAlarm::new();
+        alarm.begin_pass();
+        alarm.sleep_for_room(None);
+        alarm.begin_pass();
+
+        alarm.room_opened();
+
+        assert!(!rings(&alarm).await, "the running pass reads the room itself");
+    }
+
+    #[tokio::test]
+    async fn a_wake_recorded_during_a_pass_without_room_is_slept_until_when_sooner_than_the_room() {
+        let alarm = WakeAlarm::new();
+        alarm.begin_pass();
+        alarm.recorded(at(40));
+
+        assert_eq!(alarm.sleep_for_room(Some(at(100))), Some(at(40)));
     }
 }

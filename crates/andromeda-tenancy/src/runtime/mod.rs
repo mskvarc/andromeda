@@ -19,6 +19,9 @@ mod teardown;
 mod tests;
 mod wake;
 pub mod wake_pass;
+mod wake_room;
+mod woken_release;
+mod woken_residency;
 
 use crate::{
     administration::TenantAdministration,
@@ -186,7 +189,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// A fresh eviction origin for `runtime` about to enter the cache, wired to
     /// this manager's release signal and to the runtime's activity.
     fn new_origin(&self, runtime: &F::Runtime) -> Arc<LeaseOrigin> {
-        LeaseOrigin::new(Arc::clone(&self.release_signal), runtime.activity())
+        LeaseOrigin::new(Arc::clone(&self.release_signal), Arc::clone(&self.alarm), runtime.activity())
     }
 
     /// Publish the current number of cached runtimes to the tenancy gauge.

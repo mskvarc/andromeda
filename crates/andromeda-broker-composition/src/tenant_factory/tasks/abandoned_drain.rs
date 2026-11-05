@@ -49,39 +49,21 @@ impl Drop for EntityDrain {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod tests {
-    use crate::tenant_factory::tasks::abandoned_drain::EntityDrain;
-    use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
-    use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{
-        entity_change::{EntityChange, EntityLifecycle},
-        notification::ChangeOrigin,
-    };
+    use crate::tenant_factory::{held_change_fixture::committed_change, tasks::abandoned_drain::EntityDrain};
     use andromeda_notification::pending_change::PendingCommits;
     use andromeda_telemetry::{error::TelemetryError, names::LIVE_CHANGES_ABANDONED_TOTAL, recorder::TelemetryRecorder};
-    use chrono::Utc;
     use std::sync::Arc;
-
-    fn committed() -> ContextChangeEvent {
-        ContextChangeEvent {
-            target: ContextTarget::Live,
-            event: ChangeEvent::builder()
-                .entity_id("urn:ngsi-ld:Vehicle:held".parse::<Identifier>().expect("a valid identifier"))
-                .change(EntityChange::new(EntityLifecycle::Modified, Vec::new()))
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .build(),
-            committed_at: StoreInstant::new(Utc::now()),
-        }
-    }
 
     #[test]
     fn a_drain_dropped_before_it_finishes_counts_the_changes_it_still_held() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached()?;
         let commits = Arc::new(PendingCommits::default());
-        let _held = [commits.hold(committed()), commits.hold(committed()), commits.hold(committed())];
+        let _held = [
+            commits.hold(committed_change()),
+            commits.hold(committed_change()),
+            commits.hold(committed_change()),
+        ];
         recorder.record_locally(|| drop(EntityDrain::begin(&commits)));
         assert!(
             recorder.render().contains(&format!("{LIVE_CHANGES_ABANDONED_TOTAL} 3")),
@@ -95,7 +77,7 @@ mod tests {
     fn a_finished_drain_counts_nothing() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached()?;
         let commits = Arc::new(PendingCommits::default());
-        let _held = commits.hold(committed());
+        let _held = commits.hold(committed_change());
         recorder.record_locally(|| EntityDrain::begin(&commits).finish());
         assert!(!recorder.render().contains(LIVE_CHANGES_ABANDONED_TOTAL), "{}", recorder.render());
         Ok(())

@@ -139,11 +139,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// Remove a cached runtime if it is still unleased and untouched since it
-    /// was chosen at `chosen_at`.
+    /// was chosen at `chosen_at`, telling a waker sleeping for room that a
+    /// place freed.
     pub(super) fn remove_unleased(&self, tenant: &TenantRef, chosen_at: Instant) -> Option<CachedRuntime<F::State, F::Runtime>> {
-        self.runtimes
+        let removed = self
+            .runtimes
             .remove_if(tenant, |_, cached| cached.last_used_instant() == chosen_at && !cached.is_leased())
-            .map(|(_, cached)| cached)
+            .map(|(_, cached)| cached);
+        if removed.is_some() {
+            self.alarm.room_opened();
+        }
+        removed
     }
 
     /// Wait for a teardown slot.

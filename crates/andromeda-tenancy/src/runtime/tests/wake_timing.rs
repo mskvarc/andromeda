@@ -48,6 +48,11 @@ impl TimedSchedule {
             wakes.insert(tenant.as_str().to_string(), wake_at);
         }
     }
+
+    /// `tenant`'s next wake, a claim's lease included, `None` when it has none.
+    pub(super) fn wake_of(&self, tenant: &str) -> Option<SystemTime> {
+        self.wakes.lock().ok().and_then(|wakes| wakes.get(tenant).copied().flatten())
+    }
 }
 
 #[async_trait]
@@ -99,7 +104,7 @@ impl TenantWakeSchedule for TimedSchedule {
 
 /// Run wake passes the way the broker's waker does, until dropped: at once
 /// after a full pass, otherwise asleep until the reported instant or a ring.
-async fn run_waker(manager: Arc<Manager>) {
+pub(super) async fn run_waker(manager: Arc<Manager>) {
     let catch_up = FakeCatchUp::listing(&[]);
     loop {
         let now = SystemTime::now();
@@ -113,13 +118,13 @@ async fn run_waker(manager: Arc<Manager>) {
                     () = manager.wake_alarm().rung() => {}
                 }
             }
-            NextWakePass::WhenRecorded => manager.wake_alarm().rung().await,
+            NextWakePass::WhenRecorded | NextWakePass::WhenRoomOpens => manager.wake_alarm().rung().await,
         }
     }
 }
 
 /// Whether `name` has a runtime in the cache.
-fn resident(manager: &Manager, name: &str) -> bool {
+pub(super) fn resident(manager: &Manager, name: &str) -> bool {
     manager.runtimes.contains_key(&TenantRef::Named(named(name)))
 }
 

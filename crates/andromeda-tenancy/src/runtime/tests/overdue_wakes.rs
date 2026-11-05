@@ -1,6 +1,6 @@
-//! The wakes a pass reports overdue: deferred for want of a tenant that may be
-//! unloaded, or left unclaimed by a pass that spent its whole budget, each
-//! overdue since its work fell due.
+//! The wakes a pass reports overdue: left unclaimed by a pass that spent its
+//! whole budget or had no room for them, or deferred because a request took
+//! the room, each overdue since its work fell due.
 
 use crate::{
     runtime::{
@@ -53,7 +53,7 @@ fn overdue(count: usize, oldest_due: SystemTime) -> Option<OverdueWakes> {
 }
 
 #[tokio::test]
-async fn a_pass_that_defers_due_wakes_reports_them_overdue_since_their_work_fell_due() {
+async fn a_pass_capped_by_room_reports_the_due_wakes_it_left_unclaimed_overdue_since_their_work_fell_due() {
     let now = SystemTime::now();
     let due = now - Duration::from_secs(30);
     let schedule = Arc::new(TimedSchedule::default());
@@ -64,8 +64,12 @@ async fn a_pass_that_defers_due_wakes_reports_them_overdue_since_their_work_fell
 
     let report = pass(&manager, now).await;
 
-    assert_eq!(report.scheduled, 3);
-    assert_eq!(report.overdue, overdue(2, due), "one tenant loaded, two deferred behind its woken lifetime");
+    assert_eq!(report.scheduled, 1, "one place, so one tenant is claimed");
+    assert_eq!(
+        report.overdue,
+        overdue(2, due),
+        "one tenant loaded, two left unclaimed behind its woken lifetime"
+    );
     assert_eq!(report.overdue.map(|wakes| wakes.oldest_age_at(now)), Some(Duration::from_secs(30)));
 }
 
@@ -104,17 +108,17 @@ async fn a_pass_that_serves_every_due_wake_reports_none_overdue() {
 }
 
 #[tokio::test]
-async fn a_deferred_wake_is_overdue_until_a_later_pass_loads_its_tenant() {
+async fn a_wake_left_for_want_of_room_is_overdue_until_a_later_pass_loads_its_tenant() {
     let due = SystemTime::now() - Duration::from_secs(5);
     let schedule = Arc::new(TimedSchedule::default());
     schedule.write(&named("first"), Some(due));
     schedule.write(&named("second"), Some(due));
     let manager = manager(&["first", "second"], 1, HumanDuration::from_millis(300), due, Arc::clone(&schedule));
 
-    let deferring = pass(&manager, SystemTime::now()).await;
+    let leaving = pass(&manager, SystemTime::now()).await;
     sleep(Duration::from_millis(400)).await;
     let serving = pass(&manager, SystemTime::now()).await;
 
-    assert_eq!(deferring.overdue, overdue(1, due));
+    assert_eq!(leaving.overdue, overdue(1, due));
     assert_eq!((serving.scheduled, serving.overdue), (1, None), "the first woken lifetime ended and made room");
 }

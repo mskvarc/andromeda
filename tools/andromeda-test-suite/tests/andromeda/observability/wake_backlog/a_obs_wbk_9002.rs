@@ -23,10 +23,10 @@ const OBSERVED: Duration = Duration::from_secs(30);
 /// The time between two readings.
 const READING_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Pins: on a broker keeping 41 tenants loaded, the default tenant among them, with the wake timings of
-/// `a_obs_wbk_9001`, the same forty tenants each with a Subscription with `timeInterval` 5 leave no wake overdue:
-/// from 10 seconds on, every reading of the metrics over 30 seconds has `andromeda_tenant_overdue_wakes` and
-/// `andromeda_tenant_overdue_wake_max_age_seconds` at zero
+/// Pins: on a broker keeping 41 tenants loaded, the default tenant among them, a woken tenant loaded for five seconds
+/// and an unloaded tenant woken again five seconds later, forty tenants each with a Subscription with `timeInterval` 5
+/// leave no wake overdue: from 10 seconds on, every reading of the metrics over 30 seconds has
+/// `andromeda_tenant_overdue_wakes` and `andromeda_tenant_overdue_wake_max_age_seconds` at zero
 /// Clause: 5.8.6, 5.2.12
 /// Tenant: private, forty of them (the subject is the broker's whole wake schedule)
 /// Recorded: Andromeda configuration, not v1.9.1: every tenant stays loaded, so no wake is due

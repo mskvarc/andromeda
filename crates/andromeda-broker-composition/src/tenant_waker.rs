@@ -6,8 +6,10 @@
 //! its pass on tenants behind the server's extension versions. A pass that
 //! claims its whole budget is followed at once by the next; any other pass
 //! sleeps until the earliest wake the schedule holds, so a tenant is woken at
-//! its own instant rather than on a tick. The waker's alarm ends that sleep
-//! early when this process records a wake due sooner. The reconciliation sweep
+//! its own instant rather than on a tick. A pass that finds no room for a
+//! woken tenant claims nothing and sleeps until a place frees. The waker's
+//! alarm ends a sleep early when this process records a wake due sooner, or
+//! when a place frees for a waker sleeping for room. The reconciliation sweep
 //! re-probes the least-recently-probed tenants, so a wake a crashed replica
 //! recorded but never fired is eventually picked up. All of them run only when
 //! named tenancy is enabled: a single-tenant broker holds one never-evicted
@@ -145,7 +147,7 @@ const fn next_pass(next: NextWakePass) -> DrainPassOutcome {
     match next {
         NextWakePass::Immediately => DrainPassOutcome::WorkMayRemain,
         NextWakePass::At(at) => DrainPassOutcome::IdleUntil(at),
-        NextWakePass::WhenRecorded => DrainPassOutcome::Idle,
+        NextWakePass::WhenRecorded | NextWakePass::WhenRoomOpens => DrainPassOutcome::Idle,
     }
 }
 
@@ -197,7 +199,7 @@ fn register_reconciliation(
         async move {
             let unprobed = schedule.next_unprobed(limit).await.map_err(classify_failure)?;
             for tenant in unprobed {
-                manager.wake(&tenant).await;
+                manager.reconcile(&tenant).await;
             }
             Ok(())
         }
@@ -244,5 +246,10 @@ mod tests {
     #[test]
     fn a_pass_with_no_wake_scheduled_sleeps_until_one_is_recorded_or_the_ceiling() {
         pretty_assertions::assert_eq!(next_pass(NextWakePass::WhenRecorded), DrainPassOutcome::Idle);
+    }
+
+    #[test]
+    fn a_pass_with_no_room_and_no_woken_lifetime_ending_sleeps_until_a_place_frees_or_the_ceiling() {
+        pretty_assertions::assert_eq!(next_pass(NextWakePass::WhenRoomOpens), DrainPassOutcome::Idle);
     }
 }

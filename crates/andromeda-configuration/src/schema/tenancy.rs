@@ -80,13 +80,14 @@ pub struct ResidencyConfig {
     /// others, taking a runtime whose periodic notification falls due within
     /// `min_wake_interval` only once no runtime without one is left.
     ///
-    /// A tenant woken for a periodic notification takes a place for
-    /// `woken_lifetime` once per `timeInterval`. While those shares add up to
-    /// more places than this leaves beside the default tenant and the tenants
-    /// requests hold, wakes are deferred and fall behind without bound, which
-    /// the waker reports as overdue wakes.
+    /// A tenant woken for a periodic notification takes a place once per
+    /// `timeInterval`, until its work has run while every place is taken and
+    /// for `woken_lifetime` otherwise. While those shares add up to more places
+    /// than this leaves beside the default tenant and the tenants requests
+    /// hold, wakes fall behind without bound, which the waker reports as
+    /// overdue wakes.
     #[schemars(
-        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too. A tenant loaded for a periodic notification takes a place for `tenancy.residency.woken_lifetime` once per `timeInterval`. While those shares add up to more places than this leaves beside the default tenant and the tenants requests use, the broker cannot load tenants as fast as their work falls due: their notifications fall behind without bound, and the broker logs a warning and reports the overdue wakes in `andromeda_tenant_overdue_wakes`."
+        description = "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too. A tenant loaded for a periodic notification takes a place once per `timeInterval`: while every place is taken, until its notification is sent, and otherwise for `tenancy.residency.woken_lifetime`. While those shares add up to more places than this leaves beside the default tenant and the tenants requests use, the broker cannot load tenants as fast as their work falls due: their notifications fall behind without bound, and the broker logs a warning and reports the overdue wakes in `andromeda_tenant_overdue_wakes`."
     )]
     pub max_resident: NonZeroUsize,
     /// How often idle and orphaned runtimes are swept, in human-readable form
@@ -114,10 +115,11 @@ pub struct ResidencyConfig {
     /// idle nor unloaded to make room, so the work it was woken for runs; after
     /// it, it is the first idle-eviction candidate, so it never displaces a
     /// runtime a request touched. Below `idle_eviction_after` to have that
-    /// effect. A wake that finds every other runtime within this lifetime is
-    /// retried as the first of them ends.
+    /// effect. While every place is taken, a woken runtime is asked whether
+    /// that work has run, and gives up its place as soon as it has; a wake that
+    /// finds no place is retried as the first of them may free one.
     #[schemars(
-        description = "How long a tenant loaded for its due work stays loaded. For this long it is not unloaded, not even to make room for another tenant, so its due work runs. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used. A tenant due while every tenant it could replace is still within this lifetime is loaded as the first of those lifetimes ends."
+        description = "The longest a tenant loaded for its due work keeps its place. Until its due work has run it is not unloaded, not even to make room for another tenant. While every place is taken, it gives up its place as soon as that work has run, so another tenant with due work can be loaded; while places are free, it keeps its place for this whole time. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used."
     )]
     pub woken_lifetime: HumanDuration,
     /// The most dormant tenants one wake pass opens, those with due work first

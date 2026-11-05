@@ -46,6 +46,9 @@ pub enum BrokerMetric {
     /// The largest history chunk of a tenant still in the rowstore, by tenant and hypertable.
     #[strum(serialize = "andromeda_postgresql_history_largest_rowstore_chunk_bytes")]
     HistoryLargestRowstoreChunkBytes,
+    /// The attempts to load a tenant for its scheduled work, by outcome.
+    #[strum(serialize = "andromeda_tenant_wakes_total")]
+    TenantWakes,
     /// The tenant wakes overdue as the broker's last wake pass ended.
     #[strum(serialize = "andromeda_tenant_overdue_wakes")]
     OverdueWakes,
@@ -69,6 +72,9 @@ pub enum MetricLabel {
     Limit,
     /// The maintenance action a series counts: `reindex`, `vacuum`, `analyze`, `recovery`, `recompress` or `repack`.
     Action,
+    /// How a tenant wake resolved: `already-cached`, `loaded`, `nothing-due`, `deferred`, `build-failed` or
+    /// `unregistered`.
+    Outcome,
 }
 
 /// The `tenant` label value of the default tenant's series.
