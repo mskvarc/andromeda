@@ -9,8 +9,8 @@
 
 use crate::{
     attribute::{
-        instance_member::{ReadError, optional_instant_member, present_member, present_member_within},
         member_reading::MemberReading,
+        member_value_reading::{ReadError, optional_instant_member, present_member, present_member_within},
         structure_budget,
     },
     compact_member::decoded,

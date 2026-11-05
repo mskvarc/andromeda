@@ -6,7 +6,7 @@
 //! entity's members does.
 
 use crate::{
-    attribute::{instance_member::ReadError, member_node::array_refusal, member_reading::MemberReading, merge_instance::MergeInstance, structure_budget},
+    attribute::{member_node::array_refusal, member_reading::MemberReading, member_value_reading::ReadError, merge_instance::MergeInstance, structure_budget},
     node_refusal::NodeRefusal,
 };
 use andromeda_native_stack::on_sufficient_stack;

@@ -18,7 +18,7 @@
 //! read from the text of its own, never from a tree of the pairs.
 
 use crate::{
-    attribute::{instance::Attribute, instance_member::ReadError, structure_budget},
+    attribute::{instance::Attribute, member_value_reading::ReadError, structure_budget},
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
     temporal::plural_member_refusal::PluralMemberRefusal,
 };

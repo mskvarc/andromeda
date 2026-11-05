@@ -11,7 +11,7 @@
 use crate::{
     attribute::{
         instance::{Attribute, AttributeValue},
-        instance_member::ReadError,
+        member_value_reading::ReadError,
     },
     node_refusal::NodeRefusal,
     temporal::simplified_unfold::instances_of,

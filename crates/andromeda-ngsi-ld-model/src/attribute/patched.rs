@@ -8,7 +8,7 @@
 //! value held.
 
 use crate::{
-    attribute::instance_member::{ReadError, optional_member},
+    attribute::member_value_reading::{ReadError, optional_member},
     node_refusal::RefusedMember,
 };
 use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

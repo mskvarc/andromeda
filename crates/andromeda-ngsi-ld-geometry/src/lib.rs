@@ -53,6 +53,7 @@ mod geojson_oracle;
 pub mod geometry;
 pub mod geometry_census;
 pub mod geometry_member;
+mod geometry_member_reading;
 pub mod geometry_members;
 pub mod geometry_object_type;
 pub mod geometry_type;

@@ -20,8 +20,8 @@
 use crate::{
     attribute::{
         instance::{Attribute, AttributeValue},
-        instance_member::ReadError,
         member_reading::MemberReading,
+        member_value_reading::ReadError,
         structure_budget,
     },
     node_refusal::{NodeRefusal, RefusedMember},

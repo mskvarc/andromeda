@@ -1,17 +1,18 @@
 //! The UUID a notification's `id` carries.
 
+use iri_rs::{Iri, iri};
 use std::fmt::Display;
 use uuid::{Uuid, Version};
 
 /// The kind prefix of a notification `id`, which a broker follows with the local id.
-const NOTIFICATION_PREFIX: &str = "urn:ngsi-ld:Notification:";
+const NOTIFICATION_PREFIX: Iri<&str> = iri!("urn:ngsi-ld:Notification:");
 
 /// The RFC 9562 version of the UUID after the `urn:ngsi-ld:Notification:` prefix of `id`, `None` when `id` is not a
 /// notification identifier that ends in a UUID.
 #[must_use]
 pub fn uuid_version(id: &impl Display) -> Option<Version> {
     let text = id.to_string();
-    let local_id = text.strip_prefix(NOTIFICATION_PREFIX)?;
+    let local_id = text.strip_prefix(NOTIFICATION_PREFIX.as_str())?;
     Uuid::parse_str(local_id).ok()?.get_version()
 }
 

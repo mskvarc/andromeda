@@ -14,8 +14,8 @@
 use crate::{
     attribute::{
         instance::AttributeValue,
-        instance_member::{ReadError, optional_instant_member},
         member_decoding::refusal,
+        member_value_reading::{ReadError, optional_instant_member},
     },
     compact_member::decoded,
     entity::Entity,

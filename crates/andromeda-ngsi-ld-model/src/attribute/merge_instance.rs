@@ -16,9 +16,10 @@
 use crate::{
     attribute::{
         geo_property_value::GeoPropertyValue,
-        instance_member::{InstanceMembers, ReadError, optional_dataset_member, optional_member},
+        instance_member::InstanceMembers,
         instance_node::{geo_refusal, json, required, value_refusal},
         member_reading::MemberReading,
+        member_value_reading::{ReadError, optional_dataset_member, optional_member},
         merge_member::MergeMember,
         merge_value::MergeValue,
         nested_null::NestedMergeMember,

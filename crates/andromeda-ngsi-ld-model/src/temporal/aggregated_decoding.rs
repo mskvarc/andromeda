@@ -8,7 +8,7 @@
 //! aggregate of their union, so nothing here combines them.
 
 use crate::{
-    attribute::instance_member::{ReadError, present_member},
+    attribute::member_value_reading::{ReadError, present_member},
     compact_member::decoded,
     entity_type::EntityTypeValue,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},

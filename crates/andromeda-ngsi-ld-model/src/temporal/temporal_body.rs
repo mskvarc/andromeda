@@ -2,7 +2,7 @@
 //! the two shapes clause 6.3.12 gives it.
 
 use crate::{
-    attribute::instance_member::ReadError,
+    attribute::member_value_reading::ReadError,
     entity_type::EntityTypeValue,
     temporal::{aggregated_entity::AggregatedTemporalEntity, temporal_entity::TemporalEntity},
 };

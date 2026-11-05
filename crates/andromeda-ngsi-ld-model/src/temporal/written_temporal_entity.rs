@@ -18,9 +18,9 @@
 use crate::{
     attribute::{
         instance::{Attribute, AttributeValue},
-        instance_member::{ReadError, present_member},
         key_screening::{member_segment, screen_keys_in_instances},
         member_decoding::refusal,
+        member_value_reading::{ReadError, present_member},
         structure_budget,
     },
     attribute_strip::AttributeStrip,

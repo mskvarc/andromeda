@@ -4,9 +4,9 @@
 use crate::{
     attribute::{
         geo_property_value::GeoPropertyValue,
-        instance_member::ReadError,
         instance_node::{geo_value, json, member, ngsi_ld_value, value_list},
         language_property::{LanguageMap, LanguageMapValue},
+        member_value_reading::ReadError,
         object_list::RelationshipObjectList,
         one_or_many::OneOrMany,
         value::NgsiLdValue,

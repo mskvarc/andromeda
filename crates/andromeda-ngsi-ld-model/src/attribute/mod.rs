@@ -35,6 +35,7 @@ pub mod member_reading;
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod member_reading_tests;
+pub(crate) mod member_value_reading;
 pub mod merge_instance;
 pub mod merge_member;
 pub mod merge_value;
