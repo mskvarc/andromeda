@@ -539,7 +539,7 @@ mod tests {
         assert!(sql.contains("JOIN LATERAL"), "{sql}");
         assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
         assert!(
-            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
+            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
             "{sql}"
         );
         assert!(!sql.contains("OVER"), "{sql}");
@@ -769,8 +769,8 @@ mod tests {
     fn a_system_time_last_n_takes_the_last_instances_on_the_axis_column() {
         let sql = recorded_sql_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
         assert_eq!(sql.matches("LIMIT 5").count(), 2, "the part and the join: {sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."modified_at" DESC, "ah"."recorded_at" DESC"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "latest"."modified_at" DESC, "latest"."recorded_at" DESC"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "ah"."modified_at" DESC, "ah"."write_id" DESC"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "latest"."modified_at" DESC, "latest"."write_id" DESC"#), "{sql}");
     }
 
     /// `observedAt` is the client's instant, so a page on it reads each

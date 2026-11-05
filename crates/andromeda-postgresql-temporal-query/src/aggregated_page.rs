@@ -474,7 +474,7 @@ mod tests {
         };
         let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, last_n));
         assert!(!sql.contains("stream_edge"), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."recorded_at" DESC"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."write_id" DESC"#), "{sql}");
         assert!(sql.contains("LIMIT 5"), "{sql}");
         let whole = sql_of(&aggregated("", TimeProp::Observed, InstancePage::Whole));
         assert!(!whole.contains("stream_edge"), "{whole}");

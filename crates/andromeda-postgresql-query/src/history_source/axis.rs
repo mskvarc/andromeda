@@ -176,10 +176,10 @@ mod tests {
     fn the_migration_indexes_each_axis_by_its_column_over_the_rows_carrying_it() {
         let migration = include_str!("../../../../migrations/branch/0018_attribute_history.sql");
         for (column, key) in [
-            ("observed_at", "observed_at desc, recorded_at desc, write_id desc, write_ordinal desc"),
+            ("observed_at", "observed_at desc, write_id desc, write_ordinal desc"),
             ("created_at", "created_at"),
             ("modified_at", "modified_at"),
-            ("deleted_at", "deleted_at desc, recorded_at desc, write_id desc, write_ordinal desc"),
+            ("deleted_at", "deleted_at desc, write_id desc, write_ordinal desc"),
         ] {
             let index =
                 format!("create index idx_attribute_history_stream_{column} on attribute_history (stream_key, {key})\nwhere\n    {column} is not null;");

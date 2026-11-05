@@ -178,7 +178,7 @@ with (
 -- The `observedAt` and `deletedAt` keys are too wide for that split choice,
 -- so their direction leaves their size unchanged, and they descend in the
 -- order a `lastN` reads.
-create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+create index idx_attribute_history_stream_observed_at on attribute_history (stream_key, observed_at desc, write_id desc, write_ordinal desc)
 where
     observed_at is not null;
 
@@ -190,7 +190,7 @@ create index idx_attribute_history_stream_modified_at on attribute_history (stre
 where
     modified_at is not null;
 
-create index idx_attribute_history_stream_deleted_at on attribute_history (stream_key, deleted_at desc, recorded_at desc, write_id desc, write_ordinal desc)
+create index idx_attribute_history_stream_deleted_at on attribute_history (stream_key, deleted_at desc, write_id desc, write_ordinal desc)
 where
     deleted_at is not null;
 

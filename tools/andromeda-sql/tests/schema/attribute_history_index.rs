@@ -21,10 +21,10 @@ use andromeda_sql::declared_schema::index::DeclaredIndex;
 fn each_time_axis_has_a_stream_index_over_the_rows_carrying_it() -> Result<(), PinError> {
     let schema = schema()?;
     for (axis, key) in [
-        ("observed_at", "observed_at desc, recorded_at desc, write_id desc, write_ordinal desc"),
+        ("observed_at", "observed_at desc, write_id desc, write_ordinal desc"),
         ("created_at", "created_at"),
         ("modified_at", "modified_at"),
-        ("deleted_at", "deleted_at desc, recorded_at desc, write_id desc, write_ordinal desc"),
+        ("deleted_at", "deleted_at desc, write_id desc, write_ordinal desc"),
     ] {
         let name = format!("idx_attribute_history_stream_{axis}");
         pretty_assertions::assert_eq!(index(&schema, &name)?.table(), "attribute_history");

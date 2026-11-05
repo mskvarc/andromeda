@@ -174,14 +174,15 @@ pub(crate) fn project_whole_streams(select: &mut SelectStatement) {
 }
 
 /// Order the history rows under `rows` as the reconstruction reads them: by
-/// attribute, then on the axis, ties broken on the hypertable's unique key.
+/// attribute, then on the axis, ties broken on the write that recorded each
+/// row: write ids rise in the order their writes commit to a stream, and the
+/// ordinal tells apart the rows of one write.
 pub(crate) fn in_rendering_order(select: &mut SelectStatement, rows: impl IntoIden, axis: AttributeHistory) {
     let rows = rows.into_iden();
     // clone: every ordering key names the rows' alias.
     select
         .order_by((rows.clone(), Alias::new("attribute_name")), Order::Asc)
         .order_by((rows.clone(), axis), Order::Asc)
-        .order_by((rows.clone(), AttributeHistory::RecordedAt), Order::Asc)
         .order_by((rows.clone(), AttributeHistory::WriteId), Order::Asc)
         .order_by((rows, AttributeHistory::WriteOrdinal), Order::Asc);
 }
@@ -214,14 +215,14 @@ pub(crate) fn walked_history(
 }
 
 /// Order `select` most recent first on `instant` and then on the columns
-/// under `alias`, ties broken on the hypertable's unique key so two instances
-/// sharing an instant are kept or dropped the same way on every execution.
+/// under `alias`, ties broken on the write that recorded each row, the latest
+/// commit first, so two instances sharing an instant are kept or dropped the
+/// same way on every execution. A write id and its ordinal name one row.
 fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, instant: SimpleExpr) {
     let alias = alias.into_iden();
     // clone: every ordering key names the alias.
     select
         .order_by_expr(instant, Order::Desc)
-        .order_by((alias.clone(), AttributeHistory::RecordedAt), Order::Desc)
         .order_by((alias.clone(), AttributeHistory::WriteId), Order::Desc)
         .order_by((alias, AttributeHistory::WriteOrdinal), Order::Desc);
 }
