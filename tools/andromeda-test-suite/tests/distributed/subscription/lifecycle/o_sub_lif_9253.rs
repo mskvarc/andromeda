@@ -52,7 +52,6 @@ async fn o_sub_lif_9253_an_expired_subscription_deletes_the_copy_placed_at_its_s
             source_answer::status(StatusCode::NO_CONTENT),
         )
         .await?;
-    let in_4_seconds: DateTime = (Utc::now() + TimeDelta::seconds(4)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let registration = CSourceRegistration::builder(source.endpoint("a")?)
         .id(registration_id.clone())
         .information([RegistrationInfo::builder()
@@ -62,6 +61,9 @@ async fn o_sub_lif_9253_an_expired_subscription_deletes_the_copy_placed_at_its_s
         .operations([DistributedOperation::CreateSubscription, DistributedOperation::DeleteSubscription])
         .build()?;
     broker.registrations().register(&registration).send().await?;
+    // Taken once the registration has answered: a registration write waits for the tenant's earlier ones, so its
+    // latency is no part of the four seconds the subscription is created to outlive.
+    let in_4_seconds: DateTime = (Utc::now() + TimeDelta::seconds(4)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([vehicle_type.as_str()])
