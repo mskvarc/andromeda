@@ -20,6 +20,7 @@ use headers::HeaderMapExt;
 use reqwest::header::HeaderMap;
 use std::{
     error::Error,
+    io,
     iter,
     time::{Duration, Instant},
 };
@@ -97,47 +98,46 @@ fn send_failure(endpoint: Url, deadline: Duration, error: reqwest::Error) -> Tra
 /// request for url ..."); whether the connection was refused, reset, or closed
 /// before a response is said by the errors below it, so the `Display` of every
 /// transport failure carrying a `reqwest` error renders the whole chain.
-pub(crate) fn error_chain_text(error: &(dyn Error + 'static)) -> String {
-    iter::successors(Some(error), |&current| current.source())
-        .map(ToString::to_string)
+pub(crate) fn error_chain_text(error: &impl Error) -> String {
+    iter::once(error.to_string())
+        .chain(iter::successors(error.source(), |&cause| cause.source()).map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(": ")
 }
 
-/// Whether a send failure is a TLS handshake or certificate failure.
+/// Whether the causes below a send failure name a TLS handshake or certificate
+/// failure.
 ///
 /// `reqwest` exposes no `is_tls()` and abstracts the TLS backend away, so the
 /// classification walks the typed error source chain, the same idiom
 /// `reqwest::Error::is_connect` uses internally to find a `hyper` error. This
 /// build links `reqwest` against `rustls`, so a handshake or certificate failure
-/// surfaces as a [`rustls::Error`] somewhere below `reqwest`'s own error;
-/// downcasting to it is immune to changes in the spelling and capitalisation of
-/// the message. The text pass is only a backstop for a wrapping that erases the
-/// type before it reaches the chain, and the unit tests pin both paths.
-fn chain_indicates_tls(error: &(dyn Error + 'static)) -> bool {
-    let mut current = Some(error);
-    while let Some(source) = current {
-        if source.downcast_ref::<rustls::Error>().is_some() {
-            return true;
-        }
-        current = source.source();
-    }
-    chain_mentions_tls_terms(error)
+/// surfaces as a [`rustls::Error`] below `reqwest`'s own error, either as a
+/// cause of its own or as the error an [`io::Error`] carries: `io::Error`
+/// reports the causes of the error it carries, not that error itself, so the
+/// carried errors are read through [`io::Error::get_ref`]. Downcasting is immune
+/// to changes in the spelling and capitalisation of the message. The text pass
+/// is only a backstop for a wrapping that erases the type before it reaches the
+/// chain, and the unit tests pin both paths.
+fn chain_indicates_tls(error: &impl Error) -> bool {
+    iter::successors(error.source(), |&cause| cause.source())
+        .any(|cause| cause.is::<rustls::Error>() || cause.downcast_ref::<io::Error>().is_some_and(carries_tls_failure))
+        || chain_mentions_tls_terms(error)
 }
 
-/// Backstop for [`chain_indicates_tls`]: a case-insensitive scan of the source
-/// chain for the vocabulary `rustls` uses, for the case where the typed error is
-/// wrapped into an opaque form before it reaches the chain.
-fn chain_mentions_tls_terms(error: &(dyn Error + 'static)) -> bool {
-    let mut current = Some(error);
-    while let Some(source) = current {
-        let text = source.to_string().to_ascii_lowercase();
-        if text.contains("tls") || text.contains("certificate") || text.contains("handshake") || text.contains("rustls") {
-            return true;
-        }
-        current = source.source();
-    }
-    false
+/// Whether `error` carries a [`rustls::Error`], directly or through further
+/// I/O errors that carry one another.
+fn carries_tls_failure(error: &io::Error) -> bool {
+    iter::successors(error.get_ref(), |carried| carried.downcast_ref::<io::Error>().and_then(io::Error::get_ref))
+        .any(|carried| carried.downcast_ref::<rustls::Error>().is_some())
+}
+
+/// Backstop for [`chain_indicates_tls`]: a case-insensitive scan of the chain's
+/// messages for the vocabulary `rustls` uses, for the case where the typed error
+/// is wrapped into an opaque form before it reaches the chain.
+fn chain_mentions_tls_terms(error: &impl Error) -> bool {
+    let text = error_chain_text(error).to_ascii_lowercase();
+    ["tls", "certificate", "handshake"].iter().any(|term| text.contains(term))
 }
 
 #[async_trait]
@@ -554,27 +554,26 @@ mod tests {
 
     #[test]
     fn a_rustls_error_anywhere_in_the_chain_is_classified_as_tls_by_type() {
-        // The typed path: a rustls error nested below an io::Error, found by
-        // downcast rather than by reading its message.
-        let rustls_error = rustls::Error::General("peer sent no certificates".to_string());
-        let wrapped = Error::other(rustls_error);
-        assert!(chain_indicates_tls(&wrapped), "a rustls::Error in the chain is a TLS error");
+        // The message carries none of the backstop's vocabulary, so only the
+        // downcast through the io::Error can classify it.
+        let carried = SendingRequest(Error::other(rustls::Error::General("peer closed early".to_string())));
+        assert!(chain_indicates_tls(&carried), "a rustls::Error an io::Error carries is a TLS error");
     }
 
     #[test]
     fn a_type_erased_tls_failure_is_still_caught_by_the_text_backstop() {
         // rustls capitalises these; if the type is erased before reaching the
         // chain, the case-insensitive backstop still recognises the vocabulary.
-        let handshake = Error::other("received fatal alert: HandshakeFailure");
+        let handshake = SendingRequest(Error::other("received fatal alert: HandshakeFailure"));
         assert!(chain_indicates_tls(&handshake), "a rustls HandshakeFailure is a TLS error");
 
-        let certificate = Error::other("invalid peer certificate: Expired");
+        let certificate = SendingRequest(Error::other("invalid peer certificate: Expired"));
         assert!(chain_indicates_tls(&certificate), "a certificate rejection is a TLS error");
     }
 
     #[test]
     fn a_plain_connection_refusal_is_not_classified_as_tls() {
-        let refused = Error::new(ErrorKind::ConnectionRefused, "Connection refused (os error 61)");
+        let refused = SendingRequest(Error::new(ErrorKind::ConnectionRefused, "Connection refused (os error 61)"));
         assert!(!chain_indicates_tls(&refused), "a connection refusal is not a TLS error");
     }
 

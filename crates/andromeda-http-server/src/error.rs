@@ -1,5 +1,6 @@
 //! Typed listener and connection-serving failures.
 
+use humantime::format_duration;
 use std::{io, net::SocketAddr, time::Duration};
 
 /// Failures owned by generic HTTP server execution.
@@ -22,7 +23,7 @@ pub enum HttpServerError {
         source: io::Error,
     },
     /// Accepted connections did not drain before the configured deadline.
-    #[error("HTTP connections did not drain within {deadline:?}")]
+    #[error("HTTP connections did not drain within {}", format_duration(*.deadline))]
     DrainDeadlineExceeded {
         /// Configured maximum drain duration.
         deadline: Duration,

@@ -70,7 +70,7 @@ impl ConnectionOutcome {
             if let Some(quic) = cause.downcast_ref::<ConnectionError>() {
                 return ConnectionOutcome::of_quic_failure(quic);
             }
-            if is_tls_failure(cause) {
+            if cause.is::<rustls::Error>() || cause.downcast_ref::<io::Error>().is_some_and(carries_tls_failure) {
                 return ConnectionOutcome::Refused;
             }
             if let Some(failure) = cause.downcast_ref::<reqwest::Error>() {
@@ -86,19 +86,17 @@ impl ConnectionOutcome {
     }
 }
 
-/// Whether `cause` is a TLS failure: the TLS library's own error, or an I/O error carrying it, which may itself be
-/// carried by another I/O error. An I/O error's source is the source of the error it carries, never that error, so
-/// the carried errors are not among the causes the source chain lists.
-fn is_tls_failure(cause: &(dyn Error + 'static)) -> bool {
-    let carried = cause.downcast_ref::<io::Error>().and_then(io::Error::get_ref);
-    cause.is::<rustls::Error>()
-        || iter::successors(carried, |&error| error.downcast_ref::<io::Error>().and_then(io::Error::get_ref))
-            .any(<dyn Error + Send + Sync>::is::<rustls::Error>)
+/// Whether the I/O error `error` carries the TLS library's own error, directly or through further I/O errors that
+/// carry one another. An I/O error's source is the source of the error it carries, never that error, so the carried
+/// errors are not among the causes the source chain lists.
+fn carries_tls_failure(error: &io::Error) -> bool {
+    iter::successors(error.get_ref(), |carried| carried.downcast_ref::<io::Error>().and_then(io::Error::get_ref))
+        .any(|carried| carried.downcast_ref::<rustls::Error>().is_some())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::connection_outcome::{ConnectionOutcome, is_tls_failure};
+    use crate::connection_outcome::{ConnectionOutcome, carries_tls_failure};
     use googletest::prelude::*;
     use ngsi_ld::client::{ClientError, ReqwestError};
     use quinn::ConnectionError;
@@ -187,11 +185,11 @@ mod tests {
     fn a_tls_error_carried_by_two_io_errors_is_a_tls_failure() {
         let carried = io::Error::new(ErrorKind::InvalidData, rustls::Error::General("refused".to_owned()));
         let outer = io::Error::new(ErrorKind::InvalidData, carried);
-        expect_that!(is_tls_failure(&outer), eq(true));
+        expect_that!(carries_tls_failure(&outer), eq(true));
     }
 
     #[gtest]
     fn a_refused_tcp_connection_is_no_tls_failure() {
-        expect_that!(is_tls_failure(&io::Error::from(ErrorKind::ConnectionRefused)), eq(false));
+        expect_that!(carries_tls_failure(&io::Error::from(ErrorKind::ConnectionRefused)), eq(false));
     }
 }
