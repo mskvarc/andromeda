@@ -12,7 +12,7 @@ use crate::{
 /// A request needs a positive acquire deadline, and a write
 /// reserve that leaves reads one. A name cache without capacity reads every
 /// name from its table, and a zero idle timeout evicts every name the moment
-/// it is cached.
+/// it is cached. A repack ceiling of no bytes would rule out every table.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Positive(ConfigKey::DatabaseAcquireTimeout),
@@ -23,6 +23,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Positive(ConfigKey::DatabaseNameCacheMaxSizePerDictionary),
         Rule::Positive(ConfigKey::DatabaseNameCacheIdleEvictionAfter),
+        Rule::Positive(ConfigKey::DatabaseMaintenanceRepackMaxRelationSize),
     ]
     .into_iter()
 }
@@ -68,6 +69,22 @@ mod tests {
         );
         let mut config = BrokerConfig::default();
         config.database.name_cache.idle_eviction_after = Ceiling::Unlimited(Unlimited::Unlimited);
+        assert_accepted(&config);
+    }
+
+    #[test]
+    fn a_repack_ceiling_of_no_bytes_is_refused_and_one_byte_and_unlimited_accepted() {
+        let mut config = BrokerConfig::default();
+        config.database.maintenance.repack.max_relation_size = Ceiling::At(HumanByteSize::b(0));
+        assert_eq!(
+            refusals(&config),
+            [ConfigurationViolation::Zero {
+                key: ConfigKey::DatabaseMaintenanceRepackMaxRelationSize
+            }]
+        );
+        config.database.maintenance.repack.max_relation_size = Ceiling::At(HumanByteSize::b(1));
+        assert_accepted(&config);
+        config.database.maintenance.repack.max_relation_size = Ceiling::Unlimited(Unlimited::Unlimited);
         assert_accepted(&config);
     }
 }

@@ -77,6 +77,22 @@
 -- acted, queued or deferred work without reconstructing it from logs. Each
 -- stays NULL until the target's first sample.
 --
+-- A heap repacked online is a target of its own (targets 46 to 55): its
+-- sample is the heap's and its TOAST table's free space, and its action rows
+-- record the relation's total bytes before and after the repack in
+-- `last_before_bytes` and `last_after_bytes`.
+--
+-- `postgresql_maintenance_repack_runs` holds one row per repack that has
+-- installed its trigger in a tenant database and not yet dropped what it
+-- created: the tenant, the branch (`snapshot_key`, 0 for the live branch),
+-- the target, the OID of the table in the tenant database, the phase the run
+-- reached and when it started and reached that phase. The row is written in
+-- the transaction that installs the trigger and deleted once the run's
+-- objects are dropped, so a row that outlives its run (a broker that stopped
+-- mid-run) tells recovery which table's objects to drop. While no broker
+-- holds the cluster-wide repack lock, every row belongs to a run that is no
+-- longer running.
+--
 -- `postgresql_maintenance_fleet` holds the one row of state that belongs to
 -- the cluster rather than to a tenant. `autovacuum_saturated_passes` counts
 -- the consecutive passes that found every autovacuum worker slot busy; a pass
@@ -89,7 +105,8 @@
 --     8 global-lock-unavailable, 9 no-tenant, 10 tenant-unavailable,
 --     11 schema-behind, 12 capability-unavailable, 13 idle, 14 probed,
 --     15 queued, 16 would-act, 17 deferred, 18 acted, 19 action-failed,
---     20 cancelled
+--     20 cancelled, 21 missing-pg-repack, 22 unsupported-pg-repack,
+--     23 missing-repack-right
 --   target: 1 pk_ca_grain, 2 idx_ca_value_number,
 --     3 idx_ca_value_string, 4 idx_ca_value_string_trgm,
 --     5 idx_ca_value_boolean, 6 idx_ca_value_date_time, 7 idx_ca_value_uri,
@@ -118,13 +135,24 @@
 --     42 idx_temporal_attribute_streams_value_extent,
 --     43 idx_temporal_attribute_streams_attribute_name_key_shape_mask,
 --     44 attribute_history_rowstore,
---     45 idx_notification_deliveries_subscription_claim
---   last_action_result: 1 succeeded, 2 failed, 3 ineffective
+--     45 idx_notification_deliveries_subscription_claim,
+--     46 current_attributes_repack, 47 entities_repack,
+--     48 subscription_delivery_state_repack,
+--     49 notification_events_repack, 50 notification_deliveries_repack,
+--     51 pending_side_effects_repack, 52 temporal_append_intents_repack,
+--     53 snapshot_notification_outbox_repack, 54 entity_search_repack,
+--     55 temporal_attribute_streams_repack
+--   last_action_result: 1 succeeded, 2 failed, 3 ineffective,
+--     4 repack-abandoned-lock-wait, 5 repack-not-converging,
+--     6 repack-yielded, 7 repack-recovered
 --   last_decision: 1 act, 2 queued, 3 would-act, 4 relation-too-small,
 --     5 reclaim-too-small, 6 below-threshold, 7 consecutive-samples,
 --     8 cooldown, 9 active-backend-ratio, 10 long-transaction,
 --     11 active-maintenance, 12 waiting-relation-lock, 13 paired-queued,
---     14 horizon-held
+--     14 horizon-held, 15 vacuum-pending, 16 relation-too-large,
+--     17 replication-retention, 18 snapshot-lifetime-short,
+--     19 repack-leftover, 20 freeze-pressure, 21 repack-running
+--   phase: 1 setup, 2 copy, 3 index-build, 4 replay, 5 swap, 6 drop
 -- ============================================================================
 create table postgresql_maintenance_tenants (
     tenant_key bigint not null,
@@ -137,7 +165,7 @@ create table postgresql_maintenance_tenants (
     constraint fk_postgresql_maintenance_tenants_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_tenants_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_tenants_tuple_changes_non_negative check (last_tuple_changes is null or last_tuple_changes >= 0),
-    constraint chk_postgresql_maintenance_tenants_last_result check (last_result is null or last_result between 1 and 20)
+    constraint chk_postgresql_maintenance_tenants_last_result check (last_result is null or last_result between 1 and 23)
 );
 
 create table postgresql_maintenance_targets (
@@ -169,8 +197,8 @@ create table postgresql_maintenance_targets (
     constraint pk_postgresql_maintenance_targets primary key (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_snapshot_key_non_negative check (snapshot_key >= 0),
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 45),
-    constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 55),
+    constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 7),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
@@ -180,7 +208,7 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_analyzed_rows check ((analyzed_rows is null) = (rows_analyzed_at is null) and (analyzed_rows is null or analyzed_rows >= 0)),
     constraint chk_postgresql_maintenance_targets_sample_non_negative check ((last_relation_bytes is null or last_relation_bytes >= 0) and (last_reclaimable_bytes is null or last_reclaimable_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_percentages check ((last_degraded_percent is null or last_degraded_percent between 0 and 100) and (last_threshold_percent is null or last_threshold_percent between 0 and 100)),
-    constraint chk_postgresql_maintenance_targets_last_decision check (last_decision is null or last_decision between 1 and 14)
+    constraint chk_postgresql_maintenance_targets_last_decision check (last_decision is null or last_decision between 1 and 21)
 );
 
 create table postgresql_maintenance_fleet (
@@ -189,4 +217,21 @@ create table postgresql_maintenance_fleet (
     constraint pk_postgresql_maintenance_fleet primary key (singleton),
     constraint chk_postgresql_maintenance_fleet_singleton check (singleton),
     constraint chk_postgresql_maintenance_fleet_saturated_passes_non_negative check (autovacuum_saturated_passes >= 0)
+);
+
+create table postgresql_maintenance_repack_runs (
+    tenant_key bigint not null,
+    snapshot_key bigint not null,
+    relid bigint not null,
+    started_at timestamptz not null,
+    phase_changed_at timestamptz not null,
+    target smallint not null,
+    phase smallint not null,
+    constraint pk_postgresql_maintenance_repack_runs primary key (tenant_key, snapshot_key, target),
+    constraint fk_postgresql_maintenance_repack_runs_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
+    constraint chk_postgresql_maintenance_repack_runs_snapshot_key check (snapshot_key >= 0),
+    constraint chk_postgresql_maintenance_repack_runs_relid check (relid between 1 and 4294967295),
+    constraint chk_postgresql_maintenance_repack_runs_target check (target between 46 and 55),
+    constraint chk_postgresql_maintenance_repack_runs_phase check (phase between 1 and 6),
+    constraint chk_postgresql_maintenance_repack_runs_phase_order check (phase_changed_at >= started_at)
 );

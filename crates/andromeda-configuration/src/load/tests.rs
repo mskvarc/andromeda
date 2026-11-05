@@ -4,6 +4,7 @@ mod key_tree;
 
 use crate::{
     broker_config::BrokerConfig,
+    human_byte_size::HumanByteSize,
     load::{ListenerOverrides, LoadError, LoadedConfiguration, PRECEDENCE, default_configuration_file, load, resolve_configuration_file},
     redact::{redacted_json, redacted_toml},
     reference::template::configuration_template,
@@ -227,6 +228,36 @@ fn maintenance_modes_and_profiles_load_from_the_database_table() {
         assert_eq!(config.database.maintenance.profile.to_string(), profile);
     }
     assert!(load_file("[database.maintenance]\nprofile = \"aggressive\"\n").is_err());
+}
+
+#[test]
+#[serial]
+fn repack_modes_and_an_unlimited_relation_size_load_from_the_maintenance_table() {
+    for mode in ["disabled", "observe", "automatic"] {
+        let config = load_file(&format!(
+            "[database.maintenance.repack]\nmode = \"{mode}\"\nmax_relation_size = \"unlimited\"\n"
+        ))
+        .expect("repack config should load");
+        pretty_assertions::assert_eq!(config.database.maintenance.repack.mode.to_string(), mode);
+        pretty_assertions::assert_eq!(config.database.maintenance.repack.max_relation_size.limit(), None);
+    }
+    let sized = load_file("[database.maintenance.repack]\nmax_relation_size = \"16 GiB\"\n").expect("repack config should load");
+    pretty_assertions::assert_eq!(
+        sized.database.maintenance.repack.max_relation_size.limit().map(HumanByteSize::as_u64),
+        Some(16 << 30)
+    );
+    pretty_assertions::assert_eq!(sized.database.maintenance.repack.mode.to_string(), "observe");
+}
+
+#[test]
+#[serial]
+fn a_repack_relation_size_of_no_bytes_is_refused_as_the_file_loads() {
+    pretty_assertions::assert_eq!(
+        violations_of("[database.maintenance.repack]\nmax_relation_size = 0\n"),
+        Some(vec![ConfigurationViolation::Zero {
+            key: ConfigKey::DatabaseMaintenanceRepackMaxRelationSize
+        }])
+    );
 }
 
 /// The delivery lease must leave its margin over one attempt's request
@@ -457,6 +488,7 @@ an_unknown_key_is_ignored_and_reported_with_its_path! {
     an_unknown_database_key_is_ignored: "database",
     an_unknown_database_name_cache_key_is_ignored: "database.name_cache",
     an_unknown_database_maintenance_key_is_ignored: "database.maintenance",
+    an_unknown_database_maintenance_repack_key_is_ignored: "database.maintenance.repack",
     an_unknown_tenancy_key_is_ignored: "tenancy",
     an_unknown_tenancy_databases_key_is_ignored: "tenancy.databases",
     an_unknown_tenancy_default_tenant_key_is_ignored: "tenancy.default_tenant",

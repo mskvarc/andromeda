@@ -117,6 +117,20 @@ pub enum CatalogCounter {
     ChunkIndexBytes,
     /// Entries `pg_stat_statements` evicted, or the entries it may hold.
     StatementEvictions,
+    /// The OID of a heap or of its TOAST table.
+    RelationOid,
+    /// Bytes `pgstattuple_approx` estimates a heap or a TOAST table has free.
+    FreeSpaceBytes,
+    /// Dead tuples' share of a heap or a TOAST table, as a whole percentage.
+    DeadPercent,
+    /// Bytes of a heap and its TOAST table, its indexes excluded.
+    TableBytes,
+    /// Log rows one replay of a repack applied.
+    ReplayedRows,
+    /// The process ID of a backend.
+    BackendPid,
+    /// Seconds a backend has waited for a lock.
+    LockWaitSeconds,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.

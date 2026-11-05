@@ -33,6 +33,13 @@ impl RecordedDecision {
             RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)) => MaintenanceDecisionCode::WaitingRelationLock,
             RecordedDecision::PairedQueued => MaintenanceDecisionCode::PairedQueued,
             RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::HorizonHeld)) => MaintenanceDecisionCode::HorizonHeld,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::VacuumPending)) => MaintenanceDecisionCode::VacuumPending,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RelationTooLarge)) => MaintenanceDecisionCode::RelationTooLarge,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::ReplicationRetention)) => MaintenanceDecisionCode::ReplicationRetention,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::SnapshotLifetimeShort)) => MaintenanceDecisionCode::SnapshotLifetimeShort,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RepackLeftover)) => MaintenanceDecisionCode::RepackLeftover,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::FreezePressure)) => MaintenanceDecisionCode::FreezePressure,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RepackRunning)) => MaintenanceDecisionCode::RepackRunning,
         }
     }
 }
@@ -47,7 +54,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     /// Every decision the controller can record, in registry order.
-    const EVERY_DECISION: [RecordedDecision; 14] = [
+    const EVERY_DECISION: [RecordedDecision; 21] = [
         RecordedDecision::Policy(PolicyDecision::Act),
         RecordedDecision::Policy(PolicyDecision::Queued),
         RecordedDecision::Policy(PolicyDecision::WouldAct),
@@ -62,6 +69,13 @@ mod tests {
         RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)),
         RecordedDecision::PairedQueued,
         RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::HorizonHeld)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::VacuumPending)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RelationTooLarge)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::ReplicationRetention)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::SnapshotLifetimeShort)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RepackLeftover)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::FreezePressure)),
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::RepackRunning)),
     ];
 
     /// The mapping is one-to-one and onto: every decision has its own number

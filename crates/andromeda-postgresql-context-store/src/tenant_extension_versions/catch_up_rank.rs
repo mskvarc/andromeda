@@ -1,11 +1,13 @@
 //! Which tenants behind the server's extension versions a wake pass loads, and
 //! in what order.
 //!
-//! A tenant is owed a load when one of its extensions is installed below the
-//! version the server ships and its last open did not already try to update
-//! against that version. One attempt per server version keeps a tenant whose
-//! role may not update an extension from being loaded on every pass; a newer
-//! server version earns it another.
+//! A tenant is owed a load when one of its extensions is short of the version
+//! the server ships and its last open did not already try against that
+//! version. An installed extension is short when it is below the shipped
+//! version; an absent one only when the open installs it (`pg_repack`), not
+//! when the migrations create it. One attempt per server version keeps a
+//! tenant whose role may not update or install an extension from being loaded
+//! on every pass; a newer server version earns it another.
 //!
 //! The order is furthest behind first. A tenant no open has recorded yet comes
 //! before every recorded one: each recorded version was written by a broker
@@ -13,10 +15,18 @@
 //! a broker ran, and is at least as far behind. Among recorded tenants the
 //! older `TimescaleDB` goes first, since its library is the one a later image
 //! stops shipping, which leaves the tenant unopenable; then the older
-//! `PostGIS`; then the tenant with more committed transactions, whose first
-//! request is the likelier to come soon.
+//! `PostGIS`; then the older `pg_repack`, an absent one first; then the tenant
+//! with more committed transactions, whose first request is the likelier to
+//! come soon.
 
-use crate::schema_contract::server_requirements::{ExtensionPresence, ExtensionVersion};
+use crate::{
+    recreated_extension::RecreatedExtension,
+    schema_contract::{
+        server_requirements::{ExtensionPresence, ExtensionVersion},
+        versioned_extension::VersionedExtension,
+    },
+    tracked_extension::{AbsentInstall, TrackedExtension},
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use std::cmp::Reverse;
 
@@ -41,23 +51,28 @@ pub(super) struct ExtensionLag {
 }
 
 impl ExtensionLag {
-    /// Whether an open is owed to update this extension.
+    /// Whether an open is owed to bring this extension to the shipped version,
+    /// where `absent_install` says what creates it while it is absent.
     ///
-    /// An extension the server ships none of has nothing to update to, and one
-    /// the database does not hold is created at the shipped version by the
-    /// migrations; an unrecorded extension may be either, and is owed the open
-    /// that finds out.
-    fn owes_attempt(self) -> bool {
+    /// An extension the server ships none of has nothing to reach. One the
+    /// database does not hold is owed an open only when the open installs it,
+    /// once per shipped version; the migrations create the others. An
+    /// unrecorded extension may be anything, and is owed the open that finds
+    /// out.
+    fn owes_attempt(self, absent_install: AbsentInstall) -> bool {
         match (self.recorded, self.shipped) {
-            (_, None)
-            | (
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (
                 Some(RecordedExtension {
                     installed: ExtensionPresence::Absent,
-                    ..
+                    reconciled_against,
                 }),
-                Some(_),
-            ) => false,
-            (None, Some(_)) => true,
+                Some(shipped),
+            ) => match absent_install {
+                AbsentInstall::CreatedByMigrations => false,
+                AbsentInstall::InstalledByOpen => reconciled_against != Some(shipped),
+            },
             (
                 Some(RecordedExtension {
                     installed: ExtensionPresence::Installed(installed),
@@ -95,6 +110,8 @@ pub(super) struct CatchUpCandidate {
     pub(super) timescaledb: ExtensionLag,
     /// Its `PostGIS`.
     pub(super) postgis: ExtensionLag,
+    /// Its `pg_repack`.
+    pub(super) pg_repack: ExtensionLag,
     /// The transactions its database committed, as `pg_stat_database` counts
     /// them, zero when the statistics hold no row for it.
     pub(super) committed_transactions: i64,
@@ -119,19 +136,31 @@ struct CatchUpRank {
     timescaledb: Option<ExtensionVersion>,
     /// Then the older `PostGIS`.
     postgis: Option<ExtensionVersion>,
+    /// Then the older `pg_repack`.
+    pg_repack: Option<ExtensionVersion>,
     /// Then the busier database.
     committed_transactions: Reverse<i64>,
 }
 
 impl CatchUpCandidate {
-    /// Whether an open is owed to update any of its extensions.
+    /// Each extension's lag beside the extension it is the lag of.
+    const fn lags(&self) -> [(TrackedExtension, ExtensionLag); 3] {
+        [
+            (TrackedExtension::Updated(VersionedExtension::TimescaleDb), self.timescaledb),
+            (TrackedExtension::Updated(VersionedExtension::PostGis), self.postgis),
+            (TrackedExtension::Recreated(RecreatedExtension::PgRepack), self.pg_repack),
+        ]
+    }
+
+    /// Whether an open is owed to bring any of its extensions to the shipped
+    /// version.
     fn owes_attempt(&self) -> bool {
-        self.timescaledb.owes_attempt() || self.postgis.owes_attempt()
+        self.lags().into_iter().any(|(extension, lag)| lag.owes_attempt(extension.absent_install()))
     }
 
     /// Where the candidate sorts.
-    const fn rank(&self) -> CatchUpRank {
-        let recording = if self.timescaledb.recorded.is_some() && self.postgis.recorded.is_some() {
+    fn rank(&self) -> CatchUpRank {
+        let recording = if self.lags().iter().all(|(_, lag)| lag.recorded.is_some()) {
             Recording::Recorded
         } else {
             Recording::Unrecorded
@@ -140,6 +169,7 @@ impl CatchUpCandidate {
             recording,
             timescaledb: self.timescaledb.installed(),
             postgis: self.postgis.installed(),
+            pg_repack: self.pg_repack.installed(),
             committed_transactions: Reverse(self.committed_transactions),
         }
     }
@@ -167,6 +197,7 @@ mod tests {
 
     const TIMESCALEDB_SHIPPED: ExtensionVersion = ExtensionVersion::new(2, 31, 0);
     const POSTGIS_SHIPPED: ExtensionVersion = ExtensionVersion::new(3, 6, 0);
+    const PG_REPACK_SHIPPED: ExtensionVersion = ExtensionVersion::new(1, 5, 3);
 
     /// An extension recorded at `installed` by an open that ran against
     /// `reconciled_against`, while the server ships `shipped`.
@@ -196,7 +227,20 @@ mod tests {
             name: TenantName::try_from(name.to_owned()).expect("a valid tenant name"),
             timescaledb,
             postgis,
+            pg_repack: current(PG_REPACK_SHIPPED),
             committed_transactions,
+        }
+    }
+
+    /// `pg_repack` recorded absent by an open that ran against
+    /// `reconciled_against`, while the server ships it.
+    const fn repack_absent(reconciled_against: ExtensionVersion) -> ExtensionLag {
+        ExtensionLag {
+            recorded: Some(RecordedExtension {
+                installed: ExtensionPresence::Absent,
+                reconciled_against: Some(reconciled_against),
+            }),
+            shipped: Some(PG_REPACK_SHIPPED),
         }
     }
 
@@ -310,5 +354,74 @@ mod tests {
             candidate("absent", current(TIMESCALEDB_SHIPPED), absent, 1),
         ]);
         assert_eq!(order, Vec::<TenantName>::new());
+    }
+
+    #[test]
+    fn a_tenant_whose_pg_repack_is_a_patch_behind_the_image_is_listed() {
+        let order = catch_up_order(vec![CatchUpCandidate {
+            pg_repack: behind(ExtensionVersion::new(1, 5, 2), PG_REPACK_SHIPPED),
+            ..candidate("repack", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 0)
+        }]);
+        assert_eq!(names(&order), ["repack"]);
+    }
+
+    #[test]
+    fn a_tenant_whose_pg_repack_is_absent_and_never_tried_against_the_shipped_version_is_listed() {
+        let order = catch_up_order(vec![
+            CatchUpCandidate {
+                pg_repack: repack_absent(ExtensionVersion::new(1, 5, 2)),
+                ..candidate("tried-before", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 0)
+            },
+            CatchUpCandidate {
+                pg_repack: ExtensionLag {
+                    recorded: None,
+                    shipped: Some(PG_REPACK_SHIPPED),
+                },
+                ..candidate("unrecorded", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 0)
+            },
+        ]);
+        assert_eq!(names(&order), ["unrecorded", "tried-before"]);
+    }
+
+    #[test]
+    fn a_tenant_whose_pg_repack_stayed_absent_against_the_shipped_version_or_is_not_shipped_is_not_listed() {
+        let order = catch_up_order(vec![
+            CatchUpCandidate {
+                pg_repack: repack_absent(PG_REPACK_SHIPPED),
+                ..candidate("refused", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 1)
+            },
+            CatchUpCandidate {
+                pg_repack: ExtensionLag {
+                    recorded: Some(RecordedExtension {
+                        installed: ExtensionPresence::Absent,
+                        reconciled_against: None,
+                    }),
+                    shipped: None,
+                },
+                ..candidate("unshipped", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 1)
+            },
+            CatchUpCandidate {
+                pg_repack: recorded(ExtensionVersion::new(1, 5, 2), PG_REPACK_SHIPPED, PG_REPACK_SHIPPED),
+                ..candidate("deferred", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 1)
+            },
+        ]);
+        assert_eq!(order, Vec::<TenantName>::new());
+    }
+
+    #[test]
+    fn a_tenant_behind_on_postgis_comes_before_one_behind_only_on_pg_repack() {
+        let order = catch_up_order(vec![
+            CatchUpCandidate {
+                pg_repack: behind(ExtensionVersion::new(1, 4, 0), PG_REPACK_SHIPPED),
+                ..candidate("repack", current(TIMESCALEDB_SHIPPED), current(POSTGIS_SHIPPED), 9_000)
+            },
+            candidate(
+                "postgis",
+                current(TIMESCALEDB_SHIPPED),
+                behind(ExtensionVersion::new(3, 5, 0), POSTGIS_SHIPPED),
+                0,
+            ),
+        ]);
+        assert_eq!(names(&order), ["postgis", "repack"]);
     }
 }

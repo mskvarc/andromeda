@@ -1,5 +1,6 @@
 //! Configuration selecting whether and how PostgreSQL maintenance runs.
 
+use crate::{human_byte_size::HumanByteSize, schema::ceiling::Ceiling};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -37,6 +38,37 @@ pub enum MaintenanceProfile {
     Responsive,
 }
 
+/// Whether and on which tables the controller repacks online.
+///
+/// A repack copies a table and its indexes into new files while the table
+/// stays in use, then swaps them in, so the database needs free disk of up to
+/// twice the table's size while it runs. SQL cannot read filesystem free
+/// space, so the default only reports the repacks the controller would run.
+#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema, Debug, Eq, PartialEq)]
+#[schemars(description = "Online repacks of bloated tables, which rewrite a table and its indexes while it stays in use.")]
+#[schemars(deny_unknown_fields)]
+pub struct RepackConfig {
+    /// Whether repacks are off, only reported, or run. The stricter of this
+    /// and [`MaintenanceConfig::mode`] applies.
+    #[schemars(
+        description = "Whether the controller only reports the repacks it would run, runs them, or neither. The stricter of this and `database.maintenance.mode` applies. A repack copies the table online, so the database needs free disk of up to twice the table's size, which the broker cannot measure. Repacks are only reported by default, so their decisions can be checked against the free disk before they run."
+    )]
+    pub mode: MaintenanceMode,
+    /// The largest table, heap plus TOAST, the controller repacks, in
+    /// human-readable form (`"4 GiB"`), or `"unlimited"`.
+    #[schemars(description = "The largest table, its heap plus its TOAST, the controller repacks, or `\"unlimited\"` to repack a table of any size.")]
+    pub max_relation_size: Ceiling<HumanByteSize>,
+}
+
+impl Default for RepackConfig {
+    fn default() -> RepackConfig {
+        RepackConfig {
+            mode: MaintenanceMode::Observe,
+            max_relation_size: Ceiling::At(HumanByteSize::gib(4)),
+        }
+    }
+}
+
 /// Adaptive PostgreSQL maintenance configuration.
 #[derive(Clone, Copy, Deserialize, Serialize, Default, JsonSchema, Debug, Eq, PartialEq)]
 #[schemars(description = "Adaptive PostgreSQL inspection and maintenance of the tenant databases.")]
@@ -50,18 +82,60 @@ pub struct MaintenanceConfig {
     /// Fixed threshold and cadence profile.
     #[schemars(description = "How often the controller inspects, and how much evidence it needs before it acts.")]
     pub profile: MaintenanceProfile,
+    /// Online repacks of bloated tables.
+    #[schemars(description = "Online repacks of bloated tables.")]
+    pub repack: RepackConfig,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile};
+    use crate::{
+        human_byte_size::HumanByteSize,
+        schema::{
+            ceiling::{Ceiling, Unlimited},
+            database::maintenance::{MaintenanceConfig, MaintenanceMode, MaintenanceProfile, RepackConfig},
+        },
+    };
     use pretty_assertions::assert_eq;
+    use toml::de::Error;
 
     #[test]
     fn omitted_maintenance_configuration_is_automatic_and_conservative() {
         let config = MaintenanceConfig::default();
         assert_eq!(config.mode, MaintenanceMode::Automatic);
         assert_eq!(config.profile, MaintenanceProfile::Conservative);
+    }
+
+    #[test]
+    fn omitted_repack_configuration_only_reports_and_stops_at_four_gibibytes() {
+        let config = MaintenanceConfig::default();
+        assert_eq!(config.repack.mode, MaintenanceMode::Observe);
+        assert_eq!(config.repack.max_relation_size, Ceiling::At(HumanByteSize::gib(4)));
+        assert_eq!(config.repack.max_relation_size.limit().map(HumanByteSize::as_u64), Some(4 << 30));
+    }
+
+    #[test]
+    fn a_repack_table_reads_every_mode_and_an_unlimited_relation_size() -> Result<(), Error> {
+        for (raw, mode) in [
+            ("disabled", MaintenanceMode::Disabled),
+            ("observe", MaintenanceMode::Observe),
+            ("automatic", MaintenanceMode::Automatic),
+        ] {
+            let config: RepackConfig = toml::from_str(&format!("mode = \"{raw}\"\nmax_relation_size = \"unlimited\"\n"))?;
+            assert_eq!(
+                config,
+                RepackConfig {
+                    mode,
+                    max_relation_size: Ceiling::Unlimited(Unlimited::Unlimited),
+                }
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_repack_size_that_is_neither_a_size_nor_unlimited_is_refused() {
+        assert!(toml::from_str::<RepackConfig>("mode = \"observe\"\nmax_relation_size = \"forever\"\n").is_err());
     }
 
     #[test]

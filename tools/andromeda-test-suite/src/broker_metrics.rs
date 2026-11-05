@@ -22,6 +22,9 @@ pub enum BrokerMetric {
     /// The maintenance decisions the broker took, over every outcome.
     #[strum(serialize = "andromeda_postgresql_maintenance_decisions_total")]
     MaintenanceDecisions,
+    /// The maintenance actions the broker ran, by action and outcome.
+    #[strum(serialize = "andromeda_postgresql_maintenance_actions_total")]
+    MaintenanceActions,
     /// The names the loaded tenants' name dictionary caches hold, by dictionary.
     #[strum(serialize = "andromeda_name_dictionary_entries")]
     NameDictionaryEntries,
@@ -64,6 +67,8 @@ pub enum MetricLabel {
     Endpoint,
     /// The size limit a refused notification exceeded: `max-http-body`, `max-mqtt-packet` or `mqtt-server-announced`.
     Limit,
+    /// The maintenance action a series counts: `reindex`, `vacuum`, `analyze`, `recovery`, `recompress` or `repack`.
+    Action,
 }
 
 /// The `tenant` label value of the default tenant's series.

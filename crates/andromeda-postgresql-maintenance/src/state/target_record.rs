@@ -4,7 +4,8 @@ use crate::{
     action_measurement::ActionComparison,
     action_policy::ActionVerdict,
     branch::{Branch, BranchTarget},
-    candidate::{MaintenanceTarget, index_target::IndexTarget},
+    breach_run::{BreachRun, breach_after},
+    candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
     catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
     evidence::{
@@ -12,7 +13,7 @@ use crate::{
         recorded_decision::RecordedDecision,
         target_code::{stored_target, target_of},
     },
-    policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, TargetState, breach_after},
+    policy::{DeferralReason, DegradationSample, PolicyDecision, TargetState},
     state::{
         RegisteredTenant,
         TenantKey,
@@ -102,6 +103,65 @@ pub(crate) async fn index_probe_states(
     tenant: &RegisteredTenant,
     branch: Branch,
 ) -> Result<Vec<IndexProbeState>, MaintenanceError> {
+    let targets = IndexTarget::PROBEABLE.map(MaintenanceTarget::Index);
+    probe_states(connection, tenant, branch, &targets)
+        .await?
+        .into_iter()
+        .map(|(code, last_sampled_at, cooldown_until)| {
+            let MaintenanceTarget::Index(target) = target_of(code) else {
+                return Err(MaintenanceError::ProbeTargetOfAnotherKind(code));
+            };
+            Ok(IndexProbeState {
+                target,
+                last_sampled_at,
+                cooldown_until,
+            })
+        })
+        .collect()
+}
+
+/// Durable ordering and cooldown metadata for one heap's free-space probe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HeapProbeState {
+    /// The heap whose repack target the row is.
+    pub(crate) heap: HeapTarget,
+    /// Most recent free-space sample, absent before the first probe.
+    pub(crate) last_sampled_at: Option<DateTime<Utc>>,
+    /// Cooldown its last repack set, absent before the first one.
+    pub(crate) cooldown_until: Option<DateTime<Utc>>,
+}
+
+/// Read the free-space probe ordering and cooldown state of every repack
+/// target of `branch` in one platform query.
+pub(crate) async fn heap_probe_states(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+) -> Result<Vec<HeapProbeState>, MaintenanceError> {
+    let targets = branch.heaps().map(MaintenanceTarget::Repack).collect::<Vec<_>>();
+    probe_states(connection, tenant, branch, &targets)
+        .await?
+        .into_iter()
+        .map(|(code, last_sampled_at, cooldown_until)| {
+            let MaintenanceTarget::Repack(heap) = target_of(code) else {
+                return Err(MaintenanceError::ProbeTargetOfAnotherKind(code));
+            };
+            Ok(HeapProbeState {
+                heap,
+                last_sampled_at,
+                cooldown_until,
+            })
+        })
+        .collect()
+}
+
+/// The last sample and cooldown of every row of `targets` in `branch`.
+async fn probe_states(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+    targets: &[MaintenanceTarget],
+) -> Result<Vec<(MaintenanceTargetCode, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>, MaintenanceError> {
     let statement = Query::select()
         .columns([
             PostgresqlMaintenanceTargets::Target,
@@ -111,22 +171,16 @@ pub(crate) async fn index_probe_states(
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(branch_rows(branch))
-        .and_where(
-            Expr::col(PostgresqlMaintenanceTargets::Target).is_in(IndexTarget::PROBEABLE.map(|target| stored_target(MaintenanceTarget::Index(target)).code())),
-        )
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).is_in(targets.iter().map(|&target| stored_target(target).code())))
         .to_owned();
     let rows = statement.to_query().fetch_all(connection).await?;
     rows.into_iter()
         .map(|row| {
-            let code = MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?;
-            let MaintenanceTarget::Index(target) = target_of(code) else {
-                return Err(MaintenanceError::ProbeTargetNotAnIndex(code));
-            };
-            Ok(IndexProbeState {
-                target,
-                last_sampled_at: row.try_get(PostgresqlMaintenanceTargets::LastSampledAt.to_string().as_str())?,
-                cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
-            })
+            Ok((
+                MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?,
+                row.try_get(PostgresqlMaintenanceTargets::LastSampledAt.to_string().as_str())?,
+                row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
+            ))
         })
         .collect()
 }
@@ -174,7 +228,11 @@ pub(crate) async fn record_decision(
     statement.to_query().execute(&mut *connection).await?;
     let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => None,
+        MaintenanceTarget::Heap(_)
+        | MaintenanceTarget::Statistics(_)
+        | MaintenanceTarget::Columnstore(_)
+        | MaintenanceTarget::Rowstore(_)
+        | MaintenanceTarget::Repack(_) => None,
     };
     if decision == PolicyDecision::Queued
         && let Some(gin) = paired_gin
@@ -223,7 +281,9 @@ fn action_completion_update(
     comparison: ActionComparison,
 ) -> Result<UpdateStatement, MaintenanceError> {
     let (before_bytes, after_bytes, dead_tuples_before, dead_tuples_after) = match comparison {
-        ActionComparison::Index { before_bytes, after_bytes } | ActionComparison::Rowstore { before_bytes, after_bytes } => (
+        ActionComparison::Index { before_bytes, after_bytes }
+        | ActionComparison::Rowstore { before_bytes, after_bytes }
+        | ActionComparison::Repack { before_bytes, after_bytes } => (
             Some(persisted_count(before_bytes, CatalogCounter::BeforeBytes)?),
             Some(persisted_count(after_bytes, CatalogCounter::AfterBytes)?),
             None,
@@ -289,12 +349,14 @@ fn lapsed_action_update(tenant: TenantKey, target: BranchTarget, reason: Deferra
         .to_owned()
 }
 
-/// Persist a failed action while keeping it pending for a retry once its
-/// backoff ends.
+/// Persist an action that ended without doing its work, a failure or an
+/// abandoned or recovered repack, as `result`, keeping it pending for a
+/// retry once its backoff ends.
 pub(crate) async fn record_action_failure(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     target: BranchTarget,
+    result: ActionResult,
     cooldown_until: DateTime<Utc>,
 ) -> Result<(), MaintenanceError> {
     let statement = Query::update()
@@ -305,7 +367,7 @@ pub(crate) async fn record_action_failure(
         )
         .value(PostgresqlMaintenanceTargets::CooldownUntil, cooldown_until)
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
-        .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Failed.code().code())
+        .value(PostgresqlMaintenanceTargets::LastActionResult, result.code().code())
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(branch_rows(target.branch()))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))

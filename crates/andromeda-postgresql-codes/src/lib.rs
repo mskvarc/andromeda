@@ -63,6 +63,8 @@ pub mod maintenance_action_result;
 pub mod maintenance_decision;
 /// The persisted outcome of one tenant's maintenance inspection.
 pub mod maintenance_inspection_result;
+/// The persisted phase of one running table repack.
+pub mod maintenance_repack_phase;
 /// The persisted relation one maintenance target row describes.
 pub mod maintenance_target;
 /// The persisted trigger conditions a subscription listens for.

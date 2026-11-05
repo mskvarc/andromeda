@@ -22,6 +22,7 @@ macro_rules! observation_event {
 }
 
 mod action;
+mod action_completion;
 mod action_measurement;
 mod action_policy;
 mod analyzed_rows;
@@ -30,6 +31,8 @@ mod autovacuum_health;
 mod autovacuum_trigger;
 mod branch;
 mod branch_selection;
+/// The unbroken run of breaching samples a target qualifies on.
+pub mod breach_run;
 mod btree_estimate;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;
@@ -53,6 +56,7 @@ mod freeze_policy;
 mod freeze_report;
 mod gin_density;
 mod gin_keys;
+mod heap_free_space;
 mod heap_reading;
 mod history_chunk_policy;
 /// On-disk size of the history chunk each temporal hypertable converts next.
@@ -64,6 +68,12 @@ mod platform_relations;
 /// Threshold and safety-gate decision policy.
 pub mod policy;
 mod prepared_action;
+mod repack;
+mod repack_context;
+mod repack_policy;
+/// The task that runs the repacks the passes queue, one at a time across the
+/// fleet.
+pub mod repack_task;
 mod replication_slot;
 mod rowstore_rebuild;
 mod safety_gate_inspection;

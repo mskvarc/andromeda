@@ -1,4 +1,4 @@
-//! The `tenant_extension_versions` table: the versioned extensions each tenant
+//! The `tenant_extension_versions` table: the tracked extensions each tenant
 //! database held after the broker last opened it, and the tenants a wake pass
 //! loads to bring up to date.
 //!
@@ -13,7 +13,7 @@ mod catch_up_rank;
 
 use crate::{
     error::ContextStoreError,
-    extension_update::{ExtensionStanding, extension_standings},
+    extension_standing::{ExtensionStanding, extension_standings},
     schema_contract::server_requirements::{ExtensionPresence, ExtensionVersion},
 };
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
@@ -35,12 +35,12 @@ impl PostgresTenantExtensionVersions {
         PostgresTenantExtensionVersions { main_pool }
     }
 
-    /// Record the versioned extensions the database behind `tenant_pool`
-    /// holds, and the versions the server ships, as the open of `database`
-    /// left them.
+    /// Record the tracked extensions the database behind `tenant_pool` holds,
+    /// and the versions the server ships, as the open of `database` left them.
     ///
     /// Run after the open brought the extensions up to date, so the record
-    /// says which server version the open's one update attempt ran against.
+    /// says which server version the open's one attempt to update, recreate or
+    /// install each extension ran against.
     ///
     /// # Errors
     ///
@@ -109,28 +109,37 @@ fn tenant_key_of(database: &TenantDatabaseName) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::{
-        extension_update::ExtensionStanding,
+        extension_standing::ExtensionStanding,
+        recreated_extension::RecreatedExtension,
         schema_contract::{
             server_requirements::{ExtensionPresence, ExtensionVersion},
             versioned_extension::VersionedExtension,
         },
         tenant_extension_versions::record_statement,
+        tracked_extension::TrackedExtension,
     };
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
+
+    const MIGRATION: &str = include_str!("../../../../migrations/platform/0030_tenant_extension_versions.sql");
 
     #[test]
     fn the_record_writes_one_row_per_extension_keyed_by_the_tenants_database() -> Result<(), SeaQueryError> {
         let standings = [
             ExtensionStanding {
-                extension: VersionedExtension::PostGis,
+                extension: TrackedExtension::Updated(VersionedExtension::PostGis),
                 installed: ExtensionPresence::Installed(ExtensionVersion::new(3, 5, 2)),
                 shipped: Some(ExtensionVersion::new(3, 6, 0)),
             },
             ExtensionStanding {
-                extension: VersionedExtension::TimescaleDb,
+                extension: TrackedExtension::Updated(VersionedExtension::TimescaleDb),
                 installed: ExtensionPresence::Absent,
                 shipped: None,
+            },
+            ExtensionStanding {
+                extension: TrackedExtension::Recreated(RecreatedExtension::PgRepack),
+                installed: ExtensionPresence::Installed(ExtensionVersion::new(1, 5, 2)),
+                shipped: Some(ExtensionVersion::new(1, 5, 3)),
             },
         ];
         let sql = record_statement(&TenantDatabaseName::from("andromeda_tenant_acme".to_owned()), &standings)?.to_string(PostgresQueryBuilder);
@@ -139,10 +148,18 @@ mod tests {
             r#"(SELECT "tenant_key" FROM "tenants" WHERE "database_name" = 'andromeda_tenant_acme')"#,
             r"CURRENT_TIMESTAMP, 'postgis', '3.5.2', '3.6.0')",
             r"CURRENT_TIMESTAMP, 'timescaledb', NULL, NULL)",
+            r"CURRENT_TIMESTAMP, 'pg_repack', '1.5.2', '1.5.3')",
             r#"ON CONFLICT ("tenant_key", "extension") DO UPDATE SET "reconciled_at" = "excluded"."reconciled_at", "installed_version" = "excluded"."installed_version", "shipped_version" = "excluded"."shipped_version""#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn the_table_admits_a_row_for_every_tracked_extension_and_no_other() {
+        let names: Vec<String> = TrackedExtension::all().map(|extension| format!("'{}'", extension.catalog_name())).collect();
+        let check = format!("constraint chk_tenant_extension_versions_extension check (extension in ({}))", names.join(", "));
+        assert!(MIGRATION.contains(&check), "the migration declares {check}");
     }
 }

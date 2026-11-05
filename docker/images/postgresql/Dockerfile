@@ -15,15 +15,18 @@ RUN set -eux; \
 
 # The release's versions. The broker's TimescaleDB floor equals
 # TIMESCALEDB_VERSION, and it updates each tenant database's extensions to
-# these versions when it opens the tenant.
+# these versions when it opens the tenant. The maintenance controller drives
+# pg_repack's SQL interface itself and only on the release line it was
+# written for, so pg_repack is pinned like the others.
 ARG TIMESCALEDB_VERSION=2.31.0
 ARG POSTGIS_VERSION=3.6.4
+ARG PG_REPACK_VERSION=1.5.3
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         "postgresql-18-postgis-3=${POSTGIS_VERSION}+*" \
         "postgresql-18-postgis-3-scripts=${POSTGIS_VERSION}+*" \
-        postgresql-18-repack \
+        "postgresql-18-repack=${PG_REPACK_VERSION}-*" \
         "timescaledb-2-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         "timescaledb-2-loader-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         timescaledb-tools; \

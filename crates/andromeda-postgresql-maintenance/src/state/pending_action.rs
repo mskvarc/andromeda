@@ -13,10 +13,13 @@
 //! queued again by a later sample once the branch is acted in. An action whose
 //! own right the role lacks, beyond the branch's `MAINTAIN`, is withdrawn the
 //! same way, alone.
+//!
+//! A repack is queued like every other action but never run by a visit: the
+//! repack task claims it, so the visit's choices and triage leave it out.
 
 use crate::{
     branch::{Branch, BranchTarget},
-    candidate::MaintenanceTarget,
+    candidate::{ActionRunner, MaintenanceTarget, heap_target::HeapTarget},
     error::MaintenanceError,
     evidence::{
         recorded_decision::RecordedDecision,
@@ -99,7 +102,7 @@ async fn branch_pending_actions(connection: &mut PgConnection, tenant: &Register
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(branch_rows(branch))
         .to_owned();
-    let pending = read_pending_actions(connection, &statement).await?;
+    let pending = read_pending_actions(connection, &statement, ActionRunner::Pass).await?;
     Ok(pending.into_iter().map(|row| row.action).collect())
 }
 
@@ -164,8 +167,41 @@ fn withdraw_action_update(tenant: TenantKey, row: BranchTarget) -> UpdateStateme
 /// Every tenant to which [`first_pending`] would give an action of some
 /// branch now.
 pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
-    let pending = read_pending_actions(connection, &pending_actions_statement()).await?;
+    let pending = read_pending_actions(connection, &pending_actions_statement(), ActionRunner::Pass).await?;
     Ok(due_tenants(&pending, now))
+}
+
+/// One queued repack the repack task may claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct QueuedRepack {
+    /// The tenant whose database holds the heap.
+    pub(crate) tenant: TenantKey,
+    /// The branch holding the heap.
+    pub(crate) branch: Branch,
+    /// The heap.
+    pub(crate) heap: HeapTarget,
+}
+
+/// Every queued repack past its backoff at `now`, in tenant, branch and
+/// target order.
+pub(crate) async fn due_repacks(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<QueuedRepack>, MaintenanceError> {
+    let pending = read_pending_actions(connection, &pending_actions_statement(), ActionRunner::RepackTask).await?;
+    Ok(pending
+        .into_iter()
+        .filter(|row| row.action.cooldown_until.is_none_or(|until| until <= now))
+        .filter_map(|row| match row.action.target {
+            MaintenanceTarget::Repack(heap) => Some(QueuedRepack {
+                tenant: row.tenant,
+                branch: row.branch,
+                heap,
+            }),
+            MaintenanceTarget::Index(_)
+            | MaintenanceTarget::Heap(_)
+            | MaintenanceTarget::Statistics(_)
+            | MaintenanceTarget::Columnstore(_)
+            | MaintenanceTarget::Rowstore(_) => None,
+        })
+        .collect())
 }
 
 /// The tenants of `pending`, ordered by tenant and branch, with a due action
@@ -203,10 +239,11 @@ fn pending_actions_statement() -> SelectStatement {
 }
 
 /// Run a pending-action statement and decode each row with its tenant and
-/// branch.
-async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<PendingRow>, MaintenanceError> {
+/// branch, keeping the actions `runner` runs.
+async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement, runner: ActionRunner) -> Result<Vec<PendingRow>, MaintenanceError> {
     let rows = statement.to_query().fetch_all(connection).await?;
-    rows.iter()
+    let decoded = rows
+        .iter()
         .map(|row| {
             let snapshot_key = row.try_get::<i64, _>(PostgresqlMaintenanceTargets::SnapshotKey.to_string().as_str())?;
             Ok(PendingRow {
@@ -220,7 +257,8 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
                 },
             })
         })
-        .collect()
+        .collect::<Result<Vec<PendingRow>, MaintenanceError>>()?;
+    Ok(decoded.into_iter().filter(|row| row.action.target.runner() == runner).collect())
 }
 
 /// The pending target to act on first among those `eligible` admits: any due
@@ -232,7 +270,11 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
 fn first_pending(pending: &[PendingAction], now: DateTime<Utc>, eligible: impl Fn(MaintenanceTarget) -> bool) -> Option<MaintenanceTarget> {
     let is_gin = |action: &PendingAction| match action.target {
         MaintenanceTarget::Index(index) => index.canary().is_some(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => false,
+        MaintenanceTarget::Heap(_)
+        | MaintenanceTarget::Statistics(_)
+        | MaintenanceTarget::Columnstore(_)
+        | MaintenanceTarget::Rowstore(_)
+        | MaintenanceTarget::Repack(_) => false,
     };
     let is_ready = |action: &PendingAction| action.cooldown_until.is_none_or(|until| until <= now) && eligible(action.target);
     if pending.iter().all(is_gin) {

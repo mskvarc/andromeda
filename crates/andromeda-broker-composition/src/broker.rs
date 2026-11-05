@@ -78,9 +78,10 @@ use tracing::{error, info};
 /// Connections the maintenance controller's direct platform pool may open.
 ///
 /// A maintenance pass is fleet-serialized and holds exactly one platform
-/// connection across its sweep, so two is ample headroom while a lapsed pass's
-/// connection is being reclaimed.
-pub(crate) const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 2;
+/// connection across its sweep, and the repack task holds one more for as
+/// long as a repack runs, beside the passes. A third leaves headroom while a
+/// lapsed pass's connection is being reclaimed.
+pub(crate) const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 3;
 
 /// HTTP API and process resources whose shutdown begins after traffic drains.
 struct BrokerExecution {

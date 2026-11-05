@@ -96,6 +96,29 @@ pub enum PostgresqlMaintenanceTargets {
     RowsAnalyzedAt,
 }
 
+/// One repack that has installed its trigger in a tenant database and not yet
+/// dropped what it created.
+#[derive(Clone, Copy, Iden)]
+pub enum PostgresqlMaintenanceRepackRuns {
+    /// Table name: `postgresql_maintenance_repack_runs`.
+    Table,
+    /// Foreign key to the platform tenant registry.
+    TenantKey,
+    /// The Snapshot whose published branch schema holds the table, 0 for the
+    /// live branch.
+    SnapshotKey,
+    /// Closed-set repack target (`MaintenanceTargetCode`).
+    Target,
+    /// The table's OID in the tenant database.
+    Relid,
+    /// The phase the run reached (`MaintenanceRepackPhaseCode`).
+    Phase,
+    /// When the run installed its trigger.
+    StartedAt,
+    /// When the run reached its phase.
+    PhaseChangedAt,
+}
+
 /// The one row of maintenance state that belongs to the whole cluster.
 #[derive(Clone, Copy, Iden)]
 pub enum PostgresqlMaintenanceFleet {
@@ -110,7 +133,7 @@ pub enum PostgresqlMaintenanceFleet {
 
 #[cfg(test)]
 mod tests {
-    use crate::maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants};
+    use crate::maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceRepackRuns, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -137,5 +160,8 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceFleet::Table.to_string(), "postgresql_maintenance_fleet");
         assert_eq!(PostgresqlMaintenanceFleet::Singleton.to_string(), "singleton");
         assert_eq!(PostgresqlMaintenanceFleet::AutovacuumSaturatedPasses.to_string(), "autovacuum_saturated_passes");
+        assert_eq!(PostgresqlMaintenanceRepackRuns::Table.to_string(), "postgresql_maintenance_repack_runs");
+        assert_eq!(PostgresqlMaintenanceRepackRuns::PhaseChangedAt.to_string(), "phase_changed_at");
+        assert_eq!(PostgresqlMaintenanceRepackRuns::Relid.to_string(), "relid");
     }
 }

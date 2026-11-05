@@ -1,6 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::vacuum_horizon::HorizonHolderKind;
+use crate::{breach_run::BreachRun, repack_policy::RepackThresholds, vacuum_horizon::HorizonHolderKind};
 use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -53,8 +53,10 @@ pub struct PolicyProfile {
     pub failure_backoff: BackoffSchedule,
     /// Maximum permitted active backend ratio percentage.
     pub maximum_active_backend_percent: u8,
-    /// Wall time one visit may spend on detailed index probes.
+    /// Wall time one visit may spend on detailed index and heap probes.
     pub probe_budget: Duration,
+    /// The thresholds an online repack qualifies on.
+    pub repack: RepackThresholds,
 }
 
 impl PolicyProfile {
@@ -76,6 +78,7 @@ impl PolicyProfile {
                 failure_backoff: failure_backoff_from(CONSERVATIVE_INEFFECTIVE_COOLDOWN),
                 maximum_active_backend_percent: 25,
                 probe_budget: Duration::from_secs(60),
+                repack: RepackThresholds::CONSERVATIVE,
             },
             MaintenanceProfile::Responsive => PolicyProfile {
                 cadence: Duration::from_secs(15),
@@ -90,6 +93,7 @@ impl PolicyProfile {
                 failure_backoff: failure_backoff_from(RESPONSIVE_INEFFECTIVE_COOLDOWN),
                 maximum_active_backend_percent: 50,
                 probe_budget: Duration::from_secs(30),
+                repack: RepackThresholds::RESPONSIVE,
             },
         }
     }
@@ -109,41 +113,10 @@ pub struct SafetyGates {
     pub active_maintenance: bool,
     /// Whether another backend waits for a lock on the relation.
     pub waiting_relation_lock: bool,
-}
-
-/// Fewest samples a breach run needs to qualify, however long it spans: one
-/// sample is a single reading, never evidence of a lasting state.
-pub const MINIMUM_BREACH_SAMPLES: u32 = 2;
-
-/// An unbroken run of samples that met every degradation threshold.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BreachRun {
-    /// When the run's first sample was taken.
-    pub since: DateTime<Utc>,
-    /// Samples in the run, at least one.
-    pub samples: u32,
-}
-
-impl BreachRun {
-    /// The run once a sample taken at `now` breaches too: the open run
-    /// lengthened, or a new run starting at `now`.
-    #[must_use]
-    pub const fn extended(run: Option<BreachRun>, now: DateTime<Utc>) -> BreachRun {
-        match run {
-            Some(run) => BreachRun {
-                since: run.since,
-                samples: run.samples.saturating_add(1),
-            },
-            None => BreachRun { since: now, samples: 1 },
-        }
-    }
-
-    /// Whether the run has lasted the profile's qualifying duration, inclusive,
-    /// over at least [`MINIMUM_BREACH_SAMPLES`] samples.
-    #[must_use]
-    pub fn qualifies(self, profile: PolicyProfile, now: DateTime<Utc>) -> bool {
-        self.samples >= MINIMUM_BREACH_SAMPLES && now.signed_duration_since(self.since) >= profile.qualifying_duration
-    }
+    /// Whether a repack's trigger is installed on the relation's heap: a run
+    /// copying it holds a lock vacuum, analyze and a concurrent rebuild wait
+    /// on, and an interrupted one waits for its cleanup.
+    pub repack_running: bool,
 }
 
 /// A persisted target's decision-relevant state.
@@ -186,6 +159,27 @@ pub enum DeferralReason {
     ActiveMaintenance,
     /// Another backend is waiting for a relation lock.
     WaitingRelationLock,
+    /// A heap's dead tuples are at or above its vacuum threshold: vacuum
+    /// turns them into free space first, and a repack is judged on the free
+    /// space it leaves.
+    VacuumPending,
+    /// The relation is larger than the configured largest a repack copies.
+    RelationTooLarge,
+    /// A replication slot keeps more WAL on disk than the relation takes, and
+    /// a repack writes the relation's size in WAL again.
+    ReplicationRetention,
+    /// The Snapshot whose branch holds the relation expires before a repack
+    /// of it could finish.
+    SnapshotLifetimeShort,
+    /// Objects an earlier repack left in the database wait for their
+    /// cleanup.
+    RepackLeftover,
+    /// The database's anti-wraparound vacuum is behind: a repack's copy holds
+    /// the database's freeze horizon for as long as it reads.
+    FreezePressure,
+    /// A repack of the relation's heap is running, or one that was
+    /// interrupted waits for its cleanup.
+    RepackRunning,
 }
 
 /// The policy's exact result for one target.
@@ -256,6 +250,9 @@ pub(crate) const fn safety_deferral(profile: PolicyProfile, gates: SafetyGates) 
     if gates.waiting_relation_lock {
         return Some(DeferralReason::WaitingRelationLock);
     }
+    if gates.repack_running {
+        return Some(DeferralReason::RepackRunning);
+    }
     None
 }
 
@@ -275,7 +272,7 @@ pub fn decide(
     if let Err(reason) = sample.qualification(profile) {
         return PolicyDecision::Deferred(reason);
     }
-    if !BreachRun::extended(state.breach, now).qualifies(profile, now) {
+    if !BreachRun::extended(state.breach, now).qualifies(profile.qualifying_duration, now) {
         return PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples);
     }
     newly_qualified(mode)
@@ -321,11 +318,13 @@ pub(crate) const fn pending_decision(mode: MaintenanceMode) -> PolicyDecision {
 /// load gate decided before the sample was judged.
 pub(crate) const fn lapse(state: TargetState, decision: PolicyDecision) -> Option<DeferralReason> {
     match decision {
-        PolicyDecision::Deferred(reason @ (DeferralReason::RelationTooSmall | DeferralReason::ReclaimTooSmall | DeferralReason::BelowThreshold))
-            if state.is_action_pending =>
-        {
-            Some(reason)
-        }
+        PolicyDecision::Deferred(
+            reason @ (DeferralReason::RelationTooSmall
+            | DeferralReason::ReclaimTooSmall
+            | DeferralReason::BelowThreshold
+            | DeferralReason::VacuumPending
+            | DeferralReason::RelationTooLarge),
+        ) if state.is_action_pending => Some(reason),
         PolicyDecision::Act
         | PolicyDecision::Queued
         | PolicyDecision::WouldAct
@@ -339,7 +338,14 @@ pub(crate) const fn lapse(state: TargetState, decision: PolicyDecision) -> Optio
             | DeferralReason::LongTransaction
             | DeferralReason::HorizonHeld
             | DeferralReason::ActiveMaintenance
-            | DeferralReason::WaitingRelationLock,
+            | DeferralReason::WaitingRelationLock
+            | DeferralReason::VacuumPending
+            | DeferralReason::RelationTooLarge
+            | DeferralReason::ReplicationRetention
+            | DeferralReason::SnapshotLifetimeShort
+            | DeferralReason::RepackLeftover
+            | DeferralReason::FreezePressure
+            | DeferralReason::RepackRunning,
         ) => None,
     }
 }
@@ -352,35 +358,11 @@ pub(crate) const fn newly_qualified(mode: MaintenanceMode) -> PolicyDecision {
     }
 }
 
-/// The breach run to persist after `decision`, judged on a sample taken at
-/// `now` (`sample` is `None` when a pending action was decided on without
-/// one).
-///
-/// A breaching sample lengthens the run and a sample under any threshold
-/// closes it. A decision taken before the sample was judged (cooldown, a load
-/// gate, a pending action) leaves the run as it was.
-#[must_use]
-pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample: Option<DegradationSample>, now: DateTime<Utc>) -> Option<BreachRun> {
-    match decision {
-        PolicyDecision::Queued | PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples) => Some(BreachRun::extended(breach, now)),
-        PolicyDecision::WouldAct => sample.map_or(breach, |_| Some(BreachRun::extended(breach, now))),
-        PolicyDecision::Deferred(DeferralReason::RelationTooSmall | DeferralReason::ReclaimTooSmall | DeferralReason::BelowThreshold) => None,
-        PolicyDecision::Act
-        | PolicyDecision::Deferred(
-            DeferralReason::Cooldown
-            | DeferralReason::ActiveBackendRatio
-            | DeferralReason::LongTransaction
-            | DeferralReason::HorizonHeld
-            | DeferralReason::ActiveMaintenance
-            | DeferralReason::WaitingRelationLock,
-        ) => breach,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after, decide, lapse},
+        breach_run::{BreachRun, breach_after},
+        policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, decide, lapse},
         vacuum_horizon::HorizonHolderKind,
     };
     use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
@@ -403,6 +385,7 @@ mod tests {
             held_horizon: None,
             active_maintenance: false,
             waiting_relation_lock: false,
+            repack_running: false,
         }
     }
 
@@ -493,7 +476,7 @@ mod tests {
                 since: now - ChronoDuration::hours(1),
                 samples: 1
             }
-            .qualifies(profile, now)
+            .qualifies(profile.qualifying_duration, now)
         );
     }
 
@@ -637,6 +620,13 @@ mod tests {
                     ..idle_gates()
                 },
                 DeferralReason::WaitingRelationLock,
+            ),
+            (
+                SafetyGates {
+                    repack_running: true,
+                    ..idle_gates()
+                },
+                DeferralReason::RepackRunning,
             ),
         ] {
             assert_eq!(

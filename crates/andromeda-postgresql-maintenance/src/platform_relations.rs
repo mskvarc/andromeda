@@ -12,7 +12,7 @@
 //! reset.
 
 use andromeda_postgresql_schema::{
-    maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants},
+    maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceRepackRuns, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants},
     subscription_forwarding::ForwardedSubscriptionRoutes,
     tenancy::{TenantExtensionVersions, TenantWakeSchedule, Tenants},
 };
@@ -26,7 +26,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, Query, SimpleExpr};
 
 /// The name of every table the platform migrations create.
-fn platform_tables() -> [String; 7] {
+fn platform_tables() -> [String; 8] {
     [
         Tenants::Table.to_string(),
         TenantWakeSchedule::Table.to_string(),
@@ -35,6 +35,7 @@ fn platform_tables() -> [String; 7] {
         PostgresqlMaintenanceTenants::Table.to_string(),
         PostgresqlMaintenanceTargets::Table.to_string(),
         PostgresqlMaintenanceFleet::Table.to_string(),
+        PostgresqlMaintenanceRepackRuns::Table.to_string(),
     ]
 }
 

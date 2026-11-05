@@ -31,6 +31,15 @@ pub mod entity_map;
 pub mod entity_state_record;
 /// Error types for the context store crate.
 pub mod error;
+/// Running one extension command on a connection of its own, and the refusals
+/// it ends in.
+mod extension_command;
+/// Dropping and creating again an extension that ships no update scripts, to
+/// reach the version the server ships.
+pub mod extension_recreation;
+/// Each tracked extension's installed version beside the version the server
+/// ships.
+pub mod extension_standing;
 /// Updating a tenant database's versioned extensions to the versions the
 /// server ships, and installing the optional extensions it ships.
 pub mod extension_update;
@@ -55,6 +64,9 @@ pub mod optional_extension;
 pub mod pending_side_effects;
 /// Reading a tenant's database for the earliest instant it has work due.
 pub mod pending_work;
+/// The optional extensions brought to the shipped version by dropping and
+/// creating them again.
+pub mod recreated_extension;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
 /// Persistence layer for snapshot records.
@@ -74,7 +86,7 @@ pub mod subscription_forwarding;
 pub mod subscription_store;
 /// Reaching and creating a tenant's database.
 pub mod tenant_database;
-/// The versioned extensions each tenant database held after its last open,
+/// The tracked extensions each tenant database held after its last open,
 /// behind the tenancy crate's catch-up port.
 pub mod tenant_extension_versions;
 /// Migrating a tenant's database to the schema this binary embeds.
@@ -85,6 +97,9 @@ pub mod tenant_registry;
 pub mod tenant_usage;
 /// The `tenant_wake_schedule` table, behind the tenancy crate's wake-schedule port.
 pub mod tenant_wake_schedule;
+/// The extensions whose installed version the tenant extension version record
+/// keeps.
+pub mod tracked_extension;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

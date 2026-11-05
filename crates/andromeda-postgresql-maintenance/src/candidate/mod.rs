@@ -3,6 +3,7 @@
 pub mod heap_target;
 pub mod history_table;
 pub mod index_target;
+pub mod repack_order;
 
 use crate::candidate::{
     heap_target::{HeapTarget, RelationPresence},
@@ -25,6 +26,18 @@ pub enum MaintenanceTarget {
     /// The closed rowstore chunks of one history hypertable, each chunk's
     /// indexes rebuilt once, the oldest chunk first.
     Rowstore(HistoryTable),
+    /// One heap repacked online, its free space given back to the filesystem.
+    Repack(HeapTarget),
+}
+
+/// Who runs a target's queued action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActionRunner {
+    /// The pass that visits the target's tenant, within its visit.
+    Pass,
+    /// The repack task, outside every pass: a repack runs for minutes or
+    /// hours, and a pass holds the fleet lock every other tenant waits on.
+    RepackTask,
 }
 
 impl MaintenanceTarget {
@@ -34,8 +47,21 @@ impl MaintenanceTarget {
     pub const fn relation_name(self) -> &'static str {
         match self {
             MaintenanceTarget::Index(target) => target.relation_name(),
-            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.relation_name(),
+            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) | MaintenanceTarget::Repack(target) => target.relation_name(),
             MaintenanceTarget::Columnstore(table) | MaintenanceTarget::Rowstore(table) => table.relation_name(),
+        }
+    }
+
+    /// Who runs the target's queued action.
+    #[must_use]
+    pub const fn runner(self) -> ActionRunner {
+        match self {
+            MaintenanceTarget::Index(_)
+            | MaintenanceTarget::Heap(_)
+            | MaintenanceTarget::Statistics(_)
+            | MaintenanceTarget::Columnstore(_)
+            | MaintenanceTarget::Rowstore(_) => ActionRunner::Pass,
+            MaintenanceTarget::Repack(_) => ActionRunner::RepackTask,
         }
     }
 
@@ -46,7 +72,7 @@ impl MaintenanceTarget {
     pub const fn presence(self) -> RelationPresence {
         match self {
             MaintenanceTarget::Index(target) => target.heap().presence(),
-            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) => target.presence(),
+            MaintenanceTarget::Heap(target) | MaintenanceTarget::Statistics(target) | MaintenanceTarget::Repack(target) => target.presence(),
             MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => RelationPresence::LiveOnly,
         }
     }
@@ -61,6 +87,7 @@ mod tests {
     use crate::{
         branch::Branch,
         candidate::{
+            ActionRunner,
             MaintenanceTarget,
             heap_target::{HeapTarget, RelationPresence},
             history_table::HistoryTable,
@@ -129,6 +156,7 @@ mod tests {
         for heap in HeapTarget::ALL {
             assert_eq!(MaintenanceTarget::Heap(heap).presence(), heap.presence());
             assert_eq!(MaintenanceTarget::Statistics(heap).presence(), heap.presence());
+            assert_eq!(MaintenanceTarget::Repack(heap).presence(), heap.presence());
         }
     }
 
@@ -137,6 +165,22 @@ mod tests {
         for table in HistoryTable::ALL {
             assert_eq!(MaintenanceTarget::Columnstore(table).presence(), RelationPresence::LiveOnly);
             assert_eq!(MaintenanceTarget::Columnstore(table).relation_name(), table.relation_name());
+        }
+    }
+
+    #[test]
+    fn only_a_repack_is_left_to_the_repack_task() {
+        for heap in HeapTarget::ALL {
+            assert_eq!(MaintenanceTarget::Repack(heap).runner(), ActionRunner::RepackTask, "{heap}");
+            assert_eq!(MaintenanceTarget::Heap(heap).runner(), ActionRunner::Pass, "{heap}");
+            assert_eq!(MaintenanceTarget::Statistics(heap).runner(), ActionRunner::Pass, "{heap}");
+        }
+        for index in IndexTarget::ALL {
+            assert_eq!(MaintenanceTarget::Index(index).runner(), ActionRunner::Pass, "{index}");
+        }
+        for table in HistoryTable::ALL {
+            assert_eq!(MaintenanceTarget::Columnstore(table).runner(), ActionRunner::Pass);
+            assert_eq!(MaintenanceTarget::Rowstore(table).runner(), ActionRunner::Pass);
         }
     }
 }

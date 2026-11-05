@@ -30,6 +30,10 @@ pub enum SqlState {
     /// `23505`, `unique_violation`.
     #[strum(serialize = "23505")]
     UniqueViolation,
+    /// `2BP01`, `dependent_objects_still_exist`: a `RESTRICT` drop refused
+    /// because objects outside the dropped one depend on it.
+    #[strum(serialize = "2BP01")]
+    DependentObjectsStillExist,
     /// `40001`, `serialization_failure`: the transaction was rolled back to
     /// preserve its isolation level.
     #[strum(serialize = "40001")]
@@ -118,6 +122,7 @@ mod tests {
             ("22023", SqlState::InvalidParameterValue),
             ("2201B", SqlState::InvalidRegularExpression),
             ("23505", SqlState::UniqueViolation),
+            ("2BP01", SqlState::DependentObjectsStillExist),
             ("40001", SqlState::SerializationFailure),
             ("40P01", SqlState::DeadlockDetected),
             ("42501", SqlState::InsufficientPrivilege),

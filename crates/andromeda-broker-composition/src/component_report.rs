@@ -18,6 +18,7 @@ use andromeda_component_report::{
 };
 use andromeda_configuration::broker_config::BrokerConfig;
 use andromeda_postgresql_context_store::component_report;
+use andromeda_postgresql_maintenance::repack_task::RUN_SESSIONS;
 use shadow_rs::shadow;
 use sqlx::PgPool;
 use thiserror::Error;
@@ -32,7 +33,8 @@ pub(crate) enum ComponentReportError {
     PostgreSql(#[from] sqlx::Error),
 }
 
-/// The connection the maintenance controller opens into the tenant it visits.
+/// The connection the maintenance controller's pass opens into the tenant it
+/// visits.
 const MAINTENANCE_TENANT_CONNECTIONS: u32 = 1;
 
 /// The one-connection pools the dormant-tenant probes open on the request
@@ -71,8 +73,9 @@ pub(crate) async fn collect(pool: &PgPool, config: &BrokerConfig) -> Result<Vec<
 /// may open is full at once.
 ///
 /// Straight to PostgreSQL, always: the platform pool and the maintenance
-/// controller's platform pool, its connection into the tenant it visits, and
-/// the peak of every cold build that may run at once. On the request path,
+/// controller's platform pool, its pass's connection into the tenant it
+/// visits, the repack task's sessions into the tenant whose table it
+/// repacks, and the peak of every cold build that may run at once. On the request path,
 /// unless a transaction pooler fronts it: the default tenant's serving pool,
 /// one serving pool per tenant the runtime cache holds, and the
 /// dormant-tenant probes. Behind a pooler those reach the pooler, whose own
@@ -86,6 +89,7 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
         .get()
         .saturating_add(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
         .saturating_add(MAINTENANCE_TENANT_CONNECTIONS)
+        .saturating_add(RUN_SESSIONS)
         .saturating_add(builds.saturating_mul(BUILD_CONNECTIONS));
     if database.is_pooled() {
         return direct;
@@ -132,12 +136,12 @@ mod tests {
         config
     }
 
-    /// Direct: platform 10, maintenance 2 plus its tenant connection 1,
-    /// builds 4 x 2; request path: default tenant 7, cached tenants 20 x 3,
-    /// probes 2.
+    /// Direct: platform 10, maintenance 3 plus its pass's tenant connection
+    /// 1 and its repack's 2, builds 4 x 2; request path: default tenant 7,
+    /// cached tenants 20 x 3, probes 2.
     #[test]
     fn a_direct_broker_counts_every_pool_it_opens_against_postgresql() {
-        assert_eq!(broker_connection_ceiling(&sized()), 10 + 2 + 1 + 8 + 7 + 60 + 2);
+        assert_eq!(broker_connection_ceiling(&sized()), 10 + 3 + 1 + 2 + 8 + 7 + 60 + 2);
     }
 
     /// Behind a pooler the request path reaches the pooler, so only the
@@ -146,7 +150,7 @@ mod tests {
     fn behind_a_pooler_only_the_direct_pools_count() {
         let mut config = sized();
         config.database.pooler = Some(PoolerConfig::default());
-        assert_eq!(broker_connection_ceiling(&config), 10 + 2 + 1 + 8);
+        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8);
     }
 
     #[test]

@@ -100,9 +100,11 @@ mod tests {
     use strum::IntoEnumIterator;
 
     /// The mapping is one-to-one, and onto every number but the capability
-    /// ones: a missing `MAINTAIN` privilege leaves a visit observing, and a
-    /// missing `pgstattuple` leaves it without index probes, so either visit
-    /// records its own outcome and those numbers are only ever decoded.
+    /// ones: a missing `MAINTAIN` privilege leaves a visit observing, a
+    /// missing `pgstattuple` leaves it without index probes, and a missing or
+    /// unsupported `pg_repack` or repack right leaves it only reporting its
+    /// repacks, so every such visit records its own outcome and those numbers
+    /// only name the missing capability.
     #[test]
     fn every_inspection_result_has_its_own_stored_number_and_only_the_capability_numbers_are_unwritten() {
         let unwritten = [
@@ -111,6 +113,9 @@ mod tests {
             MaintenanceInspectionResultCode::MissingPgstattupleExecute,
             MaintenanceInspectionResultCode::MissingMaintain,
             MaintenanceInspectionResultCode::CapabilityUnavailable,
+            MaintenanceInspectionResultCode::MissingPgRepack,
+            MaintenanceInspectionResultCode::UnsupportedPgRepack,
+            MaintenanceInspectionResultCode::MissingRepackRight,
         ];
         let stored: Vec<MaintenanceInspectionResultCode> = InspectionResult::iter().map(InspectionResult::code).collect();
         let written: Vec<MaintenanceInspectionResultCode> = MaintenanceInspectionResultCode::ALL

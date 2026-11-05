@@ -1,12 +1,13 @@
-//! The once-per-process warning for a tenant whose index probes are off.
+//! The once-per-process warning for a tenant whose index and heap probes are
+//! off, or whose repacks are only reported.
 //!
-//! The extension is optional and its absence is a standing condition, not an
-//! event, so the operator hears of it once per tenant, not on every visit. A
-//! tenant that regains the capability is forgotten, so losing it again, or
-//! losing it in another way, warns again.
+//! Both extensions are optional and their absence is a standing condition,
+//! not an event, so the operator hears of it once per tenant, not on every
+//! visit. A tenant that regains a capability is forgotten, so losing it
+//! again, or losing it in another way, warns again.
 
 use crate::{
-    capability::ProbeCapability,
+    capability::{ProbeCapability, RepackCapability},
     state::{RegisteredTenant, TenantKey},
 };
 use dashmap::DashMap;
@@ -26,8 +27,12 @@ enum Notice {
 /// The tenants this process has warned about, each with the lack it named.
 #[derive(Debug, Default)]
 pub(crate) struct ProbeNotices {
-    /// The capability each warned-about tenant lacked when it was warned.
+    /// The probe capability each warned-about tenant lacked when it was
+    /// warned.
     warned: DashMap<TenantKey, ProbeCapability>,
+    /// The repack capability each warned-about tenant lacked when it was
+    /// warned.
+    repack_warned: DashMap<TenantKey, RepackCapability>,
 }
 
 impl ProbeNotices {
@@ -36,31 +41,54 @@ impl ProbeNotices {
     pub(crate) fn report(&self, tenant: &RegisteredTenant, capability: ProbeCapability) {
         if self.notice(tenant.key, capability) == Notice::Warn {
             let reason: &'static str = capability.into();
-            warn!(tenant = tenant.log_name(), database = %tenant.database, decision = "capability-unavailable", reason, "PostgreSQL maintenance measures no index without pgstattuple; every other check runs");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, decision = "capability-unavailable", reason, "PostgreSQL maintenance measures no index and no heap without pgstattuple; every other check runs");
+        }
+    }
+
+    /// Warn about `tenant` lacking a repack `capability` unless this process
+    /// already has.
+    pub(crate) fn report_repack(&self, tenant: &RegisteredTenant, capability: RepackCapability) {
+        if let Some(reason) = capability.missing()
+            && notice(&self.repack_warned, tenant.key, Some(capability)) == Notice::Warn
+        {
+            warn!(tenant = tenant.log_name(), database = %tenant.database, decision = "capability-unavailable", reason, capability = ?capability, "PostgreSQL maintenance only reports the repacks it would run; every other action runs");
+        }
+        if capability.missing().is_none() {
+            notice(&self.repack_warned, tenant.key, None);
         }
     }
 
     /// Record `capability` for the tenant keyed `key` and say whether it is
     /// news.
     fn notice(&self, key: TenantKey, capability: ProbeCapability) -> Notice {
-        match capability {
-            ProbeCapability::Ready => {
-                self.warned.remove(&key);
-                Notice::Quiet
-            }
-            ProbeCapability::MissingPgstattuple | ProbeCapability::MissingPgstattupleExecute => match self.warned.insert(key, capability) {
-                Some(warned) if warned == capability => Notice::Quiet,
-                Some(_) | None => Notice::Warn,
-            },
+        let missing = match capability {
+            ProbeCapability::Ready => None,
+            ProbeCapability::MissingPgstattuple | ProbeCapability::MissingPgstattupleExecute => Some(capability),
+        };
+        notice(&self.warned, key, missing)
+    }
+}
+
+/// Record the lack `missing` of the tenant keyed `key` in `warned`, `None`
+/// when it lacks nothing, and say whether it is news.
+fn notice<C: Copy + Eq>(warned: &DashMap<TenantKey, C>, key: TenantKey, missing: Option<C>) -> Notice {
+    match missing {
+        None => {
+            warned.remove(&key);
+            Notice::Quiet
         }
+        Some(capability) => match warned.insert(key, capability) {
+            Some(previous) if previous == capability => Notice::Quiet,
+            Some(_) | None => Notice::Warn,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        capability::ProbeCapability,
-        controller::probe_notices::{Notice, ProbeNotices},
+        capability::{ProbeCapability, RepackCapability},
+        controller::probe_notices::{Notice, ProbeNotices, notice},
         state::TenantKey,
     };
     use pretty_assertions::assert_eq;
@@ -95,5 +123,16 @@ mod tests {
         assert_eq!(notices.notice(TenantKey(1), ProbeCapability::MissingPgstattupleExecute), Notice::Warn);
         assert_eq!(notices.notice(TenantKey(1), ProbeCapability::Ready), Notice::Quiet);
         assert_eq!(notices.notice(TenantKey(1), ProbeCapability::MissingPgstattupleExecute), Notice::Warn);
+    }
+
+    #[test]
+    fn a_tenant_without_pg_repack_is_warned_about_once_and_again_after_it_regained_it() {
+        let notices = ProbeNotices::default();
+        let missing = Some(RepackCapability::MissingExtension);
+        assert_eq!(notice(&notices.repack_warned, TenantKey(1), missing), Notice::Warn);
+        assert_eq!(notice(&notices.repack_warned, TenantKey(1), missing), Notice::Quiet);
+        assert_eq!(notice(&notices.repack_warned, TenantKey(1), Some(RepackCapability::MissingRight)), Notice::Warn);
+        assert_eq!(notice::<RepackCapability>(&notices.repack_warned, TenantKey(1), None), Notice::Quiet);
+        assert_eq!(notice(&notices.repack_warned, TenantKey(1), missing), Notice::Warn);
     }
 }

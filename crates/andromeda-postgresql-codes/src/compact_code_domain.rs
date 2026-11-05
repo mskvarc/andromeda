@@ -42,6 +42,8 @@ pub enum CompactCodeDomain {
     MaintenanceDecisionCode,
     /// [`MaintenanceInspectionResultCode`](crate::maintenance_inspection_result::MaintenanceInspectionResultCode).
     MaintenanceInspectionResultCode,
+    /// [`MaintenanceRepackPhaseCode`](crate::maintenance_repack_phase::MaintenanceRepackPhaseCode).
+    MaintenanceRepackPhaseCode,
     /// [`MaintenanceTargetCode`](crate::maintenance_target::MaintenanceTargetCode).
     MaintenanceTargetCode,
     /// [`NotificationTriggerCode`](crate::notification_trigger::NotificationTriggerCode).

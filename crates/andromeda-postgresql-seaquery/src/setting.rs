@@ -63,9 +63,15 @@ pub enum Setting {
     /// `icu_validation_level`.
     #[strum(serialize = "icu_validation_level")]
     IcuValidationLevel,
+    /// `idle_in_transaction_session_timeout`.
+    #[strum(serialize = "idle_in_transaction_session_timeout")]
+    IdleInTransactionSessionTimeout,
     /// `lock_timeout`.
     #[strum(serialize = "lock_timeout")]
     LockTimeout,
+    /// `maintenance_work_mem`.
+    #[strum(serialize = "maintenance_work_mem")]
+    MaintenanceWorkMem,
     /// `max_connections`.
     #[strum(serialize = "max_connections")]
     MaxConnections,
@@ -122,6 +128,9 @@ pub enum Setting {
     /// `timescaledb.max_tuples_decompressed_per_dml_transaction`.
     #[strum(serialize = "timescaledb.max_tuples_decompressed_per_dml_transaction")]
     TimescaledbMaxTuplesDecompressedPerDmlTransaction,
+    /// `work_mem`.
+    #[strum(serialize = "work_mem")]
+    WorkMem,
 }
 
 impl Setting {
@@ -150,16 +159,19 @@ struct SetConfig;
 /// `set_config(name, value, is_local)`: change `setting` for `scope`.
 #[must_use]
 pub fn set_config(setting: Setting, value: &str, scope: SettingScope) -> SimpleExpr {
+    set_config_to(setting, SimpleExpr::from(Expr::val(value.to_owned())), scope)
+}
+
+/// `set_config(name, value, is_local)`: change `setting` to what the
+/// expression `value` evaluates to, for `scope`.
+#[must_use]
+pub fn set_config_to(setting: Setting, value: SimpleExpr, scope: SettingScope) -> SimpleExpr {
     let is_local = match scope {
         SettingScope::Transaction => true,
         SettingScope::Session => false,
     };
     Func::cust(SetConfig)
-        .args([
-            setting.name_value(),
-            SimpleExpr::from(Expr::val(value.to_owned())),
-            SimpleExpr::from(Expr::val(is_local)),
-        ])
+        .args([setting.name_value(), value, SimpleExpr::from(Expr::val(is_local))])
         .into()
 }
 

@@ -12,6 +12,7 @@
 //! in what order, is decided on the parsed versions.
 
 use crate::{
+    recreated_extension::RecreatedExtension,
     schema_contract::{
         server_requirements::{ExtensionPresence, ExtensionVersion},
         versioned_extension::VersionedExtension,
@@ -22,6 +23,7 @@ use crate::{
         catch_up_rank::{CatchUpCandidate, ExtensionLag, RecordedExtension, catch_up_order},
     },
     tenant_registry::status_code::stored_status,
+    tracked_extension::TrackedExtension,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_postgresql_schema::tenancy::{TenantExtensionVersions, TenantWakeSchedule, Tenants};
@@ -33,7 +35,6 @@ use andromeda_tenancy::{
 use async_trait::async_trait;
 use sea_query::{Alias, Cond, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
-use strum::IntoEnumIterator;
 
 /// The `pg_stat_database` statistics view, for the transactions each database
 /// committed.
@@ -74,31 +75,37 @@ enum RecordAlias {
     /// The `TimescaleDB` record.
     #[iden = "timescaledb_record"]
     TimescaleDb,
+    /// The `pg_repack` record.
+    #[iden = "pg_repack_record"]
+    PgRepack,
 }
 
 impl RecordAlias {
     /// The alias of `extension`'s record.
-    const fn of(extension: VersionedExtension) -> RecordAlias {
+    const fn of(extension: TrackedExtension) -> RecordAlias {
         match extension {
-            VersionedExtension::PostGis => RecordAlias::PostGis,
-            VersionedExtension::TimescaleDb => RecordAlias::TimescaleDb,
+            TrackedExtension::Updated(VersionedExtension::PostGis) => RecordAlias::PostGis,
+            TrackedExtension::Updated(VersionedExtension::TimescaleDb) => RecordAlias::TimescaleDb,
+            TrackedExtension::Recreated(RecreatedExtension::PgRepack) => RecordAlias::PgRepack,
         }
     }
 }
 
 /// The column saying whether one extension has a record row.
-const fn recorded_column(extension: VersionedExtension) -> &'static str {
+const fn recorded_column(extension: TrackedExtension) -> &'static str {
     match extension {
-        VersionedExtension::PostGis => "postgis_recorded",
-        VersionedExtension::TimescaleDb => "timescaledb_recorded",
+        TrackedExtension::Updated(VersionedExtension::PostGis) => "postgis_recorded",
+        TrackedExtension::Updated(VersionedExtension::TimescaleDb) => "timescaledb_recorded",
+        TrackedExtension::Recreated(RecreatedExtension::PgRepack) => "pg_repack_recorded",
     }
 }
 
 /// The column one extension's recorded server version is read under.
-const fn reconciled_column(extension: VersionedExtension) -> &'static str {
+const fn reconciled_column(extension: TrackedExtension) -> &'static str {
     match extension {
-        VersionedExtension::PostGis => "postgis_reconciled_against",
-        VersionedExtension::TimescaleDb => "timescaledb_reconciled_against",
+        TrackedExtension::Updated(VersionedExtension::PostGis) => "postgis_reconciled_against",
+        TrackedExtension::Updated(VersionedExtension::TimescaleDb) => "timescaledb_reconciled_against",
+        TrackedExtension::Recreated(RecreatedExtension::PgRepack) => "pg_repack_reconciled_against",
     }
 }
 
@@ -122,7 +129,7 @@ fn lagging_tenants_statement() -> SelectStatement {
             Expr::col((PgStatDatabase::Table, PgStatDatabase::Datname)).equals((Tenants::Table, Tenants::DatabaseName)),
         );
     let mut unsettled = Cond::any();
-    for extension in VersionedExtension::iter() {
+    for extension in TrackedExtension::all() {
         let record = RecordAlias::of(extension);
         select
             .join_as(
@@ -162,7 +169,7 @@ fn lagging_tenants_statement() -> SelectStatement {
 /// ships one, and the tenant has no record of the extension or a record
 /// spelling the shipped version neither as installed nor as the version its
 /// last open ran against.
-fn unsettled_extension(extension: VersionedExtension) -> Cond {
+fn unsettled_extension(extension: TrackedExtension) -> Cond {
     let record = RecordAlias::of(extension);
     let shipped = || extension_shipped_version(extension.catalog_name());
     let spelled_unlike_shipped = |column: TenantExtensionVersions| Func::coalesce([Expr::col((record, column)), Expr::val("")]).ne(shipped());
@@ -183,14 +190,15 @@ fn candidate_from_row(row: &PgRow) -> Result<CatchUpCandidate, CatchUpError> {
         .map_err(|error| CatchUpError::Store(persistence_failure(&error)))?;
     Ok(CatchUpCandidate {
         name: TenantName::try_from(name).map_err(|error| CatchUpError::Store(undecodable(&error)))?,
-        timescaledb: lag_from_row(row, VersionedExtension::TimescaleDb)?,
-        postgis: lag_from_row(row, VersionedExtension::PostGis)?,
+        timescaledb: lag_from_row(row, TrackedExtension::Updated(VersionedExtension::TimescaleDb))?,
+        postgis: lag_from_row(row, TrackedExtension::Updated(VersionedExtension::PostGis))?,
+        pg_repack: lag_from_row(row, TrackedExtension::Recreated(RecreatedExtension::PgRepack))?,
         committed_transactions,
     })
 }
 
 /// One extension of a read row against the version the server ships.
-fn lag_from_row(row: &PgRow, extension: VersionedExtension) -> Result<ExtensionLag, CatchUpError> {
+fn lag_from_row(row: &PgRow, extension: TrackedExtension) -> Result<ExtensionLag, CatchUpError> {
     let column = |name: &str| {
         row.try_get::<Option<String>, _>(name)
             .map_err(|error| CatchUpError::Store(persistence_failure(&error)))
@@ -245,6 +253,11 @@ mod tests {
             r#""timescaledb_record"."installed_version" AS "timescaledb_version""#,
             r#""timescaledb_record"."shipped_version" AS "timescaledb_reconciled_against""#,
             r#"(SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'timescaledb') AS "timescaledb_shipped_version""#,
+            r#"LEFT JOIN "tenant_extension_versions" AS "pg_repack_record" ON "pg_repack_record"."tenant_key" = "tenants"."tenant_key" AND "pg_repack_record"."extension" = 'pg_repack'"#,
+            r#""pg_repack_record"."tenant_key" IS NOT NULL AS "pg_repack_recorded""#,
+            r#""pg_repack_record"."installed_version" AS "pg_repack_version""#,
+            r#""pg_repack_record"."shipped_version" AS "pg_repack_reconciled_against""#,
+            r#"(SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'pg_repack') AS "pg_repack_shipped_version""#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -271,6 +284,9 @@ mod tests {
             r#"COALESCE("timescaledb_record"."installed_version", '') <> (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'timescaledb')"#,
             r#"COALESCE("timescaledb_record"."shipped_version", '') <> (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'timescaledb')"#,
             r#"(SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'postgis') IS NOT NULL"#,
+            r#""pg_repack_record"."tenant_key" IS NULL"#,
+            r#"COALESCE("pg_repack_record"."installed_version", '') <> (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'pg_repack')"#,
+            r#"COALESCE("pg_repack_record"."shipped_version", '') <> (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'pg_repack')"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }

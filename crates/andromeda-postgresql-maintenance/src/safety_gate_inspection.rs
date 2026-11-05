@@ -14,6 +14,7 @@ use andromeda_postgresql_seaquery::{
     introspection::{current_database, current_setting},
     maintenance::{backend_pid, to_regclass},
     pg_type::PostgresType,
+    repack::REPACK_TRIGGER,
     setting::Setting,
     statement::Statement,
 };
@@ -59,7 +60,7 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
                     None,
                     vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?),
                 ),
-                MaintenanceTarget::Statistics(target) => (branch.qualified(target.relation_name()), None, None),
+                MaintenanceTarget::Statistics(target) | MaintenanceTarget::Repack(target) => (branch.qualified(target.relation_name()), None, None),
                 MaintenanceTarget::Columnstore(table) | MaintenanceTarget::Rowstore(table) => (branch.qualified(table.relation_name()), None, None),
             }
         }
@@ -83,6 +84,7 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
         .to_query_scalar::<bool>()
         .fetch_one(&mut *connection)
         .await?;
+    let repack_running = repack_trigger_statement(&heap).to_query_scalar::<bool>().fetch_one(&mut *connection).await?;
     let oldest_transaction_seconds = oldest.map_or(0, |started| {
         let seconds = Utc::now().signed_duration_since(started).num_seconds();
         u64::try_from(seconds).unwrap_or(0)
@@ -95,7 +97,20 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
         held_horizon,
         active_maintenance,
         waiting_relation_lock,
+        repack_running,
     })
+}
+
+/// Whether a repack's trigger is installed on `heap`: a repack of it runs, or
+/// one that was interrupted left its trigger behind.
+fn repack_trigger_statement(heap: &str) -> SelectStatement {
+    let trigger = Query::select()
+        .expr(Expr::val(1))
+        .from(Alias::new("pg_trigger"))
+        .and_where(Expr::col(Alias::new("tgrelid")).eq(to_regclass(Expr::val(heap))))
+        .and_where(Expr::col(Alias::new("tgname")).eq(REPACK_TRIGGER))
+        .to_owned();
+    Query::select().expr(Expr::exists(trigger)).to_owned()
 }
 
 /// Active foreground backend count across the cluster.
@@ -196,7 +211,13 @@ fn waiting_lock_statement(heap: &str, index: Option<&str>) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::safety_gate_inspection::{active_backend_statement, active_maintenance_statement, oldest_transaction_statement, waiting_lock_statement};
+    use crate::safety_gate_inspection::{
+        active_backend_statement,
+        active_maintenance_statement,
+        oldest_transaction_statement,
+        repack_trigger_statement,
+        waiting_lock_statement,
+    };
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -235,5 +256,13 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("\"granted\" = FALSE"), "{sql}");
+    }
+
+    #[test]
+    fn the_repack_gate_reads_the_trigger_a_run_installs_on_the_heap() {
+        assert_eq!(
+            repack_trigger_statement("public.notification_deliveries").to_string(PostgresQueryBuilder),
+            r#"SELECT EXISTS(SELECT 1 FROM "pg_trigger" WHERE "tgrelid" = to_regclass('public.notification_deliveries') AND "tgname" = 'repack_trigger')"#
+        );
     }
 }

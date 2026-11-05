@@ -70,17 +70,35 @@ impl ReplicationSlot {
 }
 
 /// Read every replication slot, report the most WAL one keeps, and log each
-/// slot that warrants it.
-pub(crate) async fn observe_replication_slots(platform: &mut PgConnection) -> Result<(), MaintenanceError> {
-    let rows = replication_slots_statement().to_query().fetch_all(platform).await?;
-    let slots = rows.iter().map(replication_slot_of).collect::<Result<Vec<_>, _>>()?;
-    record_replication_slot_wal(slots.iter().filter_map(|slot| slot.retained_bytes).max().unwrap_or_default());
+/// slot that warrants it. Returns the most WAL one keeps, zero without a
+/// slot.
+pub(crate) async fn observe_replication_slots(platform: &mut PgConnection) -> Result<u64, MaintenanceError> {
+    let slots = replication_slots(platform).await?;
+    let retained = most_retained_wal(&slots);
+    record_replication_slot_wal(retained);
     for slot in &slots {
         if let Some(finding) = slot.finding() {
             observation_event!(finding, slot = slot.name.as_str(), slot_type = slot.kind.as_str(), slot_database = ?slot.database, active = slot.active, wal_status = ?slot.wal_status, retained_bytes = ?slot.retained_bytes, safe_wal_size = ?slot.safe_wal_size, "PostgreSQL replication slot keeps WAL past max_wal_size or has lost WAL its consumer needs");
         }
     }
-    Ok(())
+    Ok(retained)
+}
+
+/// The most WAL any replication slot keeps, zero without a slot, read without
+/// reporting.
+pub(crate) async fn retained_wal(platform: &mut PgConnection) -> Result<u64, MaintenanceError> {
+    Ok(most_retained_wal(&replication_slots(platform).await?))
+}
+
+/// Every replication slot of the cluster.
+async fn replication_slots(platform: &mut PgConnection) -> Result<Vec<ReplicationSlot>, MaintenanceError> {
+    let rows = replication_slots_statement().to_query().fetch_all(platform).await?;
+    rows.iter().map(replication_slot_of).collect()
+}
+
+/// The most WAL one of `slots` keeps, zero without a slot.
+fn most_retained_wal(slots: &[ReplicationSlot]) -> u64 {
+    slots.iter().filter_map(|slot| slot.retained_bytes).max().unwrap_or_default()
 }
 
 /// The columns the slot statement projects.

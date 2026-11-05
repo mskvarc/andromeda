@@ -79,6 +79,10 @@ pub enum PostgresType {
     /// function taking a column name expects.
     #[iden = "name"]
     Name,
+    /// `cstring`, the C string pseudo-type an extension function written in C
+    /// may take its text arguments as.
+    #[iden = "cstring"]
+    Cstring,
     /// `xid8`, the 64-bit transaction identifier a write is stamped with.
     #[iden = "xid8"]
     Xid8,

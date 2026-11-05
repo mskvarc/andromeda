@@ -92,7 +92,11 @@ fn stored_layout(row: &PgRow) -> Result<StoredKeyLayout, MaintenanceError> {
     let code = MaintenanceTargetCode::try_from(row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?)?;
     let column = match target_of(code) {
         MaintenanceTarget::Index(target) => target.density_column(),
-        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) | MaintenanceTarget::Columnstore(_) | MaintenanceTarget::Rowstore(_) => None,
+        MaintenanceTarget::Heap(_)
+        | MaintenanceTarget::Statistics(_)
+        | MaintenanceTarget::Columnstore(_)
+        | MaintenanceTarget::Rowstore(_)
+        | MaintenanceTarget::Repack(_) => None,
     }
     .ok_or(MaintenanceError::KeyLayoutTargetNotDensityMeasured(code))?;
     Ok(StoredKeyLayout {

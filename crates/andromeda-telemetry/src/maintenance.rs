@@ -6,6 +6,7 @@ use crate::{
         LABEL_DECISION,
         LABEL_LEVEL,
         LABEL_OUTCOME,
+        LABEL_PHASE,
         POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
         POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
         POSTGRESQL_FREEZE_AGE_MAX,
@@ -15,6 +16,7 @@ use crate::{
         POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+        POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS,
         POSTGRESQL_MULTIXACT_AGE_MAX,
         POSTGRESQL_OVERDUE_RELATIONS,
         POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES,
@@ -71,6 +73,29 @@ pub enum MaintenanceAction {
     Recovery,
     /// One recompression of a partially converted history chunk.
     Recompress,
+    /// One online repack of a heap, or the cleanup of one an interruption
+    /// left.
+    Repack,
+}
+
+/// Stable labels of the phases one online table repack runs through.
+#[derive(Clone, Copy, Debug, EnumIter, IntoStaticStr, Eq, PartialEq)]
+#[strum(serialize_all = "kebab-case")]
+pub enum RepackPhaseLabel {
+    /// The log table and its trigger are created.
+    Setup,
+    /// The table's rows are copied.
+    Copy,
+    /// The copy's indexes are built.
+    IndexBuild,
+    /// The writes logged meanwhile are replayed.
+    Replay,
+    /// The table is given the copy's files.
+    Swap,
+    /// The run's objects, the old files among them, are dropped.
+    Drop,
+    /// The repacked table's planner statistics are refreshed.
+    Analyze,
 }
 
 /// Stable maintenance action outcomes.
@@ -142,6 +167,13 @@ pub fn record_replication_slot_wal(retained_bytes_max: u64) {
     gauge!(POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES).set(SampleValue::from(retained_bytes_max));
 }
 
+/// Record how long one phase of a table repack took, without naming the
+/// tenant or the table.
+pub fn record_repack_phase(phase: RepackPhaseLabel, duration: Duration) {
+    let phase: &'static str = phase.into();
+    histogram!(POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS, LABEL_PHASE => phase).record(duration);
+}
+
 /// Count one bounded pass decision without a tenant label.
 pub fn record_decision(decision: MaintenanceDecision) {
     let decision: &'static str = decision.into();
@@ -176,11 +208,13 @@ mod tests {
             MaintenanceAction,
             MaintenanceActionOutcome,
             MaintenanceDecision,
+            RepackPhaseLabel,
             record_action,
             record_autovacuum_workers,
             record_decision,
             record_fleet_freeze,
             record_overdue_relations,
+            record_repack_phase,
             record_replication_slot_wal,
         },
         names::{
@@ -192,6 +226,7 @@ mod tests {
             POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
             POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
             POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+            POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS,
             POSTGRESQL_MULTIXACT_AGE_MAX,
             POSTGRESQL_OVERDUE_RELATIONS,
             POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES,
@@ -275,6 +310,28 @@ mod tests {
             rendered.contains(&format!("{POSTGRESQL_REPLICATION_SLOT_MAX_RETAINED_WAL_BYTES} 4096")),
             "{rendered}"
         );
+        assert!(!rendered.contains("tenant="), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn each_repack_phase_is_timed_under_its_kebab_case_label_without_a_tenant() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            record_repack_phase(RepackPhaseLabel::IndexBuild, Duration::from_secs(90));
+            record_action(
+                MaintenanceAction::Repack,
+                MaintenanceActionOutcome::Ok,
+                Duration::from_secs(120),
+                Some(ActionEffect::ReclaimedBytes(600 * 1_048_576)),
+            );
+        });
+        let rendered = recorder.render();
+        assert!(
+            rendered.contains(&format!("{POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS}_count{{phase=\"index-build\"}} 1")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("action=\"repack\""), "{rendered}");
         assert!(!rendered.contains("tenant="), "{rendered}");
         Ok(())
     }

@@ -1,4 +1,5 @@
-//! Process-scoped PostgreSQL maintenance task registration.
+//! Process-scoped PostgreSQL maintenance task registration: the controller's
+//! passes, and beside them the task that runs the repacks the passes queue.
 
 use andromeda_configuration::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode};
 use andromeda_postgresql_context_store::{error::ContextStoreError, migration_set::branch::current_branch_version};
@@ -7,6 +8,7 @@ use andromeda_postgresql_maintenance::{
     error::MaintenanceError,
     expected_deployment::ExpectedDeployment,
     policy::PolicyProfile,
+    repack_task::RepackTask,
 };
 use andromeda_postgresql_pool::database_url::DatabaseUrl;
 use andromeda_retry::schedule::BackoffSchedule;
@@ -64,6 +66,13 @@ pub(crate) fn register_postgresql_maintenance(
         ShutdownPolicy::new(Duration::from_secs(30)),
     );
     let branch_version = current_branch_version().map_err(|error| MaintenanceRegistrationError::BranchVersion(ContextStoreError::BranchVersion(error)))?;
+    let repack = Arc::new(RepackTask::new(
+        platform_pool.clone(), // clone: the repack task holds its own platform connection beside the pass's
+        direct_url.clone(),    // clone: the repack task derives tenant URLs over the direct base
+        config,
+        acquire_timeout,
+        branch_version,
+    ));
     let controller = Arc::new(MaintenanceController::new(
         platform_pool,
         direct_url,
@@ -77,6 +86,30 @@ pub(crate) fn register_postgresql_maintenance(
         async move {
             let outcome = controller.run(execution.cancellation()).await.map_err(classify_failure)?;
             debug!(outcome = %outcome, "PostgreSQL maintenance pass finished");
+            Ok(())
+        }
+    });
+    supervisor.register_scheduled(task).map(drop).map_err(MaintenanceRegistrationError::from)?;
+    register_repack_task(supervisor, repack, profile)
+}
+
+/// Register the repack task on the pass cadence. It claims one queued repack
+/// per execution under the repack fleet lock, so on every replica it runs
+/// beside the passes, and a shutdown gives a running repack the time its
+/// cleanup takes.
+fn register_repack_task(supervisor: &TaskSupervisor, repack: Arc<RepackTask>, profile: PolicyProfile) -> Result<(), MaintenanceRegistrationError> {
+    let schedule = PeriodicSchedule::new(profile.cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)?.with_jitter(profile.maximum_jitter)?;
+    let registration = TaskRegistration::new(
+        TaskName::try_from("postgresql-repack")?,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(profile.cadence)),
+        ShutdownPolicy::new(Duration::from_secs(60)),
+    );
+    let task = ScheduledTask::new(registration, schedule, move |execution| {
+        let repack = Arc::clone(&repack); // clone: each execution owns the process task while it runs
+        async move {
+            let outcome = repack.run(execution.cancellation()).await.map_err(classify_failure)?;
+            debug!(outcome = %outcome, "PostgreSQL repack task finished");
             Ok(())
         }
     });
@@ -97,7 +130,10 @@ const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceErr
         | MaintenanceError::ExtensionVersions(_)
         | MaintenanceError::UnknownHorizonHolder(_)
         | MaintenanceError::UnreadableCode(_)
-        | MaintenanceError::ProbeTargetNotAnIndex(_)
+        | MaintenanceError::ProbeTargetOfAnotherKind(_)
+        | MaintenanceError::FleetLockNotHeld(_)
+        | MaintenanceError::RepackVersion(_)
+        | MaintenanceError::UnknownLockMode(_)
         | MaintenanceError::KeyLayoutTargetNotDensityMeasured(_)
         | MaintenanceError::InvalidKeyLayout { .. }
         | MaintenanceError::UnknownBranchSchema

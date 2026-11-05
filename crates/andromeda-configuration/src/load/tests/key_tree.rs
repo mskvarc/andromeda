@@ -771,6 +771,7 @@ fn every_mode_refuses_a_value_it_does_not_define() {
         "http.security_headers",
         "http.csrf",
         "database.maintenance",
+        "database.maintenance.repack",
         "tenancy",
         "jsonld.fetch",
         "temporal.storage.retention",

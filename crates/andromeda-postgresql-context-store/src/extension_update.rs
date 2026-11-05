@@ -11,6 +11,10 @@
 //! read that decides whether an update is due keeps `TimescaleDB` unloaded, so
 //! no connection that outlives the update ever carried the old library.
 //!
+//! An optional extension that ships no update scripts, which no update reaches
+//! a newer version of, is dropped and created again instead, under the same
+//! lock and each statement on a connection of its own.
+//!
 //! The same reconciliation installs every [`OptionalExtension`] the server ships
 //! and the database lacks, when the connecting role may create it. It runs
 //! before a database is migrated and whenever a tenant's probe finds one due, so
@@ -25,52 +29,30 @@
 
 use crate::{
     error::ContextStoreError,
+    extension_command::{ExtensionCommandRefusal, refusal, role_may_create, run_on_own_connection},
+    extension_recreation::{apply_recreation, pending_extension_recreations},
+    extension_standing::{ExtensionStanding, extension_standings},
     optional_extension::OptionalExtension,
     schema_contract::{
-        error::SchemaContractError,
         server_requirements::{ExtensionPresence, ExtensionVersion},
         versioned_extension::VersionedExtension,
     },
+    tracked_extension::TrackedExtension,
 };
-use andromeda_postgresql_pool::{
-    schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
-    sql_state::SqlState,
-};
+use andromeda_postgresql_pool::schema_change_lock::schema_change_connect_options;
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     command::Command,
     extension_creation::ExtensionCreation,
     extension_update::ExtensionUpdate,
-    introspection::{current_role_is_superuser, extension_shipped_version, extension_trusted, extension_version},
+    introspection::{extension_shipped_version, extension_version},
     setting::{Setting, SettingAssignment, SettingScope},
     statement::Statement,
 };
-use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
-use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
-use sqlx::{
-    Acquire,
-    Connection,
-    Executor,
-    PgConnection,
-    Postgres,
-    Row,
-    Transaction,
-    postgres::{PgConnectOptions, PgRow},
-};
+use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use sqlx::{Acquire, Connection, PgConnection, Postgres, Row, Transaction, postgres::PgConnectOptions};
 use strum::IntoEnumIterator;
 use url::Url;
-
-/// One versioned extension's installed version in a database, and the version
-/// the server's installation ships.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExtensionStanding {
-    /// The extension.
-    pub extension: VersionedExtension,
-    /// What `pg_extension` records for this database.
-    pub installed: ExtensionPresence,
-    /// The version the server's installation ships, `None` when it ships none.
-    pub shipped: Option<ExtensionVersion>,
-}
 
 /// One versioned extension installed below the version the server ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,24 +113,6 @@ pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<
     Ok(extension_standings(connection).await?.into_iter().filter_map(pending_update).collect())
 }
 
-/// Every versioned extension's installed version in the database `executor`
-/// reaches, beside the version the server ships.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::Database`] when the read fails and
-/// [`ContextStoreError::SchemaContract`] when a reported version cannot be
-/// read.
-pub async fn extension_standings<'e, E>(executor: E) -> Result<Vec<ExtensionStanding>, ContextStoreError>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    let row = extension_versions_statement().to_query().fetch_one(executor).await?;
-    VersionedExtension::iter()
-        .map(|extension| read_versions(&row, extension).map(|(installed, shipped)| ExtensionStanding { extension, installed, shipped }))
-        .collect()
-}
-
 /// The optional extensions the server ships, this database lacks, and the
 /// session's role may create: as a superuser, or because the shipped version is
 /// trusted.
@@ -171,24 +135,26 @@ pub async fn installable_optional_extensions(connection: &mut PgConnection) -> R
 }
 
 /// Update every versioned extension of the database `database_url` names to
-/// the version the server ships, and install every optional extension
-/// [`installable_optional_extensions`] finds due.
+/// the version the server ships, drop and create again every recreated
+/// extension [`pending_extension_recreations`] finds due, and install every
+/// optional extension [`installable_optional_extensions`] finds due.
 ///
 /// Run before anything else touches the database on this start, so no
 /// connection the broker keeps has loaded the old `TimescaleDB` library: the
 /// lock and the version read run without loading it, and each update runs on a
 /// connection opened for it alone. An update the connecting role may not make
 /// is logged and skipped, leaving the schema contract's floor to decide whether
-/// the installed version still serves; an installation refused the same way is
-/// logged and skipped, leaving the feature that uses the extension to report
-/// its absence.
+/// the installed version still serves; a recreation or an installation refused
+/// the same way is logged and skipped, leaving the feature that uses the
+/// extension to report its absence, and a recreation whose drop finds
+/// dependent objects is logged and left for a later open.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the URL names no
 /// database, [`ContextStoreError::Database`] when a connection cannot be
 /// opened, the lock or the read fails, or an update fails for a reason other
-/// than privilege or an installation fails the same way, and
+/// than privilege or a recreation or an installation fails the same way, and
 /// [`ContextStoreError::SchemaContract`] when a reported version cannot be
 /// read.
 pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreError> {
@@ -200,8 +166,8 @@ pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreErr
 }
 
 /// Take the database's update lock, read what is pending and what is due to be
-/// installed, and apply both, all in one transaction that keeps `TimescaleDB`
-/// unloaded on the lock holder.
+/// recreated or installed, and apply all three, in one transaction that keeps
+/// `TimescaleDB` unloaded on the lock holder.
 async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOptions) -> Result<(), ContextStoreError> {
     let database = options.get_database().ok_or(ContextStoreError::DatabaseUrlUnnamed)?;
     let mut transaction = begin_without_timescaledb(&mut *lock_holder).await?;
@@ -209,28 +175,14 @@ async fn update_under_lock(lock_holder: &mut PgConnection, options: &PgConnectOp
     for pending in pending_extension_updates(&mut transaction).await? {
         apply_update(options, pending).await?;
     }
+    for pending in pending_extension_recreations(&mut transaction).await? {
+        apply_recreation(options, pending).await?;
+    }
     for extension in installable_optional_extensions(&mut transaction).await? {
         apply_installation(options, extension).await?;
     }
     transaction.commit().await?;
     Ok(())
-}
-
-/// Run `command` as the first statement of a connection opened for it, opening
-/// another and running it again while it is refused a lock.
-async fn run_on_own_connection(options: &PgConnectOptions, command: &impl Command) -> Result<(), sqlx::Error> {
-    SCHEMA_CHANGE_LOCK_RETRY
-        .run(
-            &TokioRetryDelay,
-            |error, _| is_lock_not_available(error),
-            |_| async move {
-                let mut connection = PgConnection::connect_with(options).await?;
-                let outcome = command.to_query().execute(&mut connection).await;
-                connection.close().await?;
-                outcome.map(drop)
-            },
-        )
-        .await
 }
 
 /// Install one optional extension on a connection opened for it.
@@ -240,7 +192,7 @@ async fn apply_installation(options: &PgConnectOptions, extension: OptionalExten
             tracing::info!(extension = %extension, event = "extension_installed", "optional extension installed");
             Ok(())
         }
-        Err(error) if is_insufficient_privilege(&error) => {
+        Err(error) if refusal(&error) == Some(ExtensionCommandRefusal::InsufficientPrivilege) => {
             tracing::warn!(
                 extension = %extension,
                 error = %error,
@@ -266,7 +218,7 @@ async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdat
             );
             Ok(())
         }
-        Err(error) if is_insufficient_privilege(&error) => {
+        Err(error) if refusal(&error) == Some(ExtensionCommandRefusal::InsufficientPrivilege) => {
             tracing::warn!(
                 extension = %pending.extension,
                 installed = %pending.installed,
@@ -281,46 +233,20 @@ async fn apply_update(options: &PgConnectOptions, pending: PendingExtensionUpdat
     }
 }
 
-/// Whether a failed update was refused for privilege rather than failing: the
-/// connecting role does not own the extension, or may not run an untrusted
-/// extension's update script.
-fn is_insufficient_privilege(error: &sqlx::Error) -> bool {
-    SqlState::of(error) == Some(SqlState::InsufficientPrivilege)
-}
-
-/// One extension's installed version and the version the server ships, the
-/// latter `None` when the installation does not ship it.
-fn read_versions(row: &PgRow, extension: VersionedExtension) -> Result<(ExtensionPresence, Option<ExtensionVersion>), ContextStoreError> {
-    let installed = ExtensionPresence::try_from(row.try_get::<Option<String>, _>(extension.installed_column())?).map_err(SchemaContractError::from)?;
-    let shipped = row
-        .try_get::<Option<String>, _>(extension.shipped_column())?
-        .map(|raw| ExtensionVersion::try_from(raw.as_str()))
-        .transpose()
-        .map_err(SchemaContractError::from)?;
-    Ok((installed, shipped))
-}
-
 /// The update one extension needs, or `None` when it is absent, not shipped,
-/// or installed at or above the shipped version.
+/// installed at or above the shipped version, or brought up to date by
+/// recreation rather than by update.
 ///
 /// An installed version above the shipped one is a server running an older
 /// image than the one that last updated the database; no update reaches back,
 /// and the schema contract's floor decides whether it still serves.
 fn pending_update(ExtensionStanding { extension, installed, shipped }: ExtensionStanding) -> Option<PendingExtensionUpdate> {
-    match (installed, shipped) {
-        (ExtensionPresence::Installed(installed), Some(shipped)) if installed < shipped => Some(PendingExtensionUpdate { extension, installed, shipped }),
-        (ExtensionPresence::Installed(_) | ExtensionPresence::Absent, Some(_) | None) => None,
+    match (extension, installed, shipped) {
+        (TrackedExtension::Updated(extension), ExtensionPresence::Installed(installed), Some(shipped)) if installed < shipped => {
+            Some(PendingExtensionUpdate { extension, installed, shipped })
+        }
+        (TrackedExtension::Updated(_) | TrackedExtension::Recreated(_), ExtensionPresence::Installed(_) | ExtensionPresence::Absent, Some(_) | None) => None,
     }
-}
-
-/// Read every versioned extension's installed and shipped version in one row.
-fn extension_versions_statement() -> SelectStatement {
-    VersionedExtension::iter().fold(Query::select(), |mut select, extension| {
-        select
-            .expr_as(extension_version(extension.catalog_name()), Alias::new(extension.installed_column()))
-            .expr_as(extension_shipped_version(extension.catalog_name()), Alias::new(extension.shipped_column()));
-        select
-    })
 }
 
 /// Read, for every optional extension, whether it is due to be installed:
@@ -336,11 +262,10 @@ fn installable_extensions_statement() -> SelectStatement {
 /// session's role; never `NULL`, since an unshipped extension has no trusted
 /// flag to read.
 fn installable(name: &str) -> SimpleExpr {
-    let creatable = current_role_is_superuser().or(Func::coalesce([extension_trusted(name), Expr::val(false)]));
     extension_shipped_version(name)
         .is_not_null()
         .and(extension_version(name).is_null())
-        .and(creatable)
+        .and(role_may_create(name))
 }
 
 /// The transaction advisory lock that serializes updating one database's
@@ -354,37 +279,17 @@ fn extension_update_lock(database: &str) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::{
-        extension_update::{
-            ExtensionStanding,
-            PendingExtensionUpdate,
-            extension_update_lock,
-            extension_versions_statement,
-            installable_extensions_statement,
-            is_insufficient_privilege,
-            pending_update,
-        },
+        extension_standing::ExtensionStanding,
+        extension_update::{PendingExtensionUpdate, extension_update_lock, installable_extensions_statement, pending_update},
+        recreated_extension::RecreatedExtension,
         schema_contract::{
             server_requirements::{ExtensionPresence, ExtensionVersion},
             versioned_extension::VersionedExtension,
         },
+        tracked_extension::TrackedExtension,
     };
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::PostgresQueryBuilder;
-
-    #[test]
-    fn the_version_read_takes_each_extensions_installed_and_shipped_version() {
-        let sql = extension_versions_statement().to_string(PostgresQueryBuilder);
-        for column in [
-            r#"AS "postgis_version""#,
-            r#"AS "postgis_shipped_version""#,
-            r#"AS "timescaledb_version""#,
-            r#"AS "timescaledb_shipped_version""#,
-        ] {
-            assert!(sql.contains(column), "{column} missing: {sql}");
-        }
-        assert!(sql.contains(r#"FROM "pg_extension" WHERE "extname" = 'timescaledb'"#), "{sql}");
-        assert!(sql.contains(r#"FROM "pg_available_extensions" WHERE "name" = 'postgis'"#), "{sql}");
-    }
 
     #[test]
     fn an_optional_extension_is_due_only_when_shipped_absent_and_creatable_by_the_role() {
@@ -395,6 +300,19 @@ mod tests {
             r#"(SELECT "rolsuper" FROM "pg_roles" WHERE "rolname" = (current_user))"#,
             r#"COALESCE((SELECT "trusted" FROM "pg_available_extension_versions" WHERE "name" = 'pgstattuple'"#,
             r#"AS "pgstattuple_installable""#,
+        ] {
+            assert!(sql.contains(clause), "{clause} missing: {sql}");
+        }
+    }
+
+    #[test]
+    fn pg_repack_is_due_when_shipped_absent_and_the_role_is_a_superuser_or_the_version_trusted() {
+        let sql = installable_extensions_statement().to_string(PostgresQueryBuilder);
+        for clause in [
+            r#"(SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'pg_repack') IS NOT NULL"#,
+            r#"(SELECT "extversion" FROM "pg_extension" WHERE "extname" = 'pg_repack') IS NULL"#,
+            r#"AND ((SELECT "rolsuper" FROM "pg_roles" WHERE "rolname" = (current_user)) OR COALESCE((SELECT "trusted" FROM "pg_available_extension_versions" WHERE "name" = 'pg_repack'"#,
+            r#"AS "pg_repack_installable""#,
         ] {
             assert!(sql.contains(clause), "{clause} missing: {sql}");
         }
@@ -414,7 +332,7 @@ mod tests {
         let shipped = ExtensionVersion::new(2, 30, 2);
         assert_eq!(
             pending_update(ExtensionStanding {
-                extension: VersionedExtension::TimescaleDb,
+                extension: TrackedExtension::Updated(VersionedExtension::TimescaleDb),
                 installed: ExtensionPresence::Installed(installed),
                 shipped: Some(shipped),
             }),
@@ -439,7 +357,7 @@ mod tests {
         for (installed, shipped) in settled {
             assert_eq!(
                 pending_update(ExtensionStanding {
-                    extension: VersionedExtension::PostGis,
+                    extension: TrackedExtension::Updated(VersionedExtension::PostGis),
                     installed,
                     shipped,
                 }),
@@ -450,8 +368,14 @@ mod tests {
     }
 
     #[test]
-    fn a_driver_error_without_a_sqlstate_is_not_a_privilege_refusal() {
-        assert!(!is_insufficient_privilege(&sqlx::Error::RowNotFound));
-        assert!(!is_insufficient_privilege(&sqlx::Error::PoolTimedOut));
+    fn a_recreated_extension_below_the_shipped_version_is_no_pending_update() {
+        assert_eq!(
+            pending_update(ExtensionStanding {
+                extension: TrackedExtension::Recreated(RecreatedExtension::PgRepack),
+                installed: ExtensionPresence::Installed(ExtensionVersion::new(1, 5, 2)),
+                shipped: Some(ExtensionVersion::new(1, 5, 3)),
+            }),
+            None
+        );
     }
 }

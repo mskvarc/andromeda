@@ -32,6 +32,7 @@ use crate::names::{
     POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
     POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
     POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+    POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS,
     POSTGRESQL_MULTIXACT_AGE_MAX,
     POSTGRESQL_OVERDUE_RELATIONS,
     POSTGRESQL_POOL_CONNECTIONS,
@@ -129,7 +130,7 @@ impl MetricDescription {
 }
 
 /// Every metric the broker emits.
-const DESCRIPTIONS: [MetricDescription; 53] = [
+const DESCRIPTIONS: [MetricDescription; 54] = [
     MetricDescription::gauge(BUILD_INFO, None, "Always 1, labelled by the version of the running broker."),
     MetricDescription::counter(HTTP_REQUESTS_TOTAL, "HTTP requests answered, by method, matched endpoint and status code."),
     MetricDescription::histogram(
@@ -227,6 +228,11 @@ const DESCRIPTIONS: [MetricDescription; 53] = [
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
         None,
         "Dead rows a PostgreSQL maintenance vacuum removed, by action.",
+    ),
+    MetricDescription::histogram(
+        POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS,
+        Some(Unit::Seconds),
+        "Time one phase of a PostgreSQL table repack took, by phase.",
     ),
     MetricDescription::gauge(
         POSTGRESQL_FREEZE_AGE_MAX,

@@ -55,6 +55,16 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Statistics(HeapTarget::TemporalAttributeStreams) => MaintenanceTargetCode::TemporalAttributeStreamsStatistics,
         MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryRowstore,
         MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory) => MaintenanceTargetCode::AttributeHistoryColumnstore,
+        MaintenanceTarget::Repack(HeapTarget::CurrentAttributes) => MaintenanceTargetCode::CurrentAttributesRepack,
+        MaintenanceTarget::Repack(HeapTarget::Entities) => MaintenanceTargetCode::EntitiesRepack,
+        MaintenanceTarget::Repack(HeapTarget::SubscriptionDeliveryState) => MaintenanceTargetCode::SubscriptionDeliveryStateRepack,
+        MaintenanceTarget::Repack(HeapTarget::NotificationEvents) => MaintenanceTargetCode::NotificationEventsRepack,
+        MaintenanceTarget::Repack(HeapTarget::NotificationDeliveries) => MaintenanceTargetCode::NotificationDeliveriesRepack,
+        MaintenanceTarget::Repack(HeapTarget::PendingSideEffects) => MaintenanceTargetCode::PendingSideEffectsRepack,
+        MaintenanceTarget::Repack(HeapTarget::TemporalAppendIntents) => MaintenanceTargetCode::TemporalAppendIntentsRepack,
+        MaintenanceTarget::Repack(HeapTarget::SnapshotNotificationOutbox) => MaintenanceTargetCode::SnapshotNotificationOutboxRepack,
+        MaintenanceTarget::Repack(HeapTarget::EntitySearch) => MaintenanceTargetCode::EntitySearchRepack,
+        MaintenanceTarget::Repack(HeapTarget::TemporalAttributeStreams) => MaintenanceTargetCode::TemporalAttributeStreamsRepack,
     }
 }
 
@@ -110,6 +120,16 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::TemporalAttributeStreamsStatistics => MaintenanceTarget::Statistics(HeapTarget::TemporalAttributeStreams),
         MaintenanceTargetCode::AttributeHistoryRowstore => MaintenanceTarget::Rowstore(HistoryTable::AttributeHistory),
         MaintenanceTargetCode::AttributeHistoryColumnstore => MaintenanceTarget::Columnstore(HistoryTable::AttributeHistory),
+        MaintenanceTargetCode::CurrentAttributesRepack => MaintenanceTarget::Repack(HeapTarget::CurrentAttributes),
+        MaintenanceTargetCode::EntitiesRepack => MaintenanceTarget::Repack(HeapTarget::Entities),
+        MaintenanceTargetCode::SubscriptionDeliveryStateRepack => MaintenanceTarget::Repack(HeapTarget::SubscriptionDeliveryState),
+        MaintenanceTargetCode::NotificationEventsRepack => MaintenanceTarget::Repack(HeapTarget::NotificationEvents),
+        MaintenanceTargetCode::NotificationDeliveriesRepack => MaintenanceTarget::Repack(HeapTarget::NotificationDeliveries),
+        MaintenanceTargetCode::PendingSideEffectsRepack => MaintenanceTarget::Repack(HeapTarget::PendingSideEffects),
+        MaintenanceTargetCode::TemporalAppendIntentsRepack => MaintenanceTarget::Repack(HeapTarget::TemporalAppendIntents),
+        MaintenanceTargetCode::SnapshotNotificationOutboxRepack => MaintenanceTarget::Repack(HeapTarget::SnapshotNotificationOutbox),
+        MaintenanceTargetCode::EntitySearchRepack => MaintenanceTarget::Repack(HeapTarget::EntitySearch),
+        MaintenanceTargetCode::TemporalAttributeStreamsRepack => MaintenanceTarget::Repack(HeapTarget::TemporalAttributeStreams),
     }
 }
 
@@ -120,6 +140,7 @@ mod tests {
         evidence::target_code::{stored_target, target_of},
     };
     use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
+    use andromeda_postgresql_context_store::migration_set::platform::platform_migrations;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -130,7 +151,8 @@ mod tests {
             .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Heap))
             .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Statistics))
             .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Columnstore))
-            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Rowstore));
+            .chain(HistoryTable::ALL.into_iter().map(MaintenanceTarget::Rowstore))
+            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Repack));
         for target in targets {
             assert_eq!(target_of(stored_target(target)), target);
         }
@@ -151,8 +173,40 @@ mod tests {
                 MaintenanceTarget::Statistics(heap) => format!("{}_statistics", heap.relation_name()),
                 MaintenanceTarget::Columnstore(table) => format!("{}_columnstore", table.relation_name()),
                 MaintenanceTarget::Rowstore(table) => format!("{}_rowstore", table.relation_name()),
+                MaintenanceTarget::Repack(heap) => format!("{}_repack", heap.relation_name()),
             };
             assert_eq!(code.label(), expected);
         }
+    }
+
+    #[test]
+    fn every_repack_target_round_trips_through_its_own_code() {
+        let codes = HeapTarget::ALL.map(|heap| stored_target(MaintenanceTarget::Repack(heap)).code());
+        assert_eq!(codes, [46, 47, 48, 49, 50, 51, 52, 53, 54, 55]);
+        for heap in HeapTarget::ALL {
+            assert_eq!(target_of(stored_target(MaintenanceTarget::Repack(heap))), MaintenanceTarget::Repack(heap));
+        }
+    }
+
+    /// The platform migration bounds the stored target to the registry's
+    /// highest code, so a new target fails here until the check is widened.
+    #[test]
+    fn the_migration_target_check_ends_at_the_highest_code() {
+        let highest = MaintenanceTargetCode::ALL.iter().map(|code| code.code()).max();
+        let migrations = platform_migrations();
+        let migration = migrations
+            .iter()
+            .map(|migration| migration.sql.as_str())
+            .find(|sql| sql.contains("create table postgresql_maintenance_targets"))
+            .unwrap_or_default();
+        assert_eq!(highest, Some(55));
+        assert!(
+            migration.contains("check (target between 1 and 55)"),
+            "the targets check names the highest code"
+        );
+        assert!(
+            migration.contains("check (target between 46 and 55)"),
+            "the repack runs check names the repack codes"
+        );
     }
 }

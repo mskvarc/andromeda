@@ -13,6 +13,7 @@ use crate::{
         POSTGRESQL_MAINTENANCE_ACTION_DURATION_SECONDS,
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+        POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS,
         POSTGRESQL_STATEMENT_DURATION_SECONDS,
         SUBSCRIPTION_CANDIDATES,
         TEMPORAL_OPERATION_DURATION_SECONDS,
@@ -74,6 +75,10 @@ const RECLAIMED_BYTES_BUCKETS: [f64; 8] = [
     68_719_476_736.0,
 ];
 
+/// Repack phases, from a sub-second setup to a copy of a multi-gigabyte
+/// table bounded at six hours.
+const REPACK_PHASE_SECONDS_BUCKETS: [f64; 11] = [0.1, 1.0, 5.0, 30.0, 60.0, 300.0, 900.0, 1_800.0, 3_600.0, 10_800.0, 21_600.0];
+
 /// Histogram bucket bounds for the dead tuples one vacuum removes.
 const DEAD_TUPLE_BUCKETS: [f64; 8] = [100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0, 10_000_000.0, 100_000_000.0, 1_000_000_000.0];
 
@@ -81,7 +86,7 @@ const DEAD_TUPLE_BUCKETS: [f64; 8] = [100.0, 1_000.0, 10_000.0, 100_000.0, 1_000
 ///
 /// The exporter renders a histogram without a bucket set as a summary, so a
 /// histogram missing here would change type the day it gains one.
-pub(crate) const HISTOGRAM_BUCKETS: [(&str, &[f64]); 12] = [
+pub(crate) const HISTOGRAM_BUCKETS: [(&str, &[f64]); 13] = [
     (HTTP_REQUEST_DURATION_SECONDS, &HTTP_REQUEST_SECONDS_BUCKETS),
     (ENTITY_OPERATION_DURATION_SECONDS, &OPERATION_SECONDS_BUCKETS),
     (TEMPORAL_OPERATION_DURATION_SECONDS, &OPERATION_SECONDS_BUCKETS),
@@ -94,6 +99,7 @@ pub(crate) const HISTOGRAM_BUCKETS: [(&str, &[f64]); 12] = [
     (POSTGRESQL_MAINTENANCE_ACTION_DURATION_SECONDS, &MAINTENANCE_SECONDS_BUCKETS),
     (POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES, &RECLAIMED_BYTES_BUCKETS),
     (POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES, &DEAD_TUPLE_BUCKETS),
+    (POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS, &REPACK_PHASE_SECONDS_BUCKETS),
 ];
 
 /// Where the `metrics` macros reach a recorder.

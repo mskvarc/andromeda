@@ -6,11 +6,13 @@ mod catalog_sampling;
 /// Each density-measured GIN's density over the rows its table's latest
 /// analyze counted.
 pub(crate) mod density_sampling;
+mod heap_probing;
 /// Each heap's dead share over the live rows its latest analyze counted.
 pub(crate) mod heap_sampling;
 mod index_probing;
 mod probe_notices;
 mod probe_selection;
+mod repack_recovery;
 mod visit_branches;
 
 use crate::{
@@ -19,19 +21,21 @@ use crate::{
     branch::Branch,
     branch_selection,
     capability::{self, MaintainPrivilege},
-    controller::{probe_notices::ProbeNotices, visit_branches::VisitBranches},
+    controller::{index_probing::ProbeContext, probe_notices::ProbeNotices, visit_branches::VisitBranches},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     expected_deployment::ExpectedDeployment,
     extension_observation,
     fleet_observation,
     fleet_triage,
+    freeze_policy::FreezePressure,
     freeze_report,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
+    repack_context::RepackInputs,
     replication_slot,
     rowstore_rebuild,
-    state::{self, RegisteredTenant, branch_rows, open_breach, pending_action, tenant_inspection},
+    state::{self, FleetLock, FleetLockTaken, RegisteredTenant, branch_rows, open_breach, pending_action, repack_run, tenant_inspection},
     statement_statistics,
     timescale_observation::{self, HistorySweeps},
 };
@@ -149,7 +153,7 @@ impl MaintenanceController {
         }
         let mut platform = self.platform_pool.acquire().await?;
         platform.close_on_drop();
-        if !state::try_global_lock(&mut platform).await? {
+        if state::try_fleet_lock(&mut platform, FleetLock::Pass).await? == FleetLockTaken::HeldElsewhere {
             info!(
                 decision = "deferred",
                 reason = "global-lock-unavailable",
@@ -161,7 +165,7 @@ impl MaintenanceController {
         // A failed release outranks the pass result: the advisory lock is
         // fleet-wide state, so reporting an outcome while it may still be held
         // would hide the condition that blocks every other broker.
-        state::release_global_lock(&mut platform).await?;
+        state::release_fleet_lock(&mut platform, FleetLock::Pass).await?;
         result
     }
 
@@ -173,13 +177,17 @@ impl MaintenanceController {
         let fleet = fleet_observation::observe_fleet(platform).await?;
         fleet.record_telemetry();
         fleet.report_unvisited(&self.expected.tenant_database_prefix);
-        replication_slot::observe_replication_slots(platform).await?;
+        let retained_wal_bytes = replication_slot::observe_replication_slots(platform).await?;
         autovacuum_health::observe_workers(platform).await?;
         let now = Utc::now();
         let records = tenant_inspection::inspection_records(platform).await?;
         let due = pending_action::tenants_with_due_actions(platform, now).await?;
         let breaches = open_breach::open_breaches(platform).await?;
-        let standings = fleet_triage::standings(records, &fleet, &due, &breaches);
+        let orphaned = match state::fleet_lock_held_elsewhere(platform, FleetLock::Repack).await? {
+            FleetLockTaken::Taken => repack_run::tenants_with_runs(platform).await?,
+            FleetLockTaken::HeldElsewhere => Vec::new(),
+        };
+        let standings = fleet_triage::standings(records, &fleet, &due, &breaches, &orphaned);
         let qualifying_duration = PolicyProfile::from_profile(self.config.profile).qualifying_duration;
         let Some(tenant) = fleet_triage::select_tenant(&standings, qualifying_duration, now) else {
             return Ok(PassOutcome::NoTenant);
@@ -208,6 +216,11 @@ impl MaintenanceController {
         let capability = capability::probe_capability(&mut connection).await?;
         self.probe_notices.report(tenant, capability);
         let profile = PolicyProfile::from_profile(self.config.profile);
+        if let Some(outcome) = repack_recovery::recover_repacks(self.config.mode, platform, &mut connection, tenant, profile).await? {
+            return Ok(outcome);
+        }
+        let freeze = observed.map_or(FreezePressure::Normal, |database| database.freeze.pressure());
+        let repack = self.repack_inputs(&mut connection, tenant, retained_wal_bytes, freeze).await?;
         let published = inspection::published_branches(&mut connection).await?;
         branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
         let snapshots = branch_selection::lock_branches(&mut connection, tenant, self.branch_version).await?;
@@ -245,13 +258,38 @@ impl MaintenanceController {
         }
 
         let candidates = capability.probe_candidates(sampling.probe_candidates);
-        let outcome = index_probing::probe_indexes(&branches, platform, &mut connection, tenant, &candidates, profile, cancellation)
+        let context = ProbeContext {
+            branches: &branches,
+            repack,
+            profile,
+        };
+        let outcome = index_probing::probe_indexes(&context, platform, &mut connection, tenant, &candidates, cancellation)
             .await?
             .pass_outcome(flagged);
         if outcome != PassOutcome::Cancelled {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         }
         Ok(outcome)
+    }
+
+    /// What every repack of the visit is decided with, its missing capability
+    /// warned about once.
+    async fn repack_inputs(
+        &self,
+        connection: &mut PgConnection,
+        tenant: &RegisteredTenant,
+        retained_wal_bytes: u64,
+        freeze: FreezePressure,
+    ) -> Result<RepackInputs, MaintenanceError> {
+        let inputs = RepackInputs {
+            config: self.config.repack,
+            capability: capability::repack_capability(connection).await?,
+            retained_wal_bytes,
+            freeze,
+            branch_version: self.branch_version,
+        };
+        self.probe_notices.report_repack(tenant, inputs.capability);
+        Ok(inputs)
     }
 
     /// Connect to the selected tenant's database and configure one maintenance
@@ -317,6 +355,7 @@ const fn idle_gates() -> SafetyGates {
         held_horizon: None,
         active_maintenance: false,
         waiting_relation_lock: false,
+        repack_running: false,
     }
 }
 

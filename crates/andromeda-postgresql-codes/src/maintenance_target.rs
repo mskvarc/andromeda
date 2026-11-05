@@ -11,7 +11,9 @@ compact_code_registry! {
     /// their own, labelled with the heap's name and a `_statistics` suffix, and
     /// a history hypertable's columnstore is labelled with its name and a
     /// `_columnstore` suffix, and its kept rowstore chunks with its name and a
-    /// `_rowstore` suffix.
+    /// `_rowstore` suffix. A heap repacked online to give its free space back
+    /// is a target of its own too, labelled with the heap's name and a
+    /// `_repack` suffix.
     MaintenanceTargetCode {
         frozen_prefix: 13,
         frozen_digest: 0xeca3_e32a_1519_99bf,
@@ -106,6 +108,26 @@ compact_code_registry! {
             AttributeHistoryRowstore = 44, "attribute_history_rowstore";
             /// The notification deliveries' per-subscription claim index.
             IdxNotificationDeliveriesSubscriptionClaim = 45, "idx_notification_deliveries_subscription_claim";
+            /// The current attributes' heap, repacked online to give its free space back.
+            CurrentAttributesRepack = 46, "current_attributes_repack";
+            /// The current entities' heap, repacked online to give its free space back.
+            EntitiesRepack = 47, "entities_repack";
+            /// The subscription delivery-state heap, repacked online to give its free space back.
+            SubscriptionDeliveryStateRepack = 48, "subscription_delivery_state_repack";
+            /// The notification events queue heap, repacked online to give its free space back.
+            NotificationEventsRepack = 49, "notification_events_repack";
+            /// The notification deliveries queue heap, repacked online to give its free space back.
+            NotificationDeliveriesRepack = 50, "notification_deliveries_repack";
+            /// The pending side effects queue heap, repacked online to give its free space back.
+            PendingSideEffectsRepack = 51, "pending_side_effects_repack";
+            /// The temporal append intents queue heap, repacked online to give its free space back.
+            TemporalAppendIntentsRepack = 52, "temporal_append_intents_repack";
+            /// The snapshot notification outbox queue heap, repacked online to give its free space back.
+            SnapshotNotificationOutboxRepack = 53, "snapshot_notification_outbox_repack";
+            /// The entity search projection's heap, repacked online to give its free space back.
+            EntitySearchRepack = 54, "entity_search_repack";
+            /// The temporal attribute stream catalogue's heap, repacked online to give its free space back.
+            TemporalAttributeStreamsRepack = 55, "temporal_attribute_streams_repack";
         }
     }
 }
@@ -117,7 +139,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 45);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 55);
         assert_eq!(MaintenanceTargetCode::PkCaGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -136,11 +158,13 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::IdxTemporalAttributeStreamsValueExtent.code(), 42);
         assert_eq!(MaintenanceTargetCode::AttributeHistoryRowstore.code(), 44);
         assert_eq!(MaintenanceTargetCode::IdxNotificationDeliveriesSubscriptionClaim.code(), 45);
+        assert_eq!(MaintenanceTargetCode::CurrentAttributesRepack.code(), 46);
+        assert_eq!(MaintenanceTargetCode::TemporalAttributeStreamsRepack.code(), 55);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(46).is_err());
+        assert!(MaintenanceTargetCode::try_from(56).is_err());
     }
 }

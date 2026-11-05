@@ -60,6 +60,7 @@ impl ConfigKey {
             ConfigKey::DatabaseAcquireTimeout => Some(span(config.database.acquire_timeout)),
             ConfigKey::DatabaseNameCacheMaxSizePerDictionary => Some(size(config.database.name_cache.max_size_per_dictionary)),
             ConfigKey::DatabaseNameCacheIdleEvictionAfter => config.database.name_cache.idle_eviction_after.limit().map(span),
+            ConfigKey::DatabaseMaintenanceRepackMaxRelationSize => config.database.maintenance.repack.max_relation_size.limit().map(size),
             ConfigKey::TenancyProvisionalTenantLifetime => Some(span(config.tenancy.provisional_tenant_lifetime)),
             ConfigKey::TenancyDatabasesMaxConnections => Some(count(config.tenancy.databases.max_connections.get())),
             ConfigKey::TenancyResidencyIdleEvictionAfter => Some(span(config.tenancy.residency.idle_eviction_after)),

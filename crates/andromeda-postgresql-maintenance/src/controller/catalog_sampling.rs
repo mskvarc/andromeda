@@ -140,7 +140,14 @@ pub(crate) async fn record_catalog_samples(
                 | DeferralReason::LongTransaction
                 | DeferralReason::HorizonHeld
                 | DeferralReason::ActiveMaintenance
-                | DeferralReason::WaitingRelationLock,
+                | DeferralReason::WaitingRelationLock
+                | DeferralReason::VacuumPending
+                | DeferralReason::RelationTooLarge
+                | DeferralReason::ReplicationRetention
+                | DeferralReason::SnapshotLifetimeShort
+                | DeferralReason::RepackLeftover
+                | DeferralReason::FreezePressure
+                | DeferralReason::RepackRunning,
             ) => {}
         }
     }

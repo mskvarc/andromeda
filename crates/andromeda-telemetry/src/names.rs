@@ -76,6 +76,8 @@ pub const POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL: &str = "andromeda_postgresql_mai
 pub const POSTGRESQL_MAINTENANCE_ACTION_DURATION_SECONDS: &str = "andromeda_postgresql_maintenance_action_duration_seconds";
 /// Histogram of bytes physically reclaimed by PostgreSQL maintenance actions.
 pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_maintenance_reclaimed_bytes";
+/// Histogram of the wall-clock seconds one phase of a PostgreSQL table repack took.
+pub const POSTGRESQL_MAINTENANCE_REPACK_PHASE_SECONDS: &str = "andromeda_postgresql_maintenance_repack_phase_seconds";
 /// Histogram of dead tuples removed by PostgreSQL maintenance vacuums.
 pub const POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES: &str = "andromeda_postgresql_maintenance_removed_dead_tuples";
 /// Gauge of the oldest database transaction ID age (`age(datfrozenxid)`) across the tenant fleet.
@@ -155,6 +157,8 @@ pub const LABEL_STAGE: &str = "stage";
 pub const LABEL_DECISION: &str = "decision";
 /// The `action` label naming a bounded maintenance operation family.
 pub const LABEL_ACTION: &str = "action";
+/// The `phase` label naming one phase of a PostgreSQL table repack.
+pub const LABEL_PHASE: &str = "phase";
 /// The `level` label naming a database freeze pressure level.
 pub const LABEL_LEVEL: &str = "level";
 /// The `dictionary` label naming a name dictionary.

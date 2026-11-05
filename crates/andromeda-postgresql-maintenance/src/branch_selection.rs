@@ -47,7 +47,7 @@ use tracing::info;
 /// The shortest remaining lifetime of a Snapshot whose branch a visit works
 /// in: the maintenance session's `statement_timeout`, so no rebuild or vacuum
 /// of the visit runs past the Snapshot's expiry.
-const EXPIRY_MARGIN: ChronoDuration = ChronoDuration::minutes(30);
+pub(crate) const EXPIRY_MARGIN: ChronoDuration = ChronoDuration::minutes(30);
 
 /// Whether a visit may work in a Snapshot's branch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,10 +145,24 @@ fn churn_order(eligible: &[SnapshotKey], churn: &[BranchChurn]) -> Vec<SnapshotK
     ordered.into_iter().map(|(_, key)| key).collect()
 }
 
+/// When the Snapshot `key` expires, `None` once it is reaped or its branch is
+/// behind `current`.
+pub(crate) async fn snapshot_expiry(
+    connection: &mut PgConnection,
+    key: SnapshotKey,
+    current: BranchSchemaVersion,
+) -> Result<Option<DateTime<Utc>>, MaintenanceError> {
+    Ok(snapshot_records(connection, Some(key), current)
+        .await?
+        .into_iter()
+        .next()
+        .map(|record| record.expires_at))
+}
+
 /// Take one Snapshot's branch lock without waiting, then check again that the
 /// visit may work in the branch. Returns whether it holds the lock; a branch
 /// it declines is unlocked again.
-async fn lock_branch(
+pub(crate) async fn lock_branch(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     key: SnapshotKey,

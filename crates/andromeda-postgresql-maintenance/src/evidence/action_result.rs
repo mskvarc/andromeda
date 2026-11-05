@@ -13,6 +13,14 @@ pub(crate) enum ActionResult {
     Failed,
     /// A vacuum completed but left the dead share at or above its threshold.
     Ineffective,
+    /// A repack gave up waiting for an `ACCESS EXCLUSIVE` lock.
+    RepackAbandonedLockWait,
+    /// A repack gave up on a log writes kept from converging.
+    RepackNotConverging,
+    /// A repack gave way to a session waiting for its table.
+    RepackYielded,
+    /// The objects an interrupted repack left were cleaned up.
+    RepackRecovered,
 }
 
 impl ActionResult {
@@ -22,6 +30,10 @@ impl ActionResult {
             ActionResult::Succeeded => MaintenanceActionResultCode::Succeeded,
             ActionResult::Failed => MaintenanceActionResultCode::Failed,
             ActionResult::Ineffective => MaintenanceActionResultCode::Ineffective,
+            ActionResult::RepackAbandonedLockWait => MaintenanceActionResultCode::RepackAbandonedLockWait,
+            ActionResult::RepackNotConverging => MaintenanceActionResultCode::RepackNotConverging,
+            ActionResult::RepackYielded => MaintenanceActionResultCode::RepackYielded,
+            ActionResult::RepackRecovered => MaintenanceActionResultCode::RepackRecovered,
         }
     }
 

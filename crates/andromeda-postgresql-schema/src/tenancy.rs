@@ -59,8 +59,9 @@ pub enum TenantWakeSchedule {
     ProbedAt,
 }
 
-/// The `tenant_extension_versions` table - the versioned extensions each tenant
-/// database held after its last open, and what the server shipped then.
+/// The `tenant_extension_versions` table - the `PostGIS`, `TimescaleDB` and
+/// `pg_repack` versions each tenant database held after its last open, and
+/// what the server shipped then.
 #[derive(Iden, Clone, Copy)]
 pub enum TenantExtensionVersions {
     /// Table name: `tenant_extension_versions`
@@ -69,7 +70,7 @@ pub enum TenantExtensionVersions {
     TenantKey,
     /// Instant the open that wrote the row brought the extensions up to date
     ReconciledAt,
-    /// The extension's catalogue name, `postgis` or `timescaledb`
+    /// The extension's catalogue name, `postgis`, `timescaledb` or `pg_repack`
     Extension,
     /// The version installed in the tenant database, `NULL` when not installed
     InstalledVersion,

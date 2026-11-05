@@ -2,8 +2,9 @@
 //!
 //! The platform database carries the platform set and the tenant set; every
 //! other tenant database carries the tenant set. Each run first updates the
-//! database's versioned extensions to the versions the server ships and
-//! installs the optional extensions it ships, then checks that the server can
+//! database's versioned extensions to the versions the server ships, recreates
+//! the optional extensions that ship no update scripts where they are behind,
+//! and installs the optional extensions it ships, then checks that the server can
 //! hold the schema before any migrator runs, then migrates, stamps and verifies
 //! the schema contract, and finally brings every Snapshot's branch schemas up
 //! to the branch version, quarantining a Snapshot whose upgrade fails.
@@ -16,6 +17,7 @@
 use crate::{
     database_defaults::{DatabaseDefaults, DefaultsReconciliation, reconcile_database_defaults},
     error::ContextStoreError,
+    extension_recreation::pending_extension_recreations,
     extension_update::{begin_without_timescaledb, installable_optional_extensions, pending_extension_updates, update_extensions},
     migration_set::{branch::BranchMigrationSet, platform::platform_migrator, tenant::tenant_migrator},
     schema_contract::{
@@ -225,8 +227,8 @@ pub enum TenantSchemaState {
 /// running the migrator.
 ///
 /// Built on the read-only [`verify_schema_contract`],
-/// [`pending_extension_updates`] and [`installable_optional_extensions`], run
-/// in one transaction that keeps
+/// [`pending_extension_updates`], [`pending_extension_recreations`] and
+/// [`installable_optional_extensions`], run in one transaction that keeps
 /// `TimescaleDB` unloaded: the transaction stays on one backend through a
 /// transaction pooler, and the serving connection it borrows has not loaded an
 /// extension version the migrator is about to replace, which `TimescaleDB`
@@ -235,8 +237,10 @@ pub enum TenantSchemaState {
 ///
 /// A versioned extension below the version the server ships reads as
 /// [`TenantSchemaState::NeedsMigration`], so does an optional extension the
-/// server ships, the database lacks and the role may create, since the
-/// migration run's extension reconciliation installs it, and so does a schema
+/// server ships, the database lacks and the role may create, and one installed
+/// below the shipped version that the role may drop and create again, since
+/// the migration run's extension reconciliation installs or recreates it, and
+/// so does a schema
 /// that is simply
 /// not there yet -- unstamped, a version behind, its `schema_metadata` relation
 /// undefined, or its versioned extensions not yet installed -- so the caller
@@ -258,10 +262,11 @@ pub async fn tenant_schema_state(pool: &PgPool) -> Result<TenantSchemaState, Con
     let contract = current_tenant_schema_contract()?;
     let mut probe = begin_without_timescaledb(pool).await?;
     let pending = pending_extension_updates(&mut probe).await?;
+    let recreations = pending_extension_recreations(&mut probe).await?;
     let installable = installable_optional_extensions(&mut probe).await?;
     let verified = verify_schema_contract(&mut probe, &contract).await;
     probe.rollback().await?;
-    if !pending.is_empty() || !installable.is_empty() {
+    if !pending.is_empty() || !recreations.is_empty() || !installable.is_empty() {
         return Ok(TenantSchemaState::NeedsMigration);
     }
     match verified {

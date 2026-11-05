@@ -1,6 +1,9 @@
 //! The heaps eligible for catch-up vacuum and `ANALYZE`, and the branches whose schema holds each.
 
-use crate::branch::Branch;
+use crate::{
+    branch::Branch,
+    candidate::{index_target::IndexTarget, repack_order::RepackOrder},
+};
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
     notification::{NotificationDeliveries, NotificationEvents},
@@ -85,7 +88,7 @@ impl HeapTarget {
     }
 
     /// This heap's table identifier.
-    fn table(self) -> DynIden {
+    pub(crate) fn table(self) -> DynIden {
         match self {
             HeapTarget::CurrentAttributes => CurrentAttributes::Table.into_iden(),
             HeapTarget::Entities => Entities::Table.into_iden(),
@@ -97,6 +100,28 @@ impl HeapTarget {
             HeapTarget::SnapshotNotificationOutbox => SnapshotNotificationOutbox::Table.into_iden(),
             HeapTarget::EntitySearch => EntitySearch::Table.into_iden(),
             HeapTarget::TemporalAttributeStreams => TemporalAttributeStreams::Table.into_iden(),
+        }
+    }
+
+    /// The order a repack copies the heap's rows in.
+    ///
+    /// The current attributes are copied in their grain key's order, so an
+    /// entity's attributes, which every entity read fetches together, share
+    /// pages. Every other heap is a queue, a single-row-per-key catalogue or
+    /// a projection read by one key at a time, where order buys nothing.
+    #[must_use]
+    pub const fn repack_order(self) -> RepackOrder {
+        match self {
+            HeapTarget::CurrentAttributes => RepackOrder::ClusteredBy(IndexTarget::PkCaGrain),
+            HeapTarget::Entities
+            | HeapTarget::SubscriptionDeliveryState
+            | HeapTarget::NotificationEvents
+            | HeapTarget::NotificationDeliveries
+            | HeapTarget::PendingSideEffects
+            | HeapTarget::TemporalAppendIntents
+            | HeapTarget::SnapshotNotificationOutbox
+            | HeapTarget::EntitySearch
+            | HeapTarget::TemporalAttributeStreams => RepackOrder::Physical,
         }
     }
 
@@ -128,7 +153,10 @@ pub enum RelationPresence {
 
 #[cfg(test)]
 mod tests {
-    use crate::{branch::Branch, candidate::heap_target::HeapTarget};
+    use crate::{
+        branch::Branch,
+        candidate::{heap_target::HeapTarget, index_target::IndexTarget, repack_order::RepackOrder},
+    };
     use andromeda_postgresql_seaquery::maintenance::{analyze, vacuum_non_truncating};
     use pretty_assertions::assert_eq;
     use sea_query::Alias;
@@ -189,5 +217,25 @@ mod tests {
                 "{heap}"
             );
         }
+    }
+
+    #[test]
+    fn only_the_current_attributes_are_copied_in_key_order() {
+        for heap in HeapTarget::ALL {
+            let expected = match heap {
+                HeapTarget::CurrentAttributes => RepackOrder::ClusteredBy(IndexTarget::PkCaGrain),
+                HeapTarget::Entities
+                | HeapTarget::SubscriptionDeliveryState
+                | HeapTarget::NotificationEvents
+                | HeapTarget::NotificationDeliveries
+                | HeapTarget::PendingSideEffects
+                | HeapTarget::TemporalAppendIntents
+                | HeapTarget::SnapshotNotificationOutbox
+                | HeapTarget::EntitySearch
+                | HeapTarget::TemporalAttributeStreams => RepackOrder::Physical,
+            };
+            assert_eq!(heap.repack_order(), expected, "{heap}");
+        }
+        assert_eq!(IndexTarget::PkCaGrain.heap(), HeapTarget::CurrentAttributes);
     }
 }

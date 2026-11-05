@@ -12,12 +12,13 @@ use crate::{
         action_rights::{self, ActionRights},
         catalog_sampling::{self, CatalogSample},
         density_sampling,
+        heap_probing,
         heap_sampling,
-        probe_selection,
+        probe_selection::{self, ProbeCandidate},
         visit_branches::VisitBranches,
     },
     error::MaintenanceError,
-    inspection::{self, IndexSize},
+    inspection,
     observation::ObservationLevel,
     observed_heap::WatchedHeap,
     policy::PolicyProfile,
@@ -35,9 +36,10 @@ pub(crate) struct BranchSampling {
     /// [`PassOutcome::Queued`] if any sample queued work, else
     /// [`PassOutcome::WouldAct`] if any would act, else `None`.
     pub(crate) flagged: Option<PassOutcome>,
-    /// The indexes to probe: each branch's in its probe order, the branches in
-    /// the order they were sampled.
-    pub(crate) probe_candidates: Vec<IndexSize>,
+    /// The probes to run: every branch's indexes, each branch's in its probe
+    /// order, then every branch's heaps the same way, the branches in the
+    /// order they were sampled.
+    pub(crate) probe_candidates: Vec<ProbeCandidate>,
     /// The actions of every branch whose right the role lacks.
     pub(crate) rights: ActionRights,
 }
@@ -59,6 +61,7 @@ pub(crate) async fn sample_branches(
         rights: ActionRights::default(),
     };
     let mut overdue_relations = 0;
+    let mut heap_candidates = Vec::new();
     for visit in branches.iter() {
         let branch = visit.branch;
         overdue_relations += autovacuum_health::report_overdue_heaps(connection, tenant, branch).await?;
@@ -87,10 +90,21 @@ pub(crate) async fn sample_branches(
         let flagged = catalog_sampling::record_catalog_samples(visit, &rights, platform, tenant, &samples, profile).await?;
         sampling.flagged = strongest(sampling.flagged, flagged);
         sampling.rights.extend(rights);
-        sampling
-            .probe_candidates
-            .extend(probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, Utc::now()));
+        let now = Utc::now();
+        sampling.probe_candidates.extend(
+            probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, now)
+                .into_iter()
+                .map(ProbeCandidate::Index),
+        );
+        let heap_sizes = heap_probing::heap_sizes(connection, branch).await?;
+        let heap_states = target_record::heap_probe_states(platform, tenant, branch).await?;
+        heap_candidates.extend(
+            probe_selection::heap_probe_order(&heap_sizes, &heap_states, profile, now)
+                .into_iter()
+                .map(ProbeCandidate::Heap),
+        );
     }
+    sampling.probe_candidates.extend(heap_candidates);
     record_overdue_relations(overdue_relations);
     Ok(sampling)
 }

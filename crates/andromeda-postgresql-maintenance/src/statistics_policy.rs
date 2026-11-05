@@ -52,6 +52,7 @@ mod tests {
             held_horizon: None,
             active_maintenance: false,
             waiting_relation_lock: false,
+            repack_running: false,
         }
     }
 

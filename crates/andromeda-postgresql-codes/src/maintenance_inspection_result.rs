@@ -60,6 +60,19 @@ compact_code_registry! {
             ActionFailed = 19, "action-failed";
             /// The pass was cancelled.
             Cancelled = 20, "cancelled";
+            /// A visit found no `pg_repack` extension. Nothing writes it: such a
+            /// visit repacks no table and records its own outcome. It names
+            /// the missing capability in the log.
+            MissingPgRepack = 21, "missing-pg-repack";
+            /// A visit found a `pg_repack` version the controller does not
+            /// drive. Nothing writes it: such a visit repacks no table and
+            /// records its own outcome. It names the missing capability in
+            /// the log.
+            UnsupportedPgRepack = 22, "unsupported-pg-repack";
+            /// A visit found a role that may not run a repack. Nothing writes
+            /// it: such a visit only observes its repacks and records its own
+            /// outcome. It names the missing capability in the log.
+            MissingRepackRight = 23, "missing-repack-right";
         }
     }
 }
@@ -71,14 +84,16 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceInspectionResultCode::ALL.len(), 20);
+        assert_eq!(MaintenanceInspectionResultCode::ALL.len(), 23);
         assert_eq!(MaintenanceInspectionResultCode::Started.code(), 1);
         assert_eq!(MaintenanceInspectionResultCode::Cancelled.code(), 20);
+        assert_eq!(MaintenanceInspectionResultCode::MissingPgRepack.code(), 21);
+        assert_eq!(MaintenanceInspectionResultCode::MissingRepackRight.code(), 23);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceInspectionResultCode::try_from(0).is_err());
-        assert!(MaintenanceInspectionResultCode::try_from(21).is_err());
+        assert!(MaintenanceInspectionResultCode::try_from(24).is_err());
     }
 }

@@ -34,8 +34,9 @@ pub enum ActionVerdict {
     /// A vacuum left the dead share at or above the threshold that queued it,
     /// because something held the horizon; a rebuild of a density-measured
     /// GIN reclaimed less than the reclaim floor, because its density grew
-    /// with its values rather than with bloat; or a write reached a chunk
-    /// while it was recompressed and left it partial.
+    /// with its values rather than with bloat; a write reached a chunk
+    /// while it was recompressed and left it partial; or a repack gave back
+    /// less than half the profile's repack reclaim floor.
     Ineffective,
 }
 
@@ -56,8 +57,16 @@ pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, 
             | MaintenanceTarget::Heap(_)
             | MaintenanceTarget::Statistics(_)
             | MaintenanceTarget::Columnstore(_)
-            | MaintenanceTarget::Rowstore(_) => ActionVerdict::Effective,
+            | MaintenanceTarget::Rowstore(_)
+            | MaintenanceTarget::Repack(_) => ActionVerdict::Effective,
         },
+        ActionComparison::Repack { before_bytes, after_bytes } => {
+            if before_bytes.saturating_sub(after_bytes) >= profile.repack.reclaim_floor_bytes / 2 {
+                ActionVerdict::Effective
+            } else {
+                ActionVerdict::Ineffective
+            }
+        }
         ActionComparison::Heap { after, .. } => match after.dead_percent() {
             Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
             Some(_) | None => ActionVerdict::Effective,
@@ -84,6 +93,11 @@ pub enum ActionEnding {
 
 /// The cooldown deadline an action's ending sets on its target.
 ///
+/// A repack that gave back what it was queued for cools down for the
+/// profile's repack cooldown; one that gave back too little, because writes
+/// refilled the space as it copied, for the longer of that and the profile's
+/// success cooldown.
+///
 /// A completed analyze cools down for [`ANALYZE_COOLDOWN`], a completed
 /// recompression for [`RECOMPRESSION_COOLDOWN`] and a completed rowstore chunk
 /// rebuild for [`ROWSTORE_REBUILD_COOLDOWN`] in every profile. A failure
@@ -98,12 +112,17 @@ pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending:
         (MaintenanceTarget::Rowstore(_), ActionEnding::Completed(_)) => ROWSTORE_REBUILD_COOLDOWN,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Effective)) => profile.successful_cooldown,
         (MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_), ActionEnding::Completed(ActionVerdict::Ineffective)) => profile.ineffective_cooldown,
+        (MaintenanceTarget::Repack(_), ActionEnding::Completed(ActionVerdict::Effective)) => profile.repack.successful_cooldown,
+        (MaintenanceTarget::Repack(_), ActionEnding::Completed(ActionVerdict::Ineffective)) => {
+            profile.repack.successful_cooldown.max(profile.successful_cooldown)
+        }
         (
             MaintenanceTarget::Index(_)
             | MaintenanceTarget::Heap(_)
             | MaintenanceTarget::Statistics(_)
             | MaintenanceTarget::Columnstore(_)
-            | MaintenanceTarget::Rowstore(_),
+            | MaintenanceTarget::Rowstore(_)
+            | MaintenanceTarget::Repack(_),
             ActionEnding::Failed { consecutive_failures },
         ) => ChronoDuration::from_std(profile.failure_backoff.delay(consecutive_failures)).unwrap_or(FAILURE_BACKOFF_CEILING),
     }
@@ -120,9 +139,12 @@ mod tests {
     };
     use andromeda_configuration::schema::database::maintenance::MaintenanceProfile;
     use andromeda_retry::retry_number::RetryNumber;
+    use andromeda_telemetry::maintenance::ActionEffect;
     use chrono::{Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
+
+    const MIB: u64 = 1_048_576;
 
     fn failure(consecutive_failures: u32) -> ActionEnding {
         ActionEnding::Failed {
@@ -233,5 +255,30 @@ mod tests {
         let now = Utc::now();
         assert_eq!(cooldown_after(profile, rebuild, ActionEnding::Completed(ActionVerdict::Effective), now), now);
         assert_eq!(cooldown_after(profile, rebuild, failure(1), now), now + profile.ineffective_cooldown);
+    }
+
+    /// Half the conservative 128 MiB reclaim floor is 64 MiB: 1 GiB to
+    /// 400 MiB gives back 624 MiB, 1 GiB to 990 MiB only 34 MiB.
+    #[test]
+    fn a_repack_is_effective_once_it_gives_back_half_the_reclaim_floor() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let repack = MaintenanceTarget::Repack(HeapTarget::NotificationDeliveries);
+        let comparison = |after_mib: u64| ActionComparison::Repack {
+            before_bytes: 1024 * MIB,
+            after_bytes: after_mib * MIB,
+        };
+        assert_eq!(action_verdict(profile, repack, comparison(400)), ActionVerdict::Effective);
+        assert_eq!(comparison(400).effect(), Some(ActionEffect::ReclaimedBytes(624 * MIB)));
+        assert_eq!(action_verdict(profile, repack, comparison(990)), ActionVerdict::Ineffective);
+        let now = Utc::now();
+        assert_eq!(
+            cooldown_after(profile, repack, ActionEnding::Completed(ActionVerdict::Effective), now),
+            now + ChronoDuration::days(7)
+        );
+        assert_eq!(
+            cooldown_after(profile, repack, ActionEnding::Completed(ActionVerdict::Ineffective), now),
+            now + ChronoDuration::days(7)
+        );
+        assert_eq!(cooldown_after(profile, repack, failure(1), now), now + profile.ineffective_cooldown);
     }
 }

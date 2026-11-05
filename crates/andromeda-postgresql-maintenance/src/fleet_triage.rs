@@ -15,6 +15,10 @@
 //! its own. A statistics reset erases the changes made since the last visit,
 //! so it is a reason of its own too. Any other tenant with no churn is skipped
 //! until the staleness floor.
+//!
+//! A tenant with a recorded repack run while no repack runs anywhere comes
+//! before every other: the run's trigger keeps doubling its table's writes
+//! until a visit cleans up after it.
 
 use crate::{
     fleet_observation::{ChangeCounters, DatabaseObservation, FleetObservation},
@@ -48,11 +52,16 @@ pub(crate) struct TenantStanding {
     /// When its oldest open breach run on a target without a queued action
     /// started, `None` when it has none.
     pub(crate) open_breach_since: Option<DateTime<Utc>>,
+    /// Whether a recorded repack run of the tenant outlived its run.
+    pub(crate) has_orphaned_repack: bool,
 }
 
 /// Why a tenant is due a visit, most urgent first.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum VisitReason {
+    /// A repack run recorded for it is no longer running, and its objects
+    /// wait for their cleanup.
+    OrphanedRepack,
     /// Its database's anti-wraparound vacuum is behind, the higher pressure
     /// first.
     FreezePressure(Reverse<FreezePressure>),
@@ -82,14 +91,22 @@ enum ChangesSince {
 }
 
 /// Pair every active tenant with what the fleet observation saw of it,
-/// whether it has due work and its oldest open breach run.
-pub(crate) fn standings(records: Vec<InspectionRecord>, fleet: &FleetObservation, due: &[TenantKey], breaches: &[OpenBreach]) -> Vec<TenantStanding> {
+/// whether it has due work, its oldest open breach run and whether a repack
+/// run of it is `orphaned`.
+pub(crate) fn standings(
+    records: Vec<InspectionRecord>,
+    fleet: &FleetObservation,
+    due: &[TenantKey],
+    breaches: &[OpenBreach],
+    orphaned: &[TenantKey],
+) -> Vec<TenantStanding> {
     records
         .into_iter()
         .map(|record| TenantStanding {
             observed: fleet.database(record.tenant.key),
             has_due_action: due.contains(&record.tenant.key),
             open_breach_since: breaches.iter().find(|breach| breach.tenant == record.tenant.key).map(|breach| breach.since),
+            has_orphaned_repack: orphaned.contains(&record.tenant.key),
             record,
         })
         .collect()
@@ -123,6 +140,9 @@ fn visit_reason(standing: &TenantStanding, qualifying_duration: ChronoDuration, 
             .is_none_or(|visited| now.signed_duration_since(visited) >= interval)
     };
     if unvisited_for(URGENT_REVISIT_INTERVAL) {
+        if standing.has_orphaned_repack {
+            return Some(VisitReason::OrphanedRepack);
+        }
         let pressure = standing.observed.map_or(FreezePressure::Normal, |database| database.freeze.pressure());
         if pressure > FreezePressure::Normal {
             return Some(VisitReason::FreezePressure(Reverse(pressure)));
@@ -216,6 +236,7 @@ mod tests {
                 },
             }),
             has_due_action: false,
+            has_orphaned_repack: false,
             open_breach_since: None,
         }
     }
@@ -409,5 +430,27 @@ mod tests {
         let standings = [missing];
         assert_eq!(selected(&standings, now), None);
         assert_eq!(selected(&standings, now + ChronoDuration::hours(1)), Some(1));
+    }
+
+    #[test]
+    fn a_tenant_with_an_orphaned_repack_comes_before_freeze_pressure_and_due_work() {
+        let now = Utc::now();
+        let mut pressured = standing(1, now, 1, 10);
+        pressured.observed = pressured.observed.map(|observed| DatabaseObservation {
+            freeze: DatabaseFreeze {
+                transaction: FreezeAge {
+                    age: 2_000_000_000,
+                    freeze_max_age: FREEZE_MAX_AGE,
+                },
+                ..observed.freeze
+            },
+            ..observed
+        });
+        let mut due = standing(2, now, 1, 10);
+        due.has_due_action = true;
+        let mut orphaned = standing(3, now, 1, 0);
+        orphaned.has_orphaned_repack = true;
+        let standings = [pressured, due, orphaned];
+        assert_eq!(select_tenant(&standings, QUALIFYING, now).map(|tenant| tenant.key), Some(TenantKey(3)));
     }
 }

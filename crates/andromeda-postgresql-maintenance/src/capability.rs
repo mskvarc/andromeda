@@ -1,9 +1,13 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 //!
-//! The `pgstattuple` extension and its function measure one thing: the exact
-//! free space of a probeable index. Without it, or without the privilege to
-//! execute it, a visit probes no index and runs every other check, all of
-//! which read the statistics views and the catalogs. The privilege to maintain
+//! The `pgstattuple` extension and its functions measure two things: the
+//! exact free space of a probeable index, and the estimated free space of a
+//! heap a repack would give back. Without it, or without the privilege to
+//! execute both, a visit probes no index and no heap and runs every other
+//! check, all of which read the statistics views and the catalogs. The
+//! `pg_repack` extension, on the release line the controller drives, and the
+//! rights to run it decide whether a repack may run; without them repacks are
+//! only reported. The privilege to maintain
 //! a branch's heaps is checked per branch and only decides whether automatic
 //! mode acts there; a branch without it is still sampled. The right one
 //! action needs on the relation it works on, beyond the heaps it vacuums, is
@@ -15,14 +19,26 @@
 //! ownership is what the check asks for, and every server answers the same
 //! question.
 
-use crate::{branch::Branch, error::MaintenanceError, inspection::IndexSize};
+use crate::{
+    branch::Branch,
+    error::MaintenanceError,
+    repack::version::{RepackSupport, RepackVersion},
+};
+use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
 use andromeda_postgresql_seaquery::{
-    introspection::server_version_num,
-    maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, current_user_owns_relation, to_regprocedure},
+    introspection::{current_role_is_superuser, server_version_num},
+    maintenance::{
+        current_user_has_function_privilege,
+        current_user_has_schema_privilege,
+        current_user_has_table_privilege,
+        current_user_owns_relation,
+        to_regprocedure,
+    },
+    repack::repack_version,
     statement::Statement,
 };
-use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
+use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
 use sqlx::PgConnection;
 use strum::IntoStaticStr;
 
@@ -34,14 +50,79 @@ pub(crate) enum ProbeCapability {
     Ready,
     /// The extension is not installed in the tenant database.
     MissingPgstattuple,
-    /// The extension is installed and the role may not execute `pgstattuple`.
+    /// The extension is installed and the role may not execute `pgstattuple`
+    /// or `pgstattuple_approx`.
     MissingPgstattupleExecute,
+}
+
+/// Whether a repack may run in a tenant database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RepackCapability {
+    /// The extension runs a supported version and the role may run it.
+    Ready(RepackVersion),
+    /// The extension is not installed in the tenant database.
+    MissingExtension,
+    /// The extension runs a version the controller does not drive.
+    UnsupportedVersion(RepackVersion),
+    /// The role is no superuser and may not execute the extension's
+    /// functions or create its objects in the `repack` schema.
+    MissingRight,
+}
+
+impl RepackCapability {
+    /// The missing capability's name, as the inspection result registry
+    /// spells it, `None` when nothing is missing.
+    pub(crate) const fn missing(self) -> Option<&'static str> {
+        match self {
+            RepackCapability::Ready(_) => None,
+            RepackCapability::MissingExtension => Some(MaintenanceInspectionResultCode::MissingPgRepack.label()),
+            RepackCapability::UnsupportedVersion(_) => Some(MaintenanceInspectionResultCode::UnsupportedPgRepack.label()),
+            RepackCapability::MissingRight => Some(MaintenanceInspectionResultCode::MissingRepackRight.label()),
+        }
+    }
+}
+
+/// The `repack` functions a run calls, by signature.
+const REPACK_FUNCTIONS: [&str; 11] = [
+    "repack.version()",
+    "repack.get_order_by(oid,oid)",
+    "repack.repack_indexdef(oid,oid,name,boolean)",
+    "repack.conflicted_triggers(oid)",
+    "repack.create_index_type(oid,oid)",
+    "repack.create_log_table(oid)",
+    "repack.create_table(oid,name)",
+    "repack.disable_autovacuum(regclass)",
+    "repack.repack_apply(cstring,cstring,cstring,cstring,cstring,integer)",
+    "repack.repack_swap(oid)",
+    "repack.repack_drop(oid,integer)",
+];
+
+/// Whether a repack may run in the tenant database: the extension, its
+/// version, and the role's rights beyond the ownership of the table each
+/// run checks on its own table.
+pub(crate) async fn repack_capability(connection: &mut PgConnection) -> Result<RepackCapability, MaintenanceError> {
+    if !extension_present_statement("pg_repack")
+        .to_query_scalar::<bool>()
+        .fetch_one(&mut *connection)
+        .await?
+    {
+        return Ok(RepackCapability::MissingExtension);
+    }
+    let version = RepackVersion::try_from(repack_version().to_query_scalar::<String>().fetch_one(&mut *connection).await?.as_str())?;
+    if version.support() == RepackSupport::Unsupported {
+        return Ok(RepackCapability::UnsupportedVersion(version));
+    }
+    Ok(if repack_right_statement().to_query_scalar::<bool>().fetch_one(connection).await? {
+        RepackCapability::Ready(version)
+    } else {
+        RepackCapability::MissingRight
+    })
 }
 
 impl ProbeCapability {
     /// The probes a visit runs out of `candidates`: all of them when the
     /// extension can measure them, none otherwise.
-    pub(crate) fn probe_candidates(self, candidates: Vec<IndexSize>) -> Vec<IndexSize> {
+    pub(crate) fn probe_candidates<T>(self, candidates: Vec<T>) -> Vec<T> {
         match self {
             ProbeCapability::Ready => candidates,
             ProbeCapability::MissingPgstattuple | ProbeCapability::MissingPgstattupleExecute => Vec::new(),
@@ -74,7 +155,11 @@ pub(crate) enum MaintainRight {
 /// Whether the optional `pgstattuple` extension is installed and the role may
 /// execute the one function an index probe calls.
 pub(crate) async fn probe_capability(connection: &mut PgConnection) -> Result<ProbeCapability, MaintenanceError> {
-    if !extension_present_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
+    if !extension_present_statement("pgstattuple")
+        .to_query_scalar::<bool>()
+        .fetch_one(&mut *connection)
+        .await?
+    {
         return Ok(ProbeCapability::MissingPgstattuple);
     }
     if !probe_privilege_statement().to_query_scalar::<bool>().fetch_one(&mut *connection).await? {
@@ -174,25 +259,44 @@ fn relation_maintain_probe(server: PostgresVersion, relation: &str) -> SelectSta
     }
 }
 
-/// `pg_extension` presence query.
-fn extension_present_statement() -> SelectStatement {
+/// Whether the extension `name` is installed in the database.
+fn extension_present_statement(name: &str) -> SelectStatement {
     let inner = Query::select()
         .expr(Expr::val(1))
         .from(Alias::new("pg_extension"))
-        .and_where(Expr::col(Alias::new("extname")).eq("pgstattuple"))
+        .and_where(Expr::col(Alias::new("extname")).eq(name))
         .to_owned();
     Query::select().expr(Expr::exists(inner)).to_owned()
 }
 
-/// The privilege to execute `pgstattuple(regclass)`, the function an index
-/// probe calls.
+/// The functions a probe calls: `pgstattuple(regclass)` measures an index,
+/// `pgstattuple_approx(regclass)` a heap and its TOAST table.
+const PROBE_FUNCTIONS: [&str; 2] = ["pgstattuple(regclass)", "pgstattuple_approx(regclass)"];
+
+/// The privilege to execute every function a probe calls.
 fn probe_privilege_statement() -> SelectStatement {
-    Query::select()
-        .expr(current_user_has_function_privilege(
-            to_regprocedure(Expr::val("pgstattuple(regclass)")),
-            Expr::val("EXECUTE"),
-        ))
-        .to_owned()
+    Query::select().expr(executes_every(&PROBE_FUNCTIONS)).to_owned()
+}
+
+/// Whether the role may execute every function of `signatures`.
+fn executes_every(signatures: &[&str]) -> SimpleExpr {
+    signatures
+        .iter()
+        .map(|&signature| current_user_has_function_privilege(to_regprocedure(Expr::val(signature)), Expr::val("EXECUTE")))
+        .reduce(ExprTrait::and)
+        .unwrap_or_else(|| Expr::val(true))
+}
+
+/// Whether the role may run a repack beyond owning its table: as a
+/// superuser, or with `EXECUTE` on every function a run calls, `SELECT` on
+/// the `repack.tables` view its statements are read from, which the
+/// extension grants nobody, and `USAGE` and `CREATE` on the `repack` schema,
+/// where a run creates its log and copy tables.
+fn repack_right_statement() -> SelectStatement {
+    let schema = |privilege: &'static str| current_user_has_schema_privilege(Expr::val("repack"), Expr::val(privilege));
+    let script = current_user_has_table_privilege(Expr::val("repack.tables"), Expr::val("SELECT"));
+    let granted = executes_every(&REPACK_FUNCTIONS).and(script).and(schema("USAGE")).and(schema("CREATE"));
+    Query::select().expr(current_role_is_superuser().or(granted)).to_owned()
 }
 
 /// Required PostgreSQL 17 `MAINTAIN` privileges on every allowlisted heap
@@ -217,6 +321,7 @@ mod tests {
         capability::{
             MaintainRight,
             ProbeCapability,
+            RepackCapability,
             maintain_privilege_statement,
             maintain_probe,
             maintain_right,
@@ -224,12 +329,15 @@ mod tests {
             probe_privilege_statement,
             relation_maintain_probe,
             relation_ownership_statement,
+            repack_right_statement,
             server_version_statement,
         },
         inspection::{IndexSize, pgstattuple_statement},
+        repack::version::{RepackVersion, RepackVersionError},
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
+    use andromeda_postgresql_seaquery::repack_catalog::approximate_free_space;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -318,10 +426,10 @@ mod tests {
     }
 
     #[test]
-    fn the_probe_privilege_check_asks_only_for_the_function_a_probe_calls() {
+    fn the_probe_privilege_check_asks_only_for_the_functions_a_probe_calls() {
         assert_eq!(
             probe_privilege_statement().to_string(PostgresQueryBuilder),
-            "SELECT has_function_privilege(current_user, to_regprocedure('pgstattuple(regclass)'), 'EXECUTE')"
+            "SELECT has_function_privilege(current_user, to_regprocedure('pgstattuple(regclass)'), 'EXECUTE') AND has_function_privilege(current_user, to_regprocedure('pgstattuple_approx(regclass)'), 'EXECUTE')"
         );
     }
 
@@ -335,10 +443,12 @@ mod tests {
             .filter_map(|rest| rest.split_once("(regclass)')"))
             .map(|(function, _)| function)
             .collect();
-        assert_eq!(named, ["pgstattuple"]);
-        for function in named {
-            assert!(probe.contains(&format!("{function}(to_regclass(")), "{function}: {probe}");
-        }
+        assert_eq!(named, ["pgstattuple", "pgstattuple_approx"]);
+        assert!(probe.contains("pgstattuple(to_regclass("), "{probe}");
+        assert!(
+            approximate_free_space(16_384).to_string(PostgresQueryBuilder).contains("pgstattuple_approx("),
+            "a heap probe calls pgstattuple_approx"
+        );
     }
 
     #[test]
@@ -374,5 +484,37 @@ mod tests {
     fn the_missing_capability_is_named_after_what_is_missing() {
         assert_eq!(<&str>::from(ProbeCapability::MissingPgstattuple), "missing-pgstattuple");
         assert_eq!(<&str>::from(ProbeCapability::MissingPgstattupleExecute), "missing-pgstattuple-execute");
+    }
+
+    #[test]
+    fn a_superuser_or_an_owner_with_execute_and_the_repack_schema_may_run_a_repack() {
+        let sql = repack_right_statement().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.starts_with(r#"SELECT (SELECT "rolsuper" FROM "pg_roles" WHERE "rolname" = (current_user)) OR "#),
+            "{sql}"
+        );
+        for function in [
+            "repack.repack_swap(oid)",
+            "repack.repack_drop(oid,integer)",
+            "repack.repack_apply(cstring,cstring,cstring,cstring,cstring,integer)",
+        ] {
+            assert!(sql.contains(&format!("to_regprocedure('{function}'), 'EXECUTE')")), "{function}: {sql}");
+        }
+        assert!(sql.contains("has_schema_privilege(current_user, 'repack', 'USAGE')"), "{sql}");
+        assert!(sql.contains("has_schema_privilege(current_user, 'repack', 'CREATE')"), "{sql}");
+        assert!(sql.contains("has_table_privilege(current_user, 'repack.tables', 'SELECT')"), "{sql}");
+    }
+
+    #[test]
+    fn each_missing_repack_capability_is_named_as_the_registry_names_it() -> Result<(), RepackVersionError> {
+        let version = RepackVersion::try_from("pg_repack 1.5.3")?;
+        assert_eq!(RepackCapability::Ready(version).missing(), None);
+        assert_eq!(RepackCapability::MissingExtension.missing(), Some("missing-pg-repack"));
+        assert_eq!(
+            RepackCapability::UnsupportedVersion(RepackVersion::try_from("pg_repack 1.4.8")?).missing(),
+            Some("unsupported-pg-repack")
+        );
+        assert_eq!(RepackCapability::MissingRight.missing(), Some("missing-repack-right"));
+        Ok(())
     }
 }

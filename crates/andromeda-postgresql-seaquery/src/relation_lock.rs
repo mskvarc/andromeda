@@ -5,18 +5,27 @@
 //! transaction still open on any of them fails it at once while it holds
 //! nothing, instead of leaving it queued behind that transaction holding the
 //! locks it already took. A fixture that needs a relation held against other
-//! sessions takes the same lock and waits for it.
+//! sessions takes the same lock and waits for it. An online table repack
+//! takes its locks in bounded attempts, each waiting at most its own
+//! `lock_timeout`, so a request queued behind a long transaction never holds
+//! every later writer of the table behind it for long.
 
 use crate::{
     command::{Command, rendering::RenderedCommand},
     identifier::quoted_tables,
+    setting::{Setting, SettingAssignment, SettingScope},
 };
 use sea_query::TableName;
+use std::time::Duration;
 use strum::Display;
 
 /// A table lock mode, spelled as `LOCK TABLE ... IN <mode> MODE` spells it.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum LockMode {
+    /// `ACCESS SHARE`: the lock a read takes, conflicting only with
+    /// `ACCESS EXCLUSIVE`.
+    #[strum(serialize = "ACCESS SHARE")]
+    AccessShare,
     /// `ACCESS EXCLUSIVE`: conflicts with every other lock, reads included.
     #[strum(serialize = "ACCESS EXCLUSIVE")]
     AccessExclusive,
@@ -26,6 +35,10 @@ pub enum LockMode {
     /// `SHARE`: conflicts with every data-changing lock.
     #[strum(serialize = "SHARE")]
     Share,
+    /// `SHARE UPDATE EXCLUSIVE`: conflicts with schema changes, vacuum,
+    /// analyze and concurrent index builds, never with a read or a write.
+    #[strum(serialize = "SHARE UPDATE EXCLUSIVE")]
+    ShareUpdateExclusive,
 }
 
 /// Whether the command waits for a conflicting lock to clear.
@@ -83,14 +96,48 @@ impl RenderedCommand for RelationLock {
 
 impl Command for RelationLock {}
 
+/// `SET LOCAL lock_timeout = '<n>ms'; LOCK TABLE <relations> IN <mode> MODE`:
+/// one bounded attempt at a lock, in the caller's transaction. A request that
+/// waits longer than the timeout fails with `lock_not_available` (55P03) and
+/// leaves the transaction aborted, so a caller retrying it attempts inside a
+/// savepoint.
+#[derive(Clone, Debug)]
+pub struct LockAttempt {
+    /// The lock requested.
+    lock: RelationLock,
+    /// The longest the request waits, in milliseconds.
+    timeout_millis: u128,
+}
+
+impl LockAttempt {
+    /// Request `mode` on `relations`, waiting at most `timeout`.
+    #[must_use]
+    pub const fn new(relations: Vec<TableName>, mode: LockMode, timeout: Duration) -> LockAttempt {
+        LockAttempt {
+            lock: RelationLock::waiting(relations, mode),
+            timeout_millis: timeout.as_millis(),
+        }
+    }
+}
+
+impl RenderedCommand for LockAttempt {
+    fn rendered(&self) -> String {
+        let timeout = SettingAssignment::new(Setting::LockTimeout, format!("{}ms", self.timeout_millis), SettingScope::Transaction);
+        format!("{}; {}", timeout.rendered(), self.lock.rendered())
+    }
+}
+
+impl Command for LockAttempt {}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         command::rendering::RenderedCommand,
-        relation_lock::{LockMode, RelationLock},
+        relation_lock::{LockAttempt, LockMode, RelationLock},
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, TableName};
+    use std::time::Duration;
 
     #[test]
     fn every_relation_is_locked_in_one_command_without_waiting() {
@@ -117,6 +164,23 @@ mod tests {
         assert_eq!(
             RelationLock::waiting(vec![TableName::from(Alias::new("entities"))], LockMode::RowExclusive).rendered(),
             r#"LOCK TABLE "entities" IN ROW EXCLUSIVE MODE"#
+        );
+    }
+
+    #[test]
+    fn a_bounded_lock_attempt_sets_its_timeout_before_it_requests_the_lock() {
+        let relation = vec![TableName::from((Alias::new("public"), Alias::new("notification_deliveries")))];
+        assert_eq!(
+            LockAttempt::new(relation, LockMode::AccessExclusive, Duration::from_millis(200)).rendered(),
+            r#"SET LOCAL lock_timeout = '200ms'; LOCK TABLE "public"."notification_deliveries" IN ACCESS EXCLUSIVE MODE"#
+        );
+    }
+
+    #[test]
+    fn a_share_update_exclusive_lock_names_its_mode() {
+        assert_eq!(
+            RelationLock::waiting(vec![TableName::from(Alias::new("entities"))], LockMode::ShareUpdateExclusive).rendered(),
+            r#"LOCK TABLE "entities" IN SHARE UPDATE EXCLUSIVE MODE"#
         );
     }
 }

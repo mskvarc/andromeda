@@ -144,6 +144,13 @@ pub fn total_relation_size(relation: SimpleExpr) -> SimpleExpr {
     Func::cust(MaintenanceFunction::PgTotalRelationSize).args([relation]).into()
 }
 
+/// `pg_table_size(relation)` physical bytes of a relation's heap and TOAST
+/// table, its indexes excluded.
+#[must_use]
+pub fn table_size(relation: SimpleExpr) -> SimpleExpr {
+    Func::cust(MaintenanceFunction::PgTableSize).args([relation]).into()
+}
+
 /// `pg_indexes_size(relation)` physical bytes of a relation's indexes.
 #[must_use]
 pub fn indexes_size(relation: SimpleExpr) -> SimpleExpr {
@@ -167,6 +174,14 @@ pub fn to_regprocedure(signature: SimpleExpr) -> SimpleExpr {
 pub fn current_user_has_function_privilege(function: SimpleExpr, privilege: SimpleExpr) -> SimpleExpr {
     Func::cust(MaintenanceFunction::HasFunctionPrivilege)
         .args([Expr::cust("current_user"), function, privilege])
+        .into()
+}
+
+/// `has_schema_privilege(current_user, schema, privilege)`.
+#[must_use]
+pub fn current_user_has_schema_privilege(schema: SimpleExpr, privilege: SimpleExpr) -> SimpleExpr {
+    Func::cust(MaintenanceFunction::HasSchemaPrivilege)
+        .args([Expr::cust("current_user"), schema, privilege])
         .into()
 }
 
@@ -210,6 +225,20 @@ pub fn pgstattuple(relation: SimpleExpr) -> FunctionCall {
 pub fn wal_written_since(lsn: SimpleExpr) -> SimpleExpr {
     let current = Func::cust(MaintenanceFunction::PgCurrentWalLsn).into();
     cast(Func::cust(MaintenanceFunction::PgWalLsnDiff).args([current, lsn]).into(), PostgresType::Bigint)
+}
+
+/// `pg_cancel_backend(pid)`: cancel the statement the backend `pid` runs,
+/// leaving its session open.
+#[must_use]
+pub fn cancel_backend(pid: SimpleExpr) -> SimpleExpr {
+    Func::cust(MaintenanceFunction::PgCancelBackend).arg(pid).into()
+}
+
+/// `pg_blocking_pids(pid)`: the backends holding or queued ahead for a lock
+/// the backend `pid` waits for, as `integer[]`.
+#[must_use]
+pub fn blocking_pids(pid: SimpleExpr) -> SimpleExpr {
+    Func::cust(MaintenanceFunction::PgBlockingPids).arg(pid).into()
 }
 
 /// `pg_backend_pid()` for excluding the maintenance session from load gates.
@@ -265,6 +294,8 @@ enum MaintenanceFunction {
     PgTotalRelationSize,
     /// `pg_indexes_size`.
     PgIndexesSize,
+    /// `pg_table_size`.
+    PgTableSize,
     /// `to_regclass`.
     ToRegclass,
     /// `to_regprocedure`.
@@ -273,12 +304,18 @@ enum MaintenanceFunction {
     HasFunctionPrivilege,
     /// `has_table_privilege`.
     HasTablePrivilege,
+    /// `has_schema_privilege`.
+    HasSchemaPrivilege,
     /// `pg_has_role`.
     PgHasRole,
     /// `pgstattuple`.
     Pgstattuple,
     /// `pg_backend_pid`.
     PgBackendPid,
+    /// `pg_cancel_backend`.
+    PgCancelBackend,
+    /// `pg_blocking_pids`.
+    PgBlockingPids,
     /// `age`.
     Age,
     /// `mxid_age`.

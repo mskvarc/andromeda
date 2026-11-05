@@ -23,6 +23,7 @@ andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
+derive_more = { version = "2.1.1", features = ["display", "from"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "chrono"] }
 strum = { version = "0.28.0", features = ["derive"] }

@@ -7,7 +7,9 @@
 //! An analyze is measured by the tuples modified since the heap's last
 //! analyze, which it resets; it reclaims nothing. A recompression is measured
 //! by whether its chunk is still partial after it, and a rebuild of a closed
-//! rowstore chunk by the physical bytes of every index of the chunk.
+//! rowstore chunk by the physical bytes of every index of the chunk. A repack
+//! rewrites the heap, its TOAST table and its indexes, so it is measured by
+//! the relation's total bytes.
 
 use crate::{
     candidate::{heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
@@ -117,6 +119,14 @@ pub(crate) enum ActionComparison {
         /// Physical bytes of the chunk's indexes after the rebuild.
         after_bytes: u64,
     },
+    /// A repack of a heap, compared by the relation's total bytes, its
+    /// indexes and TOAST table included.
+    Repack {
+        /// Total bytes before the repack.
+        before_bytes: u64,
+        /// Total bytes after it.
+        after_bytes: u64,
+    },
 }
 
 impl ActionComparison {
@@ -125,9 +135,9 @@ impl ActionComparison {
     /// rose, because writes outran the action, reports zero.
     pub(crate) const fn effect(self) -> Option<ActionEffect> {
         match self {
-            ActionComparison::Index { before_bytes, after_bytes } | ActionComparison::Rowstore { before_bytes, after_bytes } => {
-                Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes)))
-            }
+            ActionComparison::Index { before_bytes, after_bytes }
+            | ActionComparison::Rowstore { before_bytes, after_bytes }
+            | ActionComparison::Repack { before_bytes, after_bytes } => Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes))),
             ActionComparison::Heap { before, after } => Some(ActionEffect::RemovedDeadTuples(before.dead.saturating_sub(after.dead))),
             ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } => None,
         }
@@ -137,9 +147,11 @@ impl ActionComparison {
     /// a recompression and an empty heap.
     pub(crate) fn post_vacuum_dead_percent(self) -> Option<u8> {
         match self {
-            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } | ActionComparison::Columnstore { .. } | ActionComparison::Rowstore { .. } => {
-                None
-            }
+            ActionComparison::Index { .. }
+            | ActionComparison::Statistics { .. }
+            | ActionComparison::Columnstore { .. }
+            | ActionComparison::Rowstore { .. }
+            | ActionComparison::Repack { .. } => None,
             ActionComparison::Heap { after, .. } => after.dead_percent(),
         }
     }

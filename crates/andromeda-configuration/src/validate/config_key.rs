@@ -135,6 +135,9 @@ pub enum ConfigKey {
     /// `database.name_cache.idle_eviction_after`.
     #[display("database.name_cache.idle_eviction_after")]
     DatabaseNameCacheIdleEvictionAfter,
+    /// `database.maintenance.repack.max_relation_size`.
+    #[display("database.maintenance.repack.max_relation_size")]
+    DatabaseMaintenanceRepackMaxRelationSize,
     /// `tenancy.provisional_tenant_lifetime`.
     #[display("tenancy.provisional_tenant_lifetime")]
     TenancyProvisionalTenantLifetime,

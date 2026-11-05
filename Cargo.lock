@@ -1785,6 +1785,7 @@ dependencies = [
  "andromeda-tenancy",
  "chrono",
  "dashmap",
+ "derive_more",
  "pretty_assertions",
  "sea-query",
  "sqlx",

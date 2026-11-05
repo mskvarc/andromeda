@@ -9,7 +9,8 @@
 //! waits on, [`branch_rows`] which context branch a
 //! target row belongs to, [`gin_key_layout`] the keys per row and bytes per key
 //! a density-measured GIN is judged by and [`analyzed_rows`] the row count a
-//! heap or a density-measured GIN is judged by.
+//! heap or a density-measured GIN is judged by, and [`repack_run`] which
+//! repacks have objects in a tenant database.
 
 /// The analyzed row count stored on each heap and density-measured GIN.
 pub(crate) mod analyzed_rows;
@@ -23,6 +24,9 @@ pub(crate) mod gin_key_layout;
 pub(crate) mod open_breach;
 /// Which queued action a visit runs next.
 pub(crate) mod pending_action;
+/// The durable record of every repack whose objects are in a tenant
+/// database.
+pub(crate) mod repack_run;
 /// The durable decision and action state of one maintenance target.
 pub(crate) mod target_record;
 /// The durable evidence of one tenant's inspection.
@@ -37,8 +41,27 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Expr, Query};
 use sqlx::PgConnection;
 
-/// Stable key for the process-wide lock.
-const GLOBAL_LOCK_KEY: &str = "andromeda-postgresql-maintenance";
+/// One of the fleet-wide session advisory locks the controller coordinates
+/// its replicas by.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, strum::Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum FleetLock {
+    /// Held by the one pass running anywhere in the fleet.
+    Pass,
+    /// Held by the one repack running anywhere in the fleet, beside the pass,
+    /// which keeps visiting every tenant while a repack runs.
+    Repack,
+}
+
+impl FleetLock {
+    /// The lock's stable key.
+    const fn key(self) -> &'static str {
+        match self {
+            FleetLock::Pass => "andromeda-postgresql-maintenance",
+            FleetLock::Repack => "andromeda-postgresql-maintenance-repack",
+        }
+    }
+}
 
 /// Stable primary key of one platform tenant row.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -62,28 +85,45 @@ impl RegisteredTenant {
     }
 }
 
-/// Try to obtain the one fleet-wide session advisory lock without waiting.
-pub(crate) async fn try_global_lock(connection: &mut PgConnection) -> Result<bool, MaintenanceError> {
-    let statement = Query::select().expr(try_advisory_lock(Expr::val(GLOBAL_LOCK_KEY))).to_owned();
-    Ok(statement.to_query_scalar::<bool>().fetch_one(connection).await?)
+/// Whether a session took a fleet lock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FleetLockTaken {
+    /// This session holds the lock.
+    Taken,
+    /// Another broker's session holds it.
+    HeldElsewhere,
 }
 
-/// Release the fleet-wide session advisory lock.
-pub(crate) async fn release_global_lock(connection: &mut PgConnection) -> Result<(), MaintenanceError> {
-    let statement = Query::select().expr(advisory_unlock(Expr::val(GLOBAL_LOCK_KEY))).to_owned();
-    let released = statement.to_query_scalar::<bool>().fetch_one(connection).await?;
-    if released {
-        Ok(())
+/// Try to obtain `lock` for the session without waiting.
+pub(crate) async fn try_fleet_lock(connection: &mut PgConnection, lock: FleetLock) -> Result<FleetLockTaken, MaintenanceError> {
+    let statement = Query::select().expr(try_advisory_lock(Expr::val(lock.key()))).to_owned();
+    Ok(if statement.to_query_scalar::<bool>().fetch_one(connection).await? {
+        FleetLockTaken::Taken
     } else {
-        Err(MaintenanceError::Database(sqlx::Error::Protocol(
-            "the PostgreSQL maintenance advisory lock was not held".to_owned(),
-        )))
+        FleetLockTaken::HeldElsewhere
+    })
+}
+
+/// Release `lock`, which this session holds.
+pub(crate) async fn release_fleet_lock(connection: &mut PgConnection, lock: FleetLock) -> Result<(), MaintenanceError> {
+    let statement = Query::select().expr(advisory_unlock(Expr::val(lock.key()))).to_owned();
+    let released = statement.to_query_scalar::<bool>().fetch_one(connection).await?;
+    if released { Ok(()) } else { Err(MaintenanceError::FleetLockNotHeld(lock)) }
+}
+
+/// Whether another broker holds `lock`, read by taking it and releasing it
+/// at once.
+pub(crate) async fn fleet_lock_held_elsewhere(connection: &mut PgConnection, lock: FleetLock) -> Result<FleetLockTaken, MaintenanceError> {
+    let taken = try_fleet_lock(&mut *connection, lock).await?;
+    if taken == FleetLockTaken::Taken {
+        release_fleet_lock(connection, lock).await?;
     }
+    Ok(taken)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{RegisteredTenant, TenantKey};
+    use crate::state::{FleetLock, RegisteredTenant, TenantKey};
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
     use pretty_assertions::assert_eq;
 
@@ -95,5 +135,11 @@ mod tests {
             database: TenantDatabaseName::from("postgres".to_owned()),
         };
         assert_eq!(tenant.log_name(), "<default>");
+    }
+
+    #[test]
+    fn the_pass_and_the_repack_take_different_fleet_locks() {
+        assert_eq!(FleetLock::Pass.key(), "andromeda-postgresql-maintenance");
+        assert_eq!(FleetLock::Repack.key(), "andromeda-postgresql-maintenance-repack");
     }
 }

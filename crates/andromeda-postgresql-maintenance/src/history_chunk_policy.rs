@@ -3,8 +3,9 @@
 //! Each takes the cooldown and load gates every target takes first.
 
 use crate::{
+    breach_run::BreachRun,
     columnstore_partiality::ChunkPartiality,
-    policy::{BreachRun, DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, TargetState, gated_decision, newly_qualified},
+    policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, TargetState, gated_decision, newly_qualified},
     rowstore_rebuild::RebuildAwaiting,
 };
 use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
@@ -30,7 +31,7 @@ pub(crate) fn decide_recompression(
     }
     match partiality {
         ChunkPartiality::Whole => PolicyDecision::Deferred(DeferralReason::BelowThreshold),
-        ChunkPartiality::Partial if BreachRun::extended(state.breach, now).qualifies(profile, now) => newly_qualified(mode),
+        ChunkPartiality::Partial if BreachRun::extended(state.breach, now).qualifies(profile.qualifying_duration, now) => newly_qualified(mode),
         ChunkPartiality::Partial => PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples),
     }
 }
@@ -59,9 +60,10 @@ pub(crate) fn decide_rowstore_rebuild(
 #[cfg(test)]
 mod tests {
     use crate::{
+        breach_run::{BreachRun, breach_after},
         columnstore_partiality::ChunkPartiality,
         history_chunk_policy::{decide_recompression, decide_rowstore_rebuild},
-        policy::{BreachRun, DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after},
+        policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, TargetState},
         rowstore_rebuild::RebuildAwaiting,
     };
     use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
@@ -75,6 +77,7 @@ mod tests {
             held_horizon: None,
             active_maintenance: false,
             waiting_relation_lock: false,
+            repack_running: false,
         }
     }
 

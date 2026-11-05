@@ -1,6 +1,6 @@
 //! Typed failures produced by platform coordination and tenant inspection.
 
-use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter};
+use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter, repack::version::RepackVersionError, state::FleetLock};
 use andromeda_context_space::snapshot_key::{SnapshotKey, SnapshotKeyError};
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
 use andromeda_postgresql_codes::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
@@ -48,6 +48,9 @@ pub enum MaintenanceError {
     /// A replication slot reported a `wal_status` this binary does not know.
     #[error("PostgreSQL reported an unknown replication slot WAL status: {0}")]
     UnknownWalStatus(#[source] strum::ParseError),
+    /// `pg_locks` reported a lock mode this binary does not know.
+    #[error("PostgreSQL reported an unknown lock mode: {0}")]
+    UnknownLockMode(#[source] strum::ParseError),
     /// The installed and shipped versions of a tenant's extensions could not
     /// be read.
     #[error("PostgreSQL extension versions could not be read: {0}")]
@@ -55,9 +58,10 @@ pub enum MaintenanceError {
     /// The vacuum horizon report named a holder kind this binary never asks for.
     #[error("PostgreSQL vacuum horizon report named an unknown holder kind: {0}")]
     UnknownHorizonHolder(#[source] strum::ParseError),
-    /// Durable index-probe state names a target that is not an index.
-    #[error("platform maintenance state records an index probe for non-index target '{}'", .0.label())]
-    ProbeTargetNotAnIndex(MaintenanceTargetCode),
+    /// Durable probe state names a target of another kind than the probe
+    /// reads.
+    #[error("platform maintenance state records a probe for target '{}' of another kind", .0.label())]
+    ProbeTargetOfAnotherKind(MaintenanceTargetCode),
     /// Durable index-key layout state names a target no density measures.
     #[error("platform maintenance state records a gin key layout for '{}', which no density measures", .0.label())]
     KeyLayoutTargetNotDensityMeasured(MaintenanceTargetCode),
@@ -88,6 +92,12 @@ pub enum MaintenanceError {
         /// The Snapshot whose branch lock was released.
         snapshot: SnapshotKey,
     },
+    /// A fleet lock this session took was no longer held when it released it.
+    #[error("the PostgreSQL maintenance fleet lock {0} was not held")]
+    FleetLockNotHeld(FleetLock),
+    /// A tenant's `repack.version()` report could not be read.
+    #[error("the pg_repack version could not be read: {0}")]
+    RepackVersion(#[from] RepackVersionError),
     /// A target was addressed in a Snapshot branch whose schema never holds
     /// its heap.
     #[error("maintenance target '{}' exists only in the live branch, not in Snapshot {}", .target.relation_name(), .snapshot.as_i64())]

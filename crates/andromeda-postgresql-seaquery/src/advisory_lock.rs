@@ -35,6 +35,25 @@ enum LockFunction {
     Hashtext,
 }
 
+/// `pg_try_advisory_lock(class, object)` - obtain the session lock keyed on
+/// the pair of integers without waiting. The two-key form shares no key with
+/// the one-key form, so a pair names a lock no single-key caller contends for.
+#[must_use]
+pub fn try_advisory_lock_pair(class: i32, object: i32) -> SimpleExpr {
+    Func::cust(LockFunction::TryAdvisoryLock)
+        .args([SimpleExpr::from(Expr::val(class)), SimpleExpr::from(Expr::val(object))])
+        .into()
+}
+
+/// `pg_advisory_unlock(class, object)` - release the session lock keyed on the
+/// pair of integers; `false` when the session held none.
+#[must_use]
+pub fn advisory_unlock_pair(class: i32, object: i32) -> SimpleExpr {
+    Func::cust(LockFunction::AdvisoryUnlock)
+        .args([SimpleExpr::from(Expr::val(class)), SimpleExpr::from(Expr::val(object))])
+        .into()
+}
+
 /// `pg_try_advisory_lock(hashtext(key))` - obtain a session lock without waiting.
 #[must_use]
 pub fn try_advisory_lock(key: SimpleExpr) -> SimpleExpr {
@@ -100,9 +119,11 @@ mod tests {
         advisory_lock_shared,
         advisory_unlock,
         advisory_unlock_exclusive,
+        advisory_unlock_pair,
         advisory_unlock_shared,
         advisory_xact_lock,
         try_advisory_lock,
+        try_advisory_lock_pair,
         try_advisory_xact_lock,
     };
     use pretty_assertions::assert_eq;
@@ -143,6 +164,18 @@ mod tests {
             let (sql, values) = Query::select().expr(expression).to_owned().build(PostgresQueryBuilder);
             assert!(sql.contains("hashtext($1)"), "{sql}");
             assert_eq!(values.0.len(), 1, "{sql}");
+        }
+    }
+
+    #[test]
+    fn a_pair_keyed_session_lock_binds_both_keys_unhashed() {
+        for (expression, function) in [
+            (try_advisory_lock_pair(16_185_446, -2_147_467_264), "pg_try_advisory_lock($1, $2)"),
+            (advisory_unlock_pair(16_185_446, -2_147_467_264), "pg_advisory_unlock($1, $2)"),
+        ] {
+            let (sql, values) = Query::select().expr(expression).to_owned().build(PostgresQueryBuilder);
+            assert_eq!(sql, format!("SELECT {function}"));
+            assert_eq!(values.0.len(), 2, "{sql}");
         }
     }
 }

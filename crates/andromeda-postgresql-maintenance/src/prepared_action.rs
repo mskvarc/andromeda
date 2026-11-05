@@ -55,6 +55,8 @@ pub(crate) enum Preparation {
     /// The reading no longer meets the threshold that queued the action, for
     /// the reason given.
     Lapsed(DeferralReason),
+    /// The action is run outside the pass, by the runner its target names.
+    OtherRunner,
 }
 
 /// Resolve what a pending action works on and judge it again on a live
@@ -134,6 +136,7 @@ pub(crate) async fn prepare_action(
                 relation: awaiting.chunk.relation,
             }
         }
+        MaintenanceTarget::Repack(_) => return Ok(Preparation::OtherRunner),
     };
     Ok(Preparation::Ready(prepared))
 }

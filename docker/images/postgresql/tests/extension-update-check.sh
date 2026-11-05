@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # usage: extension-update-check.sh IMAGE BROKER_IMAGE [PREVIOUS_IMAGE PREVIOUS_BROKER_IMAGE]
 # Asserts that the broker updates each tenant database's TimescaleDB and
-# PostGIS to the versions IMAGE ships when it opens the tenant, and that the
-# tenant then serves. The first case creates the databases with TimescaleDB at
+# PostGIS to the versions IMAGE ships, and installs its pg_repack at the
+# version IMAGE ships, when it opens the tenant, and that the tenant then
+# serves. The first case creates the databases with TimescaleDB at
 # the previous minor release, which IMAGE still ships. The second, run when
 # PREVIOUS_IMAGE and PREVIOUS_BROKER_IMAGE are given, creates and fills twenty
 # tenants with the previous broker on the previous image, then restarts the
@@ -152,6 +153,7 @@ read_tenant() {
 assert_current() {
 	expect "$1 timescaledb" "$(shipped timescaledb)" "$(extversion "$1" timescaledb)"
 	expect "$1 postgis" "$(shipped postgis)" "$(extversion "$1" postgis)"
+	expect "$1 pg_repack" "$(shipped pg_repack)" "$(extversion "$1" pg_repack)"
 }
 
 # An ERROR level, a session TimescaleDB closed for a stale library, or an update
@@ -234,7 +236,7 @@ if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	mismatched=''
 	for name in "${catch_up_tenants[@]}"; do
 		db="$(sql postgres "SELECT database_name FROM tenants WHERE name = '$name'")"
-		for extension in timescaledb postgis; do
+		for extension in timescaledb postgis pg_repack; do
 			recorded="$(sql postgres "SELECT v.installed_version FROM tenant_extension_versions v JOIN tenants t USING (tenant_key) WHERE t.name = '$name' AND v.extension = '$extension'")"
 			[ "$recorded" = "$(extversion "$db" "$extension")" ] || mismatched="$mismatched $name/$extension"
 		done
