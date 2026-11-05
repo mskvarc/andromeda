@@ -30,7 +30,11 @@ pub trait TemporalMutator: Send + Sync {
     #[must_use = "temporal attribute-name reads must be awaited"]
     async fn attribute_names_for_entity(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<Vec<AttributeName>, TemporalError>;
 
-    /// Delete every temporal observation for an entity and return the affected catalogue rows.
+    /// Delete an entity's Temporal Evolution (clause 5.6.16), its queued
+    /// history with its recorded history, and return the streams removed.
+    ///
+    /// Answers [`TemporalError::NotFound`] when the entity holds no Temporal
+    /// Evolution, neither recorded nor brought into being by queued history.
     #[must_use = "temporal entity deletions must be awaited"]
     async fn delete_all_for_entity(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<u64, TemporalError>;
 

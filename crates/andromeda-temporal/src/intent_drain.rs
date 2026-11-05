@@ -14,7 +14,9 @@
 //! the head applies.
 //!
 //! The barrier applies one entity's queued intents before a Temporal API
-//! mutation of its history. It waits only for the intents queued when it
+//! mutation that keeps part of its history: an attribute deletion, or an
+//! instance's modification or deletion. A Temporal Evolution deletion keeps
+//! none of it and removes the queued intents instead. The barrier waits only for the intents queued when it
 //! starts, up to the entity's newest key at that moment: a later intent is a
 //! concurrent write, and waiting for it too would never end under sustained
 //! writes. It claims them whatever their retry delay, claims again while a

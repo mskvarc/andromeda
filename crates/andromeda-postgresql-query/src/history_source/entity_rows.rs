@@ -205,6 +205,21 @@ pub fn type_member_rows(
     })
 }
 
+/// Whether the identity row under `entities` holds a Temporal Evolution a
+/// read of `branch` sees: one it records, or, where the branch reads its
+/// queue, one a queued intent stating types brings into being.
+///
+/// It selects the rows [`entity_rows`] reads, judged one row at a time.
+#[must_use]
+pub fn holds_visible_evolution(branch: &HistoryBranch, entities: impl IntoIden) -> SimpleExpr {
+    let entities = entities.into_iden();
+    let recorded = holds_evolution(entities.clone()); // clone: the queued branch names the same row.
+    match branch.pending() {
+        PendingEntries::Absent => recorded,
+        PendingEntries::Unioned => recorded.or(pending::types_queued_for(Expr::col((entities, Entities::Id)))),
+    }
+}
+
 /// `rows` over the union of recorded and queued Evolutions, keeping a
 /// recorded one only while no queued intent states types for it: the queued
 /// branch reads it then, under the types the drain leaves it.
@@ -228,7 +243,7 @@ mod tests {
         entity_type_name_key::EntityTypeNameKey,
         history_source::{
             HistoryBranch,
-            entity_rows::{WalkedKeys, entity_rows, type_member_rows},
+            entity_rows::{WalkedKeys, entity_rows, holds_visible_evolution, type_member_rows},
         },
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -289,6 +304,30 @@ mod tests {
                 r#"WHERE "re"."evolution_created_at" IS NOT NULL UNION ALL"#
             )),
             "{sql}"
+        );
+    }
+
+    /// Reads count an Evolution a queued intent stating types brings into
+    /// being as recorded, so the live branch sees it on an identity row that
+    /// records none yet.
+    #[test]
+    fn a_live_row_holds_a_visible_evolution_when_it_records_one_or_a_queued_intent_states_types() {
+        let condition = holds_visible_evolution(&HistoryBranch::live(), Alias::new("te"));
+        assert_eq!(
+            Query::select().expr(condition).to_owned().to_string(PostgresQueryBuilder),
+            concat!(
+                r#"SELECT "te"."evolution_created_at" IS NOT NULL OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" "#,
+                r#"WHERE "pt"."entity_id" = "te"."id" AND cardinality("pt"."entity_type_name_keys") > 0)"#
+            )
+        );
+    }
+
+    #[test]
+    fn a_snapshot_row_holds_a_visible_evolution_only_when_it_records_one() {
+        let condition = holds_visible_evolution(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), Alias::new("te"));
+        assert_eq!(
+            Query::select().expr(condition).to_owned().to_string(PostgresQueryBuilder),
+            r#"SELECT "te"."evolution_created_at" IS NOT NULL"#
         );
     }
 

@@ -206,14 +206,17 @@ impl TemporalService {
         Ok(expanded_attr)
     }
 
-    /// Delete all temporal data for an entity.
+    /// Delete all temporal data for an entity (clause 5.6.16).
+    ///
+    /// The entity's queued history is deleted with its recorded history
+    /// instead of being applied first: clause 5.6.16 removes all of it, so the
+    /// deletion waits for no queue and no queued write that fails to apply
+    /// stands in its way.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
-    /// Evolution; [`TemporalError::HistoryUnsettled`] when the mutation
-    /// barrier's bound runs out before the entity's queued history is applied;
-    /// the failure of a queued intent that does not apply; and
+    /// Evolution, recorded or brought into being by its queued history, and
     /// [`TemporalError::Persistence`] when the deletion cannot be applied.
     pub async fn delete(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<(), TemporalError> {
         let timer = temporal::start(TemporalOperation::Delete);
@@ -224,10 +227,6 @@ impl TemporalService {
 
     /// The measured body of [`TemporalService::delete`].
     async fn delete_inner(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<(), TemporalError> {
-        self.mutation_barrier.synchronize(target, entity_id).await?;
-        if !self.mutator.entity_exists(target, entity_id).await? {
-            return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
-        }
         self.mutator.delete_all_for_entity(target, entity_id).await?;
         Ok(())
     }

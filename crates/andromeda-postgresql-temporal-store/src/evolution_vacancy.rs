@@ -10,13 +10,19 @@
 //! state alone. The caller removes the history and the streams first, and
 //! holds the identity rows' locks.
 //!
-//! An Entity's history queued after the caller applied the queue is a write
-//! the caller orders before (clause 4.8), so its row stays without a current
-//! state while it waits, and keeps `deleted_or_queued_at`, the instant of a
-//! deletion among those writes. The drain brings the Evolution into being
-//! again on that row, and a create of the identifier lands on it and is held
-//! after the deletion; a fresh row would be compared with nothing and could
-//! be stamped before it.
+//! An Entity whose history is still queued when the caller commits keeps its
+//! row without a current state while the history waits, and keeps
+//! `deleted_or_queued_at`, the instant of a deletion among those writes. The
+//! drain brings the Evolution into being again on that row, and a create of
+//! the identifier lands on it and is held after the deletion; a fresh row
+//! would be compared with nothing and could be stamped before it. A Temporal
+//! Evolution deletion removes the Entity's queued history before this
+//! statement runs, so only retention leaves history queued behind it.
+//!
+//! On the live branch a row holding `deleted_or_queued_at` counts as holding
+//! an Evolution: a Temporal Evolution deletion gives up an Evolution that
+//! queued history alone brought into being, and once that history is removed
+//! the row holds the instant and perhaps a current state, and no Evolution.
 //!
 //! A row its current state keeps clears `deleted_or_queued_at` unless the
 //! Entity's history still waits in the queue. Its current state's
@@ -71,8 +77,8 @@ struct Unflagged;
 struct Strays;
 
 /// Give up the Temporal Evolution of every identity row of the branch
-/// `schema` names whose key `keys` selects and which holds one, answering how
-/// many it gave up.
+/// `schema` names whose key `keys` selects and which holds one, recorded or
+/// queued, answering how many it gave up.
 #[must_use]
 pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: SelectStatement) -> WithQuery {
     let vacated = Query::select()
@@ -80,7 +86,7 @@ pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: Select
         .expr_as(kept_row(schema), Kept)
         .from(qualified(schema, Entities::Table))
         .and_where(Expr::col(Entities::EntityKey).in_subquery(keys))
-        .and_where(holds_evolution(Entities::Table))
+        .and_where(holds_given_up_evolution(schema))
         .take();
     let vacated_where = |kept: SimpleExpr| Query::select().column(Entities::EntityKey).from(Vacated).and_where(kept).take();
     let kept = || vacated_where(Expr::col(Kept));
@@ -119,6 +125,17 @@ pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: Select
         .cte(CommonTableExpression::new().table_name(Unflagged).query(memberships.cleared).to_owned())
         .cte(CommonTableExpression::new().table_name(Strays).query(memberships.deleted).to_owned());
     with.query(Query::select().expr(count_all()).from(Vacated).take())
+}
+
+/// Whether a row holds an Evolution to give up: one it records, or, on the
+/// live branch, the instant of history queued for it. A Snapshot branch
+/// queues nothing, and there the instant marks a deletion alone.
+fn holds_given_up_evolution(schema: Option<&DynIden>) -> SimpleExpr {
+    let recorded = holds_evolution(Entities::Table);
+    match schema {
+        Some(_) => recorded,
+        None => recorded.or(Expr::col((Entities::Table, Entities::DeletedOrQueuedAt)).is_not_null()),
+    }
 }
 
 /// Whether a vacated row is kept: it holds a current state, or an intent of
@@ -172,16 +189,17 @@ mod tests {
         evolution_vacancy_statement(None, keys()).to_string(PostgresQueryBuilder)
     }
 
-    /// Only an identity row holding a Temporal Evolution is vacated, and
-    /// whether a current state or queued history keeps it decides what
-    /// happens to it.
+    /// Only an identity row holding a Temporal Evolution, recorded or
+    /// brought into being by queued history, is vacated, and whether a current
+    /// state or queued history keeps it decides what happens to it.
     #[test]
     fn the_vacated_rows_hold_an_evolution_and_say_whether_a_current_state_or_queued_history_keeps_them() {
         assert!(
             rendered().starts_with(concat!(
                 r#"WITH "vacated" AS (SELECT "entity_key", "entities"."created_at" IS NOT NULL "#,
                 r#"OR EXISTS(SELECT 1 FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "entities"."id") AS "kept" "#,
-                r#"FROM "entities" WHERE "entity_key" IN (SELECT 7) AND "entities"."evolution_created_at" IS NOT NULL)"#
+                r#"FROM "entities" WHERE "entity_key" IN (SELECT 7) "#,
+                r#"AND ("entities"."evolution_created_at" IS NOT NULL OR "entities"."deleted_or_queued_at" IS NOT NULL))"#
             )),
             "{}",
             rendered()
@@ -250,6 +268,10 @@ mod tests {
         assert!(
             sql.contains(r#""entities"."created_at" IS NOT NULL AS "kept" FROM "snap_3"."entities""#),
             "only a current state keeps a row: {sql}"
+        );
+        assert!(
+            sql.contains(r#"IN (SELECT 7) AND "entities"."evolution_created_at" IS NOT NULL)"#),
+            "only a recorded Evolution is given up: {sql}"
         );
         assert!(
             sql.contains(r#""evolution_type_name_keys" = NULL, "deleted_or_queued_at" = NULL WHERE"#),

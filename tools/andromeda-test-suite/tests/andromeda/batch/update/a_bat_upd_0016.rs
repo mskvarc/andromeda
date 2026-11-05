@@ -16,7 +16,7 @@ use ngsi_ld::{
 
 /// Pins: Delete Temporal Evolution sent straight after a Batch Entity Update answered 204 with Preference-Applied:
 /// respond-async answers 204, and Retrieve Temporal Evolution sent straight after it, with no retry, answers 404
-/// `ResourceNotFound`: the history the update queued is applied before the deletion, never left to land after it
+/// `ResourceNotFound`: the history the update queued is deleted with the Temporal Evolution, never left to land after it
 /// Clause: 5.6.9, 5.6.16, 5.7.3
 /// Recorded: Andromeda extension, not v1.9.1: Prefer: respond-async on batch operations (IETF RFC 7240 section
 /// 4.1), whose history is queued with the write; clause 5.6.16 deletes the Temporal Evolution whole, so nothing the
