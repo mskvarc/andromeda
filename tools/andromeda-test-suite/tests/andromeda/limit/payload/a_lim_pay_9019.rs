@@ -21,10 +21,10 @@ use ngsi_ld::{
 };
 use strum::IntoEnumIterator;
 
-/// Pins: Create Entity, Merge Entity and a batch create of a body whose body `@context` gives the attribute a scoped
-/// context that does not propagate, and whose one Property `value`, `object`, `objectList`, `vocab` or `languageMap`
-/// holds one entry more than the entity value budget, answer 413 `RequestEntityTooLarge` naming the entity budget and
-/// write nothing
+/// Pins: Create Entity, Merge Entity and a batch create of a body whose body `@context` aliases `@nest`, which an
+/// attribute written first nests a member under, and whose one Property `value`, `object`, `objectList`, `vocab` or
+/// `languageMap` holds one entry more than the entity value budget, answer 413 `RequestEntityTooLarge` naming the entity
+/// budget and write nothing
 /// Clause: 6.3.2, 5.6.8
 /// Recorded: ETSI GS CIM 009 sets no size for an entity; Andromeda budgets the JSON values of an entity outside its
 /// geometries and JSON literals (1,000,000), the stack running the defaults, and counts a request the typed expansion

@@ -64,28 +64,37 @@ impl ManyEntries {
         format!(r#"{{"id":"{id}","type":"{entity_type}",{}"#, fragment.trim_start_matches('{'))
     }
 
-    /// [`ManyEntries::entity`] under a body `@context` that makes the typed expansion decline the attribute `member`.
+    /// [`ManyEntries::entity`] under [`DECLINING_CONTEXT`], with [`DECLINING_ATTRIBUTE`] written before every other
+    /// member, so the typed expansion declines the request before it counts the entries.
     #[must_use]
     pub fn declined_entity(self, id: &str, entity_type: &str, member: &str, count: usize) -> String {
-        declined(&self.entity(id, entity_type, member, count), member)
+        declined(&self.entity(id, entity_type, member, count))
     }
 
-    /// [`ManyEntries::fragment`] under a body `@context` that makes the typed expansion decline the attribute `member`.
+    /// [`ManyEntries::fragment`] under [`DECLINING_CONTEXT`], with [`DECLINING_ATTRIBUTE`] written before the member
+    /// that holds the entries.
     #[must_use]
     pub fn declined_fragment(self, member: &str, count: usize) -> String {
-        declined(&self.fragment(member, count), member)
+        declined(&self.fragment(member, count))
     }
 }
 
-/// The body `@context` that gives the attribute `member` a property-scoped context which does not propagate, which the
-/// typed expansion declines wherever the attribute is written, so the JSON-LD processor expands the request.
-fn declining_context(member: &str) -> String {
-    format!(r#"[{{"{member}":{{"@id":"https://example.org/declined/{member}","@context":{{"@propagate":false}}}}}}]"#)
-}
+/// A body `@context` that aliases `@nest` as `nesting`. It declares no JSON-LD Scoped Context, which a user `@context`
+/// shall not contain (ETSI GS CIM 009 v1.9.1 clause 5.5.7), and the typed expansion does not model `@nest`, so a
+/// request that writes the alias is expanded by the JSON-LD processor.
+pub const DECLINING_CONTEXT: &str = r#"[{"nesting":"@nest"}]"#;
 
-/// `text`, a JSON object, with the body `@context` that makes the typed expansion decline the attribute `member`.
-fn declined(text: &str, member: &str) -> String {
-    format!(r#"{{"@context":{},{}"#, declining_context(member), text.trim_start_matches('{'))
+/// An attribute whose structured value nests its one member under the `@nest` alias of [`DECLINING_CONTEXT`]; the
+/// JSON-LD 1.1 expansion algorithm folds the nested member into the value.
+pub const DECLINING_ATTRIBUTE: &str = r#""nestedProbe":{"type":"Property","value":{"nesting":{"level":1}}}"#;
+
+/// The values [`DECLINING_ATTRIBUTE`] adds to the entity value budget: the attribute, its instance and its `type`, the
+/// structured value and its one number.
+pub const DECLINING_ATTRIBUTE_VALUES: u64 = 5;
+
+/// `text`, a JSON object, under [`DECLINING_CONTEXT`] with [`DECLINING_ATTRIBUTE`] written before its members.
+fn declined(text: &str) -> String {
+    format!(r#"{{"@context":{DECLINING_CONTEXT},{DECLINING_ATTRIBUTE},{}"#, text.trim_start_matches('{'))
 }
 
 /// `count` URNs written as the entries of a JSON array.
@@ -105,7 +114,7 @@ fn entries(count: usize, entry: impl Fn(usize) -> String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::many_entries::ManyEntries;
+    use crate::many_entries::{DECLINING_CONTEXT, ManyEntries};
     use googletest::prelude::*;
     use serde_json::Value;
     use strum::IntoEnumIterator;
@@ -124,12 +133,30 @@ mod tests {
     }
 
     #[gtest]
-    fn a_declined_entity_names_the_context_that_makes_the_expansion_decline_its_attribute() -> Result<()> {
-        let entity: Value = serde_json::from_str(&ManyEntries::Numbers.declined_entity("urn:ngsi-ld:Probe:1", "Probe", "m", 3))?;
-        verify_that!(entity.pointer("/@context/0/m/@context/@propagate").and_then(Value::as_bool), some(eq(false)))?;
+    fn a_declined_entity_writes_the_nest_alias_before_the_member_that_holds_the_entries() -> Result<()> {
+        let text = ManyEntries::Numbers.declined_entity("urn:ngsi-ld:Probe:1", "Probe", "m", 3);
+        let entity: Value = serde_json::from_str(&text)?;
+        verify_that!(entity.pointer("/@context/0/nesting").and_then(Value::as_str), some(eq("@nest")))?;
+        verify_that!(entity.pointer("/nestedProbe/value/nesting/level").and_then(Value::as_u64), some(eq(1)))?;
         verify_that!(entity.pointer("/m/value").and_then(Value::as_array).map(Vec::len), some(eq(3)))?;
-        let fragment: Value = serde_json::from_str(&ManyEntries::Targets.declined_fragment("m", 2))?;
-        verify_that!(fragment.pointer("/m/object").and_then(Value::as_array).map(Vec::len), some(eq(2)))
+        verify_that!(text.find(r#""nestedProbe""#) < text.find(r#""m""#), eq(true))?;
+        let fragment_text = ManyEntries::Targets.declined_fragment("m", 2);
+        let fragment: Value = serde_json::from_str(&fragment_text)?;
+        verify_that!(fragment.pointer("/m/object").and_then(Value::as_array).map(Vec::len), some(eq(2)))?;
+        verify_that!(fragment_text.find(r#""nestedProbe""#) < fragment_text.find(r#""m""#), eq(true))
+    }
+
+    #[gtest]
+    fn the_declining_context_declares_no_scoped_context() -> Result<()> {
+        let context: Value = serde_json::from_str(DECLINING_CONTEXT)?;
+        let definitions = context.pointer("/0").and_then(Value::as_object).or_fail()?;
+        verify_that!(
+            definitions
+                .values()
+                .filter_map(Value::as_object)
+                .any(|definition| definition.contains_key("@context")),
+            eq(false)
+        )
     }
 
     #[gtest]
