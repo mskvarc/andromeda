@@ -57,8 +57,10 @@ pub enum Entities {
     EvolutionTypeNameKeys,
     /// The latest instant of a core deletion of the Entity or of a write that
     /// queued its history, which neither `modified_at` nor
-    /// `evolution_modified_at` may hold; never lowered, NULL while there was
-    /// none. Not indexed, so its update stays a heap-only-tuple update.
+    /// `evolution_modified_at` may hold, NULL while there was none or once the
+    /// Temporal Evolution was given up with nothing of the Entity queued. A
+    /// core deletion keeps a row holding it. Not indexed, so its update stays
+    /// a heap-only-tuple update.
     DeletedOrQueuedAt,
 }
 

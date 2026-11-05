@@ -3,8 +3,9 @@
 //! Each entity is created as Create Entity creates it (clause 5.6.7.4), with
 //! nothing read first: a create holds only while the entity does not exist,
 //! so a concurrent create answers 409 for that entity alone. An identifier
-//! whose identity row holds a Temporal Evolution alone is created anew on that
-//! row (clause 5.6.1), and the store refuses the creation when the row holds
+//! whose identity row holds no current state (a Temporal Evolution, or a
+//! deletion whose history is still queued) is created anew on that row
+//! (clause 5.6.1), and the store refuses the creation when the row holds
 //! an instant later than the batch's, a deletion's that committed while the
 //! batch ran: the instances would be recorded before the tombstones that end
 //! their predecessors. Such an entity is created again after that instant.

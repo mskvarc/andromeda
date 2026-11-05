@@ -5,8 +5,8 @@
 //! `createdAt` the instant of entry, so a write stamped earlier than an instant
 //! the Entity holds would move its `modifiedAt` backwards and could modify an
 //! instance before it was created. Every statement here refuses such a write:
-//! the insert that gives an identity row holding a Temporal Evolution alone its
-//! current state, the update and the delete. A create of an identifier no row
+//! the insert that gives an identity row holding no current state its current
+//! state, the update and the delete. A create of an identifier no row
 //! holds is never refused. A write at the Entity's latest instant is not
 //! refused either, because every Entity and attribute one batch writes carries
 //! one `modifiedAt` (clause 5.5.11.0), the instances of a repeated identifier
@@ -18,7 +18,8 @@
 //! `evolution_modified_at` as it was; a queued write's history reaches
 //! `evolution_modified_at` only when the drain applies it. Both raise
 //! `deleted_or_queued_at` to their instant. Every identity row holds a current
-//! state or a Temporal Evolution, so the greatest is never NULL. All three are
+//! state, a Temporal Evolution or that instant, so the greatest is never
+//! NULL. All three are
 //! read from the row the statement writes or locks, after any writer it waited
 //! on, so a write committed after the statement's snapshot is compared with as
 //! well.

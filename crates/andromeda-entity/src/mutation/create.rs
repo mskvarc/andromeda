@@ -1,8 +1,9 @@
 //! Create Entity (clause 5.6.1).
 //!
 //! A create reads nothing: it holds only while no Entity has a current state
-//! under its identifier. An identifier whose identity row holds a Temporal
-//! Evolution alone is created anew on that row, and the store refuses the
+//! under its identifier. An identifier whose identity row holds no current
+//! state (a Temporal Evolution, or a deletion whose history is still queued)
+//! is created anew on that row, and the store refuses the
 //! creation when the row holds an instant later than the create's, a
 //! deletion's or a Temporal API write's: its instances would be recorded
 //! before them (clause 4.8). The create is then stamped again after that

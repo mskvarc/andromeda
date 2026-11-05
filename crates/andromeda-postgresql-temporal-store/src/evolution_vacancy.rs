@@ -8,11 +8,19 @@
 //! row with the Evolution's columns cleared, its instance claims released and
 //! its type memberships kept for the current state alone. The caller removes
 //! the history and the streams first, and holds the identity rows' locks.
+//!
+//! A kept row's `deleted_or_queued_at` is cleared unless the Entity's history
+//! still waits in the queue. Its current state's `modified_at` already
+//! follows every deletion before it, and the history the drained writes left
+//! is gone, so a later deletion of an Entity with neither an Evolution nor
+//! queued history removes its row. The caller took the locks in a statement
+//! of its own, so this statement's snapshot holds every intent the Entity's
+//! writers committed, and no writer queues more before the caller commits.
 
 use andromeda_postgresql_query::{entity_sides::holds_evolution, type_membership::Memberships, type_membership_moves::side_departure};
-use andromeda_postgresql_schema::{current::Entities, temporal::AttributeHistoryInstanceClaims, type_membership::MembershipSide};
+use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::AttributeHistoryInstanceClaims, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified};
-use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Iden, Keyword, Query, SelectStatement, SimpleExpr, WithClause, WithQuery};
+use sea_query::{CaseStatement, CommonTableExpression, DynIden, Expr, ExprTrait, Iden, Keyword, Query, SelectStatement, SimpleExpr, WithClause, WithQuery};
 
 /// The identity rows whose Evolution the statement gives up, `vacated`.
 #[derive(Iden, Clone, Copy)]
@@ -80,6 +88,7 @@ pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: Select
             (Entities::EvolutionModifiedAt, Keyword::Null.into()),
             (Entities::EvolutionActiveUntil, Keyword::Null.into()),
             (Entities::EvolutionTypeNameKeys, Keyword::Null.into()),
+            (Entities::DeletedOrQueuedAt, queued_instant_kept(schema)),
         ])
         .and_where(Expr::col(Entities::EntityKey).in_subquery(kept()))
         .take();
@@ -102,6 +111,25 @@ pub(crate) fn evolution_vacancy_statement(schema: Option<&DynIden>, keys: Select
         .cte(CommonTableExpression::new().table_name(Unflagged).query(memberships.cleared).to_owned())
         .cte(CommonTableExpression::new().table_name(Strays).query(memberships.deleted).to_owned());
     with.query(Query::select().expr(count_all()).from(Vacated).take())
+}
+
+/// The `deleted_or_queued_at` a row its current state keeps is left with: as
+/// it was while an intent of the Entity is queued, NULL otherwise. A Snapshot
+/// branch records its history in the write's own transaction, so nothing of
+/// it is queued.
+fn queued_instant_kept(schema: Option<&DynIden>) -> SimpleExpr {
+    if schema.is_some() {
+        return Keyword::Null.into();
+    }
+    let queued = Query::select()
+        .expr(Expr::val(1))
+        .from(TemporalAppendIntents::Table)
+        .and_where(Expr::col((TemporalAppendIntents::Table, TemporalAppendIntents::EntityId)).equals((Entities::Table, Entities::Id)))
+        .take();
+    CaseStatement::new()
+        .case(Expr::exists(queued), Expr::col((Entities::Table, Entities::DeletedOrQueuedAt)))
+        .finally(Keyword::Null)
+        .into()
 }
 
 #[cfg(test)]
@@ -145,8 +173,23 @@ mod tests {
         );
         assert!(
             sql.contains(concat!(
-                r#""retired" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_active_until" = NULL, "evolution_type_name_keys" = NULL "#,
-                r#"WHERE "entity_key" IN (SELECT "entity_key" FROM "vacated" WHERE "current"))"#
+                r#""retired" AS (UPDATE "entities" SET "evolution_created_at" = NULL, "evolution_modified_at" = NULL, "evolution_active_until" = NULL, "evolution_type_name_keys" = NULL, "#,
+                r#""deleted_or_queued_at" = "#
+            )),
+            "{sql}"
+        );
+    }
+
+    /// A kept row keeps its queued instant only while the Entity's history
+    /// still waits in the queue, so a later deletion of an Entity left with
+    /// neither an Evolution nor queued history removes its row.
+    #[test]
+    fn a_kept_row_keeps_its_queued_instant_only_while_its_history_is_queued() {
+        let sql = rendered();
+        assert!(
+            sql.contains(concat!(
+                r#""deleted_or_queued_at" = (CASE WHEN (EXISTS(SELECT 1 FROM "temporal_append_intents" WHERE "temporal_append_intents"."entity_id" = "entities"."id")) "#,
+                r#"THEN "entities"."deleted_or_queued_at" ELSE NULL END) WHERE "entity_key" IN (SELECT "entity_key" FROM "vacated" WHERE "current"))"#
             )),
             "{sql}"
         );
@@ -175,5 +218,10 @@ mod tests {
             assert!(sql.contains(&format!(r#""snap_3"."{relation}""#)), "{relation}: {sql}");
         }
         assert_eq!(sql.matches(r#"FROM "entities""#).count(), 0, "{sql}");
+        assert!(!sql.contains("temporal_append_intents"), "a Snapshot branch queues nothing: {sql}");
+        assert!(
+            sql.contains(r#""evolution_type_name_keys" = NULL, "deleted_or_queued_at" = NULL WHERE"#),
+            "{sql}"
+        );
     }
 }

@@ -16,7 +16,7 @@ pub struct CreatedEntities {
     /// membership on both sides. An identity row that existed keeps the
     /// evolution it held, so none of those is here.
     pub established: Vec<Identifier>,
-    /// The identity rows holding a Temporal Evolution alone whose creation
+    /// The identity rows holding no current state whose creation
     /// the create refused, because they hold an instant later than its own
     /// (clause 4.8), with that instant.
     pub predated: Vec<PredatedEntity>,

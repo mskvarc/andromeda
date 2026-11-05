@@ -113,7 +113,8 @@ use std::collections::HashSet;
 /// census ledger either.
 ///
 /// An identity row without a current state is the Temporal Evolution of an
-/// Entity a core deletion removed (clause 5.6.6) or the Temporal API created.
+/// Entity a core deletion removed (clause 5.6.6) or the Temporal API created,
+/// or the row a core deletion kept while the Entity's history is queued.
 /// Clause 5.6.1 creates the Entity anew under the same identifier, so the
 /// conflict action gives that row its current state and returns it: its
 /// Temporal Evolution continues under the same key, and its type memberships
@@ -324,8 +325,8 @@ impl EntityRepository {
     /// instant its attributes carry (clause 4.8), so every entity one commit
     /// writes shares it. A new identity row of an entity in `establishing` is
     /// minted with its Temporal Evolution too ([`entity_insert_statement`]),
-    /// and those come back as established. An identity row holding a
-    /// Temporal Evolution alone and an instant later than `accepted_at` is
+    /// and those come back as established. An identity row holding no
+    /// current state and an instant later than `accepted_at` is
     /// left without a current state, and comes back as predated.
     ///
     /// # Errors

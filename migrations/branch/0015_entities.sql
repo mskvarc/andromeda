@@ -18,9 +18,10 @@
 -- core deletion (clause 5.6.6) keeps the Temporal Evolution, a Temporal
 -- Evolution deletion (clause 5.6.16) keeps the current state, and the
 -- Temporal API creates an Evolution without one. The row holds the
--- identifier once for both and goes with the last of the two. Only an Entity
--- with a current state has a search row; its membership rows say which of
--- the two each type belongs to.
+-- identifier once for both and goes with the last of the two; after a core
+-- deletion it also stays while the Entity's history may still be queued.
+-- Only an Entity with a current state has a search row; its membership rows
+-- say which of the two each type belongs to.
 -- ============================================================================
 -- Identity and lifecycle. The fillfactor leaves the room on each page that
 -- keeps the `write_count` and `modified_at` update of every core write, the
@@ -67,9 +68,14 @@ create table entities (
     -- tombstones state no type, so they leave `evolution_modified_at` as it
     -- was; a queued write's history reaches `evolution_modified_at` only when
     -- the drain applies it. The deletion and every enqueue raise it in their
-    -- own transaction, under the row lock, and nothing lowers it. A write of
-    -- the current state is held after the greatest of the three (clause 4.8),
-    -- read from the row it writes or locks.
+    -- own transaction, under the row lock. A write of the current state is
+    -- held after the greatest of the three (clause 4.8), read from the row it
+    -- writes or locks. A core deletion keeps a row holding it, so the
+    -- Evolution the drain brings into being and a later create land on that
+    -- row. Giving up the Temporal Evolution of a row its current state keeps
+    -- clears it while nothing of the Entity is queued: the current state's
+    -- `modified_at` already follows every earlier deletion, and the history it
+    -- followed is gone.
     deleted_or_queued_at timestamptz,
     -- The `entity_type_names` keys the Temporal Evolution is recorded under.
     -- Clauses 5.6.11.4 and 5.6.12.4 add the types a write states that it
@@ -83,7 +89,7 @@ create table entities (
     constraint chk_entities_write_count check (write_count > 0),
     constraint chk_entities_current_state check ((created_at is null) = (modified_at is null) and (created_at is not null or (expires_at is null and min_attribute_expires_at is null))),
     constraint chk_entities_evolution check ((evolution_created_at is null) = (evolution_modified_at is null) and (evolution_created_at is null) = (evolution_type_name_keys is null) and (evolution_type_name_keys is null or cardinality(evolution_type_name_keys) > 0) and (evolution_active_until is null or evolution_created_at is not null)),
-    constraint chk_entities_held check (created_at is not null or evolution_created_at is not null)
+    constraint chk_entities_held check (created_at is not null or evolution_created_at is not null or deleted_or_queued_at is not null)
 )
 with (
     vacuum_truncate = false,

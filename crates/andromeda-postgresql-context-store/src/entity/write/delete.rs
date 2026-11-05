@@ -64,8 +64,8 @@ const COMMITTED_AT: &str = "committed_at";
 #[iden = "gone"]
 struct Gone;
 
-/// Whether a doomed Entity keeps its identity row for its Temporal Evolution,
-/// `kept`, a column of `doomed`.
+/// Whether a doomed Entity keeps its identity row, for its Temporal Evolution
+/// or its queued history, `kept`, a column of `doomed`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "kept"]
 struct Kept;
@@ -104,7 +104,7 @@ struct Strays;
 ///
 /// ```sql
 /// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at,
-///                        e.evolution_created_at IS NOT NULL AS kept,
+///                        e.evolution_created_at IS NOT NULL OR e.deleted_or_queued_at IS NOT NULL AS kept,
 ///                        GREATEST(e.modified_at, e.evolution_modified_at, e.deleted_or_queued_at) AS latest
 ///                 FROM UNNEST(…) AS d(id, expected_entity_key, expected_write_count)
 ///                 JOIN entities e ON e.id = d.id
@@ -141,14 +141,22 @@ struct Strays;
 /// deletion as a write, so a version read before it never matches the Entity
 /// clause 5.6.1 creates anew on the same row.
 ///
+/// An Entity without a Temporal Evolution keeps its identity row too while
+/// its `deleted_or_queued_at` is set: its history may still wait in the queue,
+/// and the drain brings the Evolution into being on this row. A create of the
+/// identifier then lands on the row and is held after the deletion's instant
+/// (clause 4.8), where a fresh row would be compared with nothing and could
+/// take the history of the Entity the deletion removed. The column is NULL
+/// for an Entity with no queued history and no Evolution, whose row goes.
+///
 /// The search row is deleted by name so that the rows it held come back: the
 /// discovery census counts every one of their types and attribute instances
 /// out, from the row the delete removed rather than from the statement's
 /// snapshot of it. Clause 5.6.6 leaves the Temporal Evolution standing, so no
 /// history relation is touched, and an Entity holding one keeps its identity
 /// row with its current state taken off: its attribute instances go, and its
-/// type memberships keep the Evolution's flag alone. Everything of an Entity
-/// without one goes with the identity row: the type memberships through
+/// type memberships keep the Evolution's flag alone, none for a row without
+/// one. Everything of an Entity whose row goes goes with it: the type memberships through
 /// their cascading foreign key, the attribute instances through the
 /// statement-level trigger on `entities`, which removes the instances of
 /// every deleted entity in one pass. An Entity without a current state is not
@@ -161,8 +169,8 @@ struct Strays;
 /// standing: the deletion's tombstones are recorded at `accepted_at`, and an
 /// Evolution ending instances before it observed them would show them in
 /// effect after the Entity is gone (clause 4.8). Its row answers that instant,
-/// NULL for a candidate the delete removed. A row the Temporal Evolution keeps
-/// raises `deleted_or_queued_at` to `accepted_at`: it clears `modified_at`, and
+/// NULL for a candidate the delete removed. A row the delete keeps raises
+/// `deleted_or_queued_at` to `accepted_at`: it clears `modified_at`, and
 /// the tombstones state no type, so `evolution_modified_at` stays as it was
 /// and the row would otherwise hold no instant of the deletion.
 ///
@@ -265,11 +273,12 @@ pub(super) fn entity_delete_statement(
 
 /// The delete's candidates, `doomed`: each identity row `staging` names that
 /// holds a current state and still stands as its expectation states, locked,
-/// with the system attributes the notification needs, whether its Temporal
-/// Evolution keeps the row, and the latest instant it holds.
+/// with the system attributes the notification needs, whether the delete
+/// keeps the row, and the latest instant it holds.
 ///
 /// The lock reads each row as the writer it waited on left it, so its latest
-/// instant is the one the deletion is compared with.
+/// instant is the one the deletion is compared with, and an enqueue committed
+/// while the statement waited keeps the row.
 fn doomed_candidates(target: &ContextTarget, staging: FunctionCall) -> SelectStatement {
     Query::select()
         .expr(Expr::col((E, Entities::EntityKey)))
@@ -277,7 +286,7 @@ fn doomed_candidates(target: &ContextTarget, staging: FunctionCall) -> SelectSta
         .expr(Expr::col((E, Entities::CreatedAt)))
         .expr(Expr::col((E, Entities::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
-        .expr_as(holds_evolution(E), Kept)
+        .expr_as(holds_evolution(E).or(Expr::col((E, Entities::DeletedOrQueuedAt)).is_not_null()), Kept)
         .expr_as(latest_instant(E), Latest)
         .from_function(staging, Staged)
         .join_as(
@@ -321,7 +330,8 @@ impl EntityRepository {
     /// instance rows of the current state go with it, and the entity's
     /// temporal evolution deliberately survives, keeping the identity row:
     /// clause 5.6.6 deletes the Entity, and only clause 5.6.16 deletes its
-    /// history.
+    /// history. An Entity whose history is queued keeps the row as well, for
+    /// the Evolution the drain brings into being.
     ///
     /// `expected` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
@@ -402,7 +412,7 @@ mod tests {
         let sql = entity_delete_sql(&ContextTarget::Live);
         assert!(sql.contains("UNNEST($1::text[], $2::bigint[], $3::bigint[])"), "{sql}");
         assert!(
-            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "e"."evolution_created_at" IS NOT NULL AS "kept", GREATEST("#),
+            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at", "#),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, expected_entity_key, expected_write_count)"), "{sql}");
@@ -503,6 +513,20 @@ mod tests {
         for relation in ["attribute_history", "temporal_attribute_streams", "scope_history"] {
             assert!(!sql.contains(relation), "entity deletion must not name {relation}: {sql}");
         }
+    }
+
+    /// An Entity whose history may still wait in the queue keeps its identity
+    /// row without a Temporal Evolution, so the Evolution the drain brings
+    /// into being and a later create land on it, the create held after the
+    /// deletion (clause 4.8). The flag is read from the locked row, which an
+    /// enqueue committed while the statement waited has raised.
+    #[test]
+    fn an_entity_with_queued_history_keeps_its_identity_row() {
+        let sql = entity_delete_sql(&ContextTarget::Live);
+        assert!(
+            sql.contains(r#""e"."expires_at", "e"."evolution_created_at" IS NOT NULL OR "e"."deleted_or_queued_at" IS NOT NULL AS "kept", GREATEST("#),
+            "{sql}"
+        );
     }
 
     /// The census counts out the search rows the delete removed, read from its
