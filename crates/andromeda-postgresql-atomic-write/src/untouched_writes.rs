@@ -1,12 +1,12 @@
-//! The outcomes of the writes that change no current state, read under their
-//! Entities' row locks.
+//! The outcomes of the writes that change no current state, read from the
+//! rows the commit locked before its writes.
 //!
 //! Such a write may record history. A commit asks whether an Entity's history
 //! is queued, and keys the intents it queues, under the Entity's identity row
 //! lock, which orders the Entity's writes in commit order (clauses 4.5.7, 4.5.8
 //! and 4.8). A write of the current state holds the lock from its own
-//! statement; this one writes no row, so its row is locked before the commit's
-//! other entity statements run.
+//! statement; this one writes no row, so the commit locks its row before its
+//! entity statements run.
 //!
 //! Such a write may also state the version of the current state it was
 //! computed from, as a Temporal Evolution backfill that leaves current state as
@@ -16,50 +16,25 @@
 //! lock reads each row as the writer it waited on left it, so no write slips
 //! between the check and the commit.
 
-use crate::{attempt_failure::AttemptFailure, commit_refusal::context_store, entity_group::IndexedWrite};
+use crate::entity_group::IndexedWrite;
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_version::EntityVersion, write_outcome::WriteOutcome};
-use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_context_store::entity::{locked_entity::LockedEntity, repo::EntityRepository};
-use sqlx::{Postgres, Transaction};
+use andromeda_postgresql_context_store::entity::locked_entity::LockedEntity;
 use std::collections::HashMap;
 
-/// Lock in `tx` the identity row of every write of `untouched` that records
-/// history or states a precondition, and set the outcome of every write of
-/// `untouched` in `outcomes`.
-///
-/// # Errors
-///
-/// Returns [`AttemptFailure`] when the lock statement fails.
-pub(crate) async fn apply(
-    tx: &mut Transaction<'_, Postgres>,
-    target: &ContextTarget,
-    untouched: &[IndexedWrite<'_>],
-    outcomes: &mut [Option<WriteOutcome>],
-) -> Result<(), AttemptFailure> {
-    let locked = EntityRepository::lock_untouched_in_tx(tx, target, &to_lock(untouched))
-        .await
-        .map_err(|error| context_store(error))?;
+/// Set the outcome of every write of `untouched` in `outcomes`, held to its
+/// precondition against the rows the commit locked, `locked`.
+pub(crate) fn settle(untouched: &[IndexedWrite<'_>], locked: Vec<LockedEntity>, outcomes: &mut [Option<WriteOutcome>]) {
     for (index, outcome) in untouched_outcomes(untouched, locked) {
         outcomes[index] = Some(outcome);
     }
-    Ok(())
 }
 
-/// Whether `write` takes its Entity's row lock: it records history, which the
-/// lock orders, or it states what it assumed of the Entity, which the lock
-/// reads.
-const fn takes_lock(write: &AtomicWrite) -> bool {
+/// Whether `write`, which changes no current state, reads its Entity's row
+/// under the commit's lock: it records history, which the lock orders, or it
+/// states what it assumed of the Entity, which the lock reads.
+pub(crate) const fn reads_its_row(write: &AtomicWrite) -> bool {
     !write.history.is_empty() || !write.precondition.is_none()
-}
-
-/// The Entities of the writes of `untouched` that take their row lock.
-fn to_lock<'writes>(untouched: &[IndexedWrite<'writes>]) -> Vec<&'writes Identifier> {
-    untouched
-        .iter()
-        .filter(|(_, write)| takes_lock(write))
-        .map(|(_, write)| write.entity_id.as_ref())
-        .collect()
 }
 
 /// The submission-order position and outcome of each write of `untouched`,
@@ -82,7 +57,7 @@ fn untouched_outcomes<'writes>(
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::untouched_writes::{to_lock, untouched_outcomes};
+    use crate::untouched_writes::{reads_its_row, untouched_outcomes};
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -116,14 +91,12 @@ mod tests {
     }
 
     #[test]
-    fn a_write_recording_nothing_and_assuming_nothing_takes_no_lock() {
-        let writes = [write("urn:ngsi-ld:A")];
-        let untouched: Vec<_> = writes.iter().enumerate().collect();
-        assert_eq!(to_lock(&untouched), Vec::<&Identifier>::new());
+    fn a_write_recording_nothing_and_assuming_nothing_reads_no_row() {
+        assert!(!reads_its_row(&write("urn:ngsi-ld:A")));
     }
 
     #[test]
-    fn a_write_recording_history_or_stating_a_precondition_takes_the_lock() {
+    fn a_write_recording_history_or_stating_a_precondition_reads_its_row() {
         let mut recording = write("urn:ngsi-ld:B");
         recording.history = vec![HistoryRecord::ScopeRemoval];
         let assuming = AtomicWrite::builder()
@@ -131,9 +104,8 @@ mod tests {
             .entity(EntityMutation::None)
             .precondition(Precondition::MustExist)
             .build();
-        let writes = [write("urn:ngsi-ld:A"), recording, assuming];
-        let untouched: Vec<_> = writes.iter().enumerate().collect();
-        assert_eq!(to_lock(&untouched), vec![&id("urn:ngsi-ld:B"), &id("urn:ngsi-ld:C")]);
+        assert!(reads_its_row(&recording));
+        assert!(reads_its_row(&assuming));
     }
 
     /// A backfill lands while the version it was folded against stands, and is

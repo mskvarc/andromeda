@@ -17,6 +17,9 @@ mod behind_queue;
 mod columns;
 /// What one commit attempt continues: a fresh write or a replayed job.
 mod commit_continuation;
+/// The lock a commit takes on the identity rows it writes, before any of its
+/// entity statements run.
+mod commit_lock;
 mod commit_refusal;
 /// Native PostgreSQL implementation of the context commit port.
 pub mod committer;
@@ -36,8 +39,8 @@ pub mod intent_store;
 /// Removing the side-effect job a replayed commit settles.
 mod job_settlement;
 mod name_resolution;
-/// The outcomes of the writes that change no current state, read under
-/// their Entities' row locks.
+/// The outcomes of the writes that change no current state, read from the
+/// rows the commit locked before its writes.
 mod untouched_writes;
 mod write_isolation;
 

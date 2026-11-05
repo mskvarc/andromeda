@@ -5,6 +5,7 @@ use crate::{
     behind_queue,
     columns::{columns_for, expectations},
     commit_continuation::CommitContinuation,
+    commit_lock,
     commit_refusal::{context_store, database, entity_statement},
     consequences::{
         ConsequenceWrite,
@@ -98,8 +99,9 @@ impl PostgresAtomicCommitter {
     /// the instant its attributes carry (clause 4.8), and a created entity in
     /// `establishing` has its Temporal Evolution established beside it. A
     /// write to an Entity holding a later instant lands nothing, and its
-    /// outcome carries that instant. A write that changes no current state
-    /// locks its Entity's row first and is held to its precondition there.
+    /// outcome carries that instant. The rows the commit writes are locked
+    /// first, in identifier order, and a write that changes no current state
+    /// is held to its precondition on its locked row.
     async fn apply_entities(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -115,7 +117,8 @@ impl PostgresAtomicCommitter {
             untouched,
         } = group(writes);
         let mut outcomes: Vec<Option<WriteOutcome>> = writes.iter().map(|_| None).collect();
-        untouched_writes::apply(tx, target, &untouched, &mut outcomes).await?;
+        let locked = commit_lock::lock(tx, target, writes).await?;
+        untouched_writes::settle(&untouched, locked, &mut outcomes);
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let CreatedEntities { landed, established, predated } = self.apply_inserts(tx, target, &inserts, &names, accepted_at, establishing).await?;

@@ -39,6 +39,8 @@ mod evolution_withdrawal;
 mod insert;
 /// The latest instant an Entity holds, which no write may precede.
 mod latest_instant;
+/// Locking the identity rows a commit writes, before any of its writes run.
+mod row_lock;
 /// The images of an `entity_search` row a set-write hands on.
 pub(crate) mod search_image;
 /// The staging shape every set-write reads its arrays through.
@@ -47,8 +49,6 @@ pub(crate) mod staging;
 pub(crate) mod statement_ctes;
 /// The type-membership rows each set-write keeps in step with the search row.
 pub(crate) mod type_membership;
-/// Locking the identity rows of writes that change no current state.
-mod untouched_lock;
 /// The batch update.
 mod update;
 /// The batch update's identity row write.
