@@ -6,9 +6,10 @@
 //! Entity's intents in commit order in [`queue_order`]; the mutation barrier's
 //! wait on another owner's lease in [`release_wait`]; the port implementations
 //! here. An application first refuses a set holding an intent behind an
-//! earlier one of its Entity still queued outside it, then runs the history
-//! statements of `andromeda-postgresql-temporal-store` over the claimed rows
-//! and removes them under the lease in the same transaction.
+//! earlier one of its Entity still queued outside it, then locks the identity
+//! rows of its Entities, runs the history statements of
+//! `andromeda-postgresql-temporal-store` over the claimed rows and removes them
+//! under the lease in the same transaction.
 //!
 //! The queue lives only in the live branch: a Snapshot branch records its
 //! history in the write's own transaction, so nothing here names a branch.
@@ -32,6 +33,7 @@ use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, leas
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use andromeda_postgresql_context_store::entity::{identity_row_lock::IdentityRowLock, repo::EntityRepository};
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_postgresql_temporal_store::intent_application::{apply_intents_in_tx, intent_source::IntentSource};
@@ -46,7 +48,7 @@ use andromeda_temporal::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -122,6 +124,7 @@ impl PostgresTemporalIntentStore {
             tx.rollback().await.map_err(|error| persistence(&error))?;
             return Ok(TemporalIntentApplicationOutcome::Behind);
         }
+        lock_applied_entities(&mut tx, intents).await?;
         let source = IntentSource::claimed(&mut tx, &keys).await.map_err(TemporalError::from)?;
         apply_intents_in_tx(&mut tx, &source, &ContextTarget::Live).await.map_err(TemporalError::from)?;
         let removed = applied_removal_statement(&keys, owner)
@@ -212,6 +215,22 @@ impl TemporalIntentApplication for PostgresTemporalIntentStore {
         }
         observe_statement(ObservedStatement::TemporalIntentApplication, self.apply_held(owner, intents)).await
     }
+}
+
+/// Lock in `tx` the identity row of every Entity `intents` record history
+/// for, in identifier order, as a commit locks the rows it writes.
+///
+/// The statements of an application read whether an Entity holds a Temporal
+/// Evolution before they give it streams, history and Scope rows, and a clause
+/// 5.6.16 deletion gives all of them up under `FOR UPDATE` on the same row.
+/// Holding the row from the start runs the application wholly before or wholly
+/// after any such deletion, and in the order every commit locks its rows.
+async fn lock_applied_entities(tx: &mut Transaction<'_, Postgres>, intents: &[ClaimedTemporalIntent]) -> Result<(), TemporalError> {
+    let ids: Vec<&Identifier> = intents.iter().map(|intent| &intent.entity_id).collect();
+    EntityRepository::lock_identity_rows_in_tx(tx, &ContextTarget::Live, &ids, IdentityRowLock::Writing)
+        .await
+        .map_err(|error| TemporalError::from(error.failure_class().record(&error)))?;
+    Ok(())
 }
 
 /// Whether a lease-guarded statement reached the one row it targeted.

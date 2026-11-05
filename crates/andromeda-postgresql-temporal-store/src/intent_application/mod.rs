@@ -238,7 +238,10 @@ fn application_steps() -> Vec<Step> {
 }
 
 /// Apply the intents of `source` to the history of `target`, in the caller's
-/// transaction.
+/// transaction, which holds the identity row of every Entity the source
+/// records history for. The statements read whether an Entity holds a
+/// Temporal Evolution before they extend it, and the row lock keeps a clause
+/// 5.6.16 deletion from giving the Evolution up in between.
 ///
 /// A statement no intent of the source reaches is not run, and each
 /// statement of a bound source is sent only the fields of the entries it

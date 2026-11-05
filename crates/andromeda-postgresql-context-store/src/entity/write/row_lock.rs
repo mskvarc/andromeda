@@ -1,13 +1,15 @@
-//! Locking the identity rows a commit writes, before any of its writes run.
+//! Locking the identity rows a transaction writes, before any of its writes
+//! run.
 //!
 //! A commit writes its Entities in several statements, inserts, updates and
 //! deletions, each reaching its rows in submission order, while the history
-//! drain locks the rows of the Entities it applies in identifier order. Rows
-//! two transactions lock in opposite orders deadlock, so a commit locks every
-//! existing identity row it writes first, in identifier order: the order the
-//! drain and every other commit agree on. Its statements then take no row lock
-//! out of that order. Identifiers compare under the `C` collation both the
-//! identity rows and the queue declare.
+//! drain writes the rows of the Entities it applies in identifier order. Rows
+//! two transactions lock in opposite orders deadlock, so a commit and a history
+//! application each lock every existing identity row they write first, in
+//! identifier order: the order every commit and every application agree on.
+//! Their statements then take no row lock out of that order. Identifiers
+//! compare under the `C` collation both the identity rows and the queue
+//! declare.
 //!
 //! A write that changes no current state writes no row, yet it may record
 //! history and may state what it assumed of the Entity, so the commit locks its
@@ -17,9 +19,14 @@
 //! the Entity's history is queued, and before it keys an intent. The lock also
 //! reads the row as the writer it waited on left it, so the version it answers
 //! is the one the write's precondition is held to.
-
+//!
+//! A history application gives an Evolution streams, history rows and Scope
+//! rows, and a clause 5.6.16 deletion removes them all under `FOR UPDATE` on
+//! the same row. Holding the row from before its first statement, the
+//! application runs wholly before or wholly after the deletion, so it never
+//! gives a stream to an Evolution the deletion gave up.
 use crate::{
-    entity::{commit_row_lock::CommitRowLock, locked_entity::LockedEntity, mapper::stored_uri, repo::EntityRepository},
+    entity::{identity_row_lock::IdentityRowLock, locked_entity::LockedEntity, mapper::stored_uri, repo::EntityRepository},
     error::ContextStoreError,
 };
 use andromeda_context_commit::entity_version::EntityVersion;
@@ -46,7 +53,7 @@ struct Current;
 /// SELECT id, entity_key, write_count, created_at IS NOT NULL AS current
 /// FROM entities WHERE id = ANY($ids) ORDER BY id FOR NO KEY UPDATE
 /// ```
-fn row_lock_statement(target: &ContextTarget, ids: &[&Identifier], lock: CommitRowLock) -> SelectStatement {
+fn row_lock_statement(target: &ContextTarget, ids: &[&Identifier], lock: IdentityRowLock) -> SelectStatement {
     Query::select()
         .columns([Entities::Id, Entities::EntityKey, Entities::WriteCount])
         .expr_as(holds_current_state(Entities::Table), Current)
@@ -59,7 +66,7 @@ fn row_lock_statement(target: &ContextTarget, ids: &[&Identifier], lock: CommitR
 
 impl EntityRepository {
     /// Lock with `lock` the identity row of each Entity `ids` names in `tx`,
-    /// in identifier order, before the commit's writes run (see
+    /// in identifier order, before the transaction's writes run (see
     /// [`row_lock_statement`]), answering each locked row. An Entity no row
     /// holds has nothing to lock and is not answered.
     ///
@@ -68,17 +75,17 @@ impl EntityRepository {
     /// Returns [`ContextStoreError::Database`] when the statement fails, and
     /// [`ContextStoreError::StoredEntity`] when a locked identifier is not a
     /// valid URI.
-    pub async fn lock_commit_rows_in_tx(
+    pub async fn lock_identity_rows_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         ids: &[&Identifier],
-        lock: CommitRowLock,
+        lock: IdentityRowLock,
     ) -> Result<Vec<LockedEntity>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let rows = row_lock_statement(target, ids, lock).to_query().fetch_all(&mut **tx);
-        let rows = observe_statement(ObservedStatement::EntityCommitLock, rows).await?;
+        let rows = observe_statement(ObservedStatement::EntityRowLock, rows).await?;
         rows.iter()
             .map(|row| {
                 let version = EntityVersion::new(
@@ -102,7 +109,7 @@ impl EntityRepository {
 )]
 mod tests {
     use crate::{
-        entity::{commit_row_lock::CommitRowLock, write::row_lock::row_lock_statement},
+        entity::{identity_row_lock::IdentityRowLock, write::row_lock::row_lock_statement},
         statement_text::text_of_query,
     };
     use andromeda_context_space::context_target::ContextTarget;
@@ -114,18 +121,18 @@ mod tests {
         format!("urn:ngsi-ld:Vehicle:{index}").parse().expect("a valid identifier")
     }
 
-    fn rendered(lock: CommitRowLock) -> String {
+    fn rendered(lock: IdentityRowLock) -> String {
         let (first, second) = (vehicle(1), vehicle(2));
         text_of_query(row_lock_statement(&ContextTarget::Live, &[&second, &first], lock).to_query())
     }
 
-    /// A commit that writes rows takes the lock an update of a non-key column
-    /// takes, in the identifier order every commit and the drain agree on,
+    /// A transaction that writes rows takes the lock an update of a non-key
+    /// column takes, in the identifier order every commit and the drain agree on,
     /// reading the version a precondition is held to.
     #[test]
-    fn a_writing_commit_locks_its_rows_for_a_non_key_update_in_identifier_order() {
+    fn a_writing_transaction_locks_its_rows_for_a_non_key_update_in_identifier_order() {
         assert_eq!(
-            rendered(CommitRowLock::Writing),
+            rendered(IdentityRowLock::Writing),
             concat!(
                 r#"SELECT "id", "entity_key", "write_count", "entities"."created_at" IS NOT NULL AS "current" "#,
                 r#"FROM "entities" WHERE "id" = ANY($1) ORDER BY "id" ASC FOR NO KEY UPDATE"#
@@ -138,9 +145,9 @@ mod tests {
     #[test]
     fn a_deleting_commit_locks_its_rows_for_update() {
         assert!(
-            rendered(CommitRowLock::Deleting).ends_with(r#"ORDER BY "id" ASC FOR UPDATE"#),
+            rendered(IdentityRowLock::Deleting).ends_with(r#"ORDER BY "id" ASC FOR UPDATE"#),
             "{}",
-            rendered(CommitRowLock::Deleting)
+            rendered(IdentityRowLock::Deleting)
         );
     }
 }

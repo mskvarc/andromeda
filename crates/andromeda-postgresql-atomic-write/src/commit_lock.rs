@@ -16,7 +16,7 @@ use crate::{attempt_failure::AttemptFailure, commit_refusal::context_store, unto
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_context_store::entity::{commit_row_lock::CommitRowLock, locked_entity::LockedEntity, repo::EntityRepository};
+use andromeda_postgresql_context_store::entity::{identity_row_lock::IdentityRowLock, locked_entity::LockedEntity, repo::EntityRepository};
 use sqlx::{Postgres, Transaction};
 
 /// The rows a commit locks before its writes, and how strongly.
@@ -25,7 +25,7 @@ struct LockPlan<'writes> {
     /// The Entities whose rows are locked, each once.
     ids: Vec<&'writes Identifier>,
     /// The lock taken on each.
-    lock: CommitRowLock,
+    lock: IdentityRowLock,
 }
 
 /// Lock in `tx` the identity rows the commit of `writes` locks before its
@@ -38,7 +38,7 @@ pub(crate) async fn lock(tx: &mut Transaction<'_, Postgres>, target: &ContextTar
     let Some(LockPlan { ids, lock }) = plan(writes) else {
         return Ok(Vec::new());
     };
-    let locked = EntityRepository::lock_commit_rows_in_tx(tx, target, &ids, lock)
+    let locked = EntityRepository::lock_identity_rows_in_tx(tx, target, &ids, lock)
         .await
         .map_err(|error| context_store(error))?;
     Ok(locked)
@@ -61,9 +61,9 @@ fn plan(writes: &[AtomicWrite]) -> Option<LockPlan<'_>> {
         return None;
     }
     let lock = if writes.iter().any(|write| matches!(write.entity, EntityMutation::Delete)) {
-        CommitRowLock::Deleting
+        IdentityRowLock::Deleting
     } else {
-        CommitRowLock::Writing
+        IdentityRowLock::Writing
     };
     Some(LockPlan { ids, lock })
 }
@@ -86,7 +86,7 @@ mod tests {
     use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_postgresql_context_store::entity::commit_row_lock::CommitRowLock;
+    use andromeda_postgresql_context_store::entity::identity_row_lock::IdentityRowLock;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
@@ -135,7 +135,7 @@ mod tests {
             plan(&writes),
             Some(LockPlan {
                 ids: vec![&id("urn:ngsi-ld:A")],
-                lock: CommitRowLock::Writing,
+                lock: IdentityRowLock::Writing,
             })
         );
     }
@@ -156,7 +156,7 @@ mod tests {
             plan(&writes),
             Some(LockPlan {
                 ids: vec![&id("urn:ngsi-ld:A"), &id("urn:ngsi-ld:B"), &id("urn:ngsi-ld:C")],
-                lock: CommitRowLock::Writing,
+                lock: IdentityRowLock::Writing,
             })
         );
     }
@@ -166,6 +166,6 @@ mod tests {
     #[test]
     fn a_commit_deleting_any_entity_locks_every_row_for_its_deletion() {
         let writes = [update("urn:ngsi-ld:A"), write("urn:ngsi-ld:B", EntityMutation::Delete)];
-        assert_eq!(plan(&writes).map(|plan| plan.lock), Some(CommitRowLock::Deleting));
+        assert_eq!(plan(&writes).map(|plan| plan.lock), Some(IdentityRowLock::Deleting));
     }
 }

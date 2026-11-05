@@ -2,8 +2,6 @@
 
 /// The discovery census the entity statements keep beside the search rows.
 pub mod census;
-/// How strongly a commit locks the identity rows it writes.
-pub mod commit_row_lock;
 /// Executing a compiled entity query: its page, its total and its identifiers.
 pub mod compiled_query;
 /// What one batch create landed.
@@ -16,10 +14,12 @@ pub(crate) mod dictionary_join;
 pub mod entity_types;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
+/// How strongly a transaction locks the identity rows it writes.
+pub mod identity_row_lock;
 /// One Entity a create or update statement wrote, and when it committed.
 pub mod landed_entity;
-/// One Entity a commit locked before its writes, and the version its current
-/// state stands at.
+/// One Entity a transaction locked before its writes, and the version its
+/// current state stands at.
 pub mod locked_entity;
 /// Row-to-domain conversions for the `entities` table.
 pub mod mapper;
