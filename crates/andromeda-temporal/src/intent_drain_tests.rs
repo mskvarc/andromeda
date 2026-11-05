@@ -433,7 +433,8 @@ fn retry_policy() -> TemporalIntentRetryPolicy {
     )
 }
 
-/// The longest the barrier of the drains under test waits on another owner.
+/// The longest the barrier of the drains under test spends settling an
+/// entity's history.
 const BARRIER_WAIT: Duration = Duration::from_secs(15);
 
 fn drain(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplication>) -> TemporalIntentDrain {
@@ -442,6 +443,12 @@ fn drain(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplication>) -
 
 /// A drain over `queue` and `application` claiming `batch_size` intents a pass.
 fn drain_claiming(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplication>, batch_size: u32) -> TemporalIntentDrain {
+    drain_bounded(queue, application, batch_size, BARRIER_WAIT)
+}
+
+/// A drain over `queue` and `application` claiming `batch_size` intents a
+/// pass, whose barrier spends at most `barrier_wait`.
+fn drain_bounded(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplication>, batch_size: u32, barrier_wait: Duration) -> TemporalIntentDrain {
     TemporalIntentDrain::new(
         Arc::clone(queue) as Arc<dyn TemporalIntentQueue>,
         Arc::clone(application) as Arc<dyn TemporalIntentApplication>,
@@ -451,7 +458,7 @@ fn drain_claiming(queue: &Arc<RecordingQueue>, application: &Arc<RecordingApplic
             lease_duration: Duration::from_secs(30),
             retry_policy: retry_policy(),
         },
-        BARRIER_WAIT,
+        barrier_wait,
     )
 }
 
@@ -658,6 +665,44 @@ async fn the_mutation_barrier_applies_more_intents_than_one_batch() {
         .await
         .expect("the barrier claims until none is left");
     assert_eq!(application.calls().await, vec![vec![1, 2], vec![3, 4], vec![5]]);
+    assert_eq!(queue.pending_keys().await, Vec::<i64>::new());
+}
+
+/// A bound spent while the queue still holds intents answers unsettled after
+/// the pass that spent it, keeping that pass, rather than applying until the
+/// request deadline; a zero bound is spent by the first pass.
+#[tokio::test]
+async fn the_mutation_barrier_answers_unsettled_once_applying_spends_its_bound() {
+    let queue = Arc::new(RecordingQueue::default());
+    for key in 1..=5 {
+        queue.insert(claimed(key, &vehicle(1))).await;
+    }
+    let application = Arc::new(RecordingApplication::over(&queue));
+    let refused = drain_bounded(&queue, &application, 2, Duration::ZERO)
+        .synchronize(&live_target(), &vehicle(1))
+        .await;
+    let Err(TemporalError::HistoryUnsettled(unsettled)) = refused else {
+        panic!("expected an unsettled history, got {refused:?}");
+    };
+    assert_eq!(unsettled.retry_after(), Duration::from_secs(1));
+    assert_eq!(application.calls().await, vec![vec![1, 2]]);
+    assert_eq!(queue.pending_keys().await, vec![3, 4, 5], "the applied pass stays applied");
+}
+
+/// The bound refuses only history still queued: a pass that spends it and
+/// applies the last intent lets the mutation through.
+#[tokio::test]
+async fn the_mutation_barrier_passes_when_the_pass_that_spends_its_bound_applies_the_last_intent() {
+    let queue = Arc::new(RecordingQueue::default());
+    for key in 1..=2 {
+        queue.insert(claimed(key, &vehicle(1))).await;
+    }
+    let application = Arc::new(RecordingApplication::over(&queue));
+    drain_bounded(&queue, &application, 2, Duration::ZERO)
+        .synchronize(&live_target(), &vehicle(1))
+        .await
+        .expect("nothing is left queued");
+    assert_eq!(application.calls().await, vec![vec![1, 2]]);
     assert_eq!(queue.pending_keys().await, Vec::<i64>::new());
 }
 

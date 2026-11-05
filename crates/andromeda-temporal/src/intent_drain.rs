@@ -18,9 +18,10 @@
 //! starts, up to the entity's newest key at that moment: a later intent is a
 //! concurrent write, and waiting for it too would never end under sustained
 //! writes. It claims them whatever their retry delay, claims again while a
-//! claim leaves some behind, and waits, at most its bound, for another owner's
-//! lease on them; a wait that runs out answers
-//! [`TemporalError::HistoryUnsettled`].
+//! claim leaves some behind, and waits for another owner's lease on them. Its
+//! bound covers the claims, their applications and the wait together: once it
+//! runs out with any of them still queued, the barrier answers
+//! [`TemporalError::HistoryUnsettled`], and what it applied stays applied.
 
 use crate::{
     append_intent::TemporalIntentKey,
@@ -100,8 +101,8 @@ pub struct TemporalIntentDrain {
     lease_duration: Duration,
     /// How a failed intent is rescheduled and when it is reported as stuck.
     retry_policy: TemporalIntentRetryPolicy,
-    /// The longest the mutation barrier waits for another owner's lease on
-    /// the entity's queued history.
+    /// The longest the mutation barrier spends applying the entity's queued
+    /// history and waiting for another owner's lease on it.
     barrier_wait: Duration,
     /// Executor-independent gate preventing scheduled and request-driven passes from overlapping.
     execution_gate: Mutex<()>,
@@ -126,7 +127,7 @@ pub struct TemporalIntentClaim {
 
 impl TemporalIntentDrain {
     /// Construct one bounded temporal intent delivery operation whose mutation
-    /// barrier waits at most `barrier_wait` for another owner's lease.
+    /// barrier spends at most `barrier_wait` settling an entity's history.
     pub const fn new(
         queue: Arc<dyn TemporalIntentQueue>,
         application: Arc<dyn TemporalIntentApplication>,
@@ -354,15 +355,20 @@ impl TemporalIntentDrain {
             if let Some(failure) = pass.first_failure {
                 return Err(failure);
             }
-            if pass.outcome.acknowledged > 0 {
+            // The bound covers applying as well as waiting, so a queue longer
+            // than the bound can apply answers before the request deadline
+            // instead of at it. Every pass committed, so a retry resumes
+            // after the last.
+            let remaining = self.barrier_wait.saturating_sub(started.elapsed());
+            if pass.outcome.acknowledged > 0 && !remaining.is_zero() {
                 continue;
             }
-            let remaining = self.barrier_wait.saturating_sub(started.elapsed());
             match self.queue.await_entity_release(entity_id, through, remaining).await? {
                 EntityRelease::Clear => return Ok(()),
-                // A row another transaction still locks is claimable yet
-                // skipped by the claim, so once the wait is spent it is
-                // answered as held rather than claimed again without end.
+                // Intents still claimable once the bound is spent are either
+                // more than it could apply or rows another transaction still
+                // locks, which the claim skips; both are answered as unsettled
+                // rather than claimed again without end.
                 EntityRelease::Claimable if remaining.is_zero() => return Err(TemporalError::HistoryUnsettled(UnsettledHistory::after(Duration::ZERO))),
                 EntityRelease::Claimable => (),
                 EntityRelease::Held { remaining_lease } => return Err(TemporalError::HistoryUnsettled(UnsettledHistory::after(remaining_lease))),

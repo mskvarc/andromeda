@@ -100,14 +100,16 @@ pub enum TemporalError {
     /// `Retry-After`, never the 500 a broker malfunction earns.
     #[error("{}", RetryCause::Contended)]
     TransactionContended,
-    /// Another delivery owner still held the entity's queued history when the
-    /// mutation barrier's wait ran out.
+    /// The mutation barrier's bound ran out before the entity's queued history
+    /// was applied: another delivery owner still held some of it, or more was
+    /// queued than the barrier could apply within the bound.
     ///
-    /// Not a fault: the history is being applied, and the mutation can run once
-    /// it is or once the holder's lease lapses. It is answered 503 with a
-    /// `Retry-After` of the remaining lease, never the 500 a broker malfunction
-    /// earns.
-    #[error("the entity's queued temporal history is still being applied elsewhere; retry shortly")]
+    /// Not a fault: the history is being applied, what the barrier applied
+    /// stays applied, and the mutation can run once the rest is or once the
+    /// holder's lease lapses. It is answered 503 with a `Retry-After` of the
+    /// holder's remaining lease, at least one second, never the 500 a broker
+    /// malfunction earns.
+    #[error("the entity's queued temporal history is still being applied; retry shortly")]
     HistoryUnsettled(UnsettledHistory),
     /// An internal temporal invariant could not be satisfied.
     #[error("temporal invariant failed: {0}")]

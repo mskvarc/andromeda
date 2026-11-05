@@ -34,17 +34,16 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::NotFound`] when the entity, the attribute or
     /// the named instance does not exist; [`TemporalError::Validation`] when
-    /// the attribute name does not expand to a valid one, the Fragment does
-    /// not carry exactly one instance of the target attribute, or the
-    /// replacement puts a `unitCode` on an attribute family clause 4.5.2
-    /// defines without one, carries a geometry clause 4.7 gives no reading
-    /// of, or holds the NGSI-LD Null under a key of a Property value (clause
-    /// 5.5.4); [`TemporalError::JsonLd`] when the Fragment cannot be expanded
-    /// against `context`; [`TemporalError::HistoryUnsettled`] when another
-    /// delivery owner still holds the entity's queued history once the
-    /// mutation barrier's wait runs out; the failure of a queued intent that
-    /// does not apply; and [`TemporalError::Persistence`] when the update
-    /// cannot be applied.
+    /// the attribute name does not expand to a valid one, the Fragment does not
+    /// carry exactly one instance of the target attribute, or the replacement
+    /// puts a `unitCode` on an attribute family clause 4.5.2 defines without
+    /// one, carries a geometry clause 4.7 gives no reading of, or holds the
+    /// NGSI-LD Null under a key of a Property value (clause 5.5.4);
+    /// [`TemporalError::JsonLd`] when the Fragment cannot be expanded against
+    /// `context`; [`TemporalError::HistoryUnsettled`] when the mutation
+    /// barrier's bound runs out before the entity's queued history is applied;
+    /// the failure of a queued intent that does not apply; and
+    /// [`TemporalError::Persistence`] when the update cannot be applied.
     pub async fn modify_attr_instance(
         &self,
         target: &ContextTarget,
@@ -122,10 +121,10 @@ impl TemporalService {
     /// Returns [`TemporalError::NotFound`] when the entity, the attribute or
     /// the named instance does not exist; [`TemporalError::Validation`] when
     /// the attribute name does not expand to a valid one;
-    /// [`TemporalError::HistoryUnsettled`] when another delivery owner still
-    /// holds the entity's queued history once the mutation barrier's wait runs
-    /// out; the failure of a queued intent that does not apply; and
-    /// [`TemporalError::Persistence`] when the deletion cannot be applied.
+    /// [`TemporalError::HistoryUnsettled`] when the mutation barrier's bound
+    /// runs out before the entity's queued history is applied; the failure of a
+    /// queued intent that does not apply; and [`TemporalError::Persistence`]
+    /// when the deletion cannot be applied.
     pub async fn delete_attr_instance(
         &self,
         target: &ContextTarget,

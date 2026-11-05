@@ -58,8 +58,9 @@ pub(super) struct TemporalIntentRegistration {
     pub(super) mutation_barrier: Arc<dyn TemporalMutationBarrier>,
 }
 
-/// How long the mutation barrier waits for another owner's lease on an
-/// entity's queued history before the mutation is answered 503.
+/// How long the mutation barrier may spend applying an entity's queued history
+/// and waiting for another owner's lease on it before the mutation is answered
+/// 503.
 ///
 /// Half the request deadline leaves the mutation itself room to run before
 /// the request times out, and a wait past one lease is pointless: the holder's

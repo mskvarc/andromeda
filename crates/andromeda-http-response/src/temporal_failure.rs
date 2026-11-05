@@ -35,8 +35,8 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::TransactionContended => ClassifiedReport::transaction_contended(error.to_string()),
         TemporalError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         // Clause 5.5.6 has no type for a broker that is busy, so it stays
-        // `InternalError`; the 503 and the remaining lease as `Retry-After` say
-        // the identical mutation succeeds once the history is applied.
+        // `InternalError`; the 503 and its `Retry-After` say the identical
+        // mutation succeeds once the history is applied.
         TemporalError::HistoryUnsettled(unsettled) => {
             ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, error.to_string()).with_retry_after(unsettled.retry_after())
         }

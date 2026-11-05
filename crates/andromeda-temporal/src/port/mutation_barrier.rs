@@ -14,9 +14,10 @@ pub trait TemporalMutationBarrier: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::HistoryUnsettled`] when another delivery owner
-    /// still holds one of the intents once the barrier's wait has run out, and
-    /// the failure of an intent that does not apply, classified as its own.
+    /// Returns [`TemporalError::HistoryUnsettled`] when the barrier's bound,
+    /// which covers applying the intents and waiting for another delivery
+    /// owner's lease on them, runs out with one of them still queued, and the
+    /// failure of an intent that does not apply, classified as its own.
     #[must_use = "temporal mutation synchronization must be awaited"]
     async fn synchronize(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<(), TemporalError>;
 }

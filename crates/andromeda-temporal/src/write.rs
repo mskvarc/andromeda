@@ -211,11 +211,10 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
-    /// Evolution; [`TemporalError::HistoryUnsettled`] when another delivery
-    /// owner still holds the entity's queued history once the mutation
-    /// barrier's wait runs out; the failure of a queued intent that does not
-    /// apply; and [`TemporalError::Persistence`] when the deletion cannot be
-    /// applied.
+    /// Evolution; [`TemporalError::HistoryUnsettled`] when the mutation
+    /// barrier's bound runs out before the entity's queued history is applied;
+    /// the failure of a queued intent that does not apply; and
+    /// [`TemporalError::Persistence`] when the deletion cannot be applied.
     pub async fn delete(&self, target: &ContextTarget, entity_id: &Identifier) -> Result<(), TemporalError> {
         let timer = temporal::start(TemporalOperation::Delete);
         let result = self.delete_inner(target, entity_id).await;
@@ -239,13 +238,12 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::NotFound`] when the entity has no Temporal
     /// Evolution, when it carries no such attribute, or when the named
-    /// `datasetId` -- or the default instance -- matches nothing;
-    /// [`TemporalError::Validation`] when the attribute name does not expand
-    /// to a valid one; [`TemporalError::HistoryUnsettled`] when another
-    /// delivery owner still holds the entity's queued history once the
-    /// mutation barrier's wait runs out; the failure of a queued intent that
-    /// does not apply; and [`TemporalError::Persistence`] when the deletion
-    /// cannot be applied.
+    /// `datasetId`, or the default instance, matches nothing;
+    /// [`TemporalError::Validation`] when the attribute name does not expand to
+    /// a valid one; [`TemporalError::HistoryUnsettled`] when the mutation
+    /// barrier's bound runs out before the entity's queued history is applied;
+    /// the failure of a queued intent that does not apply; and
+    /// [`TemporalError::Persistence`] when the deletion cannot be applied.
     pub async fn delete_attr(
         &self,
         target: &ContextTarget,

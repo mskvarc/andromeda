@@ -1,10 +1,10 @@
-//! A Temporal API mutation refused while its entity's queued history is held
-//! by another delivery owner, and when the client may retry it.
+//! A Temporal API mutation refused while its entity's queued history is still
+//! being applied, and when the client may retry it.
 
 use std::time::Duration;
 
-/// The retry delay of a mutation whose barrier ran out of time while another
-/// delivery owner held the entity's queued history.
+/// The retry delay of a mutation whose barrier ran out of time before the
+/// entity's queued history was applied.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnsettledHistory {
     /// Whole seconds, at least one.
@@ -16,9 +16,9 @@ impl UnsettledHistory {
     /// `remaining_lease`.
     ///
     /// `Retry-After` carries whole seconds (RFC 9110 section 10.2.3), so the
-    /// lease is rounded up, and a lease that has already lapsed still asks for
-    /// one second: the client is told to come back once the barrier can claim
-    /// the history itself.
+    /// lease is rounded up, and a lease that has already lapsed, or a history
+    /// no other owner holds, still asks for one second: the client is told to
+    /// come back once the barrier can claim the history itself.
     #[must_use]
     pub const fn after(remaining_lease: Duration) -> UnsettledHistory {
         let whole_seconds = if remaining_lease.subsec_nanos() > 0 {
