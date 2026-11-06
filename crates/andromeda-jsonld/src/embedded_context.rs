@@ -12,8 +12,12 @@
 //! serve it, the durable context cache keeps no record of it, and an operator
 //! cannot preload a replacement for it.
 
-use crate::core_context::{NGSI_LD_CORE_CONTEXT_MAP, embedded_core_context, is_ngsi_ld_core_context_url};
-use andromeda_ngsi_ld_vocabulary::data_integrity_context::{DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL};
+use crate::core_context::{embedded_core_context, is_ngsi_ld_core_context_url};
+use andromeda_ngsi_ld_vocabulary::{
+    core_context::NGSI_LD_CORE_CONTEXT_RELEASES,
+    core_context_release::CoreContextRelease,
+    data_integrity_context::{DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL},
+};
 use iri_rs::Iri;
 
 /// Whether `url` names a document compiled into the broker.
@@ -30,16 +34,19 @@ pub fn embedded_context(url: Iri<&str>) -> Option<&'static str> {
 
 /// Every URL a document is compiled into the broker under.
 pub fn embedded_context_urls() -> impl Iterator<Item = Iri<&'static str>> {
-    NGSI_LD_CORE_CONTEXT_MAP.iter().map(|(url, _payload)| *url).chain([DATA_INTEGRITY_CONTEXT_URL])
+    NGSI_LD_CORE_CONTEXT_RELEASES
+        .iter()
+        .map(CoreContextRelease::url)
+        .chain([DATA_INTEGRITY_CONTEXT_URL])
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        core_context::NGSI_LD_CORE_CONTEXT_URL_LIST,
-        embedded_context::{embedded_context, embedded_context_urls, is_embedded_context_url},
+    use crate::embedded_context::{embedded_context, embedded_context_urls, is_embedded_context_url};
+    use andromeda_ngsi_ld_vocabulary::{
+        core_context::NGSI_LD_CORE_CONTEXT_RELEASES,
+        data_integrity_context::{DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL},
     };
-    use andromeda_ngsi_ld_vocabulary::data_integrity_context::{DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL};
     use iri_rs::iri;
 
     #[test]
@@ -49,7 +56,11 @@ mod tests {
 
     #[test]
     fn every_core_context_and_the_data_integrity_context_are_embedded() {
-        for url in NGSI_LD_CORE_CONTEXT_URL_LIST.into_iter().chain([DATA_INTEGRITY_CONTEXT_URL]) {
+        for url in NGSI_LD_CORE_CONTEXT_RELEASES
+            .map(|release| release.url())
+            .into_iter()
+            .chain([DATA_INTEGRITY_CONTEXT_URL])
+        {
             assert!(is_embedded_context_url(url), "{url} is embedded");
             assert!(embedded_context(url).is_some(), "{url} has a payload");
             assert!(embedded_context_urls().any(|embedded| embedded == url), "{url} is registered");

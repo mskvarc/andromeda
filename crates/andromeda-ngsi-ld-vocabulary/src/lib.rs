@@ -2,7 +2,8 @@
 //! workspace uses.
 //!
 //! Each document is kept once, here, as a constant beside the URL it is
-//! published under: every released core context in [`core_context`], the W3C
+//! published under: every released core context in [`core_context`], each with
+//! the SHA2-256 digest of the document ETSI serves, the W3C
 //! Data Integrity v2 context in [`data_integrity_context`], and the ETSI test
 //! suite compound context in [`test_suite_context`].
 //!
@@ -35,6 +36,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod core_context;
+pub mod core_context_release;
 pub mod data_integrity_context;
 pub mod keyword;
 pub mod ngsi_ld_null;
