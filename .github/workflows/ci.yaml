@@ -1,8 +1,7 @@
 name: ci
 
 # One run per commit: a pull request is checked through its pull_request events, and a commit reaches push only when it
-# lands on main. Every check is a job of its own, so a pull request shows each one passing or failing; ci-ok is the
-# one required status check, and the check the release workflow requires of a tag.
+# lands on main. pr-ok is the required status check; ci-ok adds the suite trees and is the check a tag requires.
 on:
   push:
     branches: [main]
@@ -11,8 +10,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -101,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-toolchain
-      - run: cargo clippy --workspace --exclude andromeda-test-suite --all-targets --all-features --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   unit:
     name: unit
@@ -181,10 +180,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test --package andromeda-sql --all-features --locked
 
-  # Broker tests against code whose own unit tests fail tell nothing more, so the trees wait for unit.
   suite:
     name: suite (${{ matrix.tree }})
-    needs: unit
+    if: *ready
     runs-on: *runner
     timeout-minutes: 120
     strategy:
@@ -198,15 +196,15 @@ jobs:
         with:
           tree: ${{ matrix.tree }}
 
-  ci-ok:
-    name: ci-ok
-    # Runs when a job it needs failed or was skipped, so a failure upstream still fails ci-ok; a cancelled run, which a
+  pr-ok:
+    name: pr-ok
+    # Runs when a job it needs failed or was skipped, so a failure upstream still fails pr-ok; a cancelled run, which a
     # newer commit superseded, reports nothing.
-    if: ${{ !cancelled() && !github.event.pull_request.draft }}
-    needs: [fmt, taplo, machete, deny, shellcheck, clippy, unit, sql, suite]
+    if: &settled ${{ !cancelled() && !github.event.pull_request.draft }}
+    needs: [fmt, taplo, machete, deny, shellcheck, clippy, unit, sql]
     runs-on: *runner
     timeout-minutes: 5
-    steps:
+    steps: &require-every-job
       - name: Require every job to pass
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
@@ -218,3 +216,11 @@ jobs:
               exit 1
             fi
           done
+
+  ci-ok:
+    name: ci-ok
+    if: *settled
+    needs: [pr-ok, suite]
+    runs-on: *runner
+    timeout-minutes: 5
+    steps: *require-every-job
