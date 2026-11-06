@@ -7,5 +7,5 @@ contact_links:
     url: https://github.com/mskvarc/andromeda/discussions
     about: How to use, deploy or configure the broker. Questions go to Discussions, not issues.
   - name: Documentation
-    url: https://github.com/mskvarc/andromeda/tree/master/docs
+    url: https://github.com/mskvarc/andromeda/tree/main/docs
     about: What the broker does, how to deploy and run it, and every setting.

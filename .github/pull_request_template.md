@@ -10,4 +10,4 @@
 
 ## Verification
 
-<!-- Optional: delete when CI covers the change. Otherwise list what CI does not show: checks run outside CI, benchmark results, failures that also occur on master, anything not run. -->
+<!-- Optional: delete when CI covers the change. Otherwise list what CI does not show: checks run outside CI, benchmark results, failures that also occur on main, anything not run. -->

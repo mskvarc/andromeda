@@ -1,11 +1,11 @@
 name: ci
 
 # One run per commit: a pull request is checked through its pull_request events, and a commit reaches push only when it
-# lands on master. Every check is a job of its own, so a pull request shows each one passing or failing; ci-ok is the
+# lands on main. Every check is a job of its own, so a pull request shows each one passing or failing; ci-ok is the
 # one required status check, and the check the release workflow requires of a tag.
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
