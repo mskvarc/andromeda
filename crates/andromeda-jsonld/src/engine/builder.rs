@@ -301,7 +301,7 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         embedded_context::DATA_INTEGRITY_CONTEXT_URL,
         engine::processor::JsonLdEngine,
         error::JsonLdError,
@@ -568,7 +568,7 @@ mod tests {
     #[tokio::test]
     async fn every_release_of_the_core_context_expands_as_the_v1_9_core_context() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        for core in [NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_URL] {
+        for core in [NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_URL] {
             let expanded = expanded_document(
                 &engine,
                 &json!({
@@ -585,5 +585,66 @@ mod tests {
 
             assert!(expanded.contains("https://uri.etsi.org/ngsi-ld/attributeCount"), "{core}: {expanded}");
         }
+    }
+
+    /// An entity with a `name` attribute, expanded under a user context that
+    /// imports `core` and defines `Building`, with the v1.9 core appended last.
+    async fn entity_under_a_user_context_importing(label: &str, core: &str) -> serde_json::Value {
+        let url = format!("https://example.com/{label}.jsonld");
+        let path = preloaded_file(
+            label,
+            &json!({ "@context": [core, { "Building": "https://example.org/Building" }] }).to_string(),
+        );
+        let mut preloads = HashMap::new();
+        preloads.insert(context_url(&url), path.clone()); // clone: the file is removed below
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .preload_contexts(preloads)
+            .build()
+            .expect("engine builds");
+        fs::remove_file(path).expect("the temporary context is removable");
+
+        let mut expanded = expanded_document(
+            &engine,
+            &json!({
+                "@context": url,
+                "id": "urn:ngsi-ld:Building:name",
+                "type": "Building",
+                "name": { "type": "Property", "value": "x" }
+            }),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("the user context expands");
+        expanded[0].take()
+    }
+
+    /// Clause 5.5.7: a core import inside a user context is removed whatever
+    /// release it names, so `name`, which Version 1.0 defines and v1.9 does
+    /// not, falls to the v1.9 `@vocab` under every release.
+    #[tokio::test]
+    async fn a_user_context_importing_any_core_release_expands_name_under_the_v1_9_vocab() {
+        for (label, core) in [
+            ("imports-versionless", NGSI_LD_CORE_CONTEXT_V10_URL),
+            ("imports-v1-6", NGSI_LD_CORE_CONTEXT_V16_URL),
+            ("imports-v1-9", NGSI_LD_CORE_CONTEXT_URL),
+        ] {
+            let entity = entity_under_a_user_context_importing(label, core.as_str()).await;
+
+            assert!(entity.get("https://uri.etsi.org/ngsi-ld/default-context/name").is_some(), "{core}: {entity}");
+            assert!(entity.get("https://uri.etsi.org/ngsi-ld/name").is_none(), "{core}: {entity}");
+        }
+    }
+
+    #[test]
+    fn a_preload_cannot_replace_the_embedded_version_1_0_core_context() {
+        let path = preloaded_file("protected-core-v1-0", r#"{"@context":{"overridden":"https://example.com/override"}}"#);
+        let mut preloads = HashMap::new();
+        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_V10_URL.as_str()), path.clone()); // clone: the file is removed below
+
+        let built = JsonLdEngine::builder().preload_contexts(preloads).build();
+
+        assert!(matches!(built, Err(JsonLdError::ProtectedContextPreload { .. })));
+        let _ = fs::remove_file(path);
     }
 }

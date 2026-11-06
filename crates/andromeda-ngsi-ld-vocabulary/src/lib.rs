@@ -39,9 +39,8 @@ jsonld::vocab! {
 /// Clause 4.4 (ETSI GS CIM 009) names the core `@context`, and every Annex C
 /// example prints it as the versioned `-v1.9.jsonld` URL. Andromeda emits that
 /// exact identifier so a client sees the precise core context version its
-/// responses were produced against. The version-less
-/// `ngsi-ld-core-context.jsonld` alias is accepted on inbound documents and
-/// resolves to the same v1.9 payload.
+/// responses were produced against. The versionless
+/// `ngsi-ld-core-context.jsonld` URL names Version 1.0, a different document.
 pub const NGSI_LD_CORE_CONTEXT_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld");
 
 #[cfg(test)]

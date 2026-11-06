@@ -25,7 +25,7 @@ use ngsi_ld::{
 /// subscription was created under nothing else, and no @context in its body
 /// Clause: 6.3.8, 5.8.1.4, JSON-LD 1.1 s6.1
 /// Recorded: clause 5.8.1.4 has the notification use the @context in `jsonldContext`; Andromeda names a
-/// `jsonldContext` that is itself a core release, the versionless alias included, as written, as the subscriber's
+/// `jsonldContext` that is itself a core release, the versionless URL included, as written, as the subscriber's
 /// explicit choice
 #[gtest]
 #[tokio::test]

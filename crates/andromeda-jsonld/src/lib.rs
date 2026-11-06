@@ -3,7 +3,7 @@
 //!
 //! NGSI-LD is a linked-data API: ETSI GS CIM 009 v1.9.1 clause 5.5.7 defines
 //! how terms are expanded and compacted against an `@context`, clause 4.4 says
-//! which released core context a versionless reference means, and clause 5.13 makes
+//! which released core context a document is processed under, and clause 5.13 makes
 //! the contexts a broker has resolved a resource of their own. Everything that
 //! follows from those three is here: which contexts apply to one operation
 //! ([`context_spec`]), where a context comes from ([`loader`],

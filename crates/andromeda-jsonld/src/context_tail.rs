@@ -32,8 +32,8 @@ use iri_rs::{Iri, IriBuf, IriRefBuf};
 pub enum ContextTail {
     /// The NGSI-LD core context this broker implements, v1.9 (clause 4.4).
     CurrentCore,
-    /// Another release of the core context, or its versionless alias, whose
-    /// published document differs from v1.9.
+    /// Another release of the core context, Version 1.0 under the versionless
+    /// URL included, whose published document differs from v1.9.
     OtherCore,
     /// Whatever the referenced context document leaves in force last.
     Reference(IriBuf),
@@ -186,7 +186,7 @@ mod tests {
     use crate::{
         context_tail::ContextTail,
         context_value::ContextEntry,
-        core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
+        core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference, NoHostedContexts},
     };
     use andromeda_json_literal::JsonLiteral;
@@ -274,8 +274,8 @@ mod tests {
     }
 
     #[test]
-    fn a_document_ending_with_an_older_core_or_the_versionless_alias_ends_with_another_core() {
-        for core in [NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL] {
+    fn a_document_ending_with_an_older_core_ends_with_another_core() {
+        for core in [NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_V10_URL] {
             let document = json!({ "@context": [{ "a": "https://example.com/a" }, core.as_str()] });
 
             pretty_assertions::assert_eq!(of_document(&document), ContextTail::OtherCore, "{core}");

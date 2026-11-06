@@ -15,8 +15,8 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// The core @context URLs a request can write: the current version, the
-/// unversioned alias and one older version.
+/// The core @context URLs a request can write: the current version, Version
+/// 1.0 under the versionless URL and one other older version.
 const CORE_URLS: [&str; 3] = [
     "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
     "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",

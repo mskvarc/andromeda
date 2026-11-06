@@ -1,4 +1,4 @@
-//! Every resource the versionless alias alone is answered as the current core context.
+//! Every resource the versionless URL alone is answered as the current core context.
 
 use andromeda_test_suite::{
     broker,
@@ -27,15 +27,15 @@ use ngsi_ld::{
 /// Pins: Retrieve Entity, Retrieve Temporal Evolution of an Entity, Retrieve Subscription, Retrieve Context Source
 /// Registration Subscription, Retrieve Context Source Registration, Retrieve Available Entity Types, Retrieve
 /// Available Attributes, Retrieve Entity Map and Query Entities as application/ld+json under a Link naming the
-/// versionless core alias alone each name the core @context as one string in the body
+/// versionless core URL alone each name the core @context as one string in the body
 /// Clause: 5.2.3, 4.4, 6.3.6, Annex C.8
 /// Tenant: private (the case renders the tenant-wide entity type and attribute lists, and clause 4.14 keeps them
 /// the tenant's own)
 /// Recorded: clause 4.4 names one core @context; Andromeda reads every embedded older release and the versionless
-/// alias as it and names only v1.9
+/// URL as it and names only v1.9
 #[gtest]
 #[tokio::test]
-async fn o_ctx_cmp_0024_every_resource_the_versionless_alias_alone_is_answered_as_the_current_core_context() -> Result<()> {
+async fn o_ctx_cmp_0024_every_resource_the_versionless_url_alone_is_answered_as_the_current_core_context() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;

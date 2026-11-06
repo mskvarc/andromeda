@@ -10,6 +10,16 @@
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, iri};
 
+/// Core Context Version 1.0 URL.
+///
+/// ETSI publishes Version 1.0 under the versionless file name and every later
+/// release under a name carrying its version, so this URL names Version 1.0 and
+/// no other release.
+pub const NGSI_LD_CORE_CONTEXT_V10_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+/// Core Context Version 1.0 embedded payload, byte for byte as ETSI serves it
+/// under [`NGSI_LD_CORE_CONTEXT_V10_URL`].
+pub const NGSI_LD_CORE_CONTEXT_V10: &str = include_str!("context/ngsi-ld-core-context-v1.0.jsonld");
+
 /// Core Context v1.3 URL.
 pub const NGSI_LD_CORE_CONTEXT_V13_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.3.jsonld");
 /// Core Context v1.3 embedded payload.
@@ -44,19 +54,9 @@ pub const NGSI_LD_CORE_CONTEXT_V18: &str = include_str!("context/ngsi-ld-core-co
 /// names ([`NGSI_LD_CORE_CONTEXT_URL`], the one constant for it).
 pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-context-v1.9.jsonld");
 
-/// The version-less core context spelling Andromeda accepts on inbound
-/// documents.
-///
-/// No clause of ETSI GS CIM 009 v1.9.1 names this URL: clause 4.4 names only
-/// the versioned v1.9 one, which Andromeda emits ([`NGSI_LD_CORE_CONTEXT_URL`]).
-/// Clients commonly write the version-less spelling, so it is
-/// accepted as a non-normative alias of the core context and resolves to the
-/// v1.9 payload; it is never emitted.
-pub const NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
-
-/// All known NGSI-LD core context URLs (aliases + versioned).
+/// The URL of every released NGSI-LD core context, oldest first.
 pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [Iri<&'static str>; 8] = [
-    NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL,
+    NGSI_LD_CORE_CONTEXT_V10_URL,
     NGSI_LD_CORE_CONTEXT_V13_URL,
     NGSI_LD_CORE_CONTEXT_V14_URL,
     NGSI_LD_CORE_CONTEXT_V15_URL,
@@ -68,8 +68,9 @@ pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [Iri<&'static str>; 8] = [
 
 /// Lookup table from core context URL to its embedded JSON payload.
 ///
-/// The unversioned alias and the v1.9 URL both map to the v1.9 payload.
+/// Every URL maps to the document its publisher serves under it.
 pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
+    (NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V10),
     (NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V13),
     (NGSI_LD_CORE_CONTEXT_V14_URL, NGSI_LD_CORE_CONTEXT_V14),
     (NGSI_LD_CORE_CONTEXT_V15_URL, NGSI_LD_CORE_CONTEXT_V15),
@@ -77,7 +78,6 @@ pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
     (NGSI_LD_CORE_CONTEXT_V17_URL, NGSI_LD_CORE_CONTEXT_V17),
     (NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_V18),
     (NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19),
-    (NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V19),
 ];
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
@@ -101,6 +101,7 @@ pub fn embedded_core_context(url: Iri<&str>) -> Option<&'static str> {
 )]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn recognises_latest_core_context() {
@@ -108,8 +109,47 @@ mod tests {
     }
 
     #[test]
-    fn recognises_the_versionless_alias() {
-        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL.as_ref()));
+    fn recognises_the_versionless_version_1_0_url() {
+        assert!(is_ngsi_ld_core_context_url(NGSI_LD_CORE_CONTEXT_V10_URL.as_ref()));
+    }
+
+    /// ETSI serves Version 1.0 under the versionless URL as a 6,222-byte
+    /// document with this SHA2-256 digest.
+    #[test]
+    fn the_versionless_url_resolves_to_the_version_1_0_document_etsi_serves() {
+        let payload = embedded_core_context(NGSI_LD_CORE_CONTEXT_V10_URL).expect("the versionless URL is embedded");
+
+        pretty_assertions::assert_eq!(payload.len(), 6222);
+        pretty_assertions::assert_eq!(
+            hex::encode(Sha256::digest(payload.as_bytes())),
+            "d751b5db4509071dc11b26342cfa36c05d18f85ea15554a4bac71a0705697905"
+        );
+    }
+
+    /// Version 1.0 defines `name` and maps `title` into the NGSI-LD namespace,
+    /// where v1.9 leaves `name` to its `@vocab` and maps `title` to Dublin Core.
+    #[test]
+    fn the_version_1_0_document_defines_terms_v1_9_does_not() {
+        let document: serde_json::Value = serde_json::from_str(NGSI_LD_CORE_CONTEXT_V10).expect("the embedded core context is JSON");
+        let terms = document["@context"].as_object().expect("the core context is a term map");
+        pretty_assertions::assert_eq!(terms.get("name"), Some(&serde_json::json!("https://uri.etsi.org/ngsi-ld/name")));
+        pretty_assertions::assert_eq!(terms.get("title"), Some(&serde_json::json!("https://uri.etsi.org/ngsi-ld/title")));
+
+        let current: serde_json::Value = serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).expect("the embedded core context is JSON");
+        let current_terms = current["@context"].as_object().expect("the core context is a term map");
+        assert!(!current_terms.contains_key("name"));
+        assert_ne!(current_terms.get("title"), terms.get("title"));
+    }
+
+    #[test]
+    fn every_core_context_url_resolves_to_its_own_release() {
+        for (url, payload) in NGSI_LD_CORE_CONTEXT_MAP {
+            let sharing = NGSI_LD_CORE_CONTEXT_MAP
+                .iter()
+                .filter(|(_other, other_payload)| *other_payload == payload)
+                .count();
+            pretty_assertions::assert_eq!(sharing, 1, "{url} shares its payload with another URL");
+        }
     }
 
     #[test]

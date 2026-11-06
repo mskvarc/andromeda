@@ -120,8 +120,8 @@ impl ContextSpec {
     /// The core context URL a document is processed under.
     ///
     /// Always the v1.9 core context this broker implements (clause 4.4): every
-    /// core reference a request names, of any release or the versionless
-    /// alias, is removed and this one appended last, so the documents a
+    /// core reference a request names, of any release, Version 1.0 under the
+    /// versionless URL included, is removed and this one appended last, so the documents a
     /// request names are processed under the same definitions whichever
     /// release the client wrote.
     #[must_use]

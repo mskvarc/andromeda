@@ -19,10 +19,10 @@ use ngsi_ld::{
 };
 
 /// Pins: An application/ld+json notification of a subscription whose `jsonldContext` is the v1.8 core, the
-/// versionless alias or the v1.9 core names it as written on the Notification and on the Entity
+/// versionless URL or the v1.9 core names it as written on the Notification and on the Entity
 /// Clause: 5.8.1.4, 5.2.3, 4.4
 /// Recorded: clause 5.8.1.4 has the notification use the @context in `jsonldContext`; Andromeda names a
-/// `jsonldContext` that is itself a core release, the versionless alias included, as written, as the subscriber's
+/// `jsonldContext` that is itself a core release, the versionless URL included, as written, as the subscriber's
 /// explicit choice
 #[gtest]
 #[tokio::test]

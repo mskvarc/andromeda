@@ -34,7 +34,7 @@ use ngsi_ld::{
 /// 4.4 has the core treated last; Andromeda names the request @contexts in order with every core reference removed,
 /// and appends the v1.9 core unless what remains leaves it in force last (Annex C.8)
 /// Recorded: clause 4.4 names one core @context; Andromeda reads every embedded older release and the versionless
-/// alias as it and names only v1.9
+/// URL as it and names only v1.9
 #[gtest]
 #[tokio::test]
 async fn o_ctx_cmp_0027_every_resource_a_document_ending_with_an_older_core_release_is_followed_by_the_current_one() -> Result<()> {

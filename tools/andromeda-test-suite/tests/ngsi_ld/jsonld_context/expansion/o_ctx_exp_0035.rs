@@ -18,11 +18,11 @@ use ngsi_ld::{
     model::{Context, ContextEntry, Entity, NgsiLdMediaType},
 };
 
-/// Pins: Retrieve Entity under a Link naming the v1.8, v1.6 or v1.3 core, the versionless alias or the v1.9 core
+/// Pins: Retrieve Entity under a Link naming the v1.8, v1.6 or v1.3 core, the versionless URL or the v1.9 core
 /// answers 200 under the v1.9 core alone, as json in its one @context link and as ld+json in its body
 /// Clause: 4.4, 6.3.5, 6.3.6
 /// Recorded: clause 4.4 names one core @context; Andromeda reads every embedded older release and the versionless
-/// alias as it and names only v1.9
+/// URL as it and names only v1.9
 #[gtest]
 #[tokio::test]
 async fn o_ctx_exp_0035_a_single_link_to_any_core_release_is_answered_under_the_current_one() -> Result<()> {

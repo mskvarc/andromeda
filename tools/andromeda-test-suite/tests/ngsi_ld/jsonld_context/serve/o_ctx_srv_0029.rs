@@ -9,7 +9,7 @@ use ngsi_ld::{
     registration::{CSourceRegistration, RegistrationInfo},
 };
 
-/// Pins: Serve @context of the core @context, under the v1.9 URL, the versionless alias and the v1.8 URL, answers
+/// Pins: Serve @context of the core @context, under the v1.9 URL, the versionless URL and the v1.8 URL, answers
 /// 404 `ResourceNotFound`, content and details alike
 /// Clause: 5.13.4.4, 4.4
 /// Tenant: private (the case exercises the tenant's own @context storage; clause 4.14 keeps each tenant's stored

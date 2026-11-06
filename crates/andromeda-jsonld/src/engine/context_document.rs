@@ -256,7 +256,7 @@ fn drop_core_import(definition: &mut Object) {
 mod tests {
     use crate::{
         context_tail::ContextTail,
-        core_context::{NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
+        core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         engine::context_document::{ContextDocument, RelativeReferences},
     };
     use andromeda_json_literal::JsonLiteral;
@@ -322,7 +322,12 @@ mod tests {
     /// import is dropped in every release.
     #[test]
     fn an_imported_core_of_any_release_is_dropped() {
-        for core in [NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_URL] {
+        for core in [
+            NGSI_LD_CORE_CONTEXT_V10_URL,
+            NGSI_LD_CORE_CONTEXT_V13_URL,
+            NGSI_LD_CORE_CONTEXT_V18_URL,
+            NGSI_LD_CORE_CONTEXT_URL,
+        ] {
             let (normalized, _) = prepare(
                 "https://example.com/importing.jsonld",
                 &json!({ "@context": { "@import": core.as_str(), "speed": "https://example.com/speed" } }),

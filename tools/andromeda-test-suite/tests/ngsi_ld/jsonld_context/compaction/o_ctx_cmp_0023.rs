@@ -32,7 +32,7 @@ use ngsi_ld::{
 /// Tenant: private (the case renders the tenant-wide entity type and attribute lists, and clause 4.14 keeps them
 /// the tenant's own)
 /// Recorded: clause 4.4 names one core @context; Andromeda reads every embedded older release and the versionless
-/// alias as it and names only v1.9
+/// URL as it and names only v1.9
 #[gtest]
 #[tokio::test]
 async fn o_ctx_cmp_0023_every_resource_an_older_core_release_alone_is_answered_as_the_current_one() -> Result<()> {
