@@ -296,7 +296,6 @@ mod tests {
     use crate::{
         context_cache::ContextCache,
         context_spec::ContextSpec,
-        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{
             expanded_text::ExpandedText,
             options::{CompactOptions, ContextStripping},
@@ -307,6 +306,7 @@ mod tests {
         loader::replaceable_row::ReplaceableRow,
         test_documents::{expanded_document, literal},
     };
+    use andromeda_ngsi_ld_vocabulary::core_context::NGSI_LD_CORE_CONTEXT_V16_URL;
     use iri_rs::{IriBuf, IriRefBuf};
     use jsonld::{
         JsonLdProcessor,

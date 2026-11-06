@@ -6,14 +6,12 @@
 //! claim a reserved IRI ahead of the core context's, a redefinition of a
 //! protected core term, and the features the walk leaves to the processor --
 //! scoped contexts, `@nest`, map containers. The ETSI test-suite context is
-//! read from the copy the JSON-LD crate keeps; nothing is fetched.
+//! the one the vocabulary crate keeps; nothing is fetched.
 
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_vocabulary::test_suite_context::ETSI_TEST_SUITE_COMPOUND_CONTEXT;
 use serde_json::{Value, json};
-
-/// The ETSI test-suite compound context, as the JSON-LD crate keeps it.
-const ETSI_COMPOUND_CONTEXT: &str = include_str!("../../../andromeda-jsonld/src/context/ngsi-ld-test-suite-compound.jsonld");
 
 /// The default-context namespace an unknown term expands into.
 const DEFAULT_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
@@ -59,7 +57,7 @@ pub(crate) fn test_contexts() -> Vec<TestContext> {
 
 /// The contexts that name terms, prefixes and coercions.
 fn term_contexts() -> Vec<TestContext> {
-    let etsi: Value = serde_json::from_str(ETSI_COMPOUND_CONTEXT).expect("the ETSI compound context is JSON");
+    let etsi: Value = serde_json::from_str(ETSI_TEST_SUITE_COMPOUND_CONTEXT).expect("the ETSI compound context is JSON");
     vec![
         body("etsi-compound", Decision::Walk, &etsi.get("@context").cloned().unwrap_or(Value::Null)),
         TestContext {

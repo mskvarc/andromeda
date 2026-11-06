@@ -299,15 +299,12 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
     reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
 )]
 mod tests {
-    use crate::{
-        context_spec::ContextSpec,
+    use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, test_documents::expanded_document};
+    use andromeda_ngsi_ld_vocabulary::{
+        NGSI_LD_CORE_CONTEXT_URL,
         core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        embedded_context::DATA_INTEGRITY_CONTEXT_URL,
-        engine::processor::JsonLdEngine,
-        error::JsonLdError,
-        test_documents::expanded_document,
+        data_integrity_context::DATA_INTEGRITY_CONTEXT_URL,
     };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
     use std::{
         collections::HashMap,

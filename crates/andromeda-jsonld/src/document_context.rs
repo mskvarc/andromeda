@@ -128,13 +128,15 @@ fn read_reference<'a>(entry: ContextEntry<'a>, reading: ReferenceReading<'_>) ->
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         document_context::{ReferenceReading, resolved_context},
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_ngsi_ld_vocabulary::{
+        NGSI_LD_CORE_CONTEXT_URL,
+        core_context::{NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
+    };
     use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::json;
 

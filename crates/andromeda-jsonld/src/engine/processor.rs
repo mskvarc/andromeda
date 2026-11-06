@@ -190,12 +190,11 @@ pub(crate) fn document_expansions() -> usize {
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{expanded_text::ExpandedText, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
         loader::test_origin::{TestOrigin, ok, redirect},
         test_documents::{as_value, expanded_document, literal},
     };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_URL, core_context::NGSI_LD_CORE_CONTEXT_V16_URL};
     use serde_json::{Value, json};
 
     /// An engine that resolves only what is embedded, never the network.

@@ -186,12 +186,14 @@ mod tests {
     use crate::{
         context_tail::ContextTail,
         context_value::ContextEntry,
-        core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference, NoHostedContexts},
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_ngsi_ld_vocabulary::{
+        NGSI_LD_CORE_CONTEXT_URL,
+        core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
+    };
     use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::json;
 

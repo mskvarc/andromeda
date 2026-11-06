@@ -65,11 +65,8 @@ pub(crate) fn is_core_context_json_string(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        core_context::NGSI_LD_CORE_CONTEXT_V18_URL,
-        core_context_precedence::{defines_nothing_but_an_import, is_core_context_json_string},
-    };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use crate::core_context_precedence::{defines_nothing_but_an_import, is_core_context_json_string};
+    use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_URL, core_context::NGSI_LD_CORE_CONTEXT_V18_URL};
     use std::iter;
 
     #[test]

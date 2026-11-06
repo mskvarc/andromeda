@@ -172,12 +172,14 @@ impl ContextSpec {
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
-        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
-        embedded_context::DATA_INTEGRITY_CONTEXT_URL,
         request_context::RequestContext,
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_ngsi_ld_vocabulary::{
+        NGSI_LD_CORE_CONTEXT_URL,
+        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        data_integrity_context::DATA_INTEGRITY_CONTEXT_URL,
+    };
     use iri_rs::IriBuf;
     use serde_json::json;
 

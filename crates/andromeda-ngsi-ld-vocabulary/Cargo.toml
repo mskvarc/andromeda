@@ -14,4 +14,7 @@ jsonld = { version = "0.27.0", features = ["vocab"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+hex = "0.4.3"
 pretty_assertions = "1.4.1"
+serde_json = "1.0.154"
+sha2 = "0.11.1"

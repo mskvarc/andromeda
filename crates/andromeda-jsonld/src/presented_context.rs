@@ -265,13 +265,15 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         context_tail::ContextTail,
-        core_context::{NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         error::JsonLdError,
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
         presented_context::{ContextLinkTarget, ContextTailLookup, NoLoadedContexts, PresentedContext, notification_body_context},
         test_documents::{as_value, literal},
     };
-    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use andromeda_ngsi_ld_vocabulary::{
+        NGSI_LD_CORE_CONTEXT_URL,
+        core_context::{NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
+    };
     use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::{Value, json};
     use std::{

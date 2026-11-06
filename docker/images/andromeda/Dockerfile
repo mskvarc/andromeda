@@ -76,6 +76,8 @@ RUN groupadd --system --gid 10001 andromeda \
 
 COPY --from=builder /build/target/release/andromeda /usr/local/bin/andromeda
 
+COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md /usr/share/doc/andromeda/
+
 USER andromeda
 WORKDIR /var/lib/andromeda
 

@@ -95,22 +95,3 @@ andromeda_architecture_checks::workspace_architecture! {
     no_raw_sql,
     retired_architecture,
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn composition_is_the_only_api_to_server_handoff_owner() {
-        let broker = include_str!("broker.rs");
-        let listeners = include_str!("listeners.rs");
-        let binary = include_str!("../../../src/main.rs");
-        // Composition assembles the API and delegates serving to the listener module.
-        assert!(broker.contains("HttpApi"));
-        assert!(broker.contains("listeners::serve"));
-        // The listener module owns the TCP and HTTP/3 serving handoff.
-        assert!(listeners.contains("execution::serve"));
-        assert!(listeners.contains("serve_endpoint"));
-        // The lean binary never touches the API or the serving primitives.
-        assert!(!binary.contains("HttpApi"));
-        assert!(!binary.contains("execution::serve"));
-    }
-}

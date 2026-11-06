@@ -1115,7 +1115,6 @@ dependencies = [
  "dashmap",
  "derive_more",
  "headers",
- "hex",
  "iri-rs",
  "jsonld",
  "jsonld-core",
@@ -1127,7 +1126,6 @@ dependencies = [
  "rdfx",
  "reqwest",
  "serde_json",
- "sha2 0.11.1",
  "strum",
  "thiserror 2.0.21",
  "tokio",
@@ -1487,9 +1485,12 @@ name = "andromeda-ngsi-ld-vocabulary"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "hex",
  "iri-rs",
  "jsonld",
  "pretty_assertions",
+ "serde_json",
+ "sha2 0.11.1",
 ]
 
 [[package]]
