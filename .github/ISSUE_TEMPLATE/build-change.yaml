@@ -1,5 +1,5 @@
 name: Build change
-description: Images, Compose and Helm, CI, release gates, or developer tooling.
+description: Images, Compose files, CI, release gates, or developer tooling.
 labels: [build]
 body:
   - type: markdown

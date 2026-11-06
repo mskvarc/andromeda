@@ -1,1 +1,11 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/mskvarc/andromeda/security/advisories/new
+    about: Report a security vulnerability privately, never in an issue.
+  - name: Ask a question
+    url: https://github.com/mskvarc/andromeda/discussions
+    about: How to use, deploy or configure the broker. Questions go to Discussions, not issues.
+  - name: Documentation
+    url: https://github.com/mskvarc/andromeda/tree/master/docs
+    about: What the broker does, how to deploy and run it, and every setting.
