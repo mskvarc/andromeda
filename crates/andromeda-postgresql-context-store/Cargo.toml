@@ -51,7 +51,7 @@ derive_more = { version = "2.1.1", features = ["add", "add_assign", "display", "
 futures = "0.3.34"
 hex = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
-iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }

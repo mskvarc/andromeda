@@ -31,12 +31,12 @@ andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-retry.workspace = true
 andromeda-telemetry.workspace = true
-async-lock = "3.4.2"
+async-lock = "3.5.0"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["display", "from", "is_variant"] }
 indexmap = { version = "2.14.2", features = ["serde"] }
-iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"

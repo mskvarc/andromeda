@@ -3,7 +3,7 @@
 use andromeda_test_suite::{broker, config::BrokerRole, data_integrity_proof::proof_value, namespace::Namespace, outcome::Done, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
-use iri_rs::IriBuf;
+use iri_rs::{Iri, IriBuf, iri};
 use ngsi_ld::{
     http::{headers::Accept, operation::ContextKindFilter},
     model::{Context, ContextId, Entity, ErrorType, Proof, Property},
@@ -11,7 +11,7 @@ use ngsi_ld::{
 use url::Url;
 
 /// The URL the W3C publishes the Data Integrity v2 @context under.
-const DATA_INTEGRITY_CONTEXT: &str = "https://w3id.org/security/data-integrity/v2";
+const DATA_INTEGRITY_CONTEXT: Iri<&str> = iri!("https://w3id.org/security/data-integrity/v2");
 
 /// Pins: On a broker with remote @context fetching disabled, after Create Entity under a Link header naming the W3C
 /// Data Integrity v2 @context, List @contexts with kind=Cached does not list its URL, and Serve @context of it
@@ -25,7 +25,7 @@ const DATA_INTEGRITY_CONTEXT: &str = "https://w3id.org/security/data-integrity/v
 async fn a_ctx_exp_9035_the_data_integrity_context_is_neither_listed_nor_served_after_use() -> Result<()> {
     let namespace = Namespace::fresh();
     let offline = broker::client(BrokerRole::SingleTenant)?;
-    let linked = offline.with_context(Context::from(IriBuf::new(DATA_INTEGRITY_CONTEXT.to_owned())?))?;
+    let linked = offline.with_context(Context::from(IriBuf::from(DATA_INTEGRITY_CONTEXT)))?;
     let store_id = namespace.urn("Store", 1)?;
     let proof = Proof::builder(proof_value())
         .entity_id_sealed(store_id.as_str())
@@ -44,8 +44,8 @@ async fn a_ctx_exp_9035_the_data_integrity_context_is_neither_listed_nor_served_
         .kind(ContextKindFilter::Cached)
         .send()
         .await?;
-    expect_that!(cached, not(contains(eq(&Url::parse(DATA_INTEGRITY_CONTEXT)?))));
-    let context_id = DATA_INTEGRITY_CONTEXT.parse::<ContextId>()?;
+    expect_that!(cached, not(contains(eq(&Url::parse(DATA_INTEGRITY_CONTEXT.as_str())?))));
+    let context_id = DATA_INTEGRITY_CONTEXT.as_str().parse::<ContextId>()?;
     let served = offline.with_responses().with_accept(Accept::any()).contexts().serve(&context_id).send().await;
     expect_that!(&served, problem(StatusCode::NOT_FOUND, ErrorType::ResourceNotFound));
     let details = offline

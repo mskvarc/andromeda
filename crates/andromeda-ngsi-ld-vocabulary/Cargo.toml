@@ -9,8 +9,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.26.0", features = ["vocab"] }
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+jsonld = { version = "0.27.0", features = ["vocab"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

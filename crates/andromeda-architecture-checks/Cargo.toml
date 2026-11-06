@@ -15,7 +15,7 @@ quote = "1.0.47"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3.0.9", features = ["full", "visit"] }
 thiserror = "2.0.21"
-toml_edit = "0.25.17"
+toml_edit = "0.25.19"
 
 [lints]
 workspace = true

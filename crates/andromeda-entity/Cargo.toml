@@ -33,14 +33,14 @@ andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
-async-lock = "3.4.2"
+async-lock = "3.5.0"
 chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from", "is_variant"] }
 futures = "0.3.34"
 geo = "0.33.1"
 indexmap = { version = "2.14.2", features = ["serde"] }
-iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
 langtag = "1.1.0"
 moka = { version = "0.12.16", features = ["future"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }

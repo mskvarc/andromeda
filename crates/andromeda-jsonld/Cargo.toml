@@ -23,14 +23,14 @@ async-trait = "0.1.92"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug", "deref", "display", "from"] }
 headers = "0.4.2"
-iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.26.0", features = ["expandable-chrono", "reqwest", "serde", "vocab"] }
-jsonld-core = "0.26.0"
-jsonld-syntax = "0.26.0"
-jstrict = "0.16.0"
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+jsonld = { version = "0.27.0", features = ["expandable-chrono", "reqwest", "serde", "vocab"] }
+jsonld-core = "0.27.0"
+jsonld-syntax = "0.27.0"
+jstrict = "0.16.1"
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
-rdfx = "0.24.0"
+rdfx = "0.25.0"
 reqwest = { version = "0.13.5", features = ["json"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
