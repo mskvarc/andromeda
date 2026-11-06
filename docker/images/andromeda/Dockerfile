@@ -76,7 +76,7 @@ RUN groupadd --system --gid 10001 andromeda \
 
 COPY --from=builder /build/target/release/andromeda /usr/local/bin/andromeda
 
-COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md /usr/share/doc/andromeda/
+COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
 
 USER andromeda
 WORKDIR /var/lib/andromeda
@@ -88,6 +88,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 LABEL org.opencontainers.image.title="Andromeda" \
       org.opencontainers.image.description="High-performance NGSI-LD context broker (ETSI GS CIM 009 v1.9.1)" \
-      org.opencontainers.image.licenses="EUPL-1.2"
+      org.opencontainers.image.licenses="EUPL-1.2 AND MIT AND BSD-3-Clause AND W3C-20150513"
 
 ENTRYPOINT ["andromeda"]
