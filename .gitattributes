@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.rs diff=rust
+*.md diff=markdown
+
+*.jsonld -text
+
+docs/configuration/andromeda.toml linguist-generated
+docs/configuration/andromeda.schema.json linguist-generated
+docs/configuration/andromeda.descriptor.json linguist-generated
