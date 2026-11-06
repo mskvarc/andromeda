@@ -46,6 +46,7 @@ pub mod context_source_property;
 pub mod context_terms;
 pub mod core_context;
 pub mod cut_stream;
+pub mod data_integrity_proof;
 pub mod database_name;
 pub mod dataset_instance_time;
 pub mod deferred_creation;

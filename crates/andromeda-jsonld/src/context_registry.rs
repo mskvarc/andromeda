@@ -17,8 +17,8 @@ use std::sync::Arc;
 /// How a registered document came to the registry.
 ///
 /// Decides what the first resolution does: an `Embedded` document is compiled
-/// into the broker (the Core @context per clause 4.4, the data-integrity
-/// stub), is never listed, served or stored, and leaves no durable cache
+/// into the broker (the Core @context per clause 4.4, the W3C Data Integrity
+/// context), is never listed, served or stored, and leaves no durable cache
 /// record; a `Preloaded` document is the operator's local stand-in for a
 /// download, so the first resolution records it as a clause 5.13.1 "Cached"
 /// entry, as written like every download.

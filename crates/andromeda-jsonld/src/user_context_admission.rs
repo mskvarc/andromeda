@@ -42,11 +42,15 @@
 //!   be said about them, which rules out the synchronous extractor that builds
 //!   the [`ContextSpec`].
 //! - The Core `@context` is exempt, and not by omission. Its `ngsildproof` term
-//!   names `https://w3id.org/security/data-integrity/v2` as a scoped context --
+//!   declares a scoped context naming `https://w3id.org/security/data-integrity/v2`,
 //!   which is what keeps `entityIdSealed` and `entityTypeSealed` reachable only
-//!   there (clause 4.5.2.2) -- and clause 5.5.7 addresses the *user* `@context`
-//!   throughout, calling the Core one "protected". Every core reference is
-//!   therefore skipped by name rather than inspected.
+//!   there (clause 4.5.2.2), and clause 5.5.7 addresses the *user* `@context`
+//!   throughout, calling the Core one "protected". The W3C Data Integrity
+//!   context the Core names is compiled into the broker with it and declares
+//!   scoped contexts of its own (one per proof type and proof purpose), so a
+//!   user `@context` naming it brings in nothing the Core does not already
+//!   bring under `ngsildproof`. Every embedded reference is therefore skipped
+//!   by name rather than inspected.
 //!
 //! The walk resolves each non-core context once and follows the remote
 //! references a resolved document itself names, because a scoped context two
@@ -61,7 +65,7 @@ use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
     context_value::{ContextEntry, context_entries},
-    core_context::is_ngsi_ld_core_context_url,
+    embedded_context::is_embedded_context_url,
     engine::{
         processor::JsonLdEngine,
         user_context_scan::{UserContextScan, scan_written_context},
@@ -233,7 +237,7 @@ pub(crate) async fn screen_user_context(engine: &JsonLdEngine, context: &Context
 
     let mut visited: HashSet<IriBuf> = HashSet::new();
     while let Some(url) = pending.pop() {
-        if is_ngsi_ld_core_context_url(url.as_ref()) || visited.contains(&url) {
+        if is_embedded_context_url(url.as_ref()) || visited.contains(&url) {
             continue;
         }
         let scan = engine.user_context_scans().get_or_load(engine.loader(), &url).await?;

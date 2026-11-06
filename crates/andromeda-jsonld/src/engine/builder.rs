@@ -1,14 +1,14 @@
 //! Configuring an engine and registering what it can resolve offline.
 //!
-//! Building an engine registers every released NGSI-LD core context, the one
-//! companion context the v1.9 core artefact still references, and whatever the
-//! operator preloaded from disk. After that the engine resolves the entire
-//! specification without a network.
+//! Building an engine registers every document compiled into the broker (the
+//! released NGSI-LD core contexts and the W3C Data Integrity context the v1.9
+//! Core @context names) and whatever the operator preloaded from disk. After
+//! that the engine resolves the entire specification without a network.
 
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::{NGSI_LD_CORE_CONTEXT_URL_LIST, embedded_core_context as embedded_core_context_payload, is_ngsi_ld_core_context_url},
+    embedded_context::{embedded_context, embedded_context_urls, is_embedded_context_url},
     engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache},
     error::JsonLdError,
     hit_counter::HitCounter,
@@ -17,20 +17,10 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_outbound_http::address_policy::AddressPolicy;
-use iri_rs::{Iri, IriBuf, iri};
+use iri_rs::{Iri, IriBuf};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 use tracing::info;
 use url::Url;
-
-/// The W3C Data Integrity companion context the ETSI v1.9 core artefact names
-/// as the scoped context of its `ngsildproof` term.
-///
-/// The broker implements no proof verification, but the term is in the
-/// verbatim ETSI document and its scoped context must resolve or expansion
-/// fails, so an empty stub is registered for it.
-const DATA_INTEGRITY_CONTEXT_URL: Iri<&'static str> = iri!("https://w3id.org/security/data-integrity/v2");
-/// The stub registered for [`DATA_INTEGRITY_CONTEXT_URL`].
-const DATA_INTEGRITY_STUB: &str = r#"{"@context":{}}"#;
 
 /// Configuration for one [`JsonLdEngine`].
 ///
@@ -193,14 +183,9 @@ impl JsonLdEngineBuilder {
     /// if one will not parse, and [`JsonLdError::ClientBuild`] if the HTTP
     /// client cannot be built.
     pub fn build(self) -> Result<JsonLdEngine, JsonLdError> {
-        for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
-            register_embedded(&self.registry, url, &parse_core_context(url)?)?;
+        for url in embedded_context_urls() {
+            register_embedded(&self.registry, url, &parse_embedded_context(url)?)?;
         }
-        register_embedded(
-            &self.registry,
-            DATA_INTEGRITY_CONTEXT_URL.as_ref(),
-            &parse_embedded(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL.as_ref())?,
-        )?;
 
         let preloaded = register_preloaded(self.preload_contexts.as_ref(), &self.registry)?;
         if preloaded.is_empty() {
@@ -267,14 +252,9 @@ fn register_embedded(registry: &ContextRegistry, url: Iri<&str>, payload: &JsonL
         })
 }
 
-/// Parse the embedded payload of one core context URL.
-fn parse_core_context(url: Iri<&str>) -> Result<JsonLiteral, JsonLdError> {
-    let payload = embedded_core_context_payload(url).ok_or_else(|| JsonLdError::EmbeddedContextMissing { url: IriBuf::from(url) })?;
-    parse_embedded(payload, url)
-}
-
-/// Parse an embedded context payload.
-fn parse_embedded(payload: &str, url: Iri<&str>) -> Result<JsonLiteral, JsonLdError> {
+/// Parse the document compiled into the broker under `url`.
+fn parse_embedded_context(url: Iri<&str>) -> Result<JsonLiteral, JsonLdError> {
+    let payload = embedded_context(url).ok_or_else(|| JsonLdError::EmbeddedContextMissing { url: IriBuf::from(url) })?;
     JsonLiteral::admit(payload).map_err(|source| JsonLdError::EmbeddedContextInvalid {
         url: IriBuf::from(url),
         source,
@@ -295,7 +275,7 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
     let mut loaded = Vec::with_capacity(entries.len());
     for (url, file) in entries {
         let typed_url = iri_buf(url)?;
-        if is_ngsi_ld_core_context_url(typed_url.as_ref()) {
+        if is_embedded_context_url(typed_url.as_ref()) {
             return Err(JsonLdError::ProtectedContextPreload { url: typed_url });
         }
         let raw = fs::read_to_string(file).map_err(|source| JsonLdError::PreloadedContextUnreadable {
@@ -322,6 +302,7 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        embedded_context::DATA_INTEGRITY_CONTEXT_URL,
         engine::processor::JsonLdEngine,
         error::JsonLdError,
         test_documents::expanded_document,
@@ -513,6 +494,66 @@ mod tests {
 
         assert!(matches!(built, Err(JsonLdError::ProtectedContextPreload { .. })));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_preload_cannot_replace_the_embedded_data_integrity_context() {
+        let path = preloaded_file("protected-data-integrity", r#"{"@context":{"proof":"https://example.com/proof"}}"#);
+        let mut preloads = HashMap::new();
+        preloads.insert(context_url(DATA_INTEGRITY_CONTEXT_URL.as_str()), path.clone());
+
+        let built = JsonLdEngine::builder().preload_contexts(preloads).build();
+
+        assert!(matches!(built, Err(JsonLdError::ProtectedContextPreload { .. })));
+        let _ = fs::remove_file(path);
+    }
+
+    /// Clause 4.5.2.2: the scoped context of `ngsildproof` names the W3C Data
+    /// Integrity context, so a proof member written with a W3C term expands to
+    /// its W3C IRI, here with no network at all.
+    #[tokio::test]
+    async fn a_proof_written_with_w3c_terms_expands_to_w3c_iris_offline() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+
+        let expanded = expanded_document(
+            &engine,
+            &json!({
+                "id": "urn:ngsi-ld:Store:002",
+                "type": "https://example.org/Store",
+                "https://example.org/address": {
+                    "type": "Property",
+                    "value": "Tiger Street 4",
+                    "ngsildproof": {
+                        "type": "Property",
+                        "entityIdSealed": "urn:ngsi-ld:Store:002",
+                        "value": {
+                            "type": "DataIntegrityProof",
+                            "created": "2025-01-27T21:02:24Z",
+                            "cryptosuite": "eddsa-rdfc-2022",
+                            "proofPurpose": "assertionMethod",
+                            "proofValue": "z3XrH3diVCqpVHXk",
+                            "verificationMethod": "https://example.edu/issuers/565049#key-1"
+                        }
+                    }
+                }
+            }),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("the Core @context expands offline");
+
+        let proof = &expanded[0]["https://example.org/address"][0]["https://uri.etsi.org/ngsi-ld/ngsildproof"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0];
+        pretty_assertions::assert_eq!(
+            proof,
+            &json!({
+                "@type": ["https://w3id.org/security#DataIntegrityProof"],
+                "http://purl.org/dc/terms/created": [{"@type": "http://www.w3.org/2001/XMLSchema#dateTime", "@value": "2025-01-27T21:02:24Z"}],
+                "https://w3id.org/security#cryptosuite": [{"@type": "https://w3id.org/security#cryptosuiteString", "@value": "eddsa-rdfc-2022"}],
+                "https://w3id.org/security#proofPurpose": [{"@id": "https://w3id.org/security#assertionMethod"}],
+                "https://w3id.org/security#proofValue": [{"@type": "https://w3id.org/security#multibase", "@value": "z3XrH3diVCqpVHXk"}],
+                "https://w3id.org/security#verificationMethod": [{"@id": "https://example.edu/issuers/565049#key-1"}]
+            })
+        );
     }
 
     #[test]

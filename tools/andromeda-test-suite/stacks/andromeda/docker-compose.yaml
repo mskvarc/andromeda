@@ -249,7 +249,9 @@ services:
   # Multi-tenancy off, so a request naming a tenant is refused: no test that works in a private tenant can run here.
   # Durable delivery with a request body limit of 4 KiB and an HTTP notification body limit of 5 KiB, and a queue that
   # polls and retries within a second, so a test sees a failing delivery run out of its four attempts while it waits;
-  # the durable broker's tests notify bodies these limits would refuse and wait out its default retries.
+  # the durable broker's tests notify bodies these limits would refuse and wait out its default retries. It fetches no
+  # remote @context, so a test sees what a broker without internet access resolves; the front broker's tests serve
+  # the @contexts they name.
   broker-single-tenant:
     extends:
       <<: *template
@@ -272,6 +274,7 @@ services:
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_ATTEMPTS: "4"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__RETRY_INTERVAL: "100ms"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_RETRY_INTERVAL: "1s"
+      ANDROMEDA__JSONLD__FETCH__MODE: "disabled"
 
   postgres-edge:
     extends:

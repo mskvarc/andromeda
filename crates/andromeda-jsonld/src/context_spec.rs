@@ -8,8 +8,8 @@
 //! `@context` a response names is [`crate::presented_context`].
 
 use crate::{
-    core_context::is_ngsi_ld_core_context_url,
     document_context::{ReferenceReading, ResolvedContext, resolved_context},
+    embedded_context::is_embedded_context_url,
     request_context::RequestContext,
 };
 use andromeda_json_literal::JsonLiteral;
@@ -141,13 +141,13 @@ impl ContextSpec {
     /// operation.
     ///
     /// A spec qualifies when it carries no body `@context` and every `Link`
-    /// context it names is a released core context, all of which are embedded
-    /// in the broker: an embedded context cannot change, while a context
+    /// context it names is embedded in the broker: an embedded context cannot
+    /// change, while a context
     /// fetched from a URL carries the lifetime its origin granted (clause
     /// 6.3.16), which the loader enforces each time it resolves it.
     #[must_use]
     pub fn embedded_context_key(&self) -> Option<Arc<str>> {
-        let embedded_only = self.body_context().is_none() && self.link_context().is_none_or(|url| is_ngsi_ld_core_context_url(url.as_ref()));
+        let embedded_only = self.body_context().is_none() && self.link_context().is_none_or(|url| is_embedded_context_url(url.as_ref()));
         embedded_only.then(|| self.context_key())
     }
 
@@ -173,6 +173,7 @@ mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        embedded_context::DATA_INTEGRITY_CONTEXT_URL,
         request_context::RequestContext,
     };
     use andromeda_json_literal::JsonLiteral;
@@ -273,6 +274,15 @@ mod tests {
     fn a_spec_naming_only_released_core_contexts_has_an_embedded_context_key() {
         assert!(
             ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()))
+                .embedded_context_key()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_spec_naming_the_embedded_data_integrity_context_has_an_embedded_context_key() {
+        assert!(
+            ContextSpec::from_link(iri(DATA_INTEGRITY_CONTEXT_URL.as_str()))
                 .embedded_context_key()
                 .is_some()
         );

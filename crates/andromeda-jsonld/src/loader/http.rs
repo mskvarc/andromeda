@@ -298,7 +298,7 @@ impl HttpContextLoader {
                     // document whose authority is a URL, so the first resolution
                     // that reaches it records a "Cached" durable entry that
                     // clause 5.13.3 then lists. An embedded registration (the
-                    // core contexts, the data-integrity stub) never carries a
+                    // core contexts, the W3C Data Integrity context) never carries a
                     // written copy, so it stays out of the durable cache.
                     // clone: an Arc bump, so the entry can move into the
                     // persisted row while `registered` outlives this block.

@@ -18,7 +18,7 @@ pub struct JsonLdFetchConfig {
     /// Whether a context that is neither embedded, preloaded nor cached may
     /// be downloaded: `enabled` or `disabled`.
     #[schemars(
-        description = "Whether a context that is neither embedded, preloaded, stored nor cached may be downloaded. With `\"disabled\"` nothing is downloaded: only the core `@context`, preloaded documents, stored `@context`s and what is already cached are used."
+        description = "Whether a context that is neither embedded, preloaded, stored nor cached may be downloaded. With `\"disabled\"` nothing is downloaded: only the core `@context` and the W3C Data Integrity context it names, preloaded documents, stored `@context`s and what is already cached are used."
     )]
     pub mode: FeatureMode,
     /// How long one download attempt may take, in human-readable form

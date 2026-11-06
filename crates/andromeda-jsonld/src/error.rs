@@ -29,10 +29,11 @@ use thiserror::Error;
 /// without inspecting error chains.
 #[derive(Debug, Error)]
 pub enum JsonLdError {
-    /// Configuration attempted to replace an embedded NGSI-LD core context.
-    #[error("preloading the protected NGSI-LD core context {url} is not allowed")]
+    /// Configuration attempted to replace a context compiled into the broker:
+    /// an NGSI-LD core context or the W3C Data Integrity context.
+    #[error("preloading the context {url} is not allowed, because the broker embeds it")]
     ProtectedContextPreload {
-        /// The protected core-context URL supplied by configuration.
+        /// The embedded context's URL supplied by configuration.
         url: IriBuf,
     },
 
@@ -107,10 +108,10 @@ pub enum JsonLdError {
     #[error("a preloaded context URL is not an IRI")]
     PreloadedContextUrl(#[source] InvalidIri<String>),
 
-    /// A core context URL has no payload embedded in the broker.
+    /// A URL the broker embeds a context under has no payload.
     #[error("no embedded payload exists for the context {url}")]
     EmbeddedContextMissing {
-        /// The core context URL without a payload.
+        /// The embedded context URL without a payload.
         url: IriBuf,
     },
 

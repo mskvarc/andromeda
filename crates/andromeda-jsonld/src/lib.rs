@@ -7,8 +7,9 @@
 //! the contexts a broker has resolved a resource of their own. Everything that
 //! follows from those three is here: which contexts apply to one operation
 //! ([`context_spec`]), where a context comes from ([`loader`],
-//! [`context_registry`], [`core_context`]), and what expanding or compacting a
-//! document against it produces ([`engine`]). Where a request named its
+//! [`context_registry`], [`core_context`], [`embedded_context`]), and what
+//! expanding or compacting a document against it produces ([`engine`]). Where
+//! a request named its
 //! context -- one `Link` header, its body, or nowhere -- is
 //! [`request_context::RequestContext`].
 //!
@@ -71,6 +72,7 @@ pub mod core_context;
 pub mod core_context_precedence;
 pub mod core_term_aliases;
 pub mod document_context;
+pub mod embedded_context;
 pub mod engine;
 pub mod error;
 pub mod hit_counter;

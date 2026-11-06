@@ -42,6 +42,8 @@ url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+hex = "0.4.3"
 pretty_assertions = "1.4.1"
+sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 wiremock = "0.6.5"

@@ -175,24 +175,36 @@ async fn a_linked_context_decides_terms_like_a_body_context() {
 }
 
 /// Clause 4.5.2.2: `ngsildproof` carries its two seals under the property-scoped
-/// context the core context gives the term.
+/// context the core context gives the term. That scoped context names the W3C
+/// Data Integrity context, whose `DataIntegrityProof` declares a type-scoped
+/// context of its own, so the walk leaves a proof to the processor, which
+/// expands its members to their W3C IRIs.
 #[tokio::test]
 async fn the_proof_term_expands_under_its_scoped_context() {
-    let document = entity(
+    let both = entity(
         &engine(),
         json!({
             "id": "urn:ngsi-ld:Store:1", "type": "Store",
-            "ngsildproof": {"type": "Property", "value": {"type": "DataIntegrityProof"}, "entityIdSealed": "urn:ngsi-ld:Store:1", "entityTypeSealed": "Store"}
+            "ngsildproof": {
+                "type": "Property",
+                "value": {"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022"},
+                "entityIdSealed": "urn:ngsi-ld:Store:1",
+                "entityTypeSealed": "Store"
+            }
         }),
         Normalization::Entity,
     )
     .await
-    .expect("the fixture expands")
-    .agreed();
+    .expect("the fixture expands");
+    pretty_assertions::assert_eq!(both.typed.expect("no refusal"), TypedExpansion::Declined(Decline::TypeScopedContext));
+    let document = both.processor.expect("the processor expands a proof");
 
     let proof = instance(&document, "https://uri.etsi.org/ngsi-ld/ngsildproof");
     assert!(proof.proof_seals().entity_id().is_some());
     assert!(proof.proof_seals().entity_type().is_some());
+    let value = node(proof);
+    assert!(value.types().iter().any(|name| name.as_str() == "https://w3id.org/security#DataIntegrityProof"));
+    pretty_assertions::assert_eq!(member(value, "https://w3id.org/security#cryptosuite").len(), 1);
 }
 
 /// What the walk does not model it declines, and the processor expands
