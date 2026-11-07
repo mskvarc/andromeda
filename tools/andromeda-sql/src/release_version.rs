@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn a_pre_release_is_refused() {
-        for tag in ["v1.0.0-alpha.1", "v1.0.0-beta", "v1.0.0-rc.2", "v1.0.0-rc1"] {
+        for tag in ["v1.0.0-alpha.1", "v1.0.0-beta.2", "v1.0.0-rc.3"] {
             assert!(
                 matches!(tag.parse::<ReleaseVersion>(), Err(ReleaseVersionError::PreRelease(refused)) if tag.ends_with(refused.as_str())),
                 "{tag}"

@@ -1,5 +1,5 @@
 //! The tag a release is pushed under: `v` and a semantic version, a stable
-//! release `vX.Y.Z` or a pre-release such as `v1.0.0-rc1`.
+//! release `vX.Y.Z` or a pre-release such as `v1.0.0-rc.1`.
 //!
 //! Build metadata names no release of its own, so a tag never carries it.
 
@@ -61,10 +61,10 @@ mod tests {
     #[test]
     fn a_stable_tag_and_a_pre_release_tag_read_back_as_written() -> Result<(), ReleaseTagError> {
         let stable = "v1.2.3".parse::<ReleaseTag>()?;
-        let candidate = "v1.2.3-rc1".parse::<ReleaseTag>()?;
+        let candidate = "v1.2.3-rc.1".parse::<ReleaseTag>()?;
         assert!(matches!(stable, ReleaseTag::Stable(_)));
         assert!(matches!(candidate, ReleaseTag::PreRelease(_)));
-        assert_eq!((stable.to_string(), candidate.to_string()), ("v1.2.3".to_owned(), "v1.2.3-rc1".to_owned()));
+        assert_eq!((stable.to_string(), candidate.to_string()), ("v1.2.3".to_owned(), "v1.2.3-rc.1".to_owned()));
         Ok(())
     }
 

@@ -431,7 +431,7 @@ fn a_stable_tag_behind_a_later_sealed_release_fails() -> io::Result<()> {
 #[test]
 fn an_rc_tag_with_no_section_passes() -> io::Result<()> {
     let root = repository_with(&[(ENTITIES, &entities())])?;
-    assert_eq!(verify(root.path(), &["--release", "v1.0.0-rc1"])?, (true, String::new()));
+    assert_eq!(verify(root.path(), &["--release", "v1.0.0-rc.1"])?, (true, String::new()));
     Ok(())
 }
 

@@ -233,7 +233,7 @@ mod tests {
         let first = SealLedger::default().with_release(release("v1.0.0", &[&entities])?);
         let both = first.clone().with_release(release("v1.1.0", &[&kinds])?);
         assert_eq!(release_violations(&both, &migrations, &"v1.1.0".parse()?), []);
-        assert_eq!(release_violations(&first, &migrations, &"v1.1.0-rc1".parse()?), []);
+        assert_eq!(release_violations(&first, &migrations, &"v1.1.0-rc.1".parse()?), []);
         assert_eq!(
             release_violations(&first, &migrations, &"v1.1.0".parse()?),
             [
